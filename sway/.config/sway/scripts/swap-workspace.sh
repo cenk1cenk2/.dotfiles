@@ -12,5 +12,21 @@ CURRENT_WORKSPACE=$(echo $WS_JSON \
 	| jq '.[] | select(.focused==true).name' \
 	| cut -d"\"" -f2 | cut -d ":" -f1)
 
-$WM_MSG rename workspace number $1 to $CURRENT_WORKSPACE
-$WM_MSG rename workspace to $1
+if [ "$1" == "left" ]; then
+	PREVIOUS_WORKSPACE=$((CURRENT_WORKSPACE - 1))
+	$WM_MSG rename workspace number $PREVIOUS_WORKSPACE to $CURRENT_WORKSPACE
+	$WM_MSG rename workspace to $PREVIOUS_WORKSPACE
+	$WM_MSG workspace $PREVIOUS_WORKSPACE
+
+elif [ "$1" == "right" ]; then
+	NEXT_WORKSPACE=$((CURRENT_WORKSPACE + 1))
+	$WM_MSG rename workspace number $NEXT_WORKSPACE to $CURRENT_WORKSPACE
+	$WM_MSG rename workspace to $NEXT_WORKSPACE
+	$WM_MSG workspace $NEXT_WORKSPACE
+
+else
+	$WM_MSG rename workspace number $1 to $CURRENT_WORKSPACE
+	$WM_MSG rename workspace to $1
+	$WM_MSG workspace $1
+
+fi
