@@ -10,7 +10,7 @@
     // informational
     "sway/language",
     "custom/github",
-    "custom/clipboard",
+    // "custom/clipboard",
     "cpu",
     "memory",
     "temperature",
@@ -38,7 +38,7 @@
   },
 
   "custom/playerctl": {
-    "interval": "once",
+    "interval": 5,
     "tooltip": true,
     "return-type": "json",
     "format": "{icon}",
@@ -51,5 +51,12 @@
     "on-scroll-up": "playerctl next; pkill -RTMIN+5 waybar",
     "on-scroll-down": "playerctl previous; pkill -RTMIN+5 waybar",
     "signal": 5
+  },
+
+  "sway/language": {
+    "format": "  {}",
+    "min-length": 5,
+    "tooltip": false,
+    "on-click": "swaymsg input $(swaymsg -t get_inputs --raw | jq '[.[] | select(.type == \"keyboard\")][0] | .identifier') xkb_switch_layout next"
   }
 }
