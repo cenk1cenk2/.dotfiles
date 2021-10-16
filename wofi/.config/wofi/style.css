@@ -1,5 +1,5 @@
 /* import css definitions for current theme */
-@import url("./theme.css");
+@import url('./theme.css');
 
 #outer-box {
   border: 1px solid @accent_color;

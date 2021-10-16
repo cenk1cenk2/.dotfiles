@@ -1,0 +1,55 @@
+{
+  "include": ["/usr/share/sway/templates/waybar/config.jsonc"],
+  "position": "bottom",
+
+  "modules-left": ["sway/workspaces", "custom/scratchpad"],
+  "modules-center": ["custom/wf-recorder", "sway/mode", "sway/window"],
+  "modules-right": [
+    "custom/playerctl",
+
+    // informational
+    "sway/language",
+    "custom/github",
+    "custom/clipboard",
+    "cpu",
+    "memory",
+    "temperature",
+
+    // connecting
+    "bluetooth",
+    "network",
+
+    // media
+    "pulseaudio",
+
+    // system
+    "custom/pacman",
+
+    "tray",
+    "clock"
+  ],
+
+  "clock": {
+    "interval": 60,
+    "format": "{:%H:%M}",
+    "tooltip": true,
+    "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
+    "on-click": "swaymsg exec \\$calendar"
+  },
+
+  "custom/playerctl": {
+    "interval": "once",
+    "tooltip": true,
+    "return-type": "json",
+    "format": "{icon}",
+    "format-icons": {
+      "Playing": "奈",
+      "Paused": ""
+    },
+    "exec": "playerctl metadata --format '{\"alt\": \"{{status}}\", \"tooltip\": \"{{playerName}}:  {{markup_escape(title)}} - {{markup_escape(artist)}}\" }'",
+    "on-click": "playerctl play-pause; pkill -RTMIN+5 waybar",
+    "on-scroll-up": "playerctl next; pkill -RTMIN+5 waybar",
+    "on-scroll-down": "playerctl previous; pkill -RTMIN+5 waybar",
+    "signal": 5
+  }
+}

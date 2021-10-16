@@ -4,6 +4,12 @@
 #
 # Read `man 5 sway` for a complete reference.
 
+# styles - set the folder for your theme defination file
+set $theme $HOME/.config/sway/themes/custom
+
+#theme variables
+include $theme/definitions
+
 # user variables
 include $HOME/.config/sway/definitions
 
