@@ -37,6 +37,16 @@
     "on-click": "swaymsg exec \\$calendar"
   },
 
+  "temperature": {
+    "critical-threshold": 90,
+    "hwmon-path": "/sys/class/hwmon/hwmon1/temp1_input",
+    "interval": 5,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", ""],
+    "tooltip": false,
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
+  },
+
   "custom/playerctl": {
     "interval": 5,
     "tooltip": true,
