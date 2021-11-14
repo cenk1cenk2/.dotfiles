@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Action
+Tooltip=Open Terminal
+Name=Open Terminal
+Profiles=profile-one;
+Icon=utilities-terminal
+
+[X-Action-Profile profile-one]
+MimeTypes=inode/directory;
+Exec=/usr/share/sway/scripts/foot.sh -D %d
+Name=Default profil
