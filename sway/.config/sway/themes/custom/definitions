@@ -6,7 +6,7 @@ set $gtk-theme Abrus-solid-dark
 set $icon-theme Qogir-dark
 set $cursor-theme xcursor-breeze
 set $gui-font Segoe UI 11
-set $term-font Consolas 12.5
+set $term-font Consolas 11
 set $kvantum-theme Matchama-Dark-Aliz
 
 # a theme specific color map
