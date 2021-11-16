@@ -1,9 +1,9 @@
 # default config for the mako notification daemon
 
 layer=overlay
-width=400
-height=200
-font=Consolas 12.5
+width=600
+height=400
+font=Consolas 14
 border-size=3
 border-color=#4b5263
 text-color=#eeeeee
