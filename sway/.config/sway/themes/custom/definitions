@@ -6,6 +6,7 @@ set $gtk-theme Abrus-solid-dark
 set $icon-theme Qogir-dark
 set $cursor-theme xcursor-breeze
 set $gui-font Segoe UI 11
+set $gui-font-big Segoe UI 14
 set $term-font Consolas 11
 set $kvantum-theme Matchama-Dark-Aliz
 
@@ -33,7 +34,7 @@ set $text-color #eeeeee
 #color1
 set $selection-color #282a2b
 #color12
-set $accent-color #623CEA
+set $accent-color #4A77BF
 set $theme_template_script "s/GTK_THEME/$gtk-theme/g; s/ICON_THEME/$icon-theme/g; s/CURSOR_THEME/$cursor-theme/g; s/GUI_FONT/$gui-font/g; s/KVANTUM_THEME/$kvantum-theme/g; s/BACKGROUND_COLOR/$base00/g; s/ACCENT_COLOR/$base0D/g; s/TEXT_COLOR/$base06/g; s/TERM_FONT/$term-font/g;"
 
 # Basic color configuration using the Base16 variables for windows and borders.
