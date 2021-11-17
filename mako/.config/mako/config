@@ -1,11 +1,11 @@
 # default config for the mako notification daemon
 
 layer=overlay
-width=600
-height=300
-font=Segoe UI 14
+width=400
+height=200
+font=Segoe UI 12
 border-size=3
-border-color=#4b5263
+border-color=#4A77BF
 text-color=#eeeeee
 background-color=#14161b
 icons=1
