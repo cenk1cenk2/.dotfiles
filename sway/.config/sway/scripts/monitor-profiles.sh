@@ -6,7 +6,7 @@ WM_MSG=${WM_MSG:-i3-msg}
 
 VG27W_MODE="2560x1440@144.006Hz"
 BENQ_MODE="2560x1440@143.856Hz"
-VG27A_MODE="2560x1440@119.993Hz"
+VG27A_MODE="2560x1440@143.995Hz"
 
 if [ "$1" == "solo" ]; then
 	swaymsg output HDMI-A-1 enable

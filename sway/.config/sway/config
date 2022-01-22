@@ -7,7 +7,7 @@
 # styles - set the folder for your theme definition file
 set $theme $HOME/.config/sway/themes/custom
 
-#theme variables
+# theme variables
 include $theme/definitions
 
 # user variables
