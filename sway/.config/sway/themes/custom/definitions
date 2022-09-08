@@ -11,30 +11,31 @@ set $term-font Consolas 11
 set $kvantum-theme Matchama-Dark-Aliz
 
 # a theme specific color map
-set $color0 #14161b
-set $color1 #282a2b
-set $color2 #00758C
-set $color3 #41535B
-set $color4  #43a5d5
-set $color5  #d6d6d6
-set $color6  #eeeeee
-set $color7  #ffffff
-set $color8  #e06c75
-set $color9  #d19a66
-set $color10 #e6cd69
-set $color11 #98c379
-set $color12 #16a085
-set $color13 #4b5263
-set $color14 #a074c4
-set $color15 #8a553f
+set $color0 #282c34
+set $color1 #e06c75
+set $color2 #98c379
+set $color3 #e5c07b
+set $color4 #61afef
+set $color5 #a40778
+set $color6 #56b6c2
+set $color7 #979eab
+set $color8 #4b5263
+set $color9 #ff7684
+set $color10 #d4ff79
+set $color11 #fad441
+set $color12 #93cfff
+set $color13 #f5169e
+set $color14 #87e6e2
+set $color15 #abb2bf
+set $color16 #ececec
 
 set $transparent-background-color rgba(20, 22, 27, 0.9)
-set $background-color #121212
+set $background-color #1e2127
 set $text-color #eeeeee
 #color1
 set $selection-color #282a2b
 #color12
-set $accent-color #4A77BF
+set $accent-color #61afef
 set $theme_template_script "s/GTK_THEME/$gtk-theme/g; s/ICON_THEME/$icon-theme/g; s/CURSOR_THEME/$cursor-theme/g; s/GUI_FONT/$gui-font/g; s/KVANTUM_THEME/$kvantum-theme/g; s/BACKGROUND_COLOR/$base00/g; s/ACCENT_COLOR/$base0D/g; s/TEXT_COLOR/$base06/g; s/TERM_FONT/$term-font/g;"
 
 # Basic color configuration using the Base16 variables for windows and borders.
