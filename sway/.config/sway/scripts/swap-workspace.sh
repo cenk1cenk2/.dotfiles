@@ -8,9 +8,9 @@ WM_MSG=${WM_MSG:-i3-msg}
 
 WS_JSON=$($WM_MSG -t get_workspaces)
 
-CURRENT_WORKSPACE=$(echo $WS_JSON \
-	| jq '.[] | select(.focused==true).name' \
-	| cut -d"\"" -f2 | cut -d ":" -f1)
+CURRENT_WORKSPACE=$(echo $WS_JSON |
+	jq '.[] | select(.focused==true).name' |
+cut -d"\"" -f2 | cut -d ":" -f1)
 
 if [ "$1" == "left" ]; then
 	PREVIOUS_WORKSPACE=$((CURRENT_WORKSPACE - 1))
