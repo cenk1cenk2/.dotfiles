@@ -41,8 +41,8 @@ set $theme_template_script "s/GTK_THEME/$gtk-theme/g; s/ICON_THEME/$icon-theme/g
 # Basic color configuration using the Base16 variables for windows and borders.
 # Property Name         Border  BG      Text    Indicator Child Border
 client.focused          $color5 $color4 $color0 $color4 $color4
-client.focused_inactive $color1 $color1 $color5 $color3 $color1
-client.unfocused        $color1 $color0 $color5 $color1 $color1
+client.focused_inactive $color1 $color1 $color15 $color3 $color1
+client.unfocused        $color1 $color0 $color7 $color1 $color1
 client.urgent           $color8 $color8 $color0 $color8 $color8
 client.placeholder      $color0 $color0 $color5 $color0 $color0
 client.background       $color7
