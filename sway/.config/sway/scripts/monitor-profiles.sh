@@ -14,20 +14,20 @@ SALON_OUTPUT="DP-5"
 
 if [ "$1" == "solo" ]; then
 	swaymsg output $MAIN_OUTPUT enable
-	swaymsg output $MAIN_OUTPUT mode "${MAIN_MODE}" pos 0 0
+	swaymsg output $MAIN_OUTPUT mode "$MAIN_MODE" pos 0 0
 
 	swaymsg output $TOP_OUTPUT disable
 	swaymsg output $SALON_OUTPUT disable
 elif [ "$1" == "dual" ]; then
 	swaymsg output $MAIN_OUTPUT enable
-	swaymsg output $MAIN_OUTPUT mode "${MAIN_MODE}" pos 0 1440
+	swaymsg output $MAIN_OUTPUT mode "$MAIN_MODE" pos 0 1440
 	swaymsg output $TOP_OUTPUT enable
-	swaymsg output $TOP_OUTPUT mode "${TOP_MODE}" pos 720 0
+	swaymsg output $TOP_OUTPUT mode "$TOP_MODE" pos 720 0
 
 	swaymsg output $SALON_OUTPUT disable
 elif [ "$1" == "salon" ]; then
 	swaymsg output $SALON_OUTPUT enable
-	swaymsg output $SALON_OUTPUT mode "${SALON_MODE}" pos 0 0
+	swaymsg output $SALON_OUTPUT mode "$SALON_MODE" pos 0 0
 
 	swaymsg output $MAIN_OUTPUT disable
 	swaymsg output $TOP_OUTPUT disable
