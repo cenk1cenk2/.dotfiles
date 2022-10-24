@@ -1,0 +1,30 @@
+[user]
+	email = cenk@kilic.dev
+  name = Cenk Kılıç
+
+[init]
+  defaultBranch = main
+
+[pull]
+  rebase = false
+
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+  required = true
+
+[safe]
+  directory = /home/cenk/.config/nvim
+
+[diff]
+  tool = nvr
+
+[difftool "nvr"]
+  cmd = nvr -s -d $LOCAL $REMOTE
+
+[merge]
+  tool = nvr
+
+[mergetool "nvr"]
+    cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
