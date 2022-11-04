@@ -25,7 +25,7 @@
   "notification-visibility": {
     "Spotify": {
       "state": "enabled",
-      "urgency": "Low",
+      "urgency": "Critical",
       "app-name": "Spotify"
     }
   },
