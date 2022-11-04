@@ -29,9 +29,8 @@
 
     "tray",
 
-    "clock",
-
-    "custom/notification"
+    "custom/notification",
+    "clock"
   ],
 
   "clock": {
