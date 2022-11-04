@@ -84,15 +84,17 @@ window#waybar .modules-right {
 #tray {
   color: @text_color;
   border-radius: 24px;
+  background-color: #22282f;
 }
 
 #clock {
   background-color: #5c6370;
 }
 
+#tray {
+}
+
 #custom-notification {
-  background-color: @alternative_color;
-  color: @theme_bg_color;
   padding-left: 8px;
   padding-right: 8px;
 }
@@ -105,4 +107,63 @@ window#waybar .modules-right {
 #custom-playerctl {
   color: @theme_bg_color;
   background-color: #98c379;
+}
+
+#mode {
+  background-color: @alternative_color;
+}
+
+#battery.warning {
+  background-color: @warning_color;
+  color: @theme_bg_color;
+}
+
+#battery.critical {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#cpu.warning {
+  background-color: @warning_color;
+  color: @theme_bg_color;
+}
+
+#cpu.critical {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#memory.warning {
+  background-color: @warning_color;
+  color: @theme_bg_color;
+}
+
+#memory.critical {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#network.disconnected {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#pulseaudio.muted {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#temperature.warning {
+  background-color: @warning_color;
+  color: @theme_bg_color;
+}
+
+#temperature.critical {
+  background-color: @error_color;
+  color: @theme_bg_color;
+}
+
+#bluetooth.disabled {
+  background-color: @error_color;
+  color: @theme_bg_color;
 }
