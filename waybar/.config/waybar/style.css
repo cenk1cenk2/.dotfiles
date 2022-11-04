@@ -10,10 +10,84 @@
 @import url('theme.css');
 @import '/usr/share/sway/templates/waybar/style.css';
 
-#window {
-  font-weight: bold;
-  margin-right: 25px;
+window#waybar {
+  background: @transparent_background_color;
+}
+
+window > box {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+window#waybar .modules-center {
+  background-color: @background_color;
+  border-radius: 24px;
+  padding: 4px;
+  padding-left: 48px;
+  padding-right: 48px;
+}
+
+window#waybar .modules-left {
+  background-color: @background_color;
+  border-radius: 24px;
+  padding: 4px;
+  padding-bottom: 0px;
+  padding-top: 0px;
+}
+
+window#waybar .modules-right {
+  background-color: @background_color;
+  border-radius: 24px;
+  margin-left: 2px;
+  margin-right: 2px;
+}
+
+#workspaces button {
   color: @dim_text_color;
+}
+
+#workspaces button.focused {
+  color: @background_color;
+  box-shadow: 0px -8px 8px @alternative_color inset;
+  /* border-bottom: 8px solid @alternative_color; */
+}
+
+#custom-scratchpad,
+#custom-menu,
+#workspaces button.focused,
+#clock {
+  border-radius: 24px;
+}
+
+#custom-pacman,
+#custom-menu,
+#custom-help,
+#custom-scratchpad,
+#custom-github,
+#custom-clipboard,
+#custom-zeit,
+#custom-dnd,
+#bluetooth,
+#battery,
+#clock,
+#cpu,
+#memory,
+#mode,
+#network,
+#pulseaudio,
+#temperature,
+#idle_inhibitor,
+#backlight,
+#language,
+#custom-sunset,
+#custom-playerctl,
+#tray {
+  color: @text_color;
+  border-radius: 24px;
+}
+
+#clock {
+  background-color: #5c6370;
 }
 
 #custom-playerctl {

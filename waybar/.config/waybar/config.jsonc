@@ -1,6 +1,8 @@
 {
   "include": ["/usr/share/sway/templates/waybar/config.jsonc"],
   "position": "bottom",
+  "heigth": "40px",
+  "spacing": 4,
 
   "modules-left": ["sway/workspaces", "custom/scratchpad"],
   "modules-center": ["custom/wf-recorder", "sway/mode", "sway/window"],

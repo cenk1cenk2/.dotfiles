@@ -6,17 +6,13 @@ args = [
   "-show-icons",
   "-no-case-sensitive",
   "-no-drun-use-desktop-cache",
-  "-theme",
-  "../rofi/launchers/type-4/style-6.rasi",
-  "-font",
-  "Roboto 14",
   "-p",
   "{prompt}",
 ]
 
 [format]
-window_format = "{urgency_start}{title}{urgency_end} — {app_name} on workspace {workspace_name} ({id}) \u0000icon\u001f{app_icon}"
-workspace_format = "{name} ({id})"
+window_format = "{urgency_start}{title}{urgency_end} — {app_name} on workspace {workspace_name} \u0000icon\u001f{app_icon}"
+workspace_format = "{name}"
 urgency_start = '<span background="darkred" foreground="yellow">'
 urgency_end = '</span>'
 html_escape = false
