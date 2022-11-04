@@ -7,8 +7,8 @@
  * =========================================================================== */
 
 /* import css definitions for current theme */
-@import url("theme.css");
-@import "/usr/share/sway/templates/waybar/style.css";
+@import url('theme.css');
+@import '/usr/share/sway/templates/waybar/style.css';
 
 #window {
   font-weight: bold;
@@ -17,5 +17,6 @@
 }
 
 #custom-playerctl {
-  color: #98c379;
+  color: @theme_bg_color;
+  background-color: #98c379;
 }
