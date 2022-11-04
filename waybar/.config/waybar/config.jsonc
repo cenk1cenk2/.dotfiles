@@ -29,6 +29,8 @@
 
     "tray",
 
+    "battery",
+    "backlight",
     "custom/notification",
     "clock"
   ],
@@ -79,9 +81,9 @@
     "format": "{icon}",
     "format-icons": {
       "notification": "<span foreground='red'><sup></sup></span>",
-      "none": " ",
+      "none": "<sup> </sup>",
       "dnd-notification": "<span foreground='red'><sup></sup></span>",
-      "dnd-none": " "
+      "dnd-none": "<sup> </sup>"
     },
     "return-type": "json",
     "exec-if": "which swaync-client",

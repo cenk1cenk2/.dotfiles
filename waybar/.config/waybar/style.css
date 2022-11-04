@@ -29,31 +29,34 @@ window#waybar .modules-center {
 
 window#waybar .modules-left {
   background-color: @background_color;
-  border-radius: 24px;
-  padding: 4px;
-  padding-bottom: 0px;
-  padding-top: 0px;
+  border-top-right-radius: 24px;
+  border-bottom-right-radius: 24px;
 }
 
 window#waybar .modules-right {
   background-color: @background_color;
-  border-radius: 24px;
-  margin-left: 2px;
-  margin-right: 2px;
+  border-top-left-radius: 24px;
+  border-bottom-left-radius: 24px;
 }
 
 #workspaces button {
   color: @dim_text_color;
+  border-radius: 24px;
 }
 
 #workspaces button.focused {
   color: @background_color;
-  /* border-bottom: 8px solid @alternative_color; */
+  border-top: 1px solid @dim_text_color;
+}
+
+#workspaces button.focused:first-child {
+  border-radius: 0px;
+  border-bottom-right-radius: 24px;
+  border-top-right-radius: 24px;
 }
 
 #custom-scratchpad,
 #custom-menu,
-#workspaces button.focused,
 #clock {
   border-radius: 24px;
 }
@@ -89,9 +92,37 @@ window#waybar .modules-right {
 
 #clock {
   background-color: #5c6370;
+  border-radius: 0px;
+  border-bottom-left-radius: 24px;
+  border-top-left-radius: 24px;
 }
 
-#tray {
+#cpu {
+  border-radius: 0px;
+  border-top-left-radius: 24px;
+  border-bottom-left-radius: 24px;
+}
+
+#memory {
+  border-radius: 0px;
+}
+
+#temperature {
+  border-radius: 0px;
+  border-top-right-radius: 24px;
+  border-bottom-right-radius: 24px;
+}
+
+#bluetooth {
+  border-radius: 0px;
+  border-top-left-radius: 24px;
+  border-bottom-left-radius: 24px;
+}
+
+#network {
+  border-radius: 0px;
+  border-top-right-radius: 24px;
+  border-bottom-right-radius: 24px;
 }
 
 #custom-notification {
@@ -110,7 +141,7 @@ window#waybar .modules-right {
 }
 
 #mode {
-  background-color: @alternative_color;
+  background-color: #5c6370;
 }
 
 #battery.warning {
