@@ -4,7 +4,7 @@ args = [
   "-dmenu",
   "-markup",
   "-show-icons",
-  "-no-case-sensitive",
+  "-i",
   "-no-drun-use-desktop-cache",
   "-p",
   "{prompt}",
