@@ -48,7 +48,6 @@ window#waybar .modules-right {
 
 #workspaces button.focused {
   color: @background_color;
-  box-shadow: 0px -8px 8px @alternative_color inset;
   /* border-bottom: 8px solid @alternative_color; */
 }
 
