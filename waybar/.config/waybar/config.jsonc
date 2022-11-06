@@ -91,5 +91,13 @@
     "on-click": "swaync-client -t -sw",
     "on-click-right": "swaync-client -d -sw",
     "escape": true
+  },
+
+  "bluetooth": {
+    "format": "",
+    "format-disabled": "",
+    "on-click": "blueberry",
+    "on-click-right": "rfkill toggle bluetooth",
+    "tooltip-format": "{}"
   }
 }
