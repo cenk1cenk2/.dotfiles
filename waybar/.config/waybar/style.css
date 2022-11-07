@@ -144,6 +144,11 @@ window#waybar .modules-right {
   background-color: #98c379;
 }
 
+#custom-scratchpad {
+  background-color: @alternative_color;
+  color: @theme_bg_color;
+}
+
 #mode {
   background-color: #38404b;
 }
