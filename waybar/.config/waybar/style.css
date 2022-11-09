@@ -50,7 +50,7 @@ window#waybar .modules-right {
 
 #workspaces button.focused {
   color: @background_color;
-  border-top: 1px solid @dim_text_color;
+  border-top: 2px solid @dim_text_color;
 }
 
 #workspaces button.focused:first-child {
