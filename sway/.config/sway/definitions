@@ -27,8 +27,8 @@ set $background /home/cenk/.dotfiles/sway/.config/sway/background/narli.jpg
 set $theme $HOME/.config/sway/themes/custom
 
 # Your preferred terminal emulator
-# set $term /usr/share/sway/scripts/foot.sh
-set $term kitty
+set $term /usr/share/sway/scripts/foot.sh
+# set $term kitty
 set $term_float footclient -a floating_shell -W 100x35
 set $term_float_portrait footclient -a floating_shell_portrait -W 35x100
 
