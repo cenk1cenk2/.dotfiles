@@ -2,9 +2,10 @@
 # Author: Appelgriebsch
 
 # some global theme specific variables
-set $gtk-theme Abrus-solid-dark
-set $icon-theme Qogir-dark
-set $kvantum-theme Matchama-Dark-Aliz
+set $gtk-theme Material-Black-Mango-3.36
+set $icon-theme Material-Black-Mango-Numix-FLAT
+# set $kvantum-theme MateriaDark
+set $kvantum-theme Material-Black-Mango-3.36
 set $cursor-theme xcursor-breeze
 set $gui-font Segoe UI 11
 set $gui-font-big Segoe UI 14
