@@ -9,7 +9,7 @@ set $kvantum-theme Material-Black-Mango-3.36
 set $cursor-theme xcursor-breeze
 set $gui-font Segoe UI 11
 set $gui-font-big Segoe UI 14
-set $term-font Consolas 11
+set $term-font Fira Code Retina Nerd Font Complete Mono 11
 
 # a theme specific color map
 set $color0 #282c34
