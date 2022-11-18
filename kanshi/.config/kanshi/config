@@ -6,7 +6,8 @@
 # * set the scaling for your screen: output HDMI1 scale 2
 
 profile {
-  output "Unknown GPD1001H 0x00000001" 2560x1600@60.009Hz scale 2.0
+  output "Unknown GPD1001H 0x00000001" 2560x1600@60.009Hz position 0,0
+  output "Unknown GPD1001H 0x00000001" scale 2.0
 }
 
 profile {
