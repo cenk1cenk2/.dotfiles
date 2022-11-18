@@ -1,0 +1,19 @@
+# configure as many display profiles as you need
+# refer to "man kanshi" to find out how to configure profiles
+# https://github.com/emersion/kanshi#configuration-file
+# * get your current screen name: swaymsg -t get_outputs
+# * set the resolution and position for your screen: output HDMI1 mode 1920x1080 position 0,0
+# * set the scaling for your screen: output HDMI1 scale 2
+
+profile {
+  output "Goldstar Company Ltd 38GN950 207NTSU62014" 3840x1600@74.997Hz position 0,0
+  output "Unknown VG27A L4LMQS123005" 2560x1440@164.999Hz position 700,0
+}
+
+profile {
+  output "Goldstar Company Ltd 38GN950 207NTSU62014" 3840x1600@74.997Hz position 0,0
+}
+
+profile {
+  output "Unknown VG27WQ L4LMDW007740" 2560x1440@143.995Hz position 0,0
+}
