@@ -91,10 +91,10 @@ window#waybar .modules-right {
 #tray {
   border-radius: 24px;
   background-color: #22282f;
+  color: @dim_text_color;
 }
 
 #clock {
-  color: @dim_text_color;
   background-color: #5c6370;
   border-radius: 0px;
   border-bottom-left-radius: 24px;
