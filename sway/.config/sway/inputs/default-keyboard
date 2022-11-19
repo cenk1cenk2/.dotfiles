@@ -3,7 +3,7 @@
 # You can get the names of your inputs by running: swaymsg -t get_inputs
 # Read `man 5 sway-input` for more information about this section.
 input type:keyboard {
-  xkb_layout "de,us,tr"
+  xkb_layout "us,de,tr"
 
   repeat_rate 20
   repeat_delay 350
