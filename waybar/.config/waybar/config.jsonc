@@ -44,7 +44,8 @@
   },
 
   "temperature": {
-    "critical-threshold": 85,
+    "warning-threshold": 72,
+    "critical-threshold": 78,
     "hwmon-path": "/sys/class/hwmon/hwmon4/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",

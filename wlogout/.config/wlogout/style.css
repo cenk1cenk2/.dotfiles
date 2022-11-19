@@ -13,6 +13,7 @@ button {
   background-color: @background_color;
   border-style: solid;
   border-width: 2px;
+  border-color: @accent_color;
   background-repeat: no-repeat;
   background-position: center;
   background-size: 25%;
@@ -21,7 +22,7 @@ button {
 button:focus,
 button:active,
 button:hover {
-  background-color: @alternative_color;
+  background-color: @background_color;
   outline-style: none;
 }
 
