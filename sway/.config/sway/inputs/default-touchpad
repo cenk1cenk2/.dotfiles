@@ -21,7 +21,7 @@ input "1149:32936:ORBIT_BT5.0_Mouse" {
 }
 
 input "2362:597:PNP0C50:00_093A:0255_Touchpad" {
-    pointer_accel 0.8
+    pointer_accel 0.5
     scroll_factor 1
 }
 
