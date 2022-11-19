@@ -21,11 +21,9 @@ input type:touchpad {
 
 input "12068:309:Mouse_for_Windows" {
   accel_profile "adaptive"
-  accel_speed 1
   pointer_accel 1
   scroll_factor 1.5
   middle_emulation enabled
-  pointer_accel 0
 }
 
 input "1149:32936:ORBIT_BT5.0_Mouse" {
