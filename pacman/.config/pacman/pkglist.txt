@@ -3,9 +3,6 @@ archlinuxcn-keyring
 autotiling
 avahi
 blueberry
-bluez
-bluez-hid2hci
-bluez-utils-compat
 git-lfs
 gvfs
 gvfs-nfs

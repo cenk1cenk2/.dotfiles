@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
-pacman -S --needed - <pkglist.txt
-pacman -S --needed - <pkglist_aur.txt
+sudo pacman -S --needed base-devel
+sudo pacman -S --needed - <pkglist.txt
+yay -S --needed - <pkglist_aur.txt
