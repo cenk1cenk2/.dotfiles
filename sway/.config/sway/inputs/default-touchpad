@@ -20,7 +20,7 @@ input type:touchpad {
 }
 
 input "12068:309:Mouse_for_Windows" {
-  accel_profile -1
+  accel_profile "adaptive"
   accel_speed 1
   pointer_accel 1
   scroll_factor 1.5
