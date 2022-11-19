@@ -9,6 +9,12 @@ profile gpd {
   output "Unknown GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0
 }
 
+
+profile gpd_portable {
+  output "Unknown GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 2.0
+  output "Unknown ASUS XG17A 0x000079A5" enable mode 1920x1080@239.964Hz position 0,0 scale 1.0
+}
+
 profile default {
   output "Goldstar Company Ltd 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,0
   output "Unknown VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
