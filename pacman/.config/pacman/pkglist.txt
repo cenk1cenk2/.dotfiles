@@ -1,7 +1,6 @@
 ansible
 archlinuxcn-keyring
 autotiling
-avahi
 blueberry
 git-lfs
 gvfs
@@ -20,7 +19,7 @@ manjaro-vaapi
 nerd-fonts-roboto-mono
 pantheon-calculator
 pcmanfm-gtk3
-procps-ng
+ryzenadj
 spotify
 stow
 swappy
@@ -35,4 +34,3 @@ xdg-desktop-portal-wlr
 xdg-user-dirs
 zathura
 zathura-pdf-poppler
-zsh

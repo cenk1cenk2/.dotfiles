@@ -7,15 +7,10 @@ goverlay
 gtk-theme-material-black
 mime-archpkg
 nwg-displays
-ryzen-controller-bin
-softethervpn
-softethervpn-server-manager
-stowtui-git
 swaync
 swaysettings-git
 themechanger-git
 ttf-ms-win10-auto
-via-bin
 wl-clipboard-git
 wl-gammactl
 wl-mirror
