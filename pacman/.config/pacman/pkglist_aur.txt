@@ -9,6 +9,7 @@ mime-archpkg
 nwg-displays
 swaync
 swaysettings-git
+tela-circle-icon-theme-grey
 themechanger-git
 ttf-ms-win10-auto
 wl-clipboard-git

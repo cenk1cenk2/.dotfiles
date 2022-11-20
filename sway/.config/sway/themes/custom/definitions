@@ -3,9 +3,9 @@
 
 # some global theme specific variables
 set $gtk-theme Material-Black-Mango-3.36
-set $icon-theme Material-Black-Mango-Numix-FLAT
+set $icon-theme Tela circle grey dark
 # set $kvantum-theme MateriaDark
-set $kvantum-theme Material-Black-Mango-3.36
+set $kvantum-theme MateriaDark
 set $cursor-theme xcursor-breeze
 set $gui-font Segoe UI 11
 set $gui-font-big Segoe UI 14
