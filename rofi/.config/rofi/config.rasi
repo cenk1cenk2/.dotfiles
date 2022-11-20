@@ -8,7 +8,7 @@
 
 
 * {
-    font: "Consolas NF 14";
+    font: "Consolas ligaturized v3 14";
 }
 
 @theme "rofi"

@@ -22,8 +22,8 @@ button {
 button:focus,
 button:active,
 button:hover {
-  color: @background_color;
-  background-color: @alternative_color;
+  background-color: @background_color;
+  border-color: @accent_color;
   outline-style: none;
 }
 
