@@ -23,9 +23,9 @@ set $color7 #979eab
 set $color8 #4b5263
 set $color9 #ff7684
 set $color10 #d4ff79
-set $color11 #fad441
+set $color11 #ebcd8f
 set $color12 #93cfff
-set $color13 #f5169e
+set $color13 #bb23a1
 set $color14 #87e6e2
 set $color15 #abb2bf
 set $color16 #ececec
