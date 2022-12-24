@@ -1,0 +1,24 @@
+---
+# https://taskfile.dev
+
+version: '3'
+
+vars: {}
+
+env: {}
+
+tasks:
+  deploy:
+    desc: Deploy to target.
+    cmds:
+      - stow --adopt -vvvt ~ {{ .CLI_ARGS }}
+
+  plan:
+    desc: Plan to target.
+    cmds:
+      - stow --adopt -nvvvt ~ {{ .CLI_ARGS }}
+
+  tui:
+    desc: Run TUI.
+    cmds:
+      - stowtui
