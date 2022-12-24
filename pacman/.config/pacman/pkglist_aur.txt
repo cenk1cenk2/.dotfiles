@@ -18,3 +18,4 @@ wl-mirror
 xclip-git
 xdg-utils-handlr
 xsel-git
+clipboard-sync
