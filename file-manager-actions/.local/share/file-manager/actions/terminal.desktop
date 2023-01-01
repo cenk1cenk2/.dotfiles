@@ -7,5 +7,5 @@ Icon=utilities-terminal
 
 [X-Action-Profile profile-one]
 MimeTypes=inode/directory;
-Exec=/usr/share/sway/scripts/foot.sh -D %d
-Name=Default profil
+Exec=kitty -D %d
+Name=Default profile
