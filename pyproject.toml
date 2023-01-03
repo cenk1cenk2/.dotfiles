@@ -1,0 +1,4 @@
+[tool.pyright]
+include = ["."]
+exclude = ["**/node_modules", "**/__pycache__"]
+reportOptionalMemberAccess = false

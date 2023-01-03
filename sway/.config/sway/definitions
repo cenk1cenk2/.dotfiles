@@ -64,6 +64,8 @@ set $idle swayidle -w \
 set $statusbar waybar
 set $waybar_position bottom
 
+# bluetooth command
+set $bluetooth $term_float bluetuith
 # pulseaudio command
 set $pulseaudio $term_float pulsemixer
 

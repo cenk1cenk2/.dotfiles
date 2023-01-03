@@ -1,5 +1,6 @@
 avizo
 bluetooth-autoconnect
+bluetuith
 geekbench
 google-chrome
 gotify-desktop

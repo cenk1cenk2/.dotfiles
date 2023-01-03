@@ -26,6 +26,8 @@ swappy
 swaylock-effects
 swayr
 sworkstyle
+tlp
+tlpui
 tmux
 vim
 virt-viewer
