@@ -6,11 +6,11 @@
 # * set the scaling for your screen: output HDMI1 scale 2
 
 profile gpd {
-  output "Unknown GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0
+  output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0
 }
 
 profile gpd_portable {
-  output "Unknown GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 2.0
+  output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 2.0
   output "Unknown ASUS XG17A 0x000079A5" enable mode 1920x1080@239.964Hz position 0,0 scale 1.0
 }
 
