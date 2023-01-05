@@ -4,30 +4,45 @@ from argparse import ArgumentParser
 
 import i3ipc
 
-# Assumption: it exists 10 workspaces (otherwise, change this value)
-NUM_WORKSPACES = 10
-
 if __name__ == "__main__":
     arguments_parser = ArgumentParser()
     arguments_parser.add_argument(
-        "-s",
-        "--switch",
-        action="store_true",
-        help="switch to the first empty workspace",
+        "-t",
+        "--to",
+        action="store",
+        help="Move workspace to the given position.",
     )
     arguments_parser.add_argument(
-        "-m",
-        "--move",
-        action="store_true",
-        help="move the currently focused container to the first empty workspace",
+        "-s",
+        "--swap",
+        action="store",
+        help="Swap workspace positionally.",
     )
     arguments = arguments_parser.parse_args()
-    assert (
-        arguments.switch or arguments.move
-    )  # at least one of the flags must be specificated
+    assert arguments.to or arguments.swap
 
     ipc = i3ipc.Connection()
     tree = ipc.get_tree()
     workspace = tree.find_focused().workspace()
+    workspace_number = workspace.num
 
-    workspaces = tree.workspaces()
+    if arguments.to:
+        ipc.command(f"rename workspace number {arguments.to} to {workspace_number}")
+        ipc.command(f"rename workspace to {arguments.to}")
+        reply = ipc.command(f"workspace {arguments.to}")
+
+        assert reply[0].success
+    elif arguments.swap:
+        if arguments.swap == "left":
+            target = workspace_number - 1
+        elif arguments.swap == "right":
+            target = workspace_number + 1
+        else:
+            raise Exception("Invalid swap argument.")
+
+        ipc.command(f"rename workspace number {target} to {workspace_number}")
+        ipc.command(f"rename workspace to {target}")
+        ipc.command(f"rename workspace {target}")
+        reply = ipc.command(f"workspace {target}")
+
+        assert reply[0].success

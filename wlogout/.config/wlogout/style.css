@@ -5,15 +5,15 @@
 }
 
 window {
-  background-color: @transparent_background_color;
+  background-color: @bg_color_alpha_400;
 }
 
 button {
   color: @text_color;
-  background-color: @background_color;
+  background-color: @bg_color_100;
   border-style: solid;
-  border-width: 2px;
-  border-color: @background_color;
+  border-width: 4px;
+  border-color: @bg_color_200;
   background-repeat: no-repeat;
   background-position: center;
   background-size: 25%;
@@ -22,8 +22,8 @@ button {
 button:focus,
 button:active,
 button:hover {
-  background-color: @background_color;
-  border-color: @accent_color;
+  background-color: @bg_color;
+  border-color: @primary_color;
   outline-style: none;
 }
 

@@ -1,3 +1,5 @@
+# vim:ft=swayconfig
+
 set $mode_shutdown "\
 <span foreground='$color10'></span>  \
 <span foreground='$color5'> \
@@ -35,4 +37,5 @@ mode --pango_markup $mode_shutdown {
 }
 
 ## Launch // Exit Menu ##
-$bindsym $mod+Shift+e mode $mode_shutdown
+# $bindsym $mod+Shift+e mode $mode_shutdown
+$bindsym $mod+Shift+e mode exec $shutdown

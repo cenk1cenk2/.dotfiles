@@ -11,7 +11,7 @@
 @import '/usr/share/sway/templates/waybar/style.css';
 
 window#waybar {
-  background: @transparent_background_color;
+  background: @bg_color_alpha_400;
 }
 
 window > box {
@@ -21,7 +21,7 @@ window > box {
 
 window#waybar .modules-center {
   color: @text_color;
-  background-color: @background_color;
+  background-color: @bg_color_100;
   padding: 4px;
   font-weight: 700;
   padding-left: 24px;
@@ -30,14 +30,14 @@ window#waybar .modules-center {
 
 window#waybar .modules-left {
   color: @dim_text_color;
-  background-color: @background_color;
+  background-color: @bg_color_100;
   border-top-right-radius: 24px;
   border-bottom-right-radius: 24px;
 }
 
 window#waybar .modules-right {
   color: @dim_text_color;
-  background-color: @background_color;
+  background-color: @bg_color_100;
   border-top-left-radius: 24px;
   border-bottom-left-radius: 24px;
 }
@@ -49,7 +49,8 @@ window#waybar .modules-right {
 }
 
 #workspaces button.focused {
-  color: @background_color;
+  color: @bg_color_100;
+  background-color: @primary_color;
   border-top: 2px solid @dim_text_color;
 }
 
@@ -90,12 +91,12 @@ window#waybar .modules-right {
 #custom-notification,
 #tray {
   border-radius: 24px;
-  background-color: #22282f;
+  background-color: @bg_color_200;
   color: @dim_text_color;
 }
 
 #clock {
-  background-color: #5c6370;
+  background-color: @bg_color_500;
   border-radius: 0px;
   border-bottom-left-radius: 24px;
   border-top-left-radius: 24px;
@@ -136,74 +137,74 @@ window#waybar .modules-right {
 
 #custom-pacman {
   background-color: @warning_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #custom-playerctl {
-  color: @theme_bg_color;
+  color: @bg_color_100;
   background-color: #98c379;
 }
 
 #custom-scratchpad {
-  background-color: @alternative_color;
-  color: @theme_bg_color;
+  background-color: @secondary_color;
+  color: @bg_color_100;
 }
 
 #mode {
-  background-color: #38404b;
+  background-color: @bg_color_200;
 }
 
 #battery.warning {
   background-color: @warning_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #battery.critical {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #cpu.warning {
   background-color: @warning_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #cpu.critical {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #memory.warning {
   background-color: @warning_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #memory.critical {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #network.disconnected {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #pulseaudio.muted {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #temperature.warning {
   background-color: @warning_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #temperature.critical {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }
 
 #bluetooth.disabled {
   background-color: @error_color;
-  color: @theme_bg_color;
+  color: @bg_color_100;
 }

@@ -1,3 +1,5 @@
+# vim:ft=swayconfig
+
 ### Variables
 #
 # Logo key. Use Mod1 for Alt and Mod4 for Super.
@@ -7,8 +9,6 @@ set $left left
 set $down down
 set $up up
 set $right right
-
-# Home row direction keys, like vim
 set $left_alt h
 set $down_alt j
 set $up_alt k
@@ -32,11 +32,11 @@ set $term kitty
 set $term_float footclient -a floating_shell -W 100x35
 set $term_float_portrait footclient -a floating_shell_portrait -W 35x100
 
-# clipboard history
-set $clipboard cliphist list | rofi -dmenu -font "$gui-font-big" -lines 10 -width 35 | cliphist decode | wl-copy
-
 # Your preferred application launcher
 set $menu rofi -show combi -combi-modi "drun,run" -terminal $term -ssh-command "{terminal} {ssh-client} {host} [-p {port}]" -run-shell-command "{terminal} {cmd}" -show-icons -font "$gui-font-big" -lines 10 -width 35
+
+# clipboard history
+set $clipboard cliphist list | rofi -dmenu -font "$gui-font-big" -lines 10 -width 35 | cliphist decode | wl-copy
 
 ### Lockscreen configuration
 set $locking swaylock --daemonize --color "$selection-color" --inside-color "$selection-color" --inside-clear-color "$text-color" --ring-color "$color2" --ring-clear-color "$color11" --ring-ver-color "$color13" --show-failed-attempts --fade-in 0.2 --grace 2 --effect-vignette 0.5:0.5 --effect-blur 7x5 --ignore-empty-password --screenshots --clock
@@ -68,6 +68,8 @@ set $waybar_position bottom
 set $bluetooth $term_float bluetuith
 # pulseaudio command
 set $pulseaudio $term_float pulsemixer
+# calendar application
+set $calendar $term_float khal interactive
 
 # get-volume commands
 set $sink_volume pactl get-sink-volume @DEFAULT_SINK@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
@@ -75,9 +77,6 @@ set $source_volume pactl get-source-volume @DEFAULT_SOURCE@ | grep '^Volume:' | 
 
 # help command
 set $help /usr/share/sway/scripts/help.sh
-
-# calendar application
-set $calendar $term_float khal interactive
 
 # workspace names
 set $ws1 number 1
@@ -97,6 +96,8 @@ set $screenshot_screen_clipboard $grimshot --notify copy output
 set $screenshot_screen_file $grimshot --notify save output
 set $screenshot_selection_clipboard $grimshot --notify copy window
 set $screenshot_selection_file $grimshot --notify save window
+set $screenshot_snipping_tool grim -g "$(slurp)" - | swappy -f -
+set $screenshot_upload $HOME/.config/sway/scripts/upload-image.sh
 
 # onscreen bar
 # set $onscreen_bar bash $HOME/.config/sway/scripts/wob.sh "$accent-colorFF" "$background-colorFF"
@@ -120,4 +121,3 @@ set $recorder /usr/share/sway/scripts/recorder.sh -a
 # custom
 set $map-to-active swaymsg input type:tablet_tool map_to_output `swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name'`
 set $menu rofi -modi "combi,run,drun" run -show drun -terminal $term -ssh-command "{terminal} {ssh-client} {host} [-p {port}]" -run-shell-command "{terminal} {cmd}"
-set $image_upload $HOME/.config/sway/scripts/upload-image.sh

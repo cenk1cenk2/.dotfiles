@@ -1,19 +1,21 @@
+# vim:ft=swayconfig
+
 ### Key bindings
 #
 # Basics:
 #
 ## Launch // Terminal ##
-$bindsym $mod+Return exec $term_cwd
-$bindsym $mod+Shift+Return exec $term
+$bindsym $mod+Return exec $term
+$bindsym $mod+Shift+Return exec $term_cwd
 
 ## Action // Kill focused window ##
 $bindsym $mod+Shift+q kill
 
 ## Launch // Open launcher ##
-$bindsym $mod+d exec $menu
+$bindsym $mod+Space exec $menu
 
 ## Launch // Open clipboard ##
-$bindsym $mod+Shift+p exec $clipboard
+# $bindsym $mod+Shift+p exec $clipboard
 
 # Drag floating windows by holding down $mod and left mouse button.
 # Resize them with right mouse button + $mod.
@@ -153,16 +155,10 @@ $bindsym $mod+Shift+f fullscreen global
 $bindsym $mod+Shift+space floating toggle
 
 ## Navigation // Toggle focus between tiling and floating ##
-$bindsym $mod+space focus mode_toggle
+$bindsym $mod+a focus mode_toggle
 
 ## Navigation // Swap focus to the parent window ##
-$bindsym $mod+a focus parent
+$bindsym $mod+Shift+a focus parent
 
 ## Launch // Toggle Help ##
-$bindsym $mod+question exec $help
-
-## Launch // Open Support ##
-$bindsym $mod+Shift+s exec xdg-open https://github.com/Manjaro-Sway/manjaro-sway/blob/main/SUPPORT.md
-
-default_border pixel 1
-hide_edge_borders smart
+# $bindsym $mod+question exec $help
