@@ -5,6 +5,8 @@
 # * set the resolution and position for your screen: output HDMI1 mode 1920x1080 position 0,0
 # * set the scaling for your screen: output HDMI1 scale 2
 
+# Goldstar Company Ltd 38GN950 207NTSU62014
+# Unknown VG27A L4LMQS123005
 profile gpd {
   output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0
 }
@@ -19,19 +21,19 @@ profile portable {
 }
 
 profile default {
-  output "Goldstar Company Ltd 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,1440
-  output "Unknown VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,1440
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
 }
 
 profile solo {
-  output "Goldstar Company Ltd 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,0
 }
 
 profile top {
-  output "Unknown VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
 }
 
 profile salon {
   output "Unknown VG27WQ L4LMDW007740" enable mode 2560x1440@164.998Hz position 0,0
-  output "Goldstar Company Ltd 38GN950 207NTSU62014" disable
+  output "LG Electronics 38GN950 207NTSU62014" disable
 }
