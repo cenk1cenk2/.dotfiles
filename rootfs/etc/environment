@@ -1,0 +1,17 @@
+#
+# This file is parsed by pam_env module
+#
+# Syntax: simple "KEY=VAL" pairs on separate lines
+#
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=sway
+WLR_XWAYLAND=/usr/local/bin/Xwayland
+QT_QPA_PLATFORM=xWayland
+
+PIPENV_VENV_IN_PROJECT="enabled"
+export GOROOT=/usr/local/lib/go
+export GOPATH=~/.go
+export GO111MODULE=on
+DOCKER_BUILDKIT=1
+# export PATH="$PATH:$GOROOT/bin:$GOPATH/bin"
+MANGOHUD=1

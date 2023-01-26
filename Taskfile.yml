@@ -11,12 +11,14 @@ tasks:
   deploy:
     desc: Deploy to target.
     cmds:
-      - stow --adopt -vvvt ~ {{ .CLI_ARGS }}
+      - mkdir -p ~/.local/share/fonts/TTF
+      - stow --adopt --no-folding -vvvt ~ avizo chrome commitizen file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority
+      - sudo stow --adopt --no-folding -vvvt / rootfs
 
   plan:
     desc: Plan to target.
     cmds:
-      - stow --adopt -nvvvt ~ {{ .CLI_ARGS }}
+      - stow --adopt --no-folding -nvvvt ~ {{ .CLI_ARGS }}
 
   tui:
     desc: Run TUI.
