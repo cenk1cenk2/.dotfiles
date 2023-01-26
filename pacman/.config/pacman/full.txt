@@ -23,7 +23,6 @@ softethervpn
 softethervpn-client-manager
 softethervpn-server-manager
 stowtui-git
-themechanger-git
 ttf-ms-win10-auto
 via-bin
 tlp
