@@ -1,6 +1,13 @@
+gvfs-nfs
+gvfs-smb
+handlr
+lxappearance
+mangohud
+nerd-fonts-roboto-mono
+ryzenadj
+vim
 bluez
 bluez-utils
-git-lfs
 gvfs
 gvfs-mtp
 gzip
