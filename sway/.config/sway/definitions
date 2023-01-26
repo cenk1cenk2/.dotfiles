@@ -61,7 +61,6 @@ set $idle swayidle -w \
     # before-sleep 'exec $locking'
 
 # statusbar command
-set $statusbar waybar
 set $waybar_position bottom
 
 # bluetooth command
