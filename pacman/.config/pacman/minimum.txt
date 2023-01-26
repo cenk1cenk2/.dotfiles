@@ -16,6 +16,7 @@ ttf-roboto-mono-nerd
 rsync
 stow
 swaybg
+polkit-gnome
 xdg-desktop-portal-wlr
 xdg-user-dirs
 xorg-xauth
