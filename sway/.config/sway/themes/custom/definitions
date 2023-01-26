@@ -6,7 +6,7 @@ set $gtk-theme Material-Black-Mango-3.36
 set $icon-theme Tela-circle-grey-dark
 # set $kvantum-theme MateriaDark
 set $kvantum-theme MateriaDark
-set $cursor-theme xcursor-breeze
+set $cursor-theme Breeze Light
 set $gui-font Segoe UI 11
 set $gui-font-big Segoe UI 14
 set $term-font Consolas ligaturized v3 11
