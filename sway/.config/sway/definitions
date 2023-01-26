@@ -27,7 +27,7 @@ set $background /home/cenk/.dotfiles/sway/.config/sway/background/narli.jpg
 set $theme $HOME/.config/sway/themes/custom
 
 # Your preferred terminal emulator
-# set $term /usr/share/sway/scripts/foot.sh
+# set $term $HOME/.config/sway/scripts/foot.sh
 set $term kitty
 set $term_float footclient -a floating_shell -W 100x35
 set $term_float_portrait footclient -a floating_shell_portrait -W 35x100
@@ -76,7 +76,7 @@ set $sink_volume pactl get-sink-volume @DEFAULT_SINK@ | grep '^Volume:' | cut -d
 set $source_volume pactl get-source-volume @DEFAULT_SOURCE@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
 
 # help command
-set $help /usr/share/sway/scripts/help.sh
+set $help $HOME/.config/sway/scripts/help.sh
 
 # workspace names
 set $ws1 number 1
@@ -91,7 +91,7 @@ set $ws9 number 9
 set $ws10 number 10
 
 # screenshot
-set $grimshot /usr/share/sway/scripts/grimshot
+set $grimshot $HOME/.config/sway/scripts/grimshot.sh
 set $screenshot_screen_clipboard $grimshot --notify copy output
 set $screenshot_screen_file $grimshot --notify save output
 set $screenshot_selection_clipboard $grimshot --notify copy window
@@ -116,7 +116,7 @@ set $volume_up $onscreen_bar $(pactl set-sink-volume @DEFAULT_SINK@ +5% && $sink
 set $volume_mute $onscreen_bar $(pactl set-sink-mute @DEFAULT_SINK@ toggle && pactl get-sink-mute @DEFAULT_SINK@ | sed -En "/no/ s/.*/$($sink_volume)/p; /yes/ s/.*/0/p") v
 set $mic_mute $onscreen_bar $(pactl set-source-mute @DEFAULT_SOURCE@ toggle && pactl get-source-mute @DEFAULT_SOURCE@ | sed -En "/no/ s/.*/$($source_volume)/p; /yes/ s/.*/0/p") m
 
-set $recorder /usr/share/sway/scripts/recorder.sh -a
+set $recorder $HOME/.config/sway/scripts/recorder.sh -a
 
 # custom
 set $map-to-active swaymsg input type:tablet_tool map_to_output `swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name'`
