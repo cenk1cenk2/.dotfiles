@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-yay -S --needed - <pkgs.txt
+yay -S --needed --noconfirm --overwrite '*' - <pkgs.txt
