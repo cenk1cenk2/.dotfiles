@@ -1,0 +1,37 @@
+[Added Associations]
+application/json=nvim.desktop;
+application/octet-stream=nvim.desktop;
+application/pdf=org.pwmt.zathura.desktop;
+application/pkix-cert=nvim.desktop;
+application/vnd.ms-excel=org.pwmt.zathura.desktop;
+application/vnd.ms-publisher=nvim.desktop;
+application/zip=org.gnome.FileRoller.desktop;
+image/jpeg=xdvi.desktop;org.pwmt.zathura.desktop;
+inode/x-shortcut=pcmanfm.desktop;
+text/css=nvim.desktop;
+text/csv=nvim.desktop;
+text/plain=org.gnome.FileRoller.desktop;nvim.desktop;chrome-hmjkmjkepdijhoojdojkdfohbdgmmhki-Default.desktop;remote-viewer.desktop;
+text/x-log=code-insiders.desktop;vim.desktop;
+video/mp4=vlc.desktop;
+x-scheme-handler/tg=userapp-Telegram Desktop-GN4870.desktop;
+
+[Default Applications]
+application/json=nvim.desktop;
+application/pdf=org.pwmt.zathura.desktop;
+application/vnd.ms-publisher=nvim.desktop;
+application/x-virt-viewer=remote-viewer.desktop;
+application/zip=org.gnome.FileRoller.desktop;
+image/jpeg=xdvi.desktop;
+inode/directory=pcmanfm.desktop;
+text/css=nvim.desktop;
+text/csv=nvim.desktop;
+text/html=google-chrome.desktop;
+text/plain=nvim.desktop;
+video/mp4=vlc.desktop;
+x-scheme-handler/about=google-chrome.desktop;
+x-scheme-handler/eclipse+command=_usr_lib_dbeaver_.desktop;
+x-scheme-handler/http=google-chrome.desktop;
+x-scheme-handler/https=google-chrome.desktop;
+x-scheme-handler/terminal=footclient.desktop;
+x-scheme-handler/tg=userapp-Telegram Desktop-GN4870.desktop;
+x-scheme-handler/unknown=google-chrome.desktop;
