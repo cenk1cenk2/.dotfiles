@@ -156,7 +156,7 @@
       "one": "类",
       "many": "缾"
     },
-    "exec": "/bin/sh ~/.config/sway/scripts/scratchpad.sh",
+    "exec": "~/.config/sway/scripts/scratchpad.sh",
     "on-click": "swaymsg 'scratchpad show'",
     "signal": 7
   },
