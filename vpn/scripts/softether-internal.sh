@@ -10,13 +10,10 @@ case $1 in
 		log_start "Getting IP address from DHCP server..."
 		sudo dhclient -v vpn_vpn
 		log_start "Adding routes..."
-		sudo sudo ip route add 192.168.10.0/24 via 192.168.50.1
-		sudo sudo ip route add 192.168.20.0/24 via 192.168.50.1
-		sudo sudo ip route add 192.168.30.0/24 via 192.168.50.1
-		sudo sudo ip route add 192.168.60.0/24 via 192.168.50.1
-		sudo sudo ip route add 192.168.70.0/24 via 192.168.50.1
+		sudo sudo ip route add 192.168.16.0/20 via 192.168.128.1
+		sudo sudo ip route add 192.168.192.0/22 via 192.168.128.1
 		log_start "Updating DNS servers."
-		echo "nameserver 192.168.50.1" | sudo tee /etc/resolv.conf
+		echo "nameserver 192.168.128.1" | sudo tee /etc/resolv.conf
 		log_start "DNS configuration file:"
 		cat /etc/resolv.conf
 		;;
