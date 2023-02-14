@@ -5,13 +5,16 @@
 #
 XDG_SESSION_TYPE=wayland
 XDG_CURRENT_DESKTOP=sway
-WLR_XWAYLAND=/usr/local/bin/Xwayland
-QT_QPA_PLATFORM=xWayland
+# avoid iterating over all libseat backends
+LIBSEAT_BACKEND=logind
 
-PIPENV_VENV_IN_PROJECT="enabled"
-export GOROOT=/usr/local/lib/go
-export GOPATH=~/.go
-export GO111MODULE=on
+# allow software renderers in sway
+WLR_RENDERER_ALLOW_SOFTWARE=1
+# for nouveau compatibility
+WLR_DRM_NO_MODIFIERS=1
+WLR_XWAYLAND=/usr/local/bin/Xwayland
+QT_QPA_PLATFORM=wayland
+QT_QPA_PLATFORMTHEME=qt5ct
+
 DOCKER_BUILDKIT=1
-# export PATH="$PATH:$GOROOT/bin:$GOPATH/bin"
 MANGOHUD=1
