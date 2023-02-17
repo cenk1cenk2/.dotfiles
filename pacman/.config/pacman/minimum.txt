@@ -21,6 +21,7 @@ xdg-desktop-portal-wlr
 xdg-user-dirs
 xorg-xauth
 xorg-xhost
+networkmanager
 xorg-xwayland
 zathura
 zathura-pdf-poppler
