@@ -83,8 +83,8 @@ window#waybar {
 #custom-sunset,
 #custom-playerctl,
 #tray {
-  padding-left: 10px;
-  padding-right: 10px;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 /* -----------------------------------------------------------------------------
@@ -141,7 +141,7 @@ window#waybar {
 
 #custom-menu {
   padding-left: 8px;
-  padding-right: 13px;
+  padding-right: 8px;
 }
 
 #memory {
@@ -180,8 +180,8 @@ window#waybar {
   border-top: 2px solid transparent;
   /* To compensate for the top border and still have vertical centering */
   padding-bottom: 2px;
-  padding-left: 10px;
-  padding-right: 10px;
+  padding-left: 8px;
+  padding-right: 8px;
   color: @theme_selected_bg_color;
 }
 
@@ -204,7 +204,7 @@ window#waybar {
 
 #custom-wf-recorder {
   color: @error_color;
-  padding-right: 10px;
+  padding-right: 8px;
 }
 
 /* update */
@@ -213,8 +213,8 @@ window#waybar {
 }
 
 window > box {
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 window#waybar .modules-center {
@@ -236,8 +236,6 @@ window#waybar .modules-left {
 window#waybar .modules-right {
   color: @dim_text_color;
   background-color: @bg_color_100;
-  border-top-left-radius: 24px;
-  border-bottom-left-radius: 24px;
 }
 
 #workspaces button {
@@ -261,7 +259,6 @@ window#waybar .modules-right {
 #custom-scratchpad,
 #custom-menu,
 #clock {
-  border-radius: 24px;
 }
 
 #custom-pacman,
@@ -288,44 +285,12 @@ window#waybar .modules-right {
 #custom-playerctl,
 #custom-notification,
 #tray {
-  border-radius: 24px;
   background-color: @bg_color_200;
   color: @dim_text_color;
 }
 
 #clock {
   background-color: @bg_color_500;
-  border-radius: 0px;
-  border-bottom-left-radius: 24px;
-  border-top-left-radius: 24px;
-}
-
-#cpu {
-  border-radius: 0px;
-  border-top-left-radius: 24px;
-  border-bottom-left-radius: 24px;
-}
-
-#memory {
-  border-radius: 0px;
-}
-
-#temperature {
-  border-radius: 0px;
-  border-top-right-radius: 24px;
-  border-bottom-right-radius: 24px;
-}
-
-#bluetooth {
-  border-radius: 0px;
-  border-top-left-radius: 24px;
-  border-bottom-left-radius: 24px;
-}
-
-#network {
-  border-radius: 0px;
-  border-top-right-radius: 24px;
-  border-bottom-right-radius: 24px;
 }
 
 #custom-notification {

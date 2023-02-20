@@ -11,7 +11,7 @@ tasks:
   deploy:
     desc: Deploy to target.
     cmds:
-      - stow --no-folding -vvvt ~ avizo chrome commitizen file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority
+      - stow --no-folding -vvvt ~ avizo chrome commitizen file-manager-actions fonts foot gitconfig kanshi khal kitty mako pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority
       - sudo stow --adopt --no-folding -vvvt / rootfs
 
   plan:

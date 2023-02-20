@@ -3,7 +3,7 @@
 
 # some global theme specific variables
 set $gtk-theme Material-Black-Mango-3.36
-set $icon-theme Tela-circle-grey-dark
+set $icon-theme Tela-circle-dracula-dark
 set $kvantum-theme MateriaDark
 set $cursor-theme Breeze
 set $term-font Consolas ligaturized v3 11
