@@ -137,6 +137,8 @@ window#waybar {
 
 #cpu.critical {
   color: @error_color;
+  animation-name: blink-critical;
+  animation-duration: 2s;
 }
 
 #custom-menu {
@@ -170,10 +172,14 @@ window#waybar {
 
 #pulseaudio.muted {
   color: @warning_color;
+  animation-name: blink-critical;
+  animation-duration: 2s;
 }
 
 #temperature.critical {
   color: @error_color;
+  animation-name: blink-critical;
+  animation-duration: 2s;
 }
 
 #workspaces button {
@@ -325,6 +331,8 @@ window#waybar .modules-right {
 #battery.critical {
   background-color: @error_color;
   color: @bg_color_100;
+  animation-name: blink-critical;
+  animation-duration: 2s;
 }
 
 #cpu.warning {
