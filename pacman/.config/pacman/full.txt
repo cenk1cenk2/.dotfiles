@@ -34,3 +34,5 @@ spotify
 steam
 wine-staging
 chiaki
+dragon-drop
+xdg-desktop-portal-termfilechooser-git
