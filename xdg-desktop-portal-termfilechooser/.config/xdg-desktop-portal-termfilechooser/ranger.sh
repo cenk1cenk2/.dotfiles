@@ -25,7 +25,7 @@ save="$3"
 path="$4"
 out="$5"
 
-echo "${@}" >/tmp/ranger.test
+# echo "${@}" >/tmp/ranger.test
 
 cmd="ranger"
 termcmd="${TERM_COMMAND:-kitty}"
