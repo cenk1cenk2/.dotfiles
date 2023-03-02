@@ -1,2 +1,3 @@
+[filechooser]
 cmd = $HOME/.config/xdg-desktop-portal-termfilechooser/ranger.sh
 default_dir = /tmp
