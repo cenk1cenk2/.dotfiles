@@ -51,10 +51,10 @@ Notes:
 2) If you quit ranger without opening a file, this file
    will be removed and the save operation aborted.
 	' >"$path"
-elif [ "$multiple" = "1" ]; then
-	set -- --choosefiles="$out" --cmd="echo Select file(s) (open file to select it; <Space> to select multiple)"
 elif [ "$directory" = "1" ]; then
 	set -- --choosedir="$out" --show-only-dirs --cmd="echo Select directory (quit in dir to select it)"
+elif [ "$multiple" = "1" ]; then
+	set -- --choosefiles="$out" --cmd="echo Select file(s) (open file to select it; <Space> to select multiple)"
 else
 	set -- --choosefile="$out" --cmd="echo Select file (open file to select it)"
 fi
