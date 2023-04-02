@@ -29,6 +29,7 @@ via-bin
 tlp
 tlpui
 poweralertd
+rebuild-detector
 lutris
 spotify
 steam
