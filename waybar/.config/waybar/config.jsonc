@@ -15,6 +15,8 @@
   "modules-center": ["custom/wf-recorder", "sway/mode", "sway/window"],
   "modules-right": [
     "custom/playerctl",
+    // system
+    "custom/pacman",
 
     // informational
     "sway/language",
@@ -30,9 +32,6 @@
 
     // media
     "pulseaudio",
-
-    // system
-    "custom/pacman",
 
     "tray",
 
