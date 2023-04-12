@@ -135,7 +135,7 @@
 
   "custom/pacman": {
     "format": " {}",
-    "interval": 3600,
+    "interval": 1800,
     "exec-if": "[ $(pamac checkupdates -q | wc -l) -gt 0 ]",
     "exec": "pamac checkupdates -q | wc -l",
     "on-click": "pamac-manager --updates; pkill -RTMIN+4 waybar",
