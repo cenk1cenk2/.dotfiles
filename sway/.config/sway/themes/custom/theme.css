@@ -8,11 +8,4 @@
 @define-color bg_color_alpha_400 rgba(23, 25, 30, 0.4);
 @define-color bg_color_alpha_900 rgba(23, 25, 30, 0.95);
 
-@define-color primary_color #e5c07b;
-@define-color secondary_color #efab5a;
-@define-color warning_color #d19a66;
-@define-color error_color #e06c75;
-
 @define-color bright_text_color #ffffff;
-@define-color dim_text_color #c6c6c6;
-@define-color text_color #eeeeee;

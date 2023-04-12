@@ -2,14 +2,13 @@
   // -------------------------------------------------------------------------
   // Global configuration
   // -------------------------------------------------------------------------
-  "layer": "top",
+  "layer": "bottom",
 
   // If height property would be not present, it'd be calculated dynamically
-  "height": 30,
+  "height": 24,
 
   "position": "bottom",
-  "heigth": "40px",
-  "spacing": 4,
+  "spacing": 0,
 
   "modules-left": ["sway/workspaces", "custom/scratchpad"],
   "modules-center": ["custom/wf-recorder", "sway/mode", "sway/window"],
@@ -112,9 +111,9 @@
   "pulseaudio": {
     "scroll-step": 5,
     "format": "{icon} {volume}%{format_source}",
-    "format-muted": "婢 {format_source}",
+    "format-muted": "婢{format_source}",
     "format-source": "",
-    "format-source-muted": " ",
+    "format-source-muted": "",
     "format-icons": {
       "headphone": "",
       "headset": "",
@@ -128,7 +127,7 @@
   },
 
   "tray": {
-    "icon-size": 21,
+    "icon-size": 20,
     "spacing": 5
   },
 

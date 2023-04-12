@@ -6,7 +6,7 @@
 @define-color noti-bg @bg_color_200;
 @define-color noti-bg-hover @bg_color_300;
 @define-color noti-bg-focus @bg_color_900;
-@define-color text-color @text_color;
+@define-color text-color @theme_text_color;
 @define-color noti-close-bg rgba(255, 255, 255, 0.1);
 @define-color noti-close-bg-hover rgba(255, 255, 255, 0.15);
 

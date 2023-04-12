@@ -9,7 +9,7 @@ window {
 }
 
 button {
-  color: @text_color;
+  color: @theme_text_color;
   background-color: @bg_color_100;
   border-style: solid;
   border-width: 4px;
@@ -23,7 +23,7 @@ button:focus,
 button:active,
 button:hover {
   background-color: @bg_color;
-  border-color: @primary_color;
+  border-color: @theme_selected_bg_color;
   outline-style: none;
 }
 
