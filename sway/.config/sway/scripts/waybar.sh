@@ -4,4 +4,4 @@
 USER_CONFIG_PATH=$HOME/.config/waybar/config.jsonc
 USER_STYLE_PATH=$HOME/.config/waybar/style.css
 
-waybar -c ${USER_CONFIG_PATH} -s ${USER_STYLE_PATH} &
+waybar -c ${USER_CONFIG_PATH} -s ${USER_STYLE_PATH}
