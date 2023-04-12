@@ -203,24 +203,22 @@ window#waybar {
 }
 
 window > box {
-  padding-top: 2px;
+  padding-top: 0px;
   padding-bottom: 0px;
 }
 
 window#waybar .modules-center {
   color: @theme_text_color;
   background-color: @bg_color_100;
-  padding: 4px;
-  font-weight: 700;
+  font-weight: 600;
   padding-left: 8px;
   padding-right: 8px;
+  border-radius: 8px;
 }
 
 window#waybar .modules-left {
   color: @theme_unfocused_text_color;
   background-color: @bg_color_100;
-  border-top-right-radius: 8px;
-  border-bottom-right-radius: 8px;
 }
 
 window#waybar .modules-right {
@@ -298,8 +296,9 @@ window#waybar .modules-right {
 }
 
 #custom-scratchpad {
-  background-color: @secondary_color;
+  background-color: shade(@theme_selected_bg_color, 0.8);
   color: @bg_color_100;
+  border-radius: 8px;
 }
 
 #mode {
