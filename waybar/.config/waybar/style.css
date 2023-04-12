@@ -62,6 +62,10 @@ window#waybar {
   font-size: 14px;
 }
 
+window.eDP-1 * {
+  font-size: 12.5px;
+}
+
 /* Each module */
 #custom-pacman,
 #custom-menu,
@@ -193,12 +197,13 @@ window#waybar {
 }
 
 /* update */
+
 window#waybar {
   background: @bg_color_alpha_400;
 }
 
 window > box {
-  padding-top: 0px;
+  padding-top: 2px;
   padding-bottom: 0px;
 }
 
