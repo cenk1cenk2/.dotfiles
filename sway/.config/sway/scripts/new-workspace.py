@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 import i3ipc
 
 # Assumption: it exists 10 workspaces (otherwise, change this value)
-NUM_WORKSPACES = 10
+NUM_WORKSPACES = 20
 
 if __name__ == "__main__":
     arguments_parser = ArgumentParser()
