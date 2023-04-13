@@ -287,7 +287,7 @@ window#waybar .modules-right {
 
 #custom-pacman {
   background-color: @success_color;
-  color: @theme_unfocused_text_color;
+  color: @bg_color_100;
 }
 
 #custom-playerctl {
