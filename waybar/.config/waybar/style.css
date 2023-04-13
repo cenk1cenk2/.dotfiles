@@ -16,23 +16,23 @@
  * -------------------------------------------------------------------------- */
 
 @keyframes blink-warning {
-  25% {
-    color: @wm_icon_bg;
+  75% {
+    color: shade(@warning_color, 0.75);
   }
 
   to {
-    color: @wm_icon_bg;
+    color: @bg_color_100;
     background-color: @warning_color;
   }
 }
 
 @keyframes blink-critical {
-  25% {
-    color: @wm_icon_bg;
+  75% {
+    color: shade(@error_color, 0.75);
   }
 
   to {
-    color: @wm_icon_bg;
+    color: @bg_color_100;
     background-color: @error_color;
   }
 }
@@ -296,7 +296,7 @@ window#waybar .modules-right {
 }
 
 #custom-scratchpad {
-  background-color: shade(@theme_selected_bg_color, 0.8);
+  background-color: shade(@theme_selected_bg_color, 0.75);
   color: @bg_color_100;
   border-radius: 8px;
 }
