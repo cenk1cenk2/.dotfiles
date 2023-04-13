@@ -286,8 +286,8 @@ window#waybar .modules-right {
 }
 
 #custom-pacman {
-  background-color: @warning_color;
-  color: @success_color;
+  background-color: @success_color;
+  color: @theme_unfocused_text_color;
 }
 
 #custom-playerctl {
