@@ -19,6 +19,7 @@
 
 [diff]
   tool = nvr
+	colorMoved = zebra
 
 [difftool "nvr"]
   cmd = nvr -s -d $LOCAL $REMOTE
@@ -28,3 +29,77 @@
 
 [mergetool "nvr"]
     cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
+
+[maintenance]
+	repo = /home/cenk/.config/znap/cenk1cenk2.zsh-theme
+	repo = /home/cenk/.config/znap/go-task-completions
+	repo = /home/cenk/.config/znap/manager
+	repo = /home/cenk/.config/znap/zsh-autocomplete
+	repo = /home/cenk/.config/znap/zsh-better-npm-completion
+	repo = /home/cenk/.config/znap/zsh-syntax-highlighting
+	repo = /home/cenk/.config/znap/zsh-yarn-completions
+	repo = /home/cenk/.config/znap/zsh-hist
+	repo = /home/cenk/.config/znap/zsh-completions
+	repo = /home/cenk/.config/znap/git
+	repo = /home/cenk/.config/znap/ohmyzsh
+	repo = /home/cenk/.config/znap/zcolors
+	repo = /home/cenk/.config/znap/LS_COLORS
+	repo = /home/cenk/.config/znap/fast-syntax-highlighting
+	repo = /home/cenk/.config/znap/zsh-autopair
+	repo = /home/cenk/.config/znap/zsh-vi-mode
+[color "status"]
+	branch = 6 normal bold
+	added = 10 normal
+	updated = 10 normal
+	localbranch = 6 normal bold
+	changed = 11 normal
+	header = normal
+	remotebranch = 5 normal bold
+	nobranch = 1 0 bold
+	unmerged = 9 normal
+	untracked = normal
+[color "branch"]
+	plain = 6 normal bold
+	remote = 5 normal bold
+	current = 6 normal bold reverse
+	local = 6 normal bold
+	upstream = 5 normal bold
+[color "remote"]
+	hint = normal dim
+	success = 2 normal
+	error = 1 normal
+	warning = 3 normal
+[color "interactive"]
+	header = normal bold
+	prompt = 15 4
+	help = normal
+	error = 1 0 bold
+[color "diff"]
+	commit = 3 0
+	newMoved = 11 normal
+	oldMovedAlternativeDimmed = 4 normal dim
+	frag = normal dim italic
+	oldMovedAlternative = 4 normal
+	contextBold = normal bold
+	newBold = 10 normal bold
+	context = normal
+	oldMoved = 3 normal
+	oldBold = 1 normal bold
+	newMovedDimmed = 11 normal dim
+	func = normal dim italic
+	meta = normal dim
+	newDimmed = 10 normal dim
+	newMovedAlternative = 12 normal
+	new = 10 normal
+	newMovedAlternativeDimmed = 12 normal dim
+	whitespace = normal 9
+	oldMovedDimmed = 3 normal dim
+	oldDimmed = 1 normal dim
+	old = 1 normal
+[color "decorate"]
+	branch = 6 normal bold
+	tag = 3 0
+	remotebranch = 5 normal bold
+	stash = normal
+	grafted = 1 0 bold
+	HEAD = 6 normal bold italic
