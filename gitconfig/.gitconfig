@@ -28,25 +28,8 @@
   tool = nvr
 
 [mergetool "nvr"]
-    cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
+  cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
 
-[maintenance]
-	repo = /home/cenk/.config/znap/cenk1cenk2.zsh-theme
-	repo = /home/cenk/.config/znap/go-task-completions
-	repo = /home/cenk/.config/znap/manager
-	repo = /home/cenk/.config/znap/zsh-autocomplete
-	repo = /home/cenk/.config/znap/zsh-better-npm-completion
-	repo = /home/cenk/.config/znap/zsh-syntax-highlighting
-	repo = /home/cenk/.config/znap/zsh-yarn-completions
-	repo = /home/cenk/.config/znap/zsh-hist
-	repo = /home/cenk/.config/znap/zsh-completions
-	repo = /home/cenk/.config/znap/git
-	repo = /home/cenk/.config/znap/ohmyzsh
-	repo = /home/cenk/.config/znap/zcolors
-	repo = /home/cenk/.config/znap/LS_COLORS
-	repo = /home/cenk/.config/znap/fast-syntax-highlighting
-	repo = /home/cenk/.config/znap/zsh-autopair
-	repo = /home/cenk/.config/znap/zsh-vi-mode
 [color "status"]
 	branch = 6 normal bold
 	added = 10 normal
