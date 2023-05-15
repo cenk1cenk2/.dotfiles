@@ -1,4 +1,4 @@
-[Added Associations]
+[Default Applications]
 application/json=nvim.desktop;
 application/octet-stream=nvim.desktop;
 application/pdf=org.pwmt.zathura.desktop;
@@ -6,21 +6,20 @@ application/pkix-cert=nvim.desktop;
 application/vnd.ms-excel=org.pwmt.zathura.desktop;
 application/vnd.ms-publisher=nvim.desktop;
 application/x-virt-viewer=remote-viewer.desktop;
-image/jpeg=xdvi.desktop;org.pwmt.zathura.desktop;
-inode/x-shortcut=pcmanfm.desktop;
+inode/x-shortcut=ranger.desktop;
 text/calendar=google-chrome.desktop;
 text/css=nvim.desktop;
 text/csv=nvim.desktop;
-text/plain=nvim.desktop;remote-viewer.desktop;
-text/x-log=vim.desktop;
-
-[Default Applications]
+text/plain=nvim.desktop;
+text/x-log=nvim.desktop;
 application/*zip=ranger.desktop;
 application/json=nvim.desktop;
 application/pdf=org.pwmt.zathura.desktop;
 application/vnd.ms-publisher=nvim.desktop;
 application/x-virt-viewer=remote-viewer.desktop;
 application/zip=ranger.desktop;
+image/jpeg=imv-dir.desktop;
+image/png=imv-dir.desktop;
 inode/directory=ranger.desktop;
 text/*=nvim.desktop;
 text/calendar=google-chrome.desktop;
