@@ -40,3 +40,4 @@ xdg-desktop-portal-termfilechooser-git
 rclone
 man-db
 clipboard
+genpass-git
