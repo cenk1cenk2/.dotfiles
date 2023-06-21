@@ -43,7 +43,7 @@ wl-gammactl
 wl-mirror
 swaync
 sworkstyle
-swaylock-effects
+swaylock-effects-git
 swaycwd
 xcursor-breeze
 xclip-git
