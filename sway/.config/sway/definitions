@@ -41,7 +41,7 @@ set $menu rofi -show combi -combi-modi "drun,run" -terminal $term -ssh-command "
 set $clipboard cliphist list | rofi -dmenu -font "$gui-font-big" -lines 10 -width 35 | cliphist decode | wl-copy
 
 ### Lockscreen configuration
-set $locking swaylock --daemonize --color "$selection-color" --inside-color "$selection-color" --inside-clear-color "$text-color" --ring-color "$color2" --ring-clear-color "$color11" --ring-ver-color "$color13" --show-failed-attempts --fade-in 0.2 --grace 2 --effect-vignette 0.5:0.5 --effect-blur 7x5 --ignore-empty-password --screenshots --clock
+set $locking swaylock --daemonize --color "$selection-color" --inside-color "$selection-color" --inside-clear-color "$text-color" --ring-color "$color2" --ring-clear-color "$color11" --ring-ver-color "$color13" --show-failed-attempts --fade-in 0.2 --grace 0.5 --effect-vignette 0.5:0.5 --effect-blur 7x5 --ignore-empty-password --screenshots --clock
 
 ###Notification daemon configuration
 set $notifications swaync
