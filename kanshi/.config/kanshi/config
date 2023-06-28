@@ -47,4 +47,5 @@ profile top {
 profile salon {
   output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@59.951Hz position 0,0
   output "LG Electronics 38GN950 207NTSU62014" disable
+  output "Synaptics Inc Non-PnP 0x0000FD4E" disable
 }
