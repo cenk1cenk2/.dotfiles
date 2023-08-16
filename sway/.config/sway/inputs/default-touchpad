@@ -47,3 +47,8 @@ input "1149:32934:Kensington_ORBIT_WIRELESS_TB_Mouse" {
   middle_emulation enabled
   pointer_accel 0
 }
+
+input "1149:32982:Kensington_SlimBlade_Pro(2.4GHz_Receiver)_Kensington_SlimBlade_Pro_Trackball(2.4GHz_Receiver)" {
+  middle_emulation enabled
+  pointer_accel 0
+}
