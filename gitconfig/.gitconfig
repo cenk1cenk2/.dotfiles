@@ -18,17 +18,17 @@
   directory = /home/cenk/.config/nvim
 
 [diff]
-  tool = nvr
+  tool = nvim
 	colorMoved = zebra
 
-[difftool "nvr"]
-  cmd = nvr -s -d $LOCAL $REMOTE
+[difftool "nvim"]
+  cmd = nvim -b $LOCAL $REMOTE
 
 [merge]
-  tool = nvr
+  tool = nvim
 
-[mergetool "nvr"]
-  cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
+[mergetool "nvim"]
+  cmd = nvim -b $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
 
 [color "status"]
 	branch = normal
