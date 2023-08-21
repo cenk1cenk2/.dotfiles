@@ -31,37 +31,37 @@
   cmd = nvr -s -d $LOCAL $BASE $REMOTE $MERGED -c 'wincmd J | wincmd ='
 
 [color "status"]
-	branch = 6 normal bold
+	branch = normal
 	added = 10 normal
 	updated = 10 normal
-	localbranch = 6 normal bold
+	localbranch = normal
 	changed = 11 normal
 	header = normal
-	remotebranch = 5 normal bold
-	nobranch = 1 0 bold
+	remotebranch = normal
+	nobranch = normal bold
 	unmerged = 9 normal
-	untracked = normal
+	untracked = normal dim
 [color "branch"]
-	plain = 6 normal bold
-	remote = 5 normal bold
-	current = 6 normal bold reverse
-	local = 6 normal bold
-	upstream = 5 normal bold
+	plain = normal
+	remote = normal
+	current = normal reverse
+	local = normal
+	upstream = normal
 [color "remote"]
 	hint = normal dim
 	success = 2 normal
 	error = 1 normal
 	warning = 3 normal
 [color "interactive"]
-	header = normal bold
+	header = normal dim bold
 	prompt = 15 4
-	help = normal
-	error = 1 0 bold
+	help = normal dim
+	error = normal bold
 [color "diff"]
-	commit = 3 0
+	commit = normal
 	newMoved = 11 normal
 	oldMovedAlternativeDimmed = 4 normal dim
-	frag = normal dim italic
+	frag = normal dim
 	oldMovedAlternative = 4 normal
 	contextBold = normal bold
 	newBold = 10 normal bold
@@ -69,8 +69,8 @@
 	oldMoved = 3 normal
 	oldBold = 1 normal bold
 	newMovedDimmed = 11 normal dim
-	func = normal dim italic
-	meta = normal dim
+	func = normal bold dim
+	meta = normal italic
 	newDimmed = 10 normal dim
 	newMovedAlternative = 12 normal
 	new = 10 normal
@@ -80,9 +80,9 @@
 	oldDimmed = 1 normal dim
 	old = 1 normal
 [color "decorate"]
-	branch = 6 normal bold
-	tag = 3 0
-	remotebranch = 5 normal bold
-	stash = normal
-	grafted = 1 0 bold
-	HEAD = 6 normal bold italic
+	branch = normal
+	tag = normal
+	remotebranch = normal
+	stash = normal dim
+	grafted = normal bold
+	HEAD = normal italic
