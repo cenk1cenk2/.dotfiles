@@ -25,8 +25,6 @@ save="$3"
 path="$4"
 out="$5"
 
-# echo "multiple $1, directory: $2, save: $3, path: $4, out: $5" >>/tmp/xdg-desktop-portal-termfilechooser.log
-
 cmd="/usr/bin/ranger"
 termcmd="${TERMCMD:-/usr/bin/kitty}"
 
@@ -56,22 +54,21 @@ EOF
 )
 
 if [ "$save" = "1" ]; then
-	set -- --choosefile="$out" --cmd='echo Select save path.' --selectfile="$path"
+	set -- --choosefile="$out" --cmd='echo Select save path (see tutorial in preview pane; try pressing zv or zp if no preview)' --selectfile="$path"
 	# selectfile fix issue for me when saving file on python 3.10+
 	if [ ! -e "$path" ]; then
 		printf '%s' "$info" >"$path"
 	fi
 elif [ "$multiple" = "1" ]; then
-	set -- --choosefiles="$out" --cmd="echo Select file(s): open file to select it; <Space> to select multiple"
-	#change order of operation -- chrome/firefox by default are setting on my system 1 1 0, when they should put 1 0 0
+	set -- --choosefiles="$out" --cmd="echo Select file(s) (open file to select it; <Space> to select multiple)"
+#change order of operation -- chrome/firefox by default are setting on my system 1 1 0, when they should put 1 0 0
 elif [ "$directory" = "1" ]; then
-	set -- --show-only-dirs --cmd="echo Select directory: 'Q' in dir to select it, 'q' to cancel selection" --cmd="map Q chain shell echo %d > \"$out\"; quitall"
+	set -- --show-only-dirs --cmd="echo Select directory ('Q'uit in dir to select it), 'q' to cancel selection" --cmd="map Q chain shell echo %d > \"$out\" ; quitall"
 else
-	set -- --choosefile="$out" --cmd="echo Select file: open file to select it"
+	set -- --choosefile="$out" --cmd="echo Select file (open file to select it)"
 fi
 
 "$termcmd" -- $cmd "$@"
-
 if [ "$save" = "1" ] && [ ! -s "$out" ]; then
 	rm "$path"
 fi
