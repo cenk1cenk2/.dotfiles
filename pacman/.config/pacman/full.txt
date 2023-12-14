@@ -42,3 +42,5 @@ man-db
 clipboard
 genpass-git
 imv
+vdirsyncer
+python-aiohttp-oauth0lib
