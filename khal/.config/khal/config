@@ -18,3 +18,9 @@ dateformat = %Y-%m-%d
 longdateformat = %Y-%m-%d
 datetimeformat = %Y-%m-%d %H:%M
 longdatetimeformat = %Y-%m-%d %H:%M
+
+[view]
+theme = dark
+
+#[palette]
+#header = light red, default, default, '#ff0000', '#ff0011'
