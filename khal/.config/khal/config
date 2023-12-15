@@ -22,5 +22,6 @@ longdatetimeformat = %Y-%m-%d %H:%M
 [view]
 theme = dark
 
-#[palette]
-#header = light red, default, default, '#ff0000', '#ff0011'
+[palette]
+# key = foreground, background, mono, foreground_high, background_high
+edit = '', '', 'bold', '', '#17191e'
