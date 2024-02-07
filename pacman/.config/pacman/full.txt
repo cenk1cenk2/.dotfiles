@@ -44,3 +44,4 @@ genpass-git
 imv
 vdirsyncer
 python-aiohttp-oauth0lib
+ripdrag-git
