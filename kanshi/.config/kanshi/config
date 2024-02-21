@@ -38,8 +38,7 @@ profile solo {
 
 profile salon {
   output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@143.995Hz position 0,0
-  output "LG Electronics 38GN950 207NTSU62014" disable
-  output "Synaptics Inc Non-PnP 0x0000FD4E" disable
+  output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" disable
 }
 
 profile top {
