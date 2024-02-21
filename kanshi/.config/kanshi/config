@@ -17,23 +17,23 @@ profile gpd_portable {
 }
 
 profile default {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,1440
-  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,1440
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@119.998Hz position 700,0
   output "Synaptics Inc Non-PnP 0x0000FD4E" enable mode 1920x1080@60.000Hz position 960,3040 transform 180
 }
 
 profile double_top {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,1440
-  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,1440
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@119.998Hz position 700,0
 }
 
 profile double_bottom {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,1440
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,1440
   output "Synaptics Inc Non-PnP 0x0000FD4E" enable mode 1920x1080@60.000Hz position 960,3040 transform 180
 }
 
 profile solo {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.997Hz position 0,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,0
 }
 
 profile salon {
