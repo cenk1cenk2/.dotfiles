@@ -19,7 +19,7 @@ profile gpd_portable {
 profile default {
   output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,1440
   output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@119.998Hz position 700,0
-  output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" enable mode 1920x1080@239.964Hz position 960,3040 transform 180
+  output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" enable mode 1920x1080@120.000Hz position 960,3040 transform 180
 }
 
 profile double_top {
@@ -29,7 +29,7 @@ profile double_top {
 
 profile double_bottom {
   output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@74.977Hz position 0,1440
-  output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" enable mode 1920x1080@239.964Hz position 960,3040 transform 180
+  output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" enable mode 1920x1080@120.000Hz position 960,3040 transform 180
 }
 
 profile solo {
