@@ -21,12 +21,12 @@ set $color5 #a40778
 set $color6 #56b6c2
 set $color7 #979eab
 set $color8 #4b5263
-set $color9 #ff7684
+set $color9 #ef9ea1
 set $color10 #d4ff79
-set $color11 #ebcd8f
-set $color12 #93cfff
-set $color13 #bb23a1
-set $color14 #87e6e2
+set $color11 #eed5a8
+set $color12 #98caf6
+set $color13 #ca6da4
+set $color14 #94ced6
 set $color15 #abb2bf
 set $color16 #ececec
 
