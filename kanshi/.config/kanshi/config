@@ -42,6 +42,7 @@ profile top {
 
 profile salon {
   output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@143.995Hz position 0,0
+  exec wl-gammactl -g 0.89
   # output "ASUSTek COMPUTER INC ASUS XG17A 0x000079A5" disable
 }
 
