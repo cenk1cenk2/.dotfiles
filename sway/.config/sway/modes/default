@@ -15,7 +15,7 @@ $bindsym $mod+Shift+q kill
 $bindsym $mod+Space exec $menu
 
 ## Launch // Open clipboard ##
-# $bindsym $mod+Shift+p exec $clipboard
+$bindsym $mod+p exec $clipboard
 
 # Drag floating windows by holding down $mod and left mouse button.
 # Resize them with right mouse button + $mod.
@@ -81,10 +81,10 @@ $bindsym $mod+Shift+$up_alt move up
 $bindsym $mod+Shift+$right_alt move right
 
 ## Navigation // List all open windows in last-recently-used order ##
-$bindsym $mod+p exec env RUST_BACKTRACE=1 swayr switch-window &>> /tmp/swayr.log
+$bindsym $mod+Tab exec env RUST_BACKTRACE=1 swayr switch-window &>> /tmp/swayr.log
 
 ## Navigation // Switch to the last recently used window ##
-$bindsym $mod+Tab exec env RUST_BACKTRACE=1 swayr switch-to-urgent-or-lru-window &>> /tmp/swayr.log
+$bindsym $mod+Shift+Tab exec env RUST_BACKTRACE=1 swayr switch-to-urgent-or-lru-window &>> /tmp/swayr.log
 
 ## Navigation // Switch to the last recently used workspace ##
 $bindsym Mod1+Tab workspace back_and_forth
