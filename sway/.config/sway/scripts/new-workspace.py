@@ -50,13 +50,11 @@ if __name__ == "__main__":
     if arguments.move and arguments.switch:
         # Avoid wallpaper flickering when moving and switching by specifying both actions in the same Sway's command
         command(
-            "move container to workspace number {}, workspace number {}".format(
-                target, target
-            )
+            f"move container to workspace number {target}, workspace number {target}"
         )
 
     elif arguments.switch:
-        command("workspace number {}".format(target))
+        command(f"workspace number {target}")
 
     elif arguments.move:
-        command("move container to workspace number {}".format(target))
+        command(f"move container to workspace number {target}")

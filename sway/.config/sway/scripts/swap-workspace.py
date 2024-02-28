@@ -9,6 +9,7 @@ if __name__ == "__main__":
     arguments_parser.add_argument(
         "-t",
         "--to",
+        type=int,
         action="store",
         help="Move workspace to the given position.",
     )
@@ -41,18 +42,21 @@ if __name__ == "__main__":
                 assert reply.success
 
     def target_to_temp(target):
-        if int(target) in set(workspace_numbers) and int(target) != workspace_number:
+        if target in set(workspace_numbers) and target != workspace_number:
             command(f"rename workspace number {target} to {temp_workspace}")
 
-    def temp_to_initial(target, original):
-        if int(target) in set(workspace_numbers) and int(target) != workspace_number:
-            command(f"rename workspace number {temp_workspace} to {original}")
+    def temp_to_initial(target, initial):
+        if target in set(workspace_numbers) and target != workspace_number:
+            command(f"rename workspace number {temp_workspace} to {initial}")
 
     if arguments.to:
-        target_to_temp(arguments.to)
-        command(f"rename workspace number {workspace_number} to {arguments.to}")
-        temp_to_initial(arguments.to, workspace_number)
-        command(f"workspace {arguments.to}")
+        target = arguments.to
+
+        target_to_temp(target)
+        command(
+            f"rename workspace number {workspace_number} to {target}, workspace number {target}"
+        )
+        temp_to_initial(target, workspace_number)
 
     elif arguments.swap:
         if arguments.swap == "left":
@@ -94,6 +98,7 @@ if __name__ == "__main__":
             raise Exception("Invalid swap argument.")
 
         target_to_temp(target)
-        command(f"rename workspace number {workspace_number} to {target}")
+        command(
+            f"rename workspace number {workspace_number} to {target}, workspace number {target}"
+        )
         temp_to_initial(target, workspace_number)
-        command(f"workspace {target}")
