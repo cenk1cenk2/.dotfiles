@@ -27,20 +27,33 @@ if __name__ == "__main__":
     workspaces = tree.workspaces()
     workspace_number = workspace.num
     workspace_numbers = [workspace.num for workspace in workspaces]
+    temp_workspace = max(workspace_numbers) + 1
 
     def command(command, should_assert=True):
+        print(f"send: {command}")
         replies = ipc.command(command)
 
         if should_assert:
             for reply in replies:
+                if reply.error:
+                    print(f"fail: {command} -> {reply.error}")
+
                 assert reply.success
 
+    def target_to_temp(target):
+        if int(target) in set(workspace_numbers) and int(target) != workspace_number:
+            command(f"rename workspace number {target} to {temp_workspace}")
+
+    def temp_to_initial(target, original):
+        if int(target) in set(workspace_numbers) and int(target) != workspace_number:
+            command(f"rename workspace number {temp_workspace} to {original}")
+
     if arguments.to:
-        temp_workspace = max(workspace_numbers) + 1
-        command(f"rename workspace number {arguments.to} to {temp_workspace}", False)
+        target_to_temp(arguments.to)
         command(f"rename workspace number {workspace_number} to {arguments.to}")
-        command(f"rename workspace number {temp_workspace} to {workspace_number}")
+        temp_to_initial(arguments.to, workspace_number)
         command(f"workspace {arguments.to}")
+
     elif arguments.swap:
         if arguments.swap == "left":
             candidates = [
@@ -58,7 +71,6 @@ if __name__ == "__main__":
                         max(candidates) if len(candidates) > 0 else workspace_number,
                     )
                 )
-                - set(candidates)
             )
         elif arguments.swap == "right":
             candidates = [
@@ -77,11 +89,11 @@ if __name__ == "__main__":
                         else workspace_number + 2,
                     )
                 )
-                - set(candidates)
             )
         else:
             raise Exception("Invalid swap argument.")
 
-        command(f"rename workspace number {target} to {workspace_number}", False)
-        command(f"rename workspace to {target}")
+        target_to_temp(target)
+        command(f"rename workspace number {workspace_number} to {target}")
+        temp_to_initial(target, workspace_number)
         command(f"workspace {target}")

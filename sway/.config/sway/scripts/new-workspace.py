@@ -30,10 +30,14 @@ if __name__ == "__main__":
     workspace_numbers = [workspace.num for workspace in workspaces]
 
     def command(command, should_assert=True):
+        print(f"send: {command}")
         replies = ipc.command(command)
 
         if should_assert:
             for reply in replies:
+                if reply.error:
+                    print(f"fail: {command} -> {reply.error}")
+
                 assert reply.success
 
     # Get the minor empty workspace's number (or set it as the current workspace's number if all are busy)
