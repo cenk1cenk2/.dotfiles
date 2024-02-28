@@ -4,9 +4,6 @@ from argparse import ArgumentParser
 
 import i3ipc
 
-# Assumption: it exists 10 workspaces (otherwise, change this value)
-NUM_WORKSPACES = 20
-
 if __name__ == "__main__":
     arguments_parser = ArgumentParser()
     arguments_parser.add_argument(
@@ -30,37 +27,32 @@ if __name__ == "__main__":
     tree = ipc.get_tree()
     current_workspace = tree.find_focused().workspace()
     workspaces = tree.workspaces()  # includes current_workspace
-
     workspace_numbers = [workspace.num for workspace in workspaces]
-    empty_workspace_numbers = set(
-        [number for number in range(1, NUM_WORKSPACES + 1)]
-    ) - set(workspace_numbers)
-    # Take into consideration that the current workspace exists but might be empty
-    if len(current_workspace.nodes) == 0:
-        empty_workspace_numbers.add(current_workspace.num)
+
+    def command(command, should_assert=True):
+        replies = ipc.command(command)
+
+        if should_assert:
+            for reply in replies:
+                assert reply.success
 
     # Get the minor empty workspace's number (or set it as the current workspace's number if all are busy)
-    first_empty_workspace_number = current_workspace.num
-    if empty_workspace_numbers:
-        first_empty_workspace_number = min(empty_workspace_numbers)
+    if not arguments.move and len(current_workspace.nodes) == 0:
+        target = current_workspace.num
+    else:
+        target = min(set(range(1, max(workspace_numbers) + 2)) - set(workspace_numbers))
 
     # Use the value of first_empty_workspace_number to make the requested actions
     if arguments.move and arguments.switch:
         # Avoid wallpaper flickering when moving and switching by specifying both actions in the same Sway's command
-        reply = ipc.command(
+        command(
             "move container to workspace number {}, workspace number {}".format(
-                first_empty_workspace_number, first_empty_workspace_number
+                target, target
             )
         )
 
-        assert reply[0].success  # exit with non-zero status if the assertion fails
     elif arguments.switch:
-        reply = ipc.command("workspace number {}".format(first_empty_workspace_number))
+        command("workspace number {}".format(target))
 
-        assert reply[0].success  # exit with non-zero status if the assertion fails
     elif arguments.move:
-        reply = ipc.command(
-            "move container to workspace number {}".format(first_empty_workspace_number)
-        )
-
-        assert reply[0].success  # exit with non-zero status if the assertion fails
+        command("move container to workspace number {}".format(target))
