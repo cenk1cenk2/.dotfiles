@@ -33,7 +33,6 @@ greetd
 greetd-tuigreet
 gtk-theme-material-black
 kvantum-theme-materia
-mime-archpkg
 nwg-displays
 sway-audio-idle-inhibit-git
 tela-circle-icon-theme-dracula
