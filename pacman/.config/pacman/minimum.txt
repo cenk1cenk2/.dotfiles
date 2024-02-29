@@ -1,7 +1,5 @@
 handlr
 vim
-bluez
-bluez-utils
 gzip
 kanshi
 kitty
