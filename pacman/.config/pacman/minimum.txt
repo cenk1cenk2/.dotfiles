@@ -23,8 +23,6 @@ xorg-xauth
 xorg-xhost
 networkmanager
 xorg-xwayland
-zathura
-zathura-pdf-poppler
 autotiling
 avizo
 bluetuith
@@ -33,7 +31,6 @@ greetd
 greetd-tuigreet
 gtk-theme-material-black
 kvantum-theme-materia
-nwg-displays
 sway-audio-idle-inhibit-git
 tela-circle-icon-theme-dracula
 pamac-aur
