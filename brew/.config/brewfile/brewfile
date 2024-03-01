@@ -1,0 +1,18 @@
+tap "homebrew/bundle"
+tap "homebrew/services"
+
+cask "google-chrome"
+cask "bitwarden"
+cask "alfred"
+cask "spotify"
+cask "kitty"
+
+# rewe related
+cask "microsoft-auto-update"
+cask "microsoft-office"
+cask "microsoft-teams"
+brew "vpn-slice"
+brew "openconnect"
+# rewe development related
+brew "operator-sdk"
+brew "go-swagger"

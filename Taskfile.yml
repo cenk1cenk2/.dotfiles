@@ -14,6 +14,11 @@ tasks:
       - stow --no-folding -vvvt ~ avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
       - sudo stow --adopt --no-folding -vvvt / rootfs
 
+  deploy:macos:
+    desc: Deploy to target.
+    cmds:
+      - stow --no-folding -vvvt ~ chrome commitizen fonts gitconfig kitty
+
   plan:
     desc: Plan to target.
     cmds:
