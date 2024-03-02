@@ -36,4 +36,7 @@ yabai -m config active_window_border_topmost off
 yabai -m rule --add app="^System Settings$" manage=off
 yabai -m rule --add app="^Calculator$" manage=off
 
+# signals
+yabai -m signal --add event=space_changed action="~/.config/yabai/scripts/auto-destroy.sh"
+
 echo "yabai configuration loaded..."

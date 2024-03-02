@@ -7,8 +7,8 @@ shift + cmd - w : yabai --restart-service
 
 # destroy desktop
 shift + cmd - q : yabai -m space --destroy;
-cmd + ctrl - left : yabai -m space --focus prev;
-cmd + ctrl - right : yabai -m space --focus next;
+cmd + ctrl - left : yabai -m space --focus prev || yabai -m space --focus last;
+cmd + ctrl - right : yabai -m space --focus next || yabai -m space --focus first;
 
 # change window focus within space
 cmd - k : yabai -m window --focus north;

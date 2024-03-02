@@ -23,6 +23,8 @@ brew "yabai"
 brew "skhd"
 tap "FelixKratz/formulae"
 brew "sketchybar"
-
 cask "sf-symbols"
 brew "switchaudio-osx"
+
+# personal
+cask "slack"
