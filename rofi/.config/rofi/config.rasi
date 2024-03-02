@@ -6,9 +6,8 @@
  * Configuration For Rofi Version: 1.7.3
  **/
 
-
 * {
-    font: "Consolas ligaturized v3 14";
+    font: "ConsolasLG Nerd Font 14";
 }
 
 @theme "rofi"
