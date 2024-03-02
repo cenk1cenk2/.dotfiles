@@ -16,3 +16,6 @@ brew "openconnect"
 # rewe development related
 brew "operator-sdk"
 brew "go-swagger"
+
+tap "koekeishiya/formulae"
+brew "yabai"
