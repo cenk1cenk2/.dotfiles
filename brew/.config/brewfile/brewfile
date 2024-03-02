@@ -1,6 +1,7 @@
 tap "homebrew/bundle"
 tap "homebrew/services"
 
+# gui program
 cask "google-chrome"
 cask "bitwarden"
 cask "alfred"
@@ -15,7 +16,13 @@ brew "vpn-slice"
 brew "openconnect"
 # rewe development related
 brew "operator-sdk"
-brew "go-swagger"
 
+# window management
 tap "koekeishiya/formulae"
 brew "yabai"
+brew "skhd"
+tap "FelixKratz/formulae"
+brew "sketchybar"
+
+cask "sf-symbols"
+brew "switchaudio-osx"
