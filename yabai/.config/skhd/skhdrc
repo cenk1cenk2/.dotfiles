@@ -6,21 +6,27 @@ shift + cmd - w : yabai --restart-service
 # -- Changing Window Focus --
 
 # destroy desktop
-shift + cmd - q : yabai -m space --destroy
-cmd + ctrl - left : yabai -m space --focus prev
-cmd + ctrl - right : yabai -m space --focus next
+shift + cmd - q : yabai -m space --destroy;
+cmd + ctrl - left : yabai -m space --focus prev;
+cmd + ctrl - right : yabai -m space --focus next;
 
 # change window focus within space
-cmd - k : yabai -m window --focus north
-cmd - j : yabai -m window --focus south
-cmd - h : yabai -m window --focus west
-cmd - l : yabai -m window --focus east
+cmd - k : yabai -m window --focus north;
+cmd - j : yabai -m window --focus south;
+cmd - h : yabai -m window --focus west;
+cmd - l : yabai -m window --focus east;
+
+# swap windows
+shift + cmd - j : yabai -m window --swap south;
+shift + cmd - k : yabai -m window --swap north;
+shift + cmd - h : yabai -m window --swap west;
+shift + cmd - l : yabai -m window --swap east;
 
 # change focus between external displays
-cmd - up: yabai -m display --focus north
-cmd - down: yabai -m display --focus south
-cmd - left: yabai -m display --focus west
-cmd - right: yabai -m display --focus east
+cmd - up: yabai -m display --focus north;
+cmd - down: yabai -m display --focus south;
+cmd - left: yabai -m display --focus west;
+cmd - right: yabai -m display --focus east;
 
 # move window to display left and right
 shift + cmd - up : yabai -m space --display north; yabai -m display --focus north;
@@ -31,42 +37,34 @@ shift + cmd - right : yabai -m space --display east; yabai -m display --focus ea
 # -- Modifying the Layout --
 
 # rotate layout clockwise
-shift + alt - r : yabai -m space --rotate 270
+shift + alt - r : yabai -m space --rotate 270;
 
 # flip along y-axis
-shift + alt - y : yabai -m space --mirror y-axis
+shift + alt - y : yabai -m space --mirror y-axis;
 
 # flip along x-axis
-shift + alt - x : yabai -m space --mirror x-axis
+shift + alt - x : yabai -m space --mirror x-axis;
 
 # toggle window float
-shift + cmd - space : yabai -m window --toggle float --grid 4:4:1:1:2:2
+shift + cmd - space : yabai -m window --toggle float --grid 4:4:1:1:2:2;
 
 # -- Modifying Window Size --
 
 # maximize a window
-shift + cmd - f : yabai -m window --toggle zoom-fullscreen
+shift + cmd - f : yabai -m window --toggle zoom-fullscreen;
 
 # balance out tree of windows (resize to occupy same area)
-shift + cmd - e : yabai -m space --balance
-
-# -- Moving Windows Around --
-
-# swap windows
-shift + cmd - j : yabai -m window --swap south
-shift + cmd - k : yabai -m window --swap north
-shift + cmd - h : yabai -m window --swap west
-shift + cmd - l : yabai -m window --swap east
+shift + cmd - e : yabai -m space --balance;
 
 # move window and split
-ctrl + alt - j : yabai -m window --warp south
-ctrl + alt - k : yabai -m window --warp north
-ctrl + alt - h : yabai -m window --warp west
-ctrl + alt - l : yabai -m window --warp east
+# ctrl + alt - j : yabai -m window --warp south
+# ctrl + alt - k : yabai -m window --warp north
+# ctrl + alt - h : yabai -m window --warp west
+# ctrl + alt - l : yabai -m window --warp east
 
 # move window to prev and next space
-shift + alt - p : yabai -m window --space prev;
-shift + alt - n : yabai -m window --space next;
+# shift + alt - p : yabai -m window --space prev;
+# shift + alt - n : yabai -m window --space next;
 
 # move window to space #
 shift + cmd - 1 : yabai -m window --space 1;
@@ -94,4 +92,4 @@ shift + alt - c : yabai -m space --create && \
 
 ## shortcuts
 
-cmd - return : /Applications/kitty.app/Contents/MacOS/kitty -d ~ &> /dev/null
+cmd - return : /Applications/kitty.app/Contents/MacOS/kitty --single-instance -d ~ &> /dev/null
