@@ -4,9 +4,9 @@ tap "homebrew/services"
 # gui program
 cask "google-chrome"
 cask "bitwarden"
-cask "alfred"
 cask "spotify"
 cask "kitty"
+cask "raycast"
 
 # rewe related
 cask "microsoft-auto-update"
