@@ -17,7 +17,7 @@ tasks:
   deploy:macos:
     desc: Deploy to target.
     cmds:
-      - stow --no-folding -vvvt ~ chrome commitizen fonts gitconfig kitty
+      - stow --no-folding -vvvt ~ chrome commitizen gitconfig kitty yabai
 
   plan:
     desc: Plan to target.
