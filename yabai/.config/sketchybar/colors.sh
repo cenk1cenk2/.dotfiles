@@ -30,12 +30,27 @@ export BG0=0xff1e1e2e
 export BG1=0x603c3e4f
 export BG2=0x60494d64
 
+# one dark
+export BLACK=0xff121212
+export WHITE=0xffefefef
+export RED=0xffe06c75
+export GREEN=0xff98c379
+export BLUE=0xff61afef
+export YELLOW=0xffe5c07b
+export ORANGE=0xffd19a66
+export MAGENTA=0xffa40778
+export GREY=0xff5c6370
+export TRANSPARENT=0x00000000
+export BG0=0xff1e2127
+export BG1=0xff6022282f
+export BG2=0xff602c333d
+
 # General bar colors
 export BAR_COLOR=$BG0
 export BAR_BORDER_COLOR=$BG2
 export BACKGROUND_1=$BG1
 export BACKGROUND_2=$BG2
-export ICON_COLOR=$WHITE # Color of all icons
+export ICON_COLOR=$WHITE  # Color of all icons
 export LABEL_COLOR=$WHITE # Color of all labels
 export POPUP_BACKGROUND_COLOR=$BAR_COLOR
 export POPUP_BORDER_COLOR=$WHITE

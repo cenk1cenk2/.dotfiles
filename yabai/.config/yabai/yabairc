@@ -19,7 +19,7 @@ yabai -m config left_padding 0
 yabai -m config right_padding 0
 yabai -m config window_gap 4
 # mouse
-yabai -m config focus_follows_mouse autoraise
+yabai -m config focus_follows_mouse autofocus
 yabai -m config mouse_follows_focus on
 yabai -m config mouse_modifier alt
 yabai -m config mouse_action1 move
@@ -28,9 +28,9 @@ yabai -m config mouse_drop_action swap
 yabai -m config window_border_width 2
 yabai -m config window_border_radius -1.0
 yabai -m config active_window_border_topmost off
-yabai -m config active_window_border_color 0xffeed5a8
-yabai -m config normal_window_border_color 0xff282c34
-yabai -m config insert_window_border_color 0xffe06c75
+# yabai -m config active_window_border_color 0xffeed5a8
+# yabai -m config normal_window_border_color 0xff282c34
+# yabai -m config insert_window_border_color 0xffe06c75
 
 # disable specific apps
 yabai -m rule --add app="^System Settings$" manage=off
