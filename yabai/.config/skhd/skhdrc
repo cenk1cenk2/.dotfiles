@@ -2,6 +2,7 @@
 
 # stop/start/restart yabai
 shift + alt - w : yabai --restart-service
+ctrl + shift + alt - w : yabai --stop-service; skhd --stop-service;
 
 # -- Changing Window Focus --
 
