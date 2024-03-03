@@ -27,8 +27,20 @@ apple_activity=(
 
 apple_lock=(
 	icon=$LOCK
-	label="Lock Screen"
-	click_script="pmset displaysleepnow; $POPUP_OFF"
+	label="Sleep"
+	click_script="pmset sleepnow; $POPUP_OFF"
+)
+
+apple_restart=(
+	icon=$LOCK
+	label="Restart"
+	click_script="shutdown -r -h now; $POPUP_OFF"
+)
+
+apple_shutdown=(
+	icon=$LOCK
+	label="Shutdown"
+	click_script="shutdown -h now; $POPUP_OFF"
 )
 
 sketchybar --add item apple.logo left \
@@ -41,4 +53,10 @@ sketchybar --add item apple.logo left \
 	--set apple.activity "${apple_activity[@]}" \
 	\
 	--add item apple.lock popup.apple.logo \
-	--set apple.lock "${apple_lock[@]}"
+	--set apple.lock "${apple_lock[@]}" \
+	\
+	--add item apple.restart popup.apple.logo \
+	--set apple.restart "${apple_restart[@]}" \
+	\
+	--add item apple.shutdown popup.apple.logo \
+	--set apple.shutdown "${apple_shutdown[@]}"
