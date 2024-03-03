@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 update() {
 	source "$CONFIG_DIR/icons.sh"

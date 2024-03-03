@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 function status() {
     systemctl --user is-active wluma >/dev/null 2>&1

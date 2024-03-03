@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 PERCENTAGE=$1
 TYPE=$2
