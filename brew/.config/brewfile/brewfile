@@ -8,6 +8,8 @@ cask "spotify"
 cask "kitty"
 cask "raycast"
 cask "shottr"
+cask "hiddenbar"
+cask "middleclick"
 
 # rewe related
 cask "microsoft-auto-update"
