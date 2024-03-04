@@ -9,7 +9,7 @@
   rebase = false
 
 [includeIf "gitdir/i:~/development/work/"]
-    path = ~/development/work/.gitconfig
+  path = ~/development/work/.gitconfig
 
 [filter "lfs"]
 	clean = git-lfs clean -- %f

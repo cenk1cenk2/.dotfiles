@@ -1,8 +1,8 @@
 # -- Starting/Stopping/Restarting Yabai --
 
 # stop/start/restart yabai
-shift + alt - w : yabai --restart-service
-ctrl + shift + alt - w : yabai --stop-service; skhd --stop-service;
+ctrl + cmd - w : yabai --restart-service || yabai --start-service && skhd --restart-service || skhd --start-service && sketcybar --reload || brew services restart sketchbar;
+shift + ctrl + cmd - w : yabai --stop-service && skhd --stop-service;
 
 # -- Changing Window Focus --
 
@@ -91,12 +91,12 @@ shift + cmd - 9 : yabai -m window --space 9;
 # -- workspaces --
 
 # create desktop and follow focus
-alt - c : yabai -m space --create && \
+ctrl + cmd - c: yabai -m space --create && \
                   index="$(yabai -m query --spaces --display | jq 'map(select(."is-native-fullscreen" == false))[-1].index')" && \
                   yabai -m space --focus "${index}"
 
 # create desktop, move window and follow focus
-shift + alt - c : yabai -m space --create && \
+shift + ctrl + cmd - c : yabai -m space --create && \
                   index="$(yabai -m query --spaces --display | jq 'map(select(."is-native-fullscreen" == false))[-1].index')" && \
                   yabai -m window --space "${index}" && \
                   yabai -m space --focus "${index}"
