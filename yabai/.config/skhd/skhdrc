@@ -1,15 +1,15 @@
 # -- Starting/Stopping/Restarting Yabai --
 
 # stop/start/restart yabai
-ctrl + cmd - w : yabai --restart-service && skhd --restart-service && sketcybar --reload;
-shift + ctrl + cmd - w : yabai --stop-service && skhd --stop-service;
+alt + cmd - w : yabai --restart-service;
+shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
 
 # -- Changing Window Focus --
 
 # destroy desktop
 shift + cmd - q : yabai -m space --destroy;
-cmd + ctrl - left : yabai -m space --focus prev || yabai -m space --focus last;
-cmd + ctrl - right : yabai -m space --focus next || yabai -m space --focus first;
+cmd + ctrl - left : yabai -m space --focus prev || index=$(yabai -m query --spaces --display | jq -re 'last | .index') && yabai -m space --focus "${index}";
+cmd + ctrl - right : yabai -m space --focus next || index=$(yabai -m query --spaces --display | jq -re 'first | .index') && yabai -m space --focus "${index}";
 
 # change window focus within space
 cmd - k : yabai -m window --focus north;
