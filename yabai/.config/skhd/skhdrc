@@ -8,8 +8,9 @@ shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
 
 # destroy desktop
 shift + cmd - q : yabai -m space --destroy;
-cmd + ctrl - left : yabai -m space --focus prev || index=$(yabai -m query --spaces --display | jq -re 'last | .index') && yabai -m space --focus "${index}";
-cmd + ctrl - right : yabai -m space --focus next || index=$(yabai -m query --spaces --display | jq -re 'first | .index') && yabai -m space --focus "${index}";
+
+cmd + ctrl - left : yabai -m space --focus prev || yabai -m space --focus "$(yabai -m query --spaces --display | jq -re 'last | .index')";
+cmd + ctrl - right : yabai -m space --focus next || yabai -m space --focus "$(yabai -m query --spaces --display | jq -re 'first | .index')";
 
 # change window focus within space
 cmd - k : yabai -m window --focus north;
@@ -49,6 +50,9 @@ shift + alt - x : yabai -m space --mirror x-axis;
 # toggle window float
 shift + cmd - space : yabai -m window --toggle float --grid 4:4:1:1:2:2;
 
+# toggle window float
+shift + ctrl + cmd - space : yabai -m window --toggle sticky --grid 4:4:1:1:2:2;
+
 # -- Modifying Window Size --
 
 # maximize a window
@@ -78,15 +82,15 @@ cmd - 8 : yabai -m space --focus 8;
 cmd - 9 : yabai -m space --focus 9;
 
 # move window to space #
-shift + cmd - 1 : yabai -m window --space 1;
-shift + cmd - 2 : yabai -m window --space 2;
-shift + cmd - 3 : yabai -m window --space 3;
-shift + cmd - 4 : yabai -m window --space 4;
-shift + cmd - 5 : yabai -m window --space 5;
-shift + cmd - 6 : yabai -m window --space 6;
-shift + cmd - 7 : yabai -m window --space 7;
-shift + cmd - 8 : yabai -m window --space 8;
-shift + cmd - 9 : yabai -m window --space 9;
+shift + cmd - 1 : yabai -m window --space 1; yabai -m space --focus 1;
+shift + cmd - 2 : yabai -m window --space 2; yabai -m space --focus 2;
+shift + cmd - 3 : yabai -m window --space 3; yabai -m space --focus 3;
+shift + cmd - 4 : yabai -m window --space 4; yabai -m space --focus 4;
+shift + cmd - 5 : yabai -m window --space 5; yabai -m space --focus 5;
+shift + cmd - 6 : yabai -m window --space 6; yabai -m space --focus 6;
+shift + cmd - 7 : yabai -m window --space 7; yabai -m space --focus 7;
+shift + cmd - 8 : yabai -m window --space 8; yabai -m space --focus 8;
+shift + cmd - 9 : yabai -m window --space 9; yabai -m space --focus 9;
 
 # -- workspaces --
 
