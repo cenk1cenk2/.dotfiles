@@ -29,5 +29,8 @@ brew "sketchybar"
 cask "sf-symbols"
 brew "switchaudio-osx"
 
+# cli
+brew "clipboard"
+
 # personal
 cask "slack"
