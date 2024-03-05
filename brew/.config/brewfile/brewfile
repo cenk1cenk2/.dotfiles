@@ -10,6 +10,7 @@ cask "raycast"
 cask "shottr"
 cask "hiddenbar"
 cask "middleclick"
+cask "alt-tab"
 
 # rewe related
 cask "microsoft-auto-update"
