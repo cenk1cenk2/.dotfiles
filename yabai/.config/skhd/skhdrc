@@ -13,10 +13,10 @@ cmd + ctrl - left : yabai -m space --focus prev || yabai -m space --focus "$(yab
 cmd + ctrl - right : yabai -m space --focus next || yabai -m space --focus "$(yabai -m query --spaces --display | jq -re 'first | .index')";
 
 # change window focus within space
-cmd - k : yabai -m window --focus north;
-cmd - j : yabai -m window --focus south;
-cmd - h : yabai -m window --focus west;
-cmd - l : yabai -m window --focus east;
+cmd + ctrl - k : yabai -m window --focus north;
+cmd + ctrl - j : yabai -m window --focus south;
+cmd + ctrl - h : yabai -m window --focus west;
+cmd + ctrl - l : yabai -m window --focus east;
 
 # swap windows
 shift + cmd - j : yabai -m window --swap south;
