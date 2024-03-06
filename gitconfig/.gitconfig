@@ -1,5 +1,5 @@
 [user]
-	email = cenk@kilic.dev
+  email = cenk@kilic.dev
   name = Cenk Kılıç
 
 [init]
@@ -12,9 +12,9 @@
   path = ~/development/work/.gitconfig
 
 [filter "lfs"]
-	clean = git-lfs clean -- %f
-	smudge = git-lfs smudge -- %f
-	process = git-lfs filter-process
+  clean = git-lfs clean -- %f
+  smudge = git-lfs smudge -- %f
+  process = git-lfs filter-process
   required = true
 
 [safe]
@@ -30,64 +30,64 @@
   cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 
 [merge]
-	tool = nvim
+  tool = nvim
 
 [mergetool "nvim"]
   cmd = "nvim -b -d \"$LOCAL\" \"$MERGED\" \"$REMOTE\""
 
 [color "status"]
-	branch = normal
-	added = 10 normal
-	updated = 10 normal
-	localbranch = normal
-	changed = 11 normal
-	header = normal
-	remotebranch = normal
-	nobranch = normal bold
-	unmerged = 9 normal
-	untracked = normal dim
+  branch = normal
+  added = 10 normal
+  updated = 10 normal
+  localbranch = normal
+  changed = 11 normal
+  header = normal
+  remotebranch = normal
+  nobranch = normal bold
+  unmerged = 9 normal
+  untracked = normal dim
 [color "branch"]
-	plain = normal
-	remote = normal
-	current = normal reverse
-	local = normal
-	upstream = normal
+  plain = normal
+  remote = normal
+  current = normal reverse
+  local = normal
+  upstream = normal
 [color "remote"]
-	hint = normal dim
-	success = 2 normal
-	error = 1 normal
-	warning = 3 normal
+  hint = normal dim
+  success = 2 normal
+  error = 1 normal
+  warning = 3 normal
 [color "interactive"]
-	header = normal dim bold
-	prompt = 15 4
-	help = normal dim
-	error = normal bold
+  header = normal dim bold
+  prompt = 15 4
+  help = normal dim
+  error = normal bold
 [color "diff"]
-	commit = normal
-	newMoved = 11 normal
-	oldMovedAlternativeDimmed = 4 normal dim
-	frag = normal dim
-	oldMovedAlternative = 4 normal
-	contextBold = normal bold
-	newBold = 10 normal bold
-	context = normal
-	oldMoved = 3 normal
-	oldBold = 1 normal bold
-	newMovedDimmed = 11 normal dim
-	func = normal bold dim
-	meta = normal italic
-	newDimmed = 10 normal dim
-	newMovedAlternative = 12 normal
-	new = 10 normal
-	newMovedAlternativeDimmed = 12 normal dim
-	whitespace = normal 9
-	oldMovedDimmed = 3 normal dim
-	oldDimmed = 1 normal dim
-	old = 1 normal
+  commit = normal
+  newMoved = 11 normal
+  oldMovedAlternativeDimmed = 4 normal dim
+  frag = normal dim
+  oldMovedAlternative = 4 normal
+  contextBold = normal bold
+  newBold = 10 normal bold
+  context = normal
+  oldMoved = 3 normal
+  oldBold = 1 normal bold
+  newMovedDimmed = 11 normal dim
+  func = normal bold dim
+  meta = normal italic
+  newDimmed = 10 normal dim
+  newMovedAlternative = 12 normal
+  new = 10 normal
+  newMovedAlternativeDimmed = 12 normal dim
+  whitespace = normal 9
+  oldMovedDimmed = 3 normal dim
+  oldDimmed = 1 normal dim
+  old = 1 normal
 [color "decorate"]
-	branch = normal
-	tag = normal
-	remotebranch = normal
-	stash = normal dim
-	grafted = normal bold
-	HEAD = normal italic
+  branch = normal
+  tag = normal
+  remotebranch = normal
+  stash = normal dim
+  grafted = normal bold
+  HEAD = normal italic
