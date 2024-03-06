@@ -12,6 +12,7 @@ cask "hiddenbar"
 cask "middleclick"
 cask "alt-tab"
 cask "soundsource"
+brew "duti"
 
 # rewe related
 cask "microsoft-auto-update"
