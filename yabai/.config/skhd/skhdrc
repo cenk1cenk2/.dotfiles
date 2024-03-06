@@ -9,8 +9,8 @@ shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
 # destroy desktop
 shift + cmd - q : yabai -m space --destroy;
 
-cmd + ctrl - left : yabai -m space --focus prev || yabai -m space --focus "$(yabai -m query --spaces --display | jq -re 'last | .index')";
-cmd + ctrl - right : yabai -m space --focus next || yabai -m space --focus "$(yabai -m query --spaces --display | jq -re 'first | .index')";
+cmd + ctrl - left : ~/.config/yabai/scripts/space-cycle.sh prev;
+cmd + ctrl - right : ~/.config/yabai/scripts/space-cycle.sh next;
 
 # change window focus within space
 cmd + ctrl - k : yabai -m window --focus north;

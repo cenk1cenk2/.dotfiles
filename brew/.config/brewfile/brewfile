@@ -11,6 +11,7 @@ cask "shottr"
 cask "hiddenbar"
 cask "middleclick"
 cask "alt-tab"
+cask "soundsource"
 
 # rewe related
 cask "microsoft-auto-update"
