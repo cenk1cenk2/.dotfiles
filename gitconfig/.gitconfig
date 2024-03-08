@@ -1,9 +1,19 @@
 [user]
   email = cenk@kilic.dev
   name = Cenk Kılıç
+  signingkey = ~/.ssh/id_rsa
 
 [init]
   defaultBranch = main
+
+[commit]
+  gpgsign = true
+
+[tag]
+  gpgsign = true
+
+[gpg]
+  format = ssh
 
 [pull]
   rebase = false
