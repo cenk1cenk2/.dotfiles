@@ -31,10 +31,10 @@ cmd + ctrl - left: yabai -m display --focus west;
 cmd + ctrl - right: yabai -m display --focus east;
 
 # move space to display left and right
-shift + cmd - up : ~/.config/yabai/scripts/space-to-display.sh north;
-shift + cmd - down : ~/.config/yabai/scripts/space-to-display.sh south;
-shift + cmd - left : ~/.config/yabai/scripts/space-to-display.sh west;
-shift + cmd - right : ~/.config/yabai/scripts/space-to-display.sh east;
+shift + ctrl + cmd - up : ~/.config/yabai/scripts/space-to-display.sh north;
+shift + ctrl + cmd - down : ~/.config/yabai/scripts/space-to-display.sh south;
+shift + ctrl + cmd - left : ~/.config/yabai/scripts/space-to-display.sh west;
+shift + ctrl + cmd - right : ~/.config/yabai/scripts/space-to-display.sh east;
 
 # -- Modifying the Layout --
 
