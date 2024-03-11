@@ -19,16 +19,16 @@ cmd + ctrl - h : yabai -m window --focus west;
 cmd + ctrl - l : yabai -m window --focus east;
 
 # swap windows
-shift + cmd - j : yabai -m window --swap south;
-shift + cmd - k : yabai -m window --swap north;
-shift + cmd - h : yabai -m window --swap west;
-shift + cmd - l : yabai -m window --swap east;
+shift + ctrl + cmd - j : yabai -m window --swap south;
+shift + ctrl + cmd - k : yabai -m window --swap north;
+shift + ctrl + cmd - h : yabai -m window --swap west;
+shift + ctrl + cmd - l : yabai -m window --swap east;
 
 # change focus between external displays
-cmd - up: yabai -m display --focus north;
-cmd - down: yabai -m display --focus south;
-cmd - left: yabai -m display --focus west;
-cmd - right: yabai -m display --focus east;
+cmd + ctrl - up: yabai -m display --focus north;
+cmd + ctrl - down: yabai -m display --focus south;
+cmd + ctrl - left: yabai -m display --focus west;
+cmd + ctrl - right: yabai -m display --focus east;
 
 # move space to display left and right
 shift + cmd - up : ~/.config/yabai/scripts/space-to-display.sh north;
