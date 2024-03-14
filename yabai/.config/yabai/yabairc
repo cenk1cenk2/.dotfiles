@@ -29,7 +29,7 @@ yabai -m config right_padding 0
 yabai -m config window_gap 4
 # focus
 yabai -m config mouse_follows_focus on
-yabai -m config focus_follows_mouse autofocus
+yabai -m config focus_follows_mouse autoraise
 # window_origin_display [default|focused|cursor]
 # Specify which display a newly created window should be managed in.
 # default: The display in which the window is created (standard macOS behaviour).
