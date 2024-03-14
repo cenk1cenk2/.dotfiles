@@ -24,17 +24,15 @@ brew "openconnect"
 brew "operator-sdk"
 
 # window management
-# tap "koekeishiya/formulae"
-# brew "yabai"
-# brew "skhd"
-# tap "FelixKratz/formulae"
-# brew "sketchybar"
-# cask "sf-symbols"
-# brew "switchaudio-osx"
-
-cask "nikitabobko/tap/aerospace"
+tap "koekeishiya/formulae"
+brew "yabai"
+brew "skhd"
 tap "FelixKratz/formulae"
+brew "sketchybar"
+cask "sf-symbols"
 brew "borders"
+# cask "nikitabobko/tap/aerospace"
+# brew "switchaudio-osx"
 
 # cli
 brew "clipboard"
