@@ -71,18 +71,18 @@ yabai -m rule --add label="About This Mac" app="System Information" title="About
 yabai -m signal --add event=window_focused action="~/.config/yabai/scripts/auto-destroy.sh"
 # yabai -m signal --add label="flash_focus" event="window_focused" action="yabai -m window \$YABAI_WINDOW_ID --opacity 0.95 && sleep $(yabai -m config window_opacity_duration) && yabai -m window \$YABAI_WINDOW_ID --opacity 0.0"
 
-function focus_under_cursor {
-  if yabai -m query --windows --space |
-      jq -er 'map(select(.focused == 1)) | length == 0' >/dev/null; then
-    yabai -m window --focus mouse 2>/dev/null || true
-  fi
-}
-
-yabai -m signal --add event=window_destroyed
-  action="${functions[focus_under_cursor]}"
-yabai -m signal --add event=window_minimized
-  action="${functions[focus_under_cursor]}"
-yabai -m signal --add event=application_hidden
-  action="${functions[focus_under_cursor]}"
+# function focus_under_cursor {
+#   if yabai -m query --windows --space |
+#       jq -er 'map(select(.focused == 1)) | length == 0' >/dev/null; then
+#     yabai -m window --focus mouse 2>/dev/null || true
+#   fi
+# }
+#
+# yabai -m signal --add event=window_destroyed
+#   action="${functions[focus_under_cursor]}"
+# yabai -m signal --add event=window_minimized
+#   action="${functions[focus_under_cursor]}"
+# yabai -m signal --add event=application_hidden
+#   action="${functions[focus_under_cursor]}"
 
 echo "yabai configuration loaded..."

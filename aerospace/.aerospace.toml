@@ -12,8 +12,8 @@ after-login-command = []
 after-startup-command = [
   # 'exec-and-forget sketchybar',
   'exec-and-forget launchctl unload -w /System/Library/LaunchAgents/com.apple.rcd.plist',
-  'exec-and-forget defaults write -g NSWindowShouldDragOnGesture YES',
-  "exec-and-forget defaults write -g NSAutomaticWindowAnimationsEnabled -bool false",
+  # 'exec-and-forget defaults write -g NSWindowShouldDragOnGesture YES',
+  # "exec-and-forget defaults write -g NSAutomaticWindowAnimationsEnabled -bool false",
   'exec-and-forget /opt/homebrew/bin/borders',
 ] # You can use it to add commands that run after AeroSpace startup.
 # 'after-startup-command' is run after 'after-login-command'
