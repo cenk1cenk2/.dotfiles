@@ -11,7 +11,6 @@ yabai -m signal --add event=dock_did_restart action="sudo yabai --load-sa"
 sudo yabai --load-sa
 # skhd --restart-service || skhd --start-service
 sketchybar --reload || brew services restart sketchybar
-borders
 
 yabai -m signal --add event=window_focused action="sketchybar --trigger window_focus"
 yabai -m signal --add event=space_changed action="sketchybar --trigger space_change"
