@@ -17,7 +17,7 @@ tasks:
   deploy:macos:
     desc: Deploy to target.
     cmds:
-      - stow --no-folding -vvvt ~ chrome commitizen gitconfig yabai aerospace sketchybar janky-borders
+      - stow --no-folding -vvvt ~ chrome commitizen gitconfig yabai sketchybar janky-borders
 
   plan:
     desc: Plan to target.
