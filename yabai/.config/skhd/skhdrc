@@ -71,26 +71,26 @@ shift + cmd - e : yabai -m space --balance;
 # shift + alt - p : yabai -m window --space prev;
 # shift + alt - n : yabai -m window --space next;
 
-cmd - 1 : yabai -m space --focus 1;
-cmd - 2 : yabai -m space --focus 2;
-cmd - 3 : yabai -m space --focus 3;
-cmd - 4 : yabai -m space --focus 4;
-cmd - 5 : yabai -m space --focus 5;
-cmd - 6 : yabai -m space --focus 6;
-cmd - 7 : yabai -m space --focus 7;
-cmd - 8 : yabai -m space --focus 8;
-cmd - 9 : yabai -m space --focus 9;
+ctrl + cmd - 1 : yabai -m space --focus 1;
+ctrl + cmd - 2 : yabai -m space --focus 2;
+ctrl + cmd - 3 : yabai -m space --focus 3;
+ctrl + cmd - 4 : yabai -m space --focus 4;
+ctrl + cmd - 5 : yabai -m space --focus 5;
+ctrl + cmd - 6 : yabai -m space --focus 6;
+ctrl + cmd - 7 : yabai -m space --focus 7;
+ctrl + cmd - 8 : yabai -m space --focus 8;
+ctrl + cmd - 9 : yabai -m space --focus 9;
 
 # move window to space #
-shift + cmd - 1 : yabai -m window --space 1; yabai -m space --focus 1;
-shift + cmd - 2 : yabai -m window --space 2; yabai -m space --focus 2;
-shift + cmd - 3 : yabai -m window --space 3; yabai -m space --focus 3;
-shift + cmd - 4 : yabai -m window --space 4; yabai -m space --focus 4;
-shift + cmd - 5 : yabai -m window --space 5; yabai -m space --focus 5;
-shift + cmd - 6 : yabai -m window --space 6; yabai -m space --focus 6;
-shift + cmd - 7 : yabai -m window --space 7; yabai -m space --focus 7;
-shift + cmd - 8 : yabai -m window --space 8; yabai -m space --focus 8;
-shift + cmd - 9 : yabai -m window --space 9; yabai -m space --focus 9;
+shift + ctrl + cmd - 1 : yabai -m window --space 1; yabai -m space --focus 1;
+shift + ctrl + cmd - 2 : yabai -m window --space 2; yabai -m space --focus 2;
+shift + ctrl + cmd - 3 : yabai -m window --space 3; yabai -m space --focus 3;
+shift + ctrl + cmd - 4 : yabai -m window --space 4; yabai -m space --focus 4;
+shift + ctrl + cmd - 5 : yabai -m window --space 5; yabai -m space --focus 5;
+shift + ctrl + cmd - 6 : yabai -m window --space 6; yabai -m space --focus 6;
+shift + ctrl + cmd - 7 : yabai -m window --space 7; yabai -m space --focus 7;
+shift + ctrl + cmd - 8 : yabai -m window --space 8; yabai -m space --focus 8;
+shift + ctrl + cmd - 9 : yabai -m window --space 9; yabai -m space --focus 9;
 
 # -- workspaces --
 
@@ -107,4 +107,4 @@ shift + ctrl + cmd - c : yabai -m space --create && \
 
 ## shortcuts
 
-cmd - return : /Applications/kitty.app/Contents/MacOS/kitty --single-instance -d ~ &> /dev/null
+ctrl + cmd - return : /Applications/kitty.app/Contents/MacOS/kitty --single-instance -d ~ &> /dev/null
