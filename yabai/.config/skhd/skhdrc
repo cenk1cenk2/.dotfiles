@@ -13,10 +13,10 @@ cmd + ctrl - left : ~/.config/yabai/scripts/space-cycle.sh prev;
 cmd + ctrl - right : ~/.config/yabai/scripts/space-cycle.sh next;
 
 # change window focus within space
-cmd - k : yabai -m window --focus north;
-cmd - j : yabai -m window --focus south;
-cmd - h : yabai -m window --focus west;
-cmd - l : yabai -m window --focus east;
+cmd + ctrl - k : yabai -m window --focus north;
+cmd + ctrl - j : yabai -m window --focus south;
+cmd + ctrl - h : yabai -m window --focus west;
+cmd + ctrl - l : yabai -m window --focus east;
 
 # swap windows
 shift + cmd - j : yabai -m window --swap south;
