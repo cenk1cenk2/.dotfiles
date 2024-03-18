@@ -41,3 +41,4 @@ zathura
 zathura-pdf-poppler
 bluez
 bluez-utils
+bitwarden
