@@ -46,3 +46,4 @@ swayr
 xdg-utils-handlr
 xsel-git
 rofi-lbonn-wayland-git
+bind
