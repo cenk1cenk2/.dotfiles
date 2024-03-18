@@ -51,7 +51,7 @@ profile double_top {
 }
 
 profile double_bottom {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@119.982hz position 0,0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@119.982Hz position 0,0
   output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@144.013Hz position 960,1600 transform 180
 }
 
