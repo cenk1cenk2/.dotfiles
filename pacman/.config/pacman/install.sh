@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 
-yay -S --needed --noconfirm --overwrite '*' - <minimum.txt
-yay -S --needed --noconfirm --overwrite '*' - <full.txt
+LOAD=${$1:-"minimum.txt"}
+
+echo "Loading packages from: $LOAD"
+
+cat "$LOAD"
+
+yay -S --needed --noconfirm --overwrite '*' - <"$LOAD"
