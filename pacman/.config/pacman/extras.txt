@@ -1,0 +1,9 @@
+mangohud
+fingerprint-gui
+goverlay
+moonlight-qt
+ryzenadj-git
+steam
+lutris
+wine-staging
+chiaki
