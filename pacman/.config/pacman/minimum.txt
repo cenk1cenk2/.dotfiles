@@ -113,4 +113,3 @@ xsel-git
 yay
 zathura
 zathura-pdf-poppler
-zsh
