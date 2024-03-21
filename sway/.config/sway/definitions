@@ -21,7 +21,7 @@ set $bindsym bindsym --to-code
 set $unbindsym unbindsym --to-code
 
 # background
-set $background /home/cenk/.dotfiles/sway/.config/sway/background/narli.jpg
+set $background $HOME/.dotfiles/sway/.config/sway/background/narli.jpg
 
 # styles - matcha-green or matcha-blue
 set $theme $HOME/.config/sway/themes/custom
