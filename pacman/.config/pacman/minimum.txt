@@ -35,6 +35,7 @@ pamac-aur
 wl-clipboard
 wl-gammactl
 wl-mirror
+sway
 swaync
 sworkstyle
 swaylock-effects-git

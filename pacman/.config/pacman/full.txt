@@ -4,7 +4,6 @@ gvfs-nfs
 gvfs-smb
 lxappearance
 mangohud
-ryzenadj
 virt-viewer
 yay
 bluetooth-autoconnect
