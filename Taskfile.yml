@@ -3,23 +3,55 @@
 
 version: '3'
 
-vars: {}
-
 env: {}
 
+vars:
+  to: '~'
+  args: ''
+  sudo: false
+  verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
+
 tasks:
+  plan:
+    label: 'plan: {{ .to }} -> {{ .CLI_ARGS }}'
+    desc: Plan to target.
+    cmds:
+      - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}
+
   deploy:
+    label: 'deploy: {{ .to }} -> {{ .CLI_ARGS }}'
+    cmds:
+      # - task: plan
+      #   vars:
+      #     CLI_ARGS: '{{ .CLI_ARGS }}'
+      #     to: '{{ .to }}'
+      - '{{ if eq .sudo "true" }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}'
+
+  undeploy:
+    label: 'undeploy: {{ .to }} -> {{ .CLI_ARGS }}'
+    desc: Remove a stowed target.
+    cmds:
+      - stow {{ .args }} -{{ .verbosity }}t {{ .to }} -D {{ .CLI_ARGS }}
+
+  deploy:linux:
     desc: Deploy to target.
     cmds:
-      - stow --no-folding -vvvt ~ avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
-      - sudo stow --adopt --no-folding -vvvt / rootfs
+      - task: deploy
+        vars:
+          to: '~'
+          CLI_ARGS: avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
+      - task: deploy
+        vars:
+          sudo: true
+          to: '/'
+          CLI_ARGS: rootfs
+          args: --adopt
+      - task: undeploy
+        vars:
+          to: '~'
+          CLI_ARGS: vpn
 
   deploy:macos:
     desc: Deploy to target.
     cmds:
-      - stow --no-folding -vvvt ~ chrome commitizen gitconfig yabai sketchybar janky-borders
-
-  plan:
-    desc: Plan to target.
-    cmds:
-      - stow --no-folding -nvvvt ~ {{ .CLI_ARGS }}
+      - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders
