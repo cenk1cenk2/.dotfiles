@@ -23,7 +23,8 @@
     // "custom/clipboard",
     "cpu",
     "memory",
-    "temperature",
+    "temperature#gpd-cpu",
+    "temperature#mau5-cpu",
 
     // connecting
     "bluetooth",
@@ -290,9 +291,19 @@
     "on-click": "swaymsg exec \\$calendar"
   },
 
-  "temperature": {
+  "temperature#gpd-cpu": {
     "critical-threshold": 72,
     "hwmon-path": "/sys/class/hwmon/hwmon4/temp1_input",
+    "interval": 5,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", ""],
+    "tooltip": false,
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
+  },
+
+  "temperature#mau5-cpu": {
+    "critical-threshold": 72,
+    "hwmon-path": "/sys/class/hwmon/hwmon3/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", ""],
