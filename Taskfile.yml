@@ -39,7 +39,7 @@ tasks:
       - task: deploy
         vars:
           to: '~'
-          CLI_ARGS: avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle vpn waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
+          CLI_ARGS: avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi sway swaync swayr sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
       - task: deploy
         vars:
           sudo: true
