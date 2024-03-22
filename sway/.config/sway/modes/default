@@ -161,7 +161,8 @@ $bindsym $mod+n exec swaync-client -t
 $bindsym $mod+Shift+n exec $network_manager
 $bindsym $mod+m exec $pulseaudio
 $bindsym $mod+Shift+m exec $bluetooth
-$bindsym $mod+t exec $calendar
+$bindsym $mod+t exec $process_manager
+$bindsym $mod+Shift+t exec $calendar
 
 # Layout stuff:
 #

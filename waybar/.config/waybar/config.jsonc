@@ -64,7 +64,7 @@
       "warning": 70,
       "critical": 90
     },
-    "on-click": "swaymsg exec \\$term_float htop"
+    "on-click": "swaymsg exec \\$process_manager"
   },
 
   "memory": {
@@ -74,7 +74,7 @@
       "warning": 70,
       "critical": 90
     },
-    "on-click": "swaymsg exec \\$term_float htop"
+    "on-click": "swaymsg exec \\$process_manager"
   },
 
   "network": {

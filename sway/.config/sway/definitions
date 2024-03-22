@@ -72,6 +72,7 @@ set $bluetooth $term_float bluetuith
 set $pulseaudio $term_float pulsemixer
 # calendar application
 set $calendar $term_float ikhal
+set $process_manager $term_float htop
 
 # get-volume commands
 set $sink_volume pactl get-sink-volume @DEFAULT_SINK@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
