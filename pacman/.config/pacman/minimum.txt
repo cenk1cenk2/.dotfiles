@@ -14,6 +14,7 @@ clipboard-sync
 cliphist
 dmenu
 downgrade
+wdisplays
 flashfocus
 foot
 genpass-git
