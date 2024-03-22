@@ -29,7 +29,7 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr
-ikhal
+khal
 imv
 input-remapper-beta-git
 kanshi
