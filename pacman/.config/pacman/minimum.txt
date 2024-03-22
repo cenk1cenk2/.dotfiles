@@ -16,6 +16,7 @@ dmenu
 downgrade
 flashfocus
 foot
+fprintd
 genpass-git
 git-lfs
 google-chrome
@@ -29,10 +30,10 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr
-khal
 imv
 input-remapper-beta-git
 kanshi
+khal
 kitty
 kvantum
 kvantum-theme-materia
