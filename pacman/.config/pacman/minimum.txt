@@ -14,7 +14,6 @@ clipboard-sync
 cliphist
 dmenu
 downgrade
-wdisplays
 flashfocus
 foot
 genpass-git
@@ -30,6 +29,7 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr
+ikhal
 imv
 input-remapper-beta-git
 kanshi
@@ -92,6 +92,7 @@ vdpauinfo
 vim
 virt-viewer
 waybar
+wdisplays
 wireplumber
 wl-clipboard
 wl-gammactl
