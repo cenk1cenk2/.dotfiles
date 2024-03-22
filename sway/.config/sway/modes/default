@@ -25,7 +25,7 @@ $bindsym $mod+p exec $clipboard
 floating_modifier $mod normal
 
 ## Action // Reload Sway Configuration ##
-$bindsym $mod+Shift+c reload
+$bindsym $mod+Shift+w reload
 
 ## Action // Toggle Waybar ##
 $bindsym $mod+Shift+b exec pkill -SIGUSR1 waybar
@@ -59,10 +59,10 @@ $bindsym XF86TouchpadToggle input type:touchpad events toggle enabled disabled
 #
 # Move your focus around
 ## Navigation // Move focus // $mod + ↑ ↓ ← → ##
-$bindsym $mod+$left focus left
-$bindsym $mod+$down focus down
-$bindsym $mod+$up focus up
-$bindsym $mod+$right focus right
+$bindsym $mod+$left focus output left
+$bindsym $mod+$down focus output down
+$bindsym $mod+$up focus output up
+$bindsym $mod+$right focus output right
 
 $bindsym $mod+$left_alt focus left
 $bindsym $mod+$down_alt focus down
@@ -70,15 +70,15 @@ $bindsym $mod+$up_alt focus up
 $bindsym $mod+$right_alt focus right
 
 ## Navigation // Move focused window // $mod + Shift + ↑ ↓ ← → ##
-$bindsym $mod+Shift+$left move left
-$bindsym $mod+Shift+$down move down
-$bindsym $mod+Shift+$up move up
-$bindsym $mod+Shift+$right move right
+$bindsym $mod+Shift+$left move output left, focus output left
+$bindsym $mod+Shift+$down move output down, focus output down
+$bindsym $mod+Shift+$up move output up, focus output up
+$bindsym $mod+Shift+$right move output right, focus output right
 
-$bindsym $mod+Shift+$left_alt move left
-$bindsym $mod+Shift+$down_alt move down
-$bindsym $mod+Shift+$up_alt move up
-$bindsym $mod+Shift+$right_alt move right
+$bindsym $mod+Shift+$left_alt move left, focus left
+$bindsym $mod+Shift+$down_alt move down, focus down
+$bindsym $mod+Shift+$up_alt move up, focus up
+$bindsym $mod+Shift+$right_alt move right, focus right
 
 ## Navigation // List all open windows in last-recently-used order ##
 $bindsym $mod+Tab exec env RUST_BACKTRACE=1 swayr switch-window &>> /tmp/swayr.log
@@ -117,24 +117,56 @@ $bindsym $mod+Shift+7 move container to workspace $ws7, exec $focus_ws $ws7
 $bindsym $mod+Shift+8 move container to workspace $ws8, exec $focus_ws $ws8
 $bindsym $mod+Shift+9 move container to workspace $ws9, exec $focus_ws $ws9
 $bindsym $mod+Shift+0 move container to workspace $ws10, exec $focus_ws $ws10
+$bindsym $mod+Alt+Right move to workspace next
+$bindsym $mod+Alt+Left move to workspace prev
+
+# swap workspaces
+
+$bindsym $mod+Control+Shift+1 exec $HOME/.config/sway/scripts/swap-workspace.py -t 1
+$bindsym $mod+Control+Shift+2 exec $HOME/.config/sway/scripts/swap-workspace.py -t 2
+$bindsym $mod+Control+Shift+3 exec $HOME/.config/sway/scripts/swap-workspace.py -t 3
+$bindsym $mod+Control+Shift+4 exec $HOME/.config/sway/scripts/swap-workspace.py -t 4
+$bindsym $mod+Control+Shift+5 exec $HOME/.config/sway/scripts/swap-workspace.py -t 5
+$bindsym $mod+Control+Shift+6 exec $HOME/.config/sway/scripts/swap-workspace.py -t 6
+$bindsym $mod+Control+Shift+7 exec $HOME/.config/sway/scripts/swap-workspace.py -t 7
+$bindsym $mod+Control+Shift+8 exec $HOME/.config/sway/scripts/swap-workspace.py -t 8
+$bindsym $mod+Control+Shift+9 exec $HOME/.config/sway/scripts/swap-workspace.py -t 9
+$bindsym $mod+Control+Shift+0 exec $HOME/.config/sway/scripts/swap-workspace.py -t 0
+$bindsym $mod+Control+Shift+h exec $HOME/.config/sway/scripts/swap-workspace.py -s left
+$bindsym $mod+Control+Shift+l exec $HOME/.config/sway/scripts/swap-workspace.py -s right
+
+# workspace navigation
+
+$bindsym $mod+Control+Right workspace next_on_output
+$bindsym $mod+Control+Left workspace prev_on_output
+
+# move workspaces
+
+$bindsym $mod+Control+Shift+Left move workspace to output left
+$bindsym $mod+Control+Shift+Right move workspace to output right
+$bindsym $mod+Control+Shift+Up move workspace to output up
+$bindsym $mod+Control+Shift+Down move workspace to output down
 
 ## Launch // Open launcher in a new workspace ##
 $bindsym $mod+Shift+d exec $HOME/.config/sway/scripts/new-workspace.py --switch, exec $menu
 
 ## Navigation // Switch to a new workspace ##
-$bindsym $mod+n exec $HOME/.config/sway/scripts/new-workspace.py --switch
+$bindsym $mod+c exec --no-startup-id $HOME/.config/sway/scripts/new-workspace.py --switch
 
 ## Action // Move focused window to a new workspace ##
-$bindsym $mod+Shift+n exec $HOME/.config/sway/scripts/new-workspace.py --move
+$bindsym $mod+Shift+c exec --no-startup-id $HOME/.config/sway/scripts/new-workspace.py --move --switch
 
-## Action // Move focused window to a new workspace and switch there ##
-$bindsym $mod+Shift+m exec $HOME/.config/sway/scripts/new-workspace.py --move --switch
+## ui elements quick access
+$bindsym $mod+n exec swaync-client -t
+$bindsym $mod+Shift+n exec $network_manager
+$bindsym $mod+m exec $pulseaudio
+$bindsym $mod+Shift+m exec $bluetooth
+$bindsym $mod+t exec $calendar
 
-#
 # Layout stuff:
 #
 ## Setting // Split windows horizontally ##
-$bindsym $mod+b splith
+$bindsym $mod+x splith
 ## Setting // Split windows vertically ##
 $bindsym $mod+v splitv
 

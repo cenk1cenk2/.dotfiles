@@ -8,10 +8,6 @@ color = light blue
 path = ~/.calendars/Personal/cln2sobledq74qb1dohmgrrcd5i62ua0ctp6utbg5pr2sor1dhimsp31e8n6errfctm6abj3dtmg@virtual
 color = light magenta
 
-[[diamir]]
-path = ~/.calendars/Diamir/cenk.kilic@diamir.io/
-color = light red
-
 [locale]
 timeformat = %H:%M
 dateformat = %Y-%m-%d

@@ -66,6 +66,7 @@ set $idle swayidle -w \
 set $waybar_position bottom
 
 # bluetooth command
+set $network_manager $term_float nmtui
 set $bluetooth $term_float bluetuith
 # pulseaudio command
 set $pulseaudio $term_float pulsemixer

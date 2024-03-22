@@ -82,7 +82,7 @@
     "format-ethernet": "󰈀",
     "format-disconnected": "󰌙",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "swaymsg exec \\$term_float nmtui"
+    "on-click": "swaymsg exec \\$network_manager"
   },
 
   "sway/mode": {
