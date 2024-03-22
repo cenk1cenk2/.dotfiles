@@ -50,15 +50,15 @@
       "warning": 30,
       "critical": 15
     },
-    "format-charging": " {capacity}%",
+    "format-charging": "󰁹 {capacity}%",
     "format": "{icon} {capacity}%",
-    "format-icons": ["", "", "", "", "", ""],
+    "format-icons": ["󰂃", "󰁺", "󰁻", "󰁾", "󰂀", "󰁹"],
     "tooltip": true
   },
 
   "cpu": {
     "interval": 5,
-    "format": "﬙ {usage}%",
+    "format": " {usage}%",
     "states": {
       "warning": 70,
       "critical": 90
@@ -68,7 +68,7 @@
 
   "memory": {
     "interval": 5,
-    "format": " {}%",
+    "format": "󰍛 {}%",
     "states": {
       "warning": 70,
       "critical": 90
@@ -79,8 +79,8 @@
   "network": {
     "interval": 5,
     "format-wifi": " ",
-    "format-ethernet": "",
-    "format-disconnected": "睊",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰌙",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
     "on-click": "swaymsg exec \\$term_float nmtui"
   },
@@ -93,8 +93,8 @@
   "idle_inhibitor": {
     "format": "{icon}",
     "format-icons": {
-      "activated": "零",
-      "deactivated": "鈴"
+      "activated": "󰒳",
+      "deactivated": "󰒲"
     },
     "tooltip": true,
     "tooltip-format-activated": "power-saving disabled",
@@ -103,7 +103,7 @@
 
   "backlight": {
     "format": "{icon} {percent}%",
-    "format-icons": ["", "", ""],
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
     "on-scroll-up": "swaymsg exec \\$brightness_up",
     "on-scroll-down": "swaymsg exec \\$brightness_down"
   },
@@ -111,13 +111,13 @@
   "pulseaudio": {
     "scroll-step": 5,
     "format": "{icon} {volume}%{format_source}",
-    "format-muted": "婢{format_source}",
+    "format-muted": "{format_source}",
     "format-source": "",
-    "format-source-muted": "",
+    "format-source-muted": "󰍭",
     "format-icons": {
-      "headphone": "",
-      "headset": "",
-      "default": ["奄", "奔", "墳"]
+      "headphone": "󰋋",
+      "headset": "󰋎",
+      "default": ["", "󰕾", ""]
     },
     "tooltip-format": "{icon} {volume}% {format_source}",
     "on-click": "swaymsg exec \\$pulseaudio",
@@ -132,7 +132,7 @@
   },
 
   "custom/pacman": {
-    "format": " {}",
+    "format": "󰏔 {}",
     "interval": 1800,
     "exec-if": "[ $(pamac checkupdates -q | wc -l) -gt 0 ]",
     "exec": "pamac checkupdates -q | wc -l",
@@ -151,8 +151,8 @@
     "return-type": "json",
     "format": "{icon}",
     "format-icons": {
-      "one": "类",
-      "many": "缾"
+      "one": "",
+      "many": ""
     },
     "exec": "~/.config/sway/scripts/scratchpad.sh",
     "on-click": "swaymsg 'scratchpad show'",
@@ -165,8 +165,8 @@
     "return-type": "json",
     "format": "{icon}",
     "format-icons": {
-      "on": "",
-      "off": ""
+      "on": "󰖔",
+      "off": ""
     },
     "exec": "fallback_latitude=50.1 fallback_longitude=8.7 latitude= longitude= ~/.config/sway/scripts/sunset.sh",
     "on-click": "~/.config/sway/scripts/sunset.sh toggle; pkill -RTMIN+6 waybar",
@@ -179,7 +179,7 @@
     "return-type": "json",
     "format": "{}",
     "tooltip-format": "{tooltip}",
-    "exec": "echo '{\"class\": \"recording\",\"text\":\"雷\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
+    "exec": "echo '{\"class\": \"recording\",\"text\":\"󰻂\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
     "exec-if": "pgrep wf-recorder",
     "on-click": "killall -s SIGINT wf-recorder",
     "signal": 8
@@ -197,7 +197,7 @@
   },
 
   "custom/clipboard": {
-    "format": "",
+    "format": "󰅍",
     "interval": "once",
     "return-type": "json",
     "on-click": "swaymsg -q exec '$clipboard'; pkill -RTMIN+9 waybar",
@@ -218,12 +218,12 @@
     "return-type": "json",
     "format-icons": {
       "Unknown": "",
-      "Cloudy": "摒",
+      "Cloudy": "",
       "Fog": "",
       "HeavyRain": "",
       "HeavyShowers": "",
       "HeavySnow": "",
-      "HeavySnowShowers": "ﰕ",
+      "HeavySnowShowers": "",
       "LightRain": "",
       "LightShowers": "",
       "LightSleet": "",
@@ -244,7 +244,7 @@
     "interval": "once",
     "format": "{icon}",
     "format-icons": {
-      "tracking": "華",
+      "tracking": "󱎫",
       "stopped": ""
     },
     "exec": "/bin/sh ~/.config/sway/scripts/zeit.sh status",
@@ -258,8 +258,8 @@
     "return-type": "json",
     "format": "{}{icon}",
     "format-icons": {
-      "default": "",
-      "dnd": "ﮡ"
+      "default": "󰚢",
+      "dnd": "󰚣"
     },
     "on-click": "makoctl mode | grep 'do-not-disturb' && makoctl mode -r do-not-disturb || makoctl mode -a do-not-disturb; pkill -RTMIN+11 waybar",
     "on-click-right": "makoctl restore",
@@ -273,8 +273,8 @@
     "return-type": "json",
     "format": "{icon}",
     "format-icons": {
-      "on": "",
-      "off": ""
+      "on": "󰃡",
+      "off": "󰳲"
     },
     "exec": "~/.config/sway/scripts/wluma.sh",
     "on-click": "~/.config/sway/scripts/wluma.sh toggle; pkill -RTMIN+12 waybar",
@@ -306,8 +306,8 @@
     "return-type": "json",
     "format": "{icon}",
     "format-icons": {
-      "Playing": "奈",
-      "Paused": ""
+      "Playing": "",
+      "Paused": ""
     },
     "exec": "playerctl --player=spotify metadata --format '{\"alt\": \"{{status}}\", \"tooltip\": \"{{playerName}}:  {{markup_escape(title)}} - {{markup_escape(artist)}}\" }'",
     "on-click": "playerctl play-pause; pkill -RTMIN+5 waybar",
@@ -341,8 +341,8 @@
   },
 
   "bluetooth": {
-    "format": "",
-    "format-disabled": "",
+    "format": "󰂯",
+    "format-disabled": "󰂲",
     "on-click": "swaymsg exec \\$bluetooth",
     "on-click-right": "rfkill toggle bluetooth",
     "tooltip-format": "{}"

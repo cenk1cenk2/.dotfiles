@@ -293,6 +293,7 @@ window#waybar .modules-right {
 #custom-playerctl {
   color: @bg_color_100;
   background-color: #98c379;
+  padding-right: 12px;
 }
 
 #custom-scratchpad {
