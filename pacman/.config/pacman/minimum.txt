@@ -11,6 +11,7 @@ bluez-utils
 brightnessctl
 clipboard
 clipboard-sync
+cliphist
 dmenu
 downgrade
 flashfocus
@@ -79,7 +80,6 @@ swaylock-effects-git
 swaync
 swayr
 sworkstyle
-tela-circle-icon-theme-dracula
 themechanger-git
 tlp
 tlpui
