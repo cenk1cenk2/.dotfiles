@@ -59,8 +59,7 @@ polkit
 polkit-gnome
 poweralertd
 pulsemixer
-python-aiohttp-oauth0lib
-qt5-wayland
+python-aiohttp-oauthlib
 qt5-wayland
 qt5ct
 rclone
