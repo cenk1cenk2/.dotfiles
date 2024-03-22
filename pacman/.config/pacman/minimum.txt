@@ -42,6 +42,7 @@ libva-utils
 libva-vdpau-driver
 lxappearance
 man-db
+net-tools
 networkmanager
 pacman
 pamac-aur
@@ -98,6 +99,7 @@ wl-clipboard
 wl-gammactl
 wl-mirror
 wlogout
+wol-systemd
 wpa_supplicant
 xclip-git
 xcursor-breeze
