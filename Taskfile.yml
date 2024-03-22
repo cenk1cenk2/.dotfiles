@@ -46,6 +46,7 @@ tasks:
           to: '/'
           CLI_ARGS: rootfs
           args: --adopt
+      # remove the undeployed guys after a while pls
       - task: undeploy
         vars:
           to: '~'
