@@ -13,6 +13,7 @@ clipboard
 clipboard-sync
 dmenu
 downgrade
+wdisplays
 flashfocus
 foot
 genpass-git
