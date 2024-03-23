@@ -73,8 +73,8 @@ spotify
 stow
 sudo
 swappy-git
-sway
 sway-audio-idle-inhibit-git
+sway-git
 swaybg
 swaycwd
 swayidle
@@ -99,6 +99,7 @@ wl-clipboard
 wl-gammactl
 wl-mirror
 wlogout
+wlroots-git
 wol-systemd
 wpa_supplicant
 xclip-git
