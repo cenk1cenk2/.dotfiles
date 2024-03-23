@@ -22,47 +22,47 @@ profile gpd_solo {
 }
 
 profile triple {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 transform 0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 transform normal
   output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,3040 transform 180
-  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 transform 0
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 transform normal
   output "LG Electronics LG TV 0x01010101" disable
   exec pkill wl-gammactl
 }
 
 profile double_top {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 transform 0
-  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 transform 0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 transform normal
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 transform normal
   output "LG Electronics LG TV 0x01010101" disable
   exec pkill wl-gammactl
 }
 
 profile double_bottom {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 transform 0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 transform normal
   output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,1600 transform 180
   output "LG Electronics LG TV 0x01010101" disable
   exec pkill wl-gammactl
 }
 
 profile solo {
-  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 transform 0
+  output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 transform normal
   output "LG Electronics LG TV 0x01010101" disable
   exec pkill wl-gammactl
 }
 
 profile top {
-  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 0,0 transform 0
+  output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 0,0 transform normal
   output "LG Electronics LG TV 0x01010101" disable
   exec pkill wl-gammactl
 }
 
 profile salon {
-  output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@143.995Hz position 0,0 transform 0
+  output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@143.995Hz position 0,0 transform normal
   output "LG Electronics LG TV 0x01010101" disable
   exec wl-gammactl -g 0.89
 }
 
 profile tv {
-  output "LG Electronics LG TV 0x01010101" enable mode 3840x2160@60.000Hz position 0,0 scale 2.0 transform 0
+  output "LG Electronics LG TV 0x01010101" enable mode 3840x2160@60.000Hz position 0,0 scale 2.0 transform normal
   exec pkill wl-gammactl
 }
 
