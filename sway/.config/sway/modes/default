@@ -1,5 +1,9 @@
 # vim:ft=swayconfig
 
+set $focus_output [ $focus_after_move == 'true' ] && swaymsg focus output
+set $focus_container [ $focus_after_move == 'true' ] && swaymsg focus
+set $focus_ws [ $focus_after_move == 'true' ] && swaymsg workspace
+
 ### Key bindings
 #
 # Basics:
@@ -70,15 +74,15 @@ $bindsym $mod+$up_alt focus up
 $bindsym $mod+$right_alt focus right
 
 ## Navigation // Move focused window // $mod + Shift + ↑ ↓ ← → ##
-$bindsym $mod+Shift+$left move output left, focus output left
-$bindsym $mod+Shift+$down move output down, focus output down
-$bindsym $mod+Shift+$up move output up, focus output up
-$bindsym $mod+Shift+$right move output right, focus output right
+$bindsym $mod+Shift+$left move output left, exec $focus_output left
+$bindsym $mod+Shift+$down move output down, exec $focus_output down
+$bindsym $mod+Shift+$up move output up, exec $focus_output up
+$bindsym $mod+Shift+$right move output right, exec $focus_output right
 
-$bindsym $mod+Shift+$left_alt move left, focus left
-$bindsym $mod+Shift+$down_alt move down, focus down
-$bindsym $mod+Shift+$up_alt move up, focus up
-$bindsym $mod+Shift+$right_alt move right, focus right
+$bindsym $mod+Shift+$left_alt move left
+$bindsym $mod+Shift+$down_alt move down
+$bindsym $mod+Shift+$up_alt move up
+$bindsym $mod+Shift+$right_alt move right
 
 ## Navigation // List all open windows in last-recently-used order ##
 $bindsym $mod+Tab exec env RUST_BACKTRACE=1 swayr switch-window &>> /tmp/swayr.log
@@ -103,8 +107,6 @@ $bindsym $mod+7 workspace $ws7
 $bindsym $mod+8 workspace $ws8
 $bindsym $mod+9 workspace $ws9
 $bindsym $mod+0 workspace $ws10
-
-set $focus_ws [ $focus_after_move == 'true' ] && swaymsg workspace
 
 ## Action // Move focused window to workspace // $mod + Shift + [number] ##
 $bindsym $mod+Shift+1 move container to workspace $ws1, exec $focus_ws $ws1
