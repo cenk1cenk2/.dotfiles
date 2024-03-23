@@ -5,7 +5,7 @@
 set $gtk-theme Graphite-yellow-Dark-compact
 set $icon-theme Tela-dracula-dark
 set $kvantum-theme Graphite-rimlessDark
-set $cursor-theme Breeze Light
+set $cursor-theme Breeze_Light
 set $term-font ConsolasLG Nerd Font 11
 
 set $gui-font Segoe UI 11
