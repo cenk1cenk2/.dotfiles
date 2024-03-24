@@ -150,13 +150,14 @@ $bindsym $mod+Control+Shift+Up move workspace to output up
 $bindsym $mod+Control+Shift+Down move workspace to output down
 
 ## Launch // Open launcher in a new workspace ##
-$bindsym $mod+d exec $HOME/.config/sway/scripts/new-workspace.py --switch, exec $menu
 
 ## Navigation // Switch to a new workspace ##
 $bindsym $mod+c exec --no-startup-id $HOME/.config/sway/scripts/new-workspace.py --switch
 
 ## Action // Move focused window to a new workspace ##
 $bindsym $mod+Shift+c exec --no-startup-id $HOME/.config/sway/scripts/new-workspace.py --move --switch
+
+$bindsym $mod+Control+Shift+c exec $HOME/.config/sway/scripts/new-workspace.py --switch, exec $menu
 
 ## ui elements quick access
 $bindsym $mod+n exec swaync-client -t
