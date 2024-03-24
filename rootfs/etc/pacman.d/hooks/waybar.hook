@@ -8,4 +8,4 @@ Target = *
 [Action]
 Description =
 When = PostTransaction
-Exec = /usr/bin/pkill -x -SIGRTMIN+14 waybar
+Exec = /usr/local/bin/waybar-signal.sh pacman

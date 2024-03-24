@@ -99,7 +99,8 @@
     },
     "tooltip": true,
     "tooltip-format-activated": "power-saving disabled",
-    "tooltip-format-deactivated": "power-saving enabled"
+    "tooltip-format-deactivated": "power-saving enabled",
+    "signal": 15
   },
 
   "backlight": {
@@ -138,7 +139,7 @@
     "exec-if": "[ $(pamac checkupdates -q | wc -l) -gt 0 ]",
     "exec": "pamac checkupdates -q | wc -l",
     "on-click": "pamac-manager --updates; pkill -RTMIN+4 waybar",
-    "signal": 4
+    "signal": 14
   },
 
   "custom/menu": {
