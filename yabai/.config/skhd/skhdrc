@@ -19,10 +19,10 @@ cmd + ctrl - h : yabai -m window --focus west;
 cmd + ctrl - l : yabai -m window --focus east;
 
 # swap windows
-shift + cmd - j : yabai -m window --swap south;
-shift + cmd - k : yabai -m window --swap north;
-shift + cmd - h : yabai -m window --swap west;
-shift + cmd - l : yabai -m window --swap east;
+shift + cmd + ctrl - j : yabai -m window --swap south;
+shift + cmd + ctrl - k : yabai -m window --swap north;
+shift + cmd + ctrl - h : yabai -m window --swap west;
+shift + cmd + ctrl - l : yabai -m window --swap east;
 
 # change focus between external displays
 cmd - up: yabai -m display --focus north;
