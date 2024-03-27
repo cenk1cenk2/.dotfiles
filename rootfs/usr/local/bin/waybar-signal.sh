@@ -23,6 +23,6 @@ if [ -z "$number" ]; then
 	exit 1
 fi
 
-echo "Sending signal: $number to $1"
+echo "Sending waybar signal: $number for $1"
 
 pkill -x -SIGRTMIN+${number} 'waybar'
