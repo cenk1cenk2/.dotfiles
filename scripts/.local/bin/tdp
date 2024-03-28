@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+# vim: ft=bash
+
+case "$1" in
+gfx)
+	sudo ryzenadj --gfx-clk $2
+	;;
+30)
+	sudo ryzenadj --stapm-limit=28000 --fast-limit=35000 --slow-limit=32000 --max-performance
+	;;
+28)
+	sudo ryzenadj --stapm-limit=28000 --fast-limit=30000 --slow-limit=30000 --max-performance
+	;;
+25)
+	sudo ryzenadj --stapm-limit=25000 --fast-limit=28000 --slow-limit=28000 --max-performance
+	;;
+20)
+	sudo ryzenadj --stapm-limit=20000 --fast-limit=20000 --slow-limit=20000 --max-performance
+	;;
+18)
+	sudo ryzenadj --stapm-limit=18000 --fast-limit=18000 --slow-limit=18000 --max-performance
+	;;
+15)
+	sudo ryzenadj --stapm-limit=15000 --fast-limit=15000 --slow-limit=15000 --max-performance
+	;;
+12)
+	sudo ryzenadj --stapm-limit=12000 --fast-limit=15000 --slow-limit=15000 --power-saving
+	;;
+9)
+	sudo ryzenadj --stapm-limit=6000 --fast-limit=12000 --slow-limit=12000 --power-saving
+	;;
+5)
+	sudo ryzenadj --stapm-limit=5000 --fast-limit=9000 --slow-limit=9000 --power-saving
+	;;
+show) ;;
+*)
+	echo "Power limit unknown."
+	exit 127
+	;;
+
+esac
+
+sudo ryzenadj -i
+
+echo "Applied: $1"
