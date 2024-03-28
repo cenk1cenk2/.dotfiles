@@ -56,11 +56,11 @@ shift + ctrl + cmd - space : yabai -m window --toggle sticky --grid 4:4:1:1:2:2;
 # -- Modifying Window Size --
 
 # maximize a window
-shift + cmd - f : yabai -m window --toggle zoom-fullscreen;
+ctrl + cmd - f : yabai -m window --toggle zoom-fullscreen;
 shift + ctrl + cmd - f :  yabai -m window --toggle native-fullscreen
 
 # balance out tree of windows (resize to occupy same area)
-shift + cmd - e : yabai -m space --balance;
+shift + ctrl + cmd - e : yabai -m space --balance;
 
 # move window and split
 # ctrl + alt - j : yabai -m window --warp south
