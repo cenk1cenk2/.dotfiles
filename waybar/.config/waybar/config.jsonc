@@ -37,6 +37,7 @@
 
     "battery",
     "backlight",
+    "idle_inhibitor",
     "custom/notification",
     "clock"
   ],
@@ -294,6 +295,7 @@
 
   "temperature#gpd-cpu": {
     "critical-threshold": 72,
+    "exec-if": "[ \"$HOST\" = \"emanet\" ]",
     "hwmon-path": "/sys/class/hwmon/hwmon4/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",
@@ -304,6 +306,7 @@
 
   "temperature#mau5-cpu": {
     "critical-threshold": 72,
+    "exec-if": "[ \"$HOST\" = \"mau5\" ]",
     "hwmon-path": "/sys/class/hwmon/hwmon3/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",
