@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -xu
+set -x
 
 THEME=$1
 
