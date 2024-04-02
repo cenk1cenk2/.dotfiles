@@ -305,7 +305,7 @@
     "hwmon-path": "/sys/class/hwmon/hwmon4/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",
-    "format-icons": ["", "", "", "", ""],
+    "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
     "on-click": "swaymsg exec \"\\$term_float watch sensors\""
   },
@@ -316,7 +316,7 @@
     "hwmon-path": "/sys/class/hwmon/hwmon3/temp1_input",
     "interval": 5,
     "format": "{icon} {temperatureC}°C",
-    "format-icons": ["", "", "", "", ""],
+    "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
     "on-click": "swaymsg exec \"\\$term_float watch sensors\""
   },
