@@ -73,6 +73,5 @@ yabai -m signal --add event=space_changed action="~/.config/yabai/scripts/auto-d
 
 yabai -m signal --add event=window_destroyed action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_minimized action="~/.config/yabai/scripts/focus-under-cursor.sh"
-yabai -m signal --add event=application_hidden action="~/.config/yabai/scripts/focus-under-cursor.sh"
 
 echo "yabai configuration loaded..."
