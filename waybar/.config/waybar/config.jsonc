@@ -50,7 +50,7 @@
     },
     "format-charging": "󰁹 {capacity}%",
     "format": "{icon} {capacity}%",
-    "format-icons": ["󰂃", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
+    "format-icons": ["󰂃", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹", "󰂄"],
     "tooltip": true
   },
 
