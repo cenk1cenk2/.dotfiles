@@ -19,15 +19,12 @@ QT_STYLE_OVERRIDE=kvantum
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GTK_USE_PORTAL=1
 GDK_DEBUG=portals
+DXVK_ASYNC=1
+MANGOHUD=1
 
 DOCKER_BUILDKIT=1
-DXVK_ASYNC=1
-
-LIBVA_DRIVER_NAME=v4l2_request
-LIBVA_V4L2_REQUEST_VIDEO_PATH=/dev/video1
 
 # Most pure GTK3 apps use wayland by default, but some,
 # like Firefox, need the backend to be explicitely selected.
 MOZ_ENABLE_WAYLAND=1
 MOZ_DBUS_REMOTE=1
-MANGOHUD=1
