@@ -61,6 +61,11 @@ profile salon {
   exec wl-gammactl -g 0.89
 }
 
+profile salon_solo {
+  output "ASUSTek COMPUTER INC VG27WQ L4LMDW007740" enable mode 2560x1440@143.995Hz position 0,0 transform normal
+  exec wl-gammactl -g 0.89
+}
+
 profile tv {
   output "LG Electronics LG TV 0x01010101" enable mode 3840x2160@60.000Hz position 0,0 scale 2.0 transform normal
   exec wl-gammactl 1 && pkill wl-gammactl
