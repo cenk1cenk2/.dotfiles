@@ -95,6 +95,7 @@ vim
 virt-viewer
 waybar
 wdisplays
+wget
 wireplumber
 wl-clipboard
 wl-gammactl
