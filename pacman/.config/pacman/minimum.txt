@@ -75,7 +75,7 @@ stow
 sudo
 swappy-git
 sway-audio-idle-inhibit-git
-sway-git
+sway
 swaybg
 swaycwd
 swayidle
@@ -101,7 +101,7 @@ wl-clipboard
 wl-gammactl
 wl-mirror
 wlogout
-wlroots-git
+wlroots
 wol-systemd
 wpa_supplicant
 xclip-git
