@@ -135,7 +135,7 @@
     "interval": 1800,
     "exec-if": "[ $(pamac checkupdates -q | wc -l) -gt 0 ]",
     "exec": "pamac checkupdates -q | wc -l",
-    "on-click": "pamac-manager --updates; pkill -RTMIN+4 waybar",
+    "on-click": "pamac-manager --updates; waybar-signal.sh pacman",
     "signal": 14
   },
 
@@ -168,7 +168,7 @@
       "off": ""
     },
     "exec": "fallback_latitude=50.1 fallback_longitude=8.7 latitude= longitude= ~/.config/sway/scripts/sunset.sh",
-    "on-click": "~/.config/sway/scripts/sunset.sh toggle; pkill -RTMIN+6 waybar",
+    "on-click": "~/.config/sway/scripts/sunset.sh toggle; waybar-signal.sh sunset",
     "exec-if": "~/.config/sway/scripts/sunset.sh check",
     "signal": 6
   },
@@ -191,7 +191,7 @@
     "format": " {}",
     "exec": "gh api '/notifications' -q '{ text: length }' | cat -",
     "exec-if": "[ -x \"$(command -v gh)\" ] && gh auth status 2>&1 | grep -q -m 1 'Logged in' && gh api '/notifications' -q 'length' | grep -q -m 1 '0' ; test $? -eq 1",
-    "on-click": "xdg-open https://github.com/notifications && sleep 30 && pkill -RTMIN+4 waybar",
+    "on-click": "xdg-open https://github.com/notifications && sleep 30 && waybar-signal.sh github",
     "signal": 4
   },
 
@@ -199,9 +199,9 @@
     "format": "󰅍",
     "interval": "once",
     "return-type": "json",
-    "on-click": "swaymsg -q exec '$clipboard'; pkill -RTMIN+9 waybar",
-    "on-click-right": "swaymsg -q exec '$clipboard-del'; pkill -RTMIN+9 waybar",
-    "on-click-middle": "rm -f ~/.cache/cliphist/db; pkill -RTMIN+9 waybar",
+    "on-click": "swaymsg -q exec '$clipboard'; waybar-signal.sh clipboard",
+    "on-click-right": "swaymsg -q exec '$clipboard-del'; waybar-signal.sh clipboard",
+    "on-click-middle": "rm -f ~/.cache/cliphist/db; waybar-signal.sh clipboard",
     "exec": "printf '{\"tooltip\":\"%s\"}' $(cliphist list | wc -l)' item(s) in the clipboard\r(Mid click to clear)'",
     "exec-if": "[ -x \"$(command -v cliphist)\" ] && [ $(cliphist list | wc -l) -gt 0 ]",
     "signal": 9
@@ -247,7 +247,7 @@
       "stopped": ""
     },
     "exec": "/bin/sh ~/.config/sway/scripts/zeit.sh status",
-    "on-click": "/bin/sh ~/.config/sway/scripts/zeit.sh click; pkill -RTMIN+10 waybar",
+    "on-click": "/bin/sh ~/.config/sway/scripts/zeit.sh click; waybar-signal.sh zeit",
     "exec-if": "[ -x \"$(command -v zeit)\" ]",
     "signal": 10
   },
@@ -260,7 +260,7 @@
       "default": "󰚢",
       "dnd": "󰚣"
     },
-    "on-click": "makoctl mode | grep 'do-not-disturb' && makoctl mode -r do-not-disturb || makoctl mode -a do-not-disturb; pkill -RTMIN+11 waybar",
+    "on-click": "makoctl mode | grep 'do-not-disturb' && makoctl mode -r do-not-disturb || makoctl mode -a do-not-disturb; waybar-signal.sh dnd",
     "on-click-right": "makoctl restore",
     "exec": "printf '{\"alt\":\"%s\",\"tooltip\":\"mode: %s\"}' $(makoctl mode | grep -q 'do-not-disturb' && echo dnd || echo default) $(makoctl mode | tail -1)",
     "signal": 11
@@ -276,7 +276,7 @@
       "off": "󰳲"
     },
     "exec": "~/.config/sway/scripts/wluma.sh",
-    "on-click": "~/.config/sway/scripts/wluma.sh toggle; pkill -RTMIN+12 waybar",
+    "on-click": "~/.config/sway/scripts/wluma.sh toggle; waybar-signal.sh adaptive_brightness",
     "exec-if": "~/.config/sway/scripts/wluma.sh check",
     "signal": 12
   },
@@ -331,9 +331,9 @@
       "Paused": ""
     },
     "exec": "playerctl --player=spotify metadata --format '{\"alt\": \"{{status}}\", \"tooltip\": \"{{playerName}}:  {{markup_escape(title)}} - {{markup_escape(artist)}}\" }'",
-    "on-click": "playerctl play-pause; pkill -RTMIN+5 waybar",
-    "on-scroll-up": "playerctl next; pkill -RTMIN+5 waybar",
-    "on-scroll-down": "playerctl previous; pkill -RTMIN+5 waybar",
+    "on-click": "playerctl play-pause; waybar-signal.sh playerctl",
+    "on-scroll-up": "playerctl next; waybar-signal.sh playerctl",
+    "on-scroll-down": "playerctl previous; waybar-signal.sh playerctl",
     "signal": 5
   },
 
