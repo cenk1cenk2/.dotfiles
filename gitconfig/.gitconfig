@@ -35,7 +35,15 @@
 [safe]
   directory = /home/cenk/.config/nvim
 
+[core]
+  pager = delta
+
+[interactive]
+  diffFilter = delta --color-only --features=interactive
+
 [delta]
+  dark = true
+  features = decorations
   navigate = true
   line-numbers = true
   zero-style = dim syntax
@@ -43,12 +51,32 @@
   side-by-side = true
   diff-so-fancy = true
   true-color = always
+  tabs = 2
+  # delta --diff-so-fancy --show-config
+  file-added-label = ""
+  file-modified-label = ""
+  file-removed-label = ""
+  file-renamed-label = ""
+  right-arrow = " "
+  minus-style = syntax auto
+  plus-style = syntax auto
+  minus-empty-line-marker-style = syntax "#3f0001"
+  plus-empty-line-marker-style = syntax "#002800"
+  minus-emph-style = syntax auto
+  plus-emph-style = syntax auto
+  grep-file-style = blue
+  line-numbers-left-style = dim
+  line-numbers-right-style = dim
+  line-numbers-minus-style = red bold
+  line-numbers-plus-style = green bold
+  line-numbers-zero-style = dim
 
 [difftool]
   prompt = false
 
 [diff]
   tool = nvim
+  context = 5
 
 [difftool "nvim"]
   cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
