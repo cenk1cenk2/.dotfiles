@@ -35,6 +35,11 @@
 [safe]
   directory = /home/cenk/.config/nvim
 
+[delta]
+  line-numbers = true
+  zero-style = dim syntax
+  diff-highlight = true
+
 [difftool]
   prompt = false
 
@@ -43,6 +48,12 @@
 
 [difftool "nvim"]
   cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
+
+[difftool "batdiff"]
+  cmd = "batdiff --paging=never \"$LOCAL\" \"$REMOTE\""
+
+[difftool "delta"]
+  cmd = "delta --paging=never \"$LOCAL\" \"$REMOTE\""
 
 [merge]
   tool = nvim
