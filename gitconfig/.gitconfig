@@ -38,7 +38,7 @@
 [delta]
   line-numbers = true
   zero-style = dim syntax
-  diff-highlight = true
+  diff-highlight = false
 
 [difftool]
   prompt = false
