@@ -36,9 +36,13 @@
   directory = /home/cenk/.config/nvim
 
 [delta]
+  navigate = true
   line-numbers = true
   zero-style = dim syntax
   diff-highlight = false
+  side-by-side = true
+  diff-so-fancy = true
+  true-color = always
 
 [difftool]
   prompt = false
