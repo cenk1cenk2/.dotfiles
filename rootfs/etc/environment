@@ -11,7 +11,7 @@ LIBSEAT_BACKEND=logind
 # allow software renderers in sway
 WLR_RENDERER_ALLOW_SOFTWARE=1
 # for nouveau compatibility
-WLR_DRM_NO_MODIFIERS=1
+#WLR_DRM_NO_MODIFIERS=1
 WLR_XWAYLAND=/usr/local/bin/Xwayland
 QT_QPA_PLATFORM=wayland;xcb
 QT_QPA_PLATFORMTHEME=qt5ct
