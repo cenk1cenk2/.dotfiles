@@ -41,10 +41,10 @@ if __name__ == "__main__":
                 assert reply.success
 
     # Get the minor empty workspace's number (or set it as the current workspace's number if all are busy)
-    if not arguments.move and len(current_workspace.nodes) == 0:
+    target = min(set(range(1, max(workspace_numbers) + 2)) - set(workspace_numbers))
+
+    if arguments.switch and len(current_workspace.nodes) == 0 and target > current_workspace.num:
         target = current_workspace.num
-    else:
-        target = min(set(range(1, max(workspace_numbers) + 2)) - set(workspace_numbers))
 
     # Use the value of first_empty_workspace_number to make the requested actions
     if arguments.move and arguments.switch:
