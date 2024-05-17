@@ -74,8 +74,8 @@ spotify
 stow
 sudo
 swappy-git
-sway-audio-idle-inhibit-git
 sway
+sway-audio-idle-inhibit-git
 swaybg
 swaycwd
 swayidle
@@ -93,6 +93,7 @@ vdirsyncer
 vdpauinfo
 vim
 virt-viewer
+vlc
 waybar
 wdisplays
 wget

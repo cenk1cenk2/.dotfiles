@@ -1,8 +1,17 @@
-mangohud
-fingerprint-gui
-goverlay
-moonlight-qt
-steam
-lutris
-wine-staging
 chiaki
+goverlay
+libretro-core-info
+libretro-mame
+libretro-mame2010-git
+libretro-mame2016
+libretro-mesen
+libretro-snes9x
+lutris
+mangohud
+moonlight-qt
+retroarch 1.18.0-2
+retroarch-assets-glui 1:495-1
+retroarch-assets-ozone 1:495-1
+retroarch-assets-xmb 1:495-1
+steam
+wine-staging

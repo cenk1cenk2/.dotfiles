@@ -1,1 +1,17 @@
 ryzenadj-git
+amd-ucode
+amdgpu_top
+amdonly-gaming-libva-mesa-driver-git
+amdonly-gaming-mesa-git
+amdonly-gaming-mesa-vdpau-git
+amdonly-gaming-opencl-rusticl-mesa-git
+amdonly-gaming-vulkan-mesa-layers-git
+amdonly-gaming-vulkan-radeon-git
+amdonly-gaming-vulkan-swrast-git
+directx-headers-git
+lib32-amdonly-gaming-libva-mesa-driver-git
+lib32-amdonly-gaming-mesa-git
+lib32-amdonly-gaming-mesa-vdpau-git
+lib32-amdonly-gaming-vulkan-mesa-layers-git
+lib32-amdonly-gaming-vulkan-radeon-git
+lib32-amdonly-gaming-vulkan-swrast-git
