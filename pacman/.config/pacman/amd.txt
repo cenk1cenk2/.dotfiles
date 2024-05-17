@@ -1,4 +1,3 @@
-ryzenadj-git
 amd-ucode
 amdgpu_top
 amdonly-gaming-libva-mesa-driver-git
@@ -15,3 +14,4 @@ lib32-amdonly-gaming-mesa-vdpau-git
 lib32-amdonly-gaming-vulkan-mesa-layers-git
 lib32-amdonly-gaming-vulkan-radeon-git
 lib32-amdonly-gaming-vulkan-swrast-git
+ryzenadj-git
