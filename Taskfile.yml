@@ -26,12 +26,16 @@ tasks:
       #     CLI_ARGS: '{{ .CLI_ARGS }}'
       #     to: '{{ .to }}'
       - '{{ if eq .sudo "true" }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}'
+    status:
+      - '{{ .status | default "false" }}'
 
   undeploy:
     label: 'undeploy: {{ .to }} -> {{ .CLI_ARGS }}'
     desc: Remove a stowed target.
     cmds:
       - stow {{ .args }} -{{ .verbosity }}t {{ .to }} -D {{ .CLI_ARGS }}
+    status:
+      - '{{ .status | default "false" }}'
 
   deploy:linux:
     desc: Deploy to target.
@@ -39,7 +43,19 @@ tasks:
       - task: deploy
         vars:
           to: '~'
-          CLI_ARGS: avizo chrome commitizen electron file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi scripts sway swaync swayr sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
+          CLI_ARGS: avizo commitizen file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi scripts sway swaync swayr sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal-termfilechooser
+      # HACK: little trick to change the configuration for nvidia
+      - task: deploy
+        vars:
+          to: '~'
+          CLI_ARGS: chrome electron
+          status: '[[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
+      - task: deploy
+        vars:
+          to: '~'
+          CLI_ARGS: chrome-nvidia electron-nvidia
+          status: '[[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
+      # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
           sudo: true
