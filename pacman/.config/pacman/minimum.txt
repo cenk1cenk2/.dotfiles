@@ -96,6 +96,7 @@ virt-viewer
 vlc
 waybar
 wdisplays
+wf-recorder
 wget
 wireplumber
 wl-clipboard
