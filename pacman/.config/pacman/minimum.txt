@@ -94,6 +94,7 @@ vdpauinfo
 vim
 virt-viewer
 vlc
+vlc
 waybar
 wdisplays
 wf-recorder
