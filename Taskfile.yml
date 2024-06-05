@@ -25,7 +25,7 @@ tasks:
       #   vars:
       #     CLI_ARGS: '{{ .CLI_ARGS }}'
       #     to: '{{ .to }}'
-      - '{{ if eq .sudo "true" }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}'
+      - '{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}'
     status:
       - '{{ .status | default "false" }}'
 
