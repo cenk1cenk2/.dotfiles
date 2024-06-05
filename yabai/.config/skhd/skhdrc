@@ -108,4 +108,4 @@ shift + ctrl + cmd - c : yabai -m space --create && \
 
 ## shortcuts
 
-ctrl + cmd - return : /Applications/kitty.app/Contents/MacOS/kitty --single-instance -d ~ &> /dev/null
+cmd - return : /Applications/kitty.app/Contents/MacOS/kitty --single-instance -d ~ &> /dev/null

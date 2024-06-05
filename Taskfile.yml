@@ -62,11 +62,6 @@ tasks:
           to: '/'
           CLI_ARGS: rootfs
           args: --adopt
-      # remove the undeployed guys after a while pls
-      - task: undeploy
-        vars:
-          to: '~'
-          CLI_ARGS: vpn
 
   deploy:macos:
     desc: Deploy to target.

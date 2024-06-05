@@ -31,8 +31,6 @@ tap "FelixKratz/formulae"
 brew "sketchybar"
 cask "sf-symbols"
 brew "borders"
-# cask "nikitabobko/tap/aerospace"
-# brew "switchaudio-osx"
 
 # cli
 brew "clipboard"
