@@ -17,8 +17,9 @@ input type:pointer {
 }
 
 input type:touchpad {
-  dwt false
+  dwt disabled
   tap enabled
+  drag enabled
 }
 
 input "12068:309:Mouse_for_Windows" {
