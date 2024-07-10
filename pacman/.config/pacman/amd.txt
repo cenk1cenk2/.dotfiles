@@ -1,5 +1,5 @@
 amd-ucode
-amdgpu_top
+rocm-smi-lib
 amdonly-gaming-libva-mesa-driver-git
 amdonly-gaming-mesa-git
 amdonly-gaming-mesa-vdpau-git
