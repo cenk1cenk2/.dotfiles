@@ -1,5 +1,4 @@
 amd-ucode
-rocm-smi-lib
 amdonly-gaming-libva-mesa-driver-git
 amdonly-gaming-mesa-git
 amdonly-gaming-mesa-vdpau-git
@@ -14,4 +13,5 @@ lib32-amdonly-gaming-mesa-vdpau-git
 lib32-amdonly-gaming-vulkan-mesa-layers-git
 lib32-amdonly-gaming-vulkan-radeon-git
 lib32-amdonly-gaming-vulkan-swrast-git
+rocm-smi-lib
 ryzenadj-git
