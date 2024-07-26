@@ -87,7 +87,7 @@ themechanger-git
 tlp
 tlpui
 tmux
-ttf-ms-win10-auto
+ttf-ms-win11-auto
 ttf-roboto-mono-nerd
 vdirsyncer
 vdpauinfo
