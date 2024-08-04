@@ -37,8 +37,16 @@ tasks:
     status:
       - '{{ .status | default "false" }}'
 
+  deploy:run:
+    desc: Deploys to all targets
+    deps:
+      - task: deploy:linux
+      - task: deploy:macos
+
   deploy:linux:
     desc: Deploy to target.
+    platforms:
+      - linux
     cmds:
       - task: deploy
         vars:
@@ -65,5 +73,7 @@ tasks:
 
   deploy:macos:
     desc: Deploy to target.
+    platforms:
+      - darwin
     cmds:
       - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders
