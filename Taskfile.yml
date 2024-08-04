@@ -76,4 +76,4 @@ tasks:
     platforms:
       - darwin
     cmds:
-      - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders
+      - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders kitty
