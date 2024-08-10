@@ -55,7 +55,7 @@ $bindsym XF86AudioPrev exec playerctl previous
 
 $bindsym XF86Search exec $menu
 
-$bindsym XF86PowerOff exec $shutdown
+# $bindsym XF86PowerOff exec $shutdown
 
 $bindsym XF86TouchpadToggle input type:touchpad events toggle enabled disabled
 
