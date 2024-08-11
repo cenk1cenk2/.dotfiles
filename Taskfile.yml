@@ -19,6 +19,7 @@ tasks:
       - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}
 
   deploy:
+    desc: Deploy to a target.
     label: 'deploy: {{ .to }} -> {{ .CLI_ARGS }}'
     cmds:
       # - task: plan
