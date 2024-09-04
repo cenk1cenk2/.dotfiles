@@ -58,12 +58,14 @@ tasks:
         vars:
           to: '~'
           CLI_ARGS: chrome electron
-          status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
+          # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
+          status: test -d /usr/lib/nvidia
       - task: deploy
         vars:
           to: '~'
           CLI_ARGS: chrome-nvidia electron-nvidia
-          status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
+          # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
+          status: test ! -d /usr/lib/nvidia
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
