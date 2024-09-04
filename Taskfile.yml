@@ -3,11 +3,8 @@
 
 version: '3'
 
-env:
-  LIBVA_DRIVER_NAME: |-
-    {{- if eq .HOST "mau5" }}
-    nvidia
-    {{- end }}
+env: {}
+
 vars:
   to: '~'
   args: ''
