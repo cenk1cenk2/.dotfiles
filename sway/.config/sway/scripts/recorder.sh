@@ -3,7 +3,7 @@
 notify() {
   line=$1
   shift
-  notify "Recording..." "${line}" -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg "$@"
+  notify-send "Recording..." "${line}" -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg "$@"
 }
 
 countdown() {
@@ -16,9 +16,10 @@ countdown() {
 pgrep wl-screenrec
 status=$?
 
-if [ "$1" == "kill" ] && [ $status == 0 ]; then
+if [ "$1" == "kill" ]; then
   killall -s SIGINT wl-screenrec
   waybar-signal.sh recorder
+  notify "Recording stopped."
   exit 0
 elif [ $status == 0 ]; then
   notify "Recording already in progress." -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg
@@ -45,4 +46,4 @@ countdown
 
 eval "$command"
 
-notify-send "Finished recording: ${file}"
+notify "Finished recording: ${file}"
