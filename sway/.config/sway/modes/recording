@@ -20,4 +20,3 @@ mode --pango_markup $mode_recording {
 
 ## Launch // Recording Mode ##
 $bindsym $mod+Shift+r mode $mode_recording
-
