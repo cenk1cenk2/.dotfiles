@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 
+notify() {
+  line=$1
+  shift
+  notify "Recording..." "${line}" -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg "$@"
+}
+
+countdown() {
+  for i in $(seq 3); do
+    notify "Recording in $((3 + 1 - i)) seconds." -t 1000
+    sleep 1
+  done
+}
+
 pgrep wl-screenrec
 status=$?
 
@@ -8,22 +21,9 @@ if [ "$1" == "kill" ] && [ $status == 0 ]; then
   waybar-signal.sh recorder
   exit 0
 elif [ $status == 0 ]; then
-  notify-send "Recording already in progress." -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg
+  notify "Recording already in progress." -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg
   exit 1
 fi
-
-countdown() {
-  for i in $(seq 3); do
-    notify-send "Recording in $((3 + 1 - i)) seconds." -t 1000
-    sleep 1
-  done
-}
-
-notify() {
-  line=$1
-  shift
-  notify-send "Recording..." "${line}" -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg "$@"
-}
 
 target_path=$(xdg-user-dir VIDEOS)
 timestamp=$(date +'recording_%Y%m%d-%H%M%S')
