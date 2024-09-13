@@ -191,7 +191,7 @@ window.eDP-1 * {
   color: @warning_color;
 }
 
-#custom-wf-recorder {
+#custom-recorder {
   color: @error_color;
   padding-right: 8px;
 }

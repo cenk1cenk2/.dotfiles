@@ -11,7 +11,7 @@
   "spacing": 0,
 
   "modules-left": ["sway/workspaces", "custom/scratchpad"],
-  "modules-center": ["custom/wf-recorder", "sway/mode", "sway/window"],
+  "modules-center": ["custom/recorder", "sway/mode", "sway/window"],
   "modules-right": [
     "custom/playerctl",
     // system
@@ -173,14 +173,14 @@
     "signal": 6
   },
 
-  "custom/wf-recorder": {
+  "custom/recorder": {
     "interval": "once",
     "return-type": "json",
     "format": "{}",
     "tooltip-format": "{tooltip}",
     "exec": "echo '{\"class\": \"recording\",\"text\":\"󰻂\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
-    "exec-if": "pgrep wf-recorder",
-    "on-click": "killall -s SIGINT wf-recorder",
+    "exec-if": "pgrep wl-screenrec",
+    "on-click": "killall -s SIGINT wl-screenrec",
     "signal": 8
   },
 

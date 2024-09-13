@@ -97,7 +97,7 @@ vlc
 vlc
 waybar
 wdisplays
-wf-recorder
+wl-screenrec
 wget
 wireplumber
 wl-clipboard
