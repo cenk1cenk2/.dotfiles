@@ -13,7 +13,7 @@ mode --pango_markup $mode_recording {
         $bindsym s exec $recorder mp4 region, mode "default"
         $bindsym Shift+s exec $recorder mp4 region audio, mode "default"
 
-        $bindsym Q exec $recorder kill
+        $bindsym q exec $recorder kill
 
         $bindsym Escape mode "default"
 }
