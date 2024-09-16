@@ -1,4 +1,4 @@
-!#/usr/bin/env bash
+#!/usr/bin/env bash
 
 set -x
 
@@ -28,7 +28,7 @@ save="$3"
 path="$4"
 out="$5"
 cmd="yazi"
-termcmd="${TERMCMD:-/usr/bin/kitty}"
+termcmd="${TERMCMD:-kitty}"
 
 if [ "$save" = "1" ]; then
   ARGS=--chooser-file="$out"
@@ -43,5 +43,5 @@ fi
 $termcmd $cmd $ARGS
 
 if [ "$save" = "1" ] && [ ! -s "$out" ]; then
-  /usr/bin/rm "$path"
+  rm "$path"
 fi
