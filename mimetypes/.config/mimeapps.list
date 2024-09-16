@@ -1,7 +1,7 @@
 [Added Associations]
 
 [Default Applications]
-application/*zip=ranger.desktop;
+application/*zip=yazi.desktop;
 application/json=nvim.desktop;
 application/octet-stream=nvim.desktop;
 application/pdf=org.pwmt.zathura.desktop;
@@ -12,12 +12,12 @@ application/x-virt-viewer=remote-viewer.desktop;
 application/x-yaml=nvim.desktop;
 application/x-zerosize=nvim.desktop;
 application/yaml=nvim.desktop;
-application/zip=ranger.desktop;
+application/zip=yazi.desktop;
 image/jpeg=imv-dir.desktop;
 image/png=imv-dir.desktop;
 image/svg+xml=imv.desktop;
-inode/directory=ranger.desktop;
-inode/x-shortcut=ranger.desktop;
+inode/directory=yazi.desktop;
+inode/x-shortcut=yazi.desktop;
 text/*=nvim.desktop;
 text/calendar=google-chrome.desktop;
 text/html=google-chrome.desktop;
