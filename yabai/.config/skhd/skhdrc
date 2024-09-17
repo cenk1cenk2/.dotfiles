@@ -1,28 +1,28 @@
 # -- Starting/Stopping/Restarting Yabai --
 
 # stop/start/restart yabai
-alt + cmd - w : yabai --restart-service;
-shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
+cmd + alt - w : yabai --restart-service;
+# shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
 
 # -- Changing Window Focus --
 
 # destroy desktop
-shift + cmd - q : yabai -m space --destroy;
+shift + cmd + alt - q : yabai -m space --destroy;
 
 cmd + ctrl - left : ~/.config/yabai/scripts/space-cycle.sh prev;
 cmd + ctrl - right : ~/.config/yabai/scripts/space-cycle.sh next;
 
 # change window focus within space
-cmd + ctrl - k : yabai -m window --focus north;
-cmd + ctrl - j : yabai -m window --focus south;
-cmd + ctrl - h : yabai -m window --focus west;
-cmd + ctrl - l : yabai -m window --focus east;
+cmd + alt - k : yabai -m window --focus north;
+cmd + alt - j : yabai -m window --focus south;
+cmd + alt - h : yabai -m window --focus west;
+cmd + alt - l : yabai -m window --focus east;
 
 # swap windows
-shift + cmd + ctrl - j : yabai -m window --swap south;
-shift + cmd + ctrl - k : yabai -m window --swap north;
-shift + cmd + ctrl - h : yabai -m window --swap west;
-shift + cmd + ctrl - l : yabai -m window --swap east;
+shift + cmd + alt - j : yabai -m window --swap south;
+shift + cmd + alt - k : yabai -m window --swap north;
+shift + cmd + alt - h : yabai -m window --swap west;
+shift + cmd + alt - l : yabai -m window --swap east;
 
 # change focus between external displays
 cmd - up: yabai -m display --focus north;
@@ -38,14 +38,17 @@ shift + cmd - right : ~/.config/yabai/scripts/space-to-display.sh east;
 
 # -- Modifying the Layout --
 
+# balance out tree of windows (resize to occupy same area)
+shift + cmd + alt - e: yabai -m space --balance;
+
 # rotate layout clockwise
-shift + alt - r : yabai -m space --rotate 270;
+shift + cmd + alt - r : yabai -m space --rotate 270;
 
 # flip along y-axis
-shift + alt - y : yabai -m space --mirror y-axis;
+cmd + alt - x : yabai -m space --mirror y-axis;
 
 # flip along x-axis
-shift + alt - x : yabai -m space --mirror x-axis;
+cmd + alt - v : yabai -m space --mirror x-axis;
 
 # toggle window float
 shift + cmd - space : yabai -m window --toggle float --grid 4:4:1:1:2:2;
@@ -56,11 +59,8 @@ shift + ctrl + cmd - space : yabai -m window --toggle sticky --grid 4:4:1:1:2:2;
 # -- Modifying Window Size --
 
 # maximize a window
-ctrl + cmd - f : yabai -m window --toggle zoom-fullscreen;
-shift + ctrl + cmd - f :  yabai -m window --toggle native-fullscreen
-
-# balance out tree of windows (resize to occupy same area)
-shift + ctrl + cmd - e : yabai -m space --balance;
+cmd + alt - f : yabai -m window --toggle zoom-fullscreen;
+shift + cmd + alt - f :  yabai -m window --toggle native-fullscreen
 
 # move window and split
 # ctrl + alt - j : yabai -m window --warp south
@@ -72,36 +72,36 @@ shift + ctrl + cmd - e : yabai -m space --balance;
 # shift + alt - p : yabai -m window --space prev;
 # shift + alt - n : yabai -m window --space next;
 
-ctrl + cmd - 1 : yabai -m space --focus 1;
-ctrl + cmd - 2 : yabai -m space --focus 2;
-ctrl + cmd - 3 : yabai -m space --focus 3;
-ctrl + cmd - 4 : yabai -m space --focus 4;
-ctrl + cmd - 5 : yabai -m space --focus 5;
-ctrl + cmd - 6 : yabai -m space --focus 6;
-ctrl + cmd - 7 : yabai -m space --focus 7;
-ctrl + cmd - 8 : yabai -m space --focus 8;
-ctrl + cmd - 9 : yabai -m space --focus 9;
+cmd + alt - 1 : yabai -m space --focus 1;
+cmd + alt - 2 : yabai -m space --focus 2;
+cmd + alt - 3 : yabai -m space --focus 3;
+cmd + alt - 4 : yabai -m space --focus 4;
+cmd + alt - 5 : yabai -m space --focus 5;
+cmd + alt - 6 : yabai -m space --focus 6;
+cmd + alt - 7 : yabai -m space --focus 7;
+cmd + alt - 8 : yabai -m space --focus 8;
+cmd + alt - 9 : yabai -m space --focus 9;
 
 # move window to space #
-shift + ctrl + cmd - 1 : yabai -m window --space 1; yabai -m space --focus 1;
-shift + ctrl + cmd - 2 : yabai -m window --space 2; yabai -m space --focus 2;
-shift + ctrl + cmd - 3 : yabai -m window --space 3; yabai -m space --focus 3;
-shift + ctrl + cmd - 4 : yabai -m window --space 4; yabai -m space --focus 4;
-shift + ctrl + cmd - 5 : yabai -m window --space 5; yabai -m space --focus 5;
-shift + ctrl + cmd - 6 : yabai -m window --space 6; yabai -m space --focus 6;
-shift + ctrl + cmd - 7 : yabai -m window --space 7; yabai -m space --focus 7;
-shift + ctrl + cmd - 8 : yabai -m window --space 8; yabai -m space --focus 8;
-shift + ctrl + cmd - 9 : yabai -m window --space 9; yabai -m space --focus 9;
+shift + cmd + alt - 1 : yabai -m window --space 1; yabai -m space --focus 1;
+shift + cmd + alt - 2 : yabai -m window --space 2; yabai -m space --focus 2;
+shift + cmd + alt - 3 : yabai -m window --space 3; yabai -m space --focus 3;
+shift + cmd + alt - 4 : yabai -m window --space 4; yabai -m space --focus 4;
+shift + cmd + alt - 5 : yabai -m window --space 5; yabai -m space --focus 5;
+shift + cmd + alt - 6 : yabai -m window --space 6; yabai -m space --focus 6;
+shift + cmd + alt - 7 : yabai -m window --space 7; yabai -m space --focus 7;
+shift + cmd + alt - 8 : yabai -m window --space 8; yabai -m space --focus 8;
+shift + cmd + alt - 9 : yabai -m window --space 9; yabai -m space --focus 9;
 
 # -- workspaces --
 
 # create desktop and follow focus
-ctrl + cmd - c: yabai -m space --create && \
+cmd + alt - c: yabai -m space --create && \
                   index="$(yabai -m query --spaces --display | jq 'map(select(."is-native-fullscreen" == false))[-1].index')" && \
                   yabai -m space --focus "${index}"
 
 # create desktop, move window and follow focus
-shift + ctrl + cmd - c : yabai -m space --create && \
+shift + cmd + alt - c : yabai -m space --create && \
                   index="$(yabai -m query --spaces --display | jq 'map(select(."is-native-fullscreen" == false))[-1].index')" && \
                   yabai -m window --space "${index}" && \
                   yabai -m space --focus "${index}"
