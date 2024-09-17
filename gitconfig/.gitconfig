@@ -33,6 +33,7 @@
   lg = lg1
   ff = pull --no-edit --ff-only
   root = rev-parse --show-toplevel
+  origin = git remote get-url origin
 
 [safe]
   directory = /home/cenk/.config/nvim
