@@ -10,35 +10,35 @@ mode --pango_markup $mode_resize {
     # right will grow the containers width
     # up will shrink the containers height
     # down will grow the containers height
-    $bindsym $left resize shrink width 10px
-    $bindsym $down resize grow height 10px
-    $bindsym $up resize shrink height 10px
-    $bindsym $right resize grow width 10px
+    bindsym Left resize shrink width 10px
+    bindsym Down resize grow height 10px
+    bindsym Up resize shrink height 10px
+    bindsym Right resize grow width 10px
 
-    $bindsym $left_alt resize shrink width 10px
-    $bindsym $down_alt resize grow height 10px
-    $bindsym $up_alt resize shrink height 10px
-    $bindsym $right_alt resize grow width 10px
+    bindsym h resize shrink width 10px
+    bindsym j resize grow height 10px
+    bindsym k resize shrink height 10px
+    bindsym l resize grow width 10px
 
-    $bindsym Shift+$left resize shrink width 50px
-    $bindsym Shift+$down resize grow height 50px
-    $bindsym Shift+$up resize shrink height 50px
-    $bindsym Shift+$right resize grow width 50px
+    bindsym Shift+Left resize shrink width 50px
+    bindsym Shift+Down resize grow height 50px
+    bindsym Shift+Up resize shrink height 50px
+    bindsym Shift+Right resize grow width 50px
 
-    $bindsym Shift+$left_alt resize shrink width 50px
-    $bindsym Shift+$down_alt resize grow height 50px
-    $bindsym Shift+$up_alt resize shrink height 50px
-    $bindsym Shift+$right_alt resize grow width 50px
+    bindsym Shift+h resize shrink width 50px
+    bindsym Shift+j resize grow height 50px
+    bindsym Shift+k resize shrink height 50px
+    bindsym Shift+l resize grow width 50px
 
     ## Resize // Window Gaps // + - ##
-    $bindsym minus gaps inner current minus 5px
-    $bindsym plus gaps inner current plus 5px
+    bindsym minus gaps inner current minus 5px
+    bindsym plus gaps inner current plus 5px
 
     # Return to default mode
-    $bindsym Return mode "default"
-    $bindsym Escape mode "default"
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
 }
 ## Launch // Resize Mode ##
-$bindsym $mod+r mode $mode_resize
+bindsym $mod+r mode $mode_resize
 gaps inner 5px
 gaps outer 5px

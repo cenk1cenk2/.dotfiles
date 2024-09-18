@@ -8,21 +8,21 @@ set $mode_screenshot "<span foreground='$color10'></span>  \
 
 mode --pango_markup $mode_screenshot {
     # output = currently active output
-    $bindsym o mode "default", exec $screenshot_screen_clipboard
-    $bindsym Shift+o mode "default", exec $screenshot_screen_file
-    $bindsym Shift+Ctrl+o mode "default", exec $screenshot_screen_upload
+    bindsym o mode "default", exec $screenshot_screen_clipboard
+    bindsym Shift+o mode "default", exec $screenshot_screen_file
+    bindsym Shift+Ctrl+o mode "default", exec $screenshot_screen_upload
 
     # pick the region to screenshot
-    $bindsym p mode "default", exec $screenshot_selection_clipboard
-    $bindsym Shift+p mode "default", exec $screenshot_selection_file
-    $bindsym Shift+Ctrl+p mode "default", exec $screenshot_selection_upload
+    bindsym p mode "default", exec $screenshot_selection_clipboard
+    bindsym Shift+p mode "default", exec $screenshot_selection_file
+    bindsym Shift+Ctrl+p mode "default", exec $screenshot_selection_upload
 
     # Return to default mode.
-    $bindsym Escape mode "default"
+    bindsym Escape mode "default"
 }
 
 ## Launch // Screenshot Mode ##
-$bindsym Print mode $mode_screenshot
+bindsym Print mode $mode_screenshot
 
 # variable overwrites
-$bindsym $mod+Shift+s exec $screenshot_snipping_tool
+bindsym $mod+Shift+s exec $screenshot_snipping_tool

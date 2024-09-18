@@ -15,27 +15,27 @@ set $purge_cliphist [ $purge_cliphist_logout == 'true' ] && rm -f $HOME/.cache/c
 
 mode --pango_markup $mode_shutdown {
     # lock
-    $bindsym l mode "default", exec $locking
+    bindsym l mode "default", exec $locking
 
     # logout
-    $bindsym e exec $purge_cliphist; exec loginctl terminate-user $USER
+    bindsym e exec $purge_cliphist; exec loginctl terminate-user $USER
 
     # suspend
-    $bindsym u mode "default", exec systemctl suspend
+    bindsym u mode "default", exec systemctl suspend
 
     # hibernate
-    $bindsym h mode "default", exec systemctl hibernate
+    bindsym h mode "default", exec systemctl hibernate
 
     # shutdown
-    $bindsym s exec $purge_cliphist; exec systemctl poweroff
+    bindsym s exec $purge_cliphist; exec systemctl poweroff
 
     # reboot
-    $bindsym r exec $purge_cliphist; exec systemctl reboot
+    bindsym r exec $purge_cliphist; exec systemctl reboot
 
     # Return to default mode.
-    $bindsym Escape mode "default"
+    bindsym Escape mode "default"
 }
 
 ## Launch // Exit Menu ##
-# $bindsym $mod+Shift+e mode $mode_shutdown
-$bindsym $mod+Shift+e exec $shutdown
+# bindsym $mod+Shift+e mode $mode_shutdown
+bindsym $mod+Shift+e exec $shutdown

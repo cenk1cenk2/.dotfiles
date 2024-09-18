@@ -8,15 +8,15 @@ set $mode_recording "<span foreground='$color10'></span>  \
 <span foreground='$color5'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span>" 
 
 mode --pango_markup $mode_recording {
-        $bindsym r exec $recorder mp4, mode "default"
-        $bindsym Shift+r exec $recorder mp4 no-region audio, mode "default"
-        $bindsym s exec $recorder mp4 region, mode "default"
-        $bindsym Shift+s exec $recorder mp4 region audio, mode "default"
+        bindsym r exec $recorder mp4, mode "default"
+        bindsym Shift+r exec $recorder mp4 no-region audio, mode "default"
+        bindsym s exec $recorder mp4 region, mode "default"
+        bindsym Shift+s exec $recorder mp4 region audio, mode "default"
 
-        $bindsym q exec $recorder kill
+        bindsym q exec $recorder kill
 
-        $bindsym Escape mode "default"
+        bindsym Escape mode "default"
 }
 
 ## Launch // Recording Mode ##
-$bindsym $mod+Shift+r mode $mode_recording
+bindsym $mod+Shift+r mode $mode_recording
