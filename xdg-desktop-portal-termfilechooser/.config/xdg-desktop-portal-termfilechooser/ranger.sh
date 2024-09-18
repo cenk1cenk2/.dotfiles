@@ -1,23 +1,8 @@
 #!/bin/sh
-# This wrapper script is invoked by xdg-desktop-portal-termfilechooser.
-#
-# Inputs:
-# 1. "1" if multiple files can be chosen, "0" otherwise.
-# 2. "1" if a directory should be chosen, "0" otherwise.
-# 3. "0" if opening files was requested, "1" if writing to a file was
-#    requested. For example, when uploading files in Firefox, this will be "0".
-#    When saving a web page in Firefox, this will be "1".
-# 4. If writing to a file, this is recommended path provided by the caller. For
-#    example, when saving a web page in Firefox, this will be the recommended
-#    path Firefox provided, such as "~/Downloads/webpage_title.html".
-#    Note that if the path already exists, we keep appending "_" to it until we
-#    get a path that does not exist.
-# 5. The output path, to which results should be written.
-#
-# Output:
-# The script should print the selected paths to the output path (argument #5),
-# one path per line.
-# If nothing is printed, then the operation is assumed to have been canceled.
+
+set -eu
+
+. "${0%/*}/common.sh" # source common functions
 
 multiple="$1"
 directory="$2"
@@ -25,11 +10,11 @@ save="$3"
 path="$4"
 out="$5"
 
-cmd="/usr/bin/ranger"
-termcmd="${TERMCMD:-/usr/bin/kitty}"
+cmd="ranger"
+termcmd=$(default_termcmd)
 
 info=$(
-	cat <<EOF
+  cat <<EOF
 xdg-desktop-portal-termfilechooser saving files tutorial
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -54,21 +39,14 @@ EOF
 )
 
 if [ "$save" = "1" ]; then
-	set -- --choosefile="$out" --cmd='echo Select save path (see tutorial in preview pane; try pressing zv or zp if no preview)' --selectfile="$path"
-	# selectfile fix issue for me when saving file on python 3.10+
-	if [ ! -e "$path" ]; then
-		printf '%s' "$info" >"$path"
-	fi
-elif [ "$multiple" = "1" ]; then
-	set -- --choosefiles="$out" --cmd="echo Select file(s) (open file to select it; <Space> to select multiple)"
-#change order of operation -- chrome/firefox by default are setting on my system 1 1 0, when they should put 1 0 0
+  create_save_file "$path" "$out"
+  set -- --choosefile="$out" --cmd="echo Select save path for the given file." --selectfile "$path"
 elif [ "$directory" = "1" ]; then
-	set -- --show-only-dirs --cmd="echo Select directory ('Q'uit in dir to select it), 'q' to cancel selection" --cmd="map Q chain shell echo %d > \"$out\" ; quitall"
+  set -- --show-only-dirs --cmd="echo Select directory ('Q'uit in dir to select it), 'q' to cancel selection" --cmd="map Q chain shell echo %d > \"$out\" ; quitall"
+elif [ "$multiple" = "1" ]; then
+  set -- --choosefiles="$out" --cmd="echo Select file(s) (open file to select it; <Space> to select multiple)"
 else
-	set -- --choosefile="$out" --cmd="echo Select file (open file to select it)"
+  set -- --choosefile="$out" --cmd="echo Select file (open file to select it)"
 fi
 
-"$termcmd" -- $cmd "$@"
-if [ "$save" = "1" ] && [ ! -s "$out" ]; then
-	rm "$path"
-fi
+$termcmd $cmd "$@"
