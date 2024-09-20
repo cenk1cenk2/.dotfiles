@@ -12,9 +12,9 @@ sudo yabai --load-sa
 # skhd --restart-service || skhd --start-service
 # sketchybar --reload || brew services restart sketchybar
 
-yabai -m signal --add event=window_focused action="sketchybar --trigger window_focus"
-yabai -m signal --add event=space_changed action="sketchybar --trigger space_change"
-yabai -m signal --add event=display_changed action="sketchybar --trigger display_change"
+# yabai -m signal --add event=window_focused action="sketchybar --trigger window_focus"
+# yabai -m signal --add event=space_changed action="sketchybar --trigger space_change"
+# yabai -m signal --add event=display_changed action="sketchybar --trigger display_change"
 # yabai -m config external_bar all:0:30
 
 # .. more yabai startup stuff# default layout (can be bsp, stack or float)
@@ -67,13 +67,21 @@ yabai -m rule --add label="Calculator" app="^Calculator$" manage=off
 yabai -m rule --add label="Dictionary" app="^Dictionary$" manage=off
 yabai -m rule --add label="Software Update" title="Software Update" manage=off
 yabai -m rule --add label="About This Mac" app="System Information" title="About This Mac" manage=off
+yabai -m rule --add app="Obsidian" manage=off
 
 # signals
 yabai -m signal --add event=space_changed action="~/.config/yabai/scripts/auto-destroy.sh"
 # yabai -m signal --add label="flash_focus" event="window_focused" action="yabai -m window \$YABAI_WINDOW_ID --opacity 0.95 && sleep $(yabai -m config window_opacity_duration) && yabai -m window \$YABAI_WINDOW_ID --opacity 0.0"
 
+yabai -m signal --add event=window_created action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=window_moved action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_destroyed action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_minimized action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=window_deminimized action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=space_created action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=space_destroyed action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=mission_control_exit action="~/.config/yabai/scripts/focus-under-cursor.sh"
+yabai -m signal --add event=application_front_changed action="~/.config/yabai/scripts/focus-under-cursor.sh"
 
 # yabai applet
 
