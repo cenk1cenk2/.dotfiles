@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: '~'
-          CLI_ARGS: avizo commitizen file-manager-actions fonts foot gitconfig kanshi khal kitty mako mimetypes pacman pipewire rofi scripts sway swaync swayr sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
+          CLI_ARGS: avizo commitizen file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane sway swaync swayr sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
@@ -73,6 +73,11 @@ tasks:
           to: '/'
           CLI_ARGS: rootfs
           args: --adopt
+      # TODO: remove me after migrating away from kanshi
+      - task: undeploy
+        vars:
+          to: '~'
+          CLI_ARGS: kanshi
 
   deploy:macos:
     desc: Deploy to target.

@@ -32,7 +32,6 @@ gzip
 handlr
 imv
 input-remapper-beta-git
-kanshi
 khal
 kitty
 kvantum
@@ -69,6 +68,7 @@ rebuild-detector
 ripdrag-git
 rofi-lbonn-wayland-git
 rsync
+shikane
 slurp
 spotify
 stow
@@ -97,12 +97,12 @@ vlc
 vlc
 waybar
 wdisplays
-wl-screenrec
 wget
 wireplumber
 wl-clipboard
 wl-gammactl
 wl-mirror
+wl-screenrec
 wlogout
 wlroots
 wol-systemd
