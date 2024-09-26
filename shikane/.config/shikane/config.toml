@@ -113,7 +113,7 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 # main monitor and top monitor
 
 [[profile]]
-name = "top"
+name = "main-top"
 exec = [
   "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
   "exec wl-gammactl 1 && pkill wl-gammactl",
@@ -144,7 +144,7 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 # main monitor and bottom monitor
 
 [[profile]]
-name = "bottom"
+name = "main-bottom"
 exec = [
   "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
   "exec wl-gammactl 1 && pkill wl-gammactl",
@@ -175,7 +175,7 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 # main monitor only
 
 [[profile]]
-name = "solo"
+name = "main-solo"
 exec = [
   "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
   "exec wl-gammactl 1 && pkill wl-gammactl",
@@ -235,5 +235,36 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 mode = "3840x2160@59.929Hz"
 position = "0,0"
 scale = 2.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = false
+search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
+
+# aux-dual
+
+[[profile]]
+name = "aux-dual"
+exec = [
+  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
+  "exec wl-gammactl 1 && pkill wl-gammactl",
+]
+
+[[profile.output]]
+enable = true
+search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+mode = "3840x2160@60.00Hz"
+position = "0,190"
+scale = 2.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["m=VG27WQ", "s=L4LMDW007740", "v=ASUSTek COMPUTER INC"]
+mode = "2560x1440@143.995Hz"
+position = "1920,0"
+scale = 1.0
 transform = "normal"
 adaptive_sync = false
