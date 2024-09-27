@@ -73,11 +73,6 @@ tasks:
           to: '/'
           CLI_ARGS: rootfs
           args: --adopt
-      # TODO: remove me after migrating away from kanshi
-      - task: undeploy
-        vars:
-          to: '~'
-          CLI_ARGS: kanshi
 
   deploy:macos:
     desc: Deploy to target.
