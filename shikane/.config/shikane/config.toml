@@ -12,7 +12,7 @@ exec = [
 
 [[profile.output]]
 enable = true
-search = ["v=Japan Display Inc", "m=GPD1001H", "s=0x00000001"]
+search = ["v=Japan Display Inc.", "m=GPD1001H", "s=0x00000001"]
 mode = "2560x1600@60.009Hz"
 position = "0,0"
 scale = 2.0
@@ -38,7 +38,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = true
-search = ["v=Japan Display Inc", "m=GPD1001H", "s=0x00000001"]
+search = ["v=Japan Display Inc.", "m=GPD1001H", "s=0x00000001"]
 mode = "2560x1600@60.009Hz"
 position = "350,1080"
 scale = 2.0
@@ -64,7 +64,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=Japan Display Inc", "m=GPD1001H", "s=0x00000001"]
+search = ["v=Japan Display Inc.", "m=GPD1001H", "s=0x00000001"]
 
 ####################################################################################################
 # main configuration
