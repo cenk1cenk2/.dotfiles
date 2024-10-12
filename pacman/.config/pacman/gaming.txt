@@ -9,9 +9,9 @@ libretro-snes9x
 lutris
 mangohud
 moonlight-qt
-retroarch 
-retroarch-assets-glui 1:495-1
-retroarch-assets-ozone 1:495-1
-retroarch-assets-xmb 1:495-1
+retroarch
+retroarch-assets-glui
+retroarch-assets-ozone
+retroarch-assets-xmb
 steam
 wine-staging
