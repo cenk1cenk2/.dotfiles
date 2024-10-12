@@ -168,9 +168,7 @@ bindsym $mod+x splith
 ## Setting // Split windows vertically ##
 bindsym $mod+v splitv
 
-bindsym $mod+e layout toggle split
-bindsym $mod+w layout tabbed
-bindsym $mod+Shift+w layout stacking
+bindsym $mod+e layout toggle split tabbed
 
 ## Action // Toggle fullscreen ##
 bindsym $mod+f fullscreen
