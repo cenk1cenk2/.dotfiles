@@ -3,7 +3,7 @@
 notify() {
   line=$1
   shift
-  notify-send "Recording..." "${line}" -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg "$@"
+  notify-send "Recording..." "${line}" -i /usr/share/icons/Adwaita/scalable/devices/camera-web.svg "$@"
 }
 
 countdown() {
@@ -22,7 +22,7 @@ if [ "$1" == "kill" ]; then
   notify "Recording stopped."
   exit 0
 elif [ $status == 0 ]; then
-  notify "Recording already in progress." -i /usr/share/icons/Papirus-Dark/32x32/devices/camera-video.svg
+  notify "Recording already in progress."
   exit 1
 fi
 

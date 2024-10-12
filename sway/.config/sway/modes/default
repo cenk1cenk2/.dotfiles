@@ -192,3 +192,13 @@ bindsym $mod+Shift+a focus parent
 
 ## Launch // Toggle Help ##
 # bindsym $mod+question exec $help
+
+## monitor profiles
+bindsym $mod+F1 exec $HOME/.config/sway/scripts/display-profile.sh main
+bindsym $mod+F2 exec $HOME/.config/sway/scripts/display-profile.sh main-solo
+bindsym $mod+F3 exec $HOME/.config/sway/scripts/display-profile.sh main-bottom
+bindsym $mod+F4 exec $HOME/.config/sway/scripts/display-profile.sh main-top
+
+bindsym $mod+F5 exec $HOME/.config/sway/scripts/display-profile.sh aux
+bindsym $mod+F6 exec $HOME/.config/sway/scripts/display-profile.sh aux-dual
+bindsym $mod+F9 exec $HOME/.config/sway/scripts/display-profile.sh tv

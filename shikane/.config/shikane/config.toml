@@ -75,8 +75,12 @@ search = ["v=Japan Display Inc.", "m=GPD1001H", "s=0x00000001"]
 [[profile]]
 name = "main"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -115,8 +119,12 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 [[profile]]
 name = "main-top"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -146,8 +154,12 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 [[profile]]
 name = "main-bottom"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -177,8 +189,12 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 [[profile]]
 name = "main-solo"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -203,8 +219,12 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 [[profile]]
 name = "aux"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
   "exec wl-gammactl -g 0.89",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -225,8 +245,12 @@ search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 [[profile]]
 name = "aux-dual"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -252,8 +276,12 @@ adaptive_sync = false
 [[profile]]
 name = "tv"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
@@ -274,8 +302,12 @@ search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
 [[profile]]
 name = "tv"
 exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
 
 [[profile.output]]
