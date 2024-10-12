@@ -1,0 +1,12 @@
+chiaki
+libretro-core-info
+libretro-mame
+libretro-mame2010-git
+libretro-mame2016
+libretro-mesen
+libretro-snes9x
+moonlight-qt
+retroarch
+retroarch-assets-glui
+retroarch-assets-ozone
+retroarch-assets-xmb
