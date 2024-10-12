@@ -119,7 +119,7 @@ bindsym $mod+Shift+0 move container to workspace $ws10, exec $focus_ws $ws10
 # bindsym $mod+Alt+Right move to workspace next
 # bindsym $mod+Alt+Left move to workspace prev
 bindsym $mod+Control+Space exec \
-    swayr move-focused-to >> /tmp/swayr.log 2>&1
+    swayr steal-window >> /tmp/swayr.log 2>&1
 
 # swap workspaces
 
