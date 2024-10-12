@@ -168,12 +168,9 @@ bindsym $mod+x splith
 ## Setting // Split windows vertically ##
 bindsym $mod+v splitv
 
-## Action // Switch to window stacking ##
-bindsym $mod+s layout stacking
-## Action // Switch to window tabbing ##
-bindsym $mod+w layout tabbed
-## Action // Toggle window splitting ##
 bindsym $mod+e layout toggle split
+bindsym $mod+w layout tabbed
+bindsym $mod+Shift+w layout stacking
 
 ## Action // Toggle fullscreen ##
 bindsym $mod+f fullscreen
@@ -186,9 +183,8 @@ bindsym $mod+Shift+space floating toggle
 
 ## Navigation // Toggle focus between tiling and floating ##
 bindsym $mod+a focus mode_toggle
-
-## Navigation // Swap focus to the parent window ##
 bindsym $mod+Shift+a focus parent
+bindsym $mod+s sticky toggle
 
 ## Launch // Toggle Help ##
 # bindsym $mod+question exec $help

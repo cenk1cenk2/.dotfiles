@@ -19,6 +19,7 @@ set $alt_tab exec env RUST_BACKTRACE=1 swayr switch-to-urgent-or-lru-window &>> 
 set $term kitty
 set $term_float kitty --class="floating_shell"
 set $term_float_portrait kitty --class="floating_shell_portrait"
+set $term_float_portrait_lg kitty --class="floating_shell_portrait_lg"
 # set $term_float footclient -a floating_shell -W 100x35
 # set $term_float_portrait footclient -a floating_shell_portrait -W 35x100
 
@@ -60,7 +61,7 @@ set $bluetooth $term_float bluetuith
 set $pulseaudio $term_float pulsemixer
 # calendar application
 set $calendar $term_float ikhal
-set $process_manager $term_float_portrait btop
+set $process_manager $term_float_portrait_lg btop
 
 # get-volume commands
 set $sink_volume pactl get-sink-volume @DEFAULT_SINK@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
