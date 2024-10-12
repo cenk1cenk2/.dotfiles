@@ -220,28 +220,6 @@ adaptive_sync = false
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 
-# tv
-
-[[profile]]
-name = "tv"
-exec = [
-  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
-  "exec wl-gammactl 1 && pkill wl-gammactl",
-]
-
-[[profile.output]]
-enable = true
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
-mode = "3840x2160@59.929Hz"
-position = "0,0"
-scale = 2.0
-transform = "normal"
-adaptive_sync = false
-
-[[profile.output]]
-enable = false
-search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
-
 # aux-dual
 
 [[profile]]
@@ -266,5 +244,45 @@ search = ["m=VG27WQ", "s=L4LMDW007740", "v=ASUSTek COMPUTER INC"]
 mode = "2560x1440@143.995Hz"
 position = "1920,0"
 scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
+# tv
+
+[[profile]]
+name = "tv"
+exec = [
+  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
+  "exec wl-gammactl 1 && pkill wl-gammactl",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+mode = "3840x2160@59.929Hz"
+position = "0,0"
+scale = 2.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = false
+search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
+
+# only tv
+
+[[profile]]
+name = "tv"
+exec = [
+  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
+  "exec wl-gammactl 1 && pkill wl-gammactl",
+]
+
+[[profile.output]]
+enable = true
+search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+mode = "3840x2160@60.00Hz"
+position = "0,0"
+scale = 2.0
 transform = "normal"
 adaptive_sync = false
