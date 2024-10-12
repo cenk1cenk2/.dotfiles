@@ -318,3 +318,23 @@ position = "0,0"
 scale = 2.0
 transform = "normal"
 adaptive_sync = false
+
+[[profile]]
+name = "tv-4k"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+mode = "3840x2160@60.00Hz"
+position = "0,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
