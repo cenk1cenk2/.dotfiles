@@ -12,7 +12,7 @@ set $background $HOME/.dotfiles/sway/.config/sway/background/narli.jpg
 set $theme $HOME/.config/sway/themes/custom
 
 # set $alt_tab workspace back_and_forth
-set $alt_tab exec env RUST_BACKTRACE=1 swayr switch-to-urgent-or-lru-window &>> /tmp/swayr.log
+set $alt_tab exec swayr switch-to-urgent-or-lru-window &>> /tmp/swayr.log
 
 # Your preferred terminal emulator
 # set $term $HOME/.config/sway/scripts/foot.sh
@@ -24,7 +24,7 @@ set $term_float_portrait_lg kitty --class="floating_shell_portrait_lg"
 # set $term_float_portrait footclient -a floating_shell_portrait -W 35x100
 
 # Your preferred application launcher
-set $menu rofi -show combi -combi-modi "drun,run" -terminal $term -ssh-command "{terminal} {ssh-client} {host} [-p {port}]" -run-shell-command "{terminal} {cmd}" -show-icons -font "$gui-font-big" -lines 10 -width 35
+set $menu rofi -modi "run,drun" run -show drun -terminal $term -ssh-command "{terminal} {ssh-client} {host} [-p {port}]" -run-shell-command "{terminal} {cmd}"
 
 # clipboard history
 set $clipboard cliphist list | rofi -dmenu -font "$gui-font-big" -lines 10 -width 35 | cliphist decode | wl-copy
@@ -86,9 +86,11 @@ set $ws10 number 10
 set $grimshot $HOME/.config/sway/scripts/grimshot.sh
 set $screenshot_screen_clipboard $grimshot --notify copy output
 set $screenshot_screen_file $grimshot --notify save output
-set $screenshot_selection_clipboard $grimshot --notify copy window
-set $screenshot_selection_file $grimshot --notify save window
-set $screenshot_snipping_tool grim -g "$(slurp)" - | swappy -f -
+set $screenshot_selection_clipboard $grimshot --notify copy area
+set $screenshot_selection_file $grimshot --notify save area
+set $screenshot_window_clipboard $grimshot --notify copy active
+set $screenshot_window_file $grimshot --notify save active
+set $screenshot_snipping_tool swappy -f -
 set $screenshot_upload $HOME/.config/sway/scripts/upload-image.sh
 
 # onscreen bar
@@ -112,4 +114,3 @@ set $recorder $HOME/.config/sway/scripts/recorder.sh
 
 # custom
 set $map-to-active swaymsg input type:tablet_tool map_to_output `swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name'`
-set $menu rofi -modi "combi,run,drun" run -show drun -terminal $term -ssh-command "{terminal} {ssh-client} {host} [-p {port}]" -run-shell-command "{terminal} {cmd}"

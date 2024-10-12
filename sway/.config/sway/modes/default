@@ -88,7 +88,7 @@ bindsym $mod+Shift+l move right
 bindsym Alt+Tab $alt_tab
 
 ## Navigation // List all open windows in last-recently-used order ##
-bindsym $mod+Tab exec env RUST_BACKTRACE=1 swayr switch-window &>> /tmp/swayr.log
+bindsym $mod+Tab swayr switch-window &>> /tmp/swayr.log
 
 #
 # Workspaces:
@@ -118,7 +118,7 @@ bindsym $mod+Shift+9 move container to workspace $ws9, exec $focus_ws $ws9
 bindsym $mod+Shift+0 move container to workspace $ws10, exec $focus_ws $ws10
 # bindsym $mod+Alt+Right move to workspace next
 # bindsym $mod+Alt+Left move to workspace prev
-bindsym $mod+Control+Space exec env RUST_BACKTRACE=1 \
+bindsym $mod+Control+Space exec \
     swayr move-focused-to >> /tmp/swayr.log 2>&1
 
 # swap workspaces
@@ -182,7 +182,7 @@ bindsym $mod+Shift+space floating toggle
 ## Navigation // Toggle focus between tiling and floating ##
 bindsym $mod+a focus mode_toggle
 bindsym $mod+Shift+a focus parent
-bindsym $mod+s sticky toggle
+bindsym $mod+w sticky toggle
 
 ## Launch // Toggle Help ##
 # bindsym $mod+question exec $help

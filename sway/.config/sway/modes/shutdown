@@ -1,14 +1,14 @@
 # vim:ft=swayconfig
 
 set $mode_shutdown "\
-<span foreground='$color10'></span>  \
+<span foreground='$color1'></span>  \
 <span foreground='$color5'> \
-<span foreground='$color10'>(<b>h</b>)</span>hibernate \
-<span foreground='$color10'>(<b>l</b>)</span>lock \
-<span foreground='$color10'>(<b>e</b>)</span>logout \
-<span foreground='$color10'>(<b>r</b>)</span>reboot \
-<span foreground='$color10'>(<b>u</b>)</span>suspend \
-<span foreground='$color10'>(<b>s</b>)</span>shutdown \
+<span foreground='$color3'>(<b>h</b>)</span>hibernate \
+<span foreground='$color3'>(<b>l</b>)</span>lock \
+<span foreground='$color3'>(<b>e</b>)</span>logout \
+<span foreground='$color3'>(<b>r</b>)</span>reboot \
+<span foreground='$color3'>(<b>u</b>)</span>suspend \
+<span foreground='$color3'>(<b>s</b>)</span>shutdown \
 </span>"
 
 set $purge_cliphist [ $purge_cliphist_logout == 'true' ] && rm -f $HOME/.cache/cliphist/db || exit 0
