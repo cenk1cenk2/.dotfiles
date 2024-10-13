@@ -301,7 +301,7 @@
 
   "temperature#cpu": {
     "critical-threshold": 72,
-    "hwmon-path-abs": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon3/temp1_input"],
+    "hwmon-path-abs": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon3/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
