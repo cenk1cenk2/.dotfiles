@@ -30,7 +30,6 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr
-imv
 input-remapper-beta-git
 khal
 kitty

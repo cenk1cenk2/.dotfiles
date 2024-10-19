@@ -1,5 +1,3 @@
-[Added Associations]
-
 [Default Applications]
 application/*zip=yazi.desktop;
 application/json=nvim.desktop;
@@ -13,9 +11,10 @@ application/x-yaml=nvim.desktop;
 application/x-zerosize=nvim.desktop;
 application/yaml=nvim.desktop;
 application/zip=yazi.desktop;
-image/jpeg=imv-dir.desktop;
-image/png=imv-dir.desktop;
-image/svg+xml=imv.desktop;
+image/*=swayimg.desktop;
+image/jpeg=swayimg.desktop;
+image/png=swayimg.desktop;
+image/svg+xml=swayimg.desktop;
 inode/directory=yazi.desktop;
 inode/x-shortcut=yazi.desktop;
 text/*=nvim.desktop;
