@@ -210,6 +210,26 @@ adaptive_sync = false
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 
+[[profile]]
+name = "main-solo"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=38GN950", "s=207NTSU62014"]
+mode = "3840x1600@160.000Hz"
+position = "0,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
 ####################################################################################################
 # auxilary configuration
 ####################################################################################################

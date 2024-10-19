@@ -197,3 +197,5 @@ bindsym $mod+F5 exec $HOME/.config/sway/scripts/display-profile.sh aux
 bindsym $mod+F6 exec $HOME/.config/sway/scripts/display-profile.sh aux-dual
 bindsym $mod+F9 exec $HOME/.config/sway/scripts/display-profile.sh tv
 bindsym $mod+F10 exec $HOME/.config/sway/scripts/display-profile.sh tv-4k
+
+bindsym $mod+F12 exec $HOME/.config/sway/scripts/display-profile.sh reload
