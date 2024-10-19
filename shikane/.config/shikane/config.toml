@@ -114,6 +114,44 @@ adaptive_sync = false
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 
+[[profile]]
+name = "main"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=38GN950", "s=207NTSU62014"]
+mode = "3840x1600@160.000Hz"
+position = "0,1440"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=ASUS XG17A", "s=0x000179A5"]
+mode = "1920x1080@239.964Hz"
+position = "960,3040"
+scale = 1.0
+transform = "180"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=VG27A", "s=L4LMQS123005"]
+mode = "2560x1440@164.999Hz"
+position = "700,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
 # main monitor and top monitor
 
 [[profile]]
@@ -149,6 +187,35 @@ adaptive_sync = false
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 
+[[profile]]
+name = "main-top"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=38GN950", "s=207NTSU62014"]
+mode = "3840x1600@160.000Hz"
+position = "0,1440"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=VG27A", "s=L4LMQS123005"]
+mode = "2560x1440@164.999Hz"
+position = "700,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
 # main monitor and bottom monitor
 
 [[profile]]
@@ -183,6 +250,35 @@ adaptive_sync = false
 [[profile.output]]
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+
+[[profile]]
+name = "main-bottom"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=38GN950", "s=207NTSU62014"]
+mode = "3840x1600@160.000Hz"
+position = "0,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=ASUS XG17A", "s=0x000179A5"]
+mode = "1920x1080@239.964Hz"
+position = "960,1600"
+scale = 1.0
+transform = "180"
+adaptive_sync = false
 
 # main monitor only
 
@@ -260,6 +356,26 @@ adaptive_sync = false
 enable = false
 search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
 
+[[profile]]
+name = "aux"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "exec wl-gammactl -g 0.89",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
+mode = "2560x1440@143.995Hz"
+position = "0,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
+
 # aux-dual
 
 [[profile]]
@@ -317,8 +433,6 @@ adaptive_sync = false
 enable = false
 search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
 
-# only tv
-
 [[profile]]
 name = "tv"
 exec = [
@@ -338,6 +452,32 @@ position = "0,0"
 scale = 2.0
 transform = "normal"
 adaptive_sync = false
+
+[[profile]]
+name = "tv"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "pkill wl-gammactl",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+mode = "3840x2160@59.929Hz"
+position = "0,0"
+scale = 2.0
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = false
+search = ["v=ASUSTek COMPUTER INC", "m=ASUS XG17A", "s=0x000179A5"]
+
+# only tv force no scaling
 
 [[profile]]
 name = "tv-4k"
