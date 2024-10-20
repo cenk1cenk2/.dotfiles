@@ -9,7 +9,8 @@ cat "$LOAD"
 yay -S --needed --noconfirm --overwrite '*' - <"$LOAD"
 
 case "$LOAD" in
-gaming.txt)
+"gaming.txt")
+  echo "Performing gaming specific setup..."
   sudo setcap 'CAP_SYS_NICE=eip' "$(which gamescope)"
   ;;
 *)
