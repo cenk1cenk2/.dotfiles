@@ -3,3 +3,7 @@ lutris
 mangohud
 steam
 wine-staging
+luajit
+gamescope-git
+gamemode
+steamtinkerlaunch
