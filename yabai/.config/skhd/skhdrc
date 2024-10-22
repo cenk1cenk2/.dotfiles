@@ -1,7 +1,7 @@
 # -- Starting/Stopping/Restarting Yabai --
 
 # stop/start/restart yabai
-cmd + alt - w : yabai --restart-service;
+shift + cmd + alt - w : yabai --restart-service;
 # shift + alt + cmd - w : yabai --stop-service && skhd --stop-service;
 
 # -- Changing Window Focus --
