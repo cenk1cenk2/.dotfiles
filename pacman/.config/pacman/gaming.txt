@@ -1,9 +1,10 @@
+gamemode
+gamescope-git
 goverlay
+luajit
 lutris
 mangohud
 steam
-wine-staging
-luajit
-gamescope-git
-gamemode
 steamtinkerlaunch
+wine-staging
+winetricks
