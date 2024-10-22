@@ -1,6 +1,5 @@
 gamemode
 gamescope-git
-goverlay
 luajit
 lutris
 mangohud
