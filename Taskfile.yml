@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: '~'
-          CLI_ARGS: avizo commitizen file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayr swayimg sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser mangohud steamtinkerlaunch
+          CLI_ARGS: avizo commitizen file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayr swayimg sworkstyle waybar wireplumber wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
@@ -81,3 +81,14 @@ tasks:
       - darwin
     cmds:
       - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders kitty
+
+  deploy:gaming:
+    desc: Deploy to target.
+    platforms:
+      - linux
+    cmds:
+      - task: deploy
+        vars:
+          to: '~'
+          CLI_ARGS: mangohud steamtinkerlaunch
+          # args: --adopt
