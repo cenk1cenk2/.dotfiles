@@ -10,3 +10,4 @@
 
 # Default wallpaper
 output * bg $background fill
+output * adaptive_sync on

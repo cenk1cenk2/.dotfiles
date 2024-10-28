@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+exec sway >/tmp/sway.log 2>&1

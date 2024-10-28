@@ -91,4 +91,4 @@ tasks:
         vars:
           to: '~'
           CLI_ARGS: mangohud steamtinkerlaunch
-          # args: --adopt
+          args: --adopt
