@@ -10,4 +10,9 @@
 
 # Default wallpaper
 output * bg $background fill
-output * adaptive_sync on
+
+output * {
+    adaptive_sync on
+    allow_tearing yes
+    max_render_time off
+}
