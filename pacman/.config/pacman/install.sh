@@ -11,6 +11,7 @@ yay -S --needed --noconfirm --overwrite '*' - <"$LOAD"
 case "$LOAD" in
 "gaming.txt")
   echo "Performing gaming specific setup..."
+  steamtinkerlaunch compat add
   sudo setcap 'CAP_SYS_NICE=eip' "$(which gamescope)"
   ;;
 *)
