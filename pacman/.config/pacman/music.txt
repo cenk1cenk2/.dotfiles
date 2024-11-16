@@ -1,0 +1,3 @@
+coppwr
+lib32-pipewire-jack
+pipewire-jack

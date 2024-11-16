@@ -9,6 +9,7 @@ bluetuith
 bluez
 bluez-obex
 bluez-utils
+bottles
 brightnessctl
 clipboard
 clipboard-sync
