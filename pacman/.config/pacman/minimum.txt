@@ -103,7 +103,7 @@ wdisplays
 wget
 wireplumber
 wl-clipboard
-wl-gammactl
+wl-gammarelay-rs
 wl-mirror
 wl-screenrec
 wlogout

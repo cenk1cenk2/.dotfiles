@@ -78,7 +78,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -120,7 +119,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -160,7 +158,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -193,7 +190,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -224,7 +220,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -257,7 +252,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -288,7 +282,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -312,7 +305,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -338,7 +330,7 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "exec wl-gammactl -g 0.89",
+  # "exec wl-gammactl -g 0.89",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -362,7 +354,7 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "exec wl-gammactl -g 0.89",
+  # "exec wl-gammactl -g 0.89",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -384,7 +376,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -415,7 +406,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -439,7 +429,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -459,7 +448,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]
@@ -485,7 +473,6 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  "pkill wl-gammactl",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
 ]

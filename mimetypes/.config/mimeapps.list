@@ -23,4 +23,5 @@ text/html=google-chrome.desktop;
 x-scheme-handler/about=google-chrome.desktop;
 x-scheme-handler/http=google-chrome.desktop;
 x-scheme-handler/https=google-chrome.desktop;
+x-scheme-handler/obsidian=obsidian.desktop;
 x-scheme-handler/terminal=kitty.desktop;
