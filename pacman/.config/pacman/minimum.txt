@@ -21,6 +21,7 @@ foot
 fprintd
 genpass-git
 git-lfs
+gnome-keyring
 google-chrome
 greetd-git
 greetd-tuigreet
@@ -37,6 +38,7 @@ kitty
 kvantum
 kvantum-theme-materia
 libpulse
+libsecret
 libva-utils
 libva-vdpau-driver
 light
@@ -68,6 +70,7 @@ rebuild-detector
 ripdrag-git
 rofi-lbonn-wayland-git
 rsync
+seahorse
 shikane
 slurp
 spotify
