@@ -100,6 +100,7 @@ virt-viewer
 vlc
 vlc
 waybar
+waylogout-git
 wdisplays
 wget
 wireplumber

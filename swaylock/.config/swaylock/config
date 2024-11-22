@@ -1,0 +1,21 @@
+font="Segoe UI"
+fade-in=0.1
+font-size=36
+effect-blur=8x6
+screenshots
+indicator
+datestr=%Y-%m-%d
+line-uses-inside
+indicator-radius=128
+indicator-thickness=16
+ring-color=#1e2127
+text-color=#efefef
+text-wrong-color=#e06c75
+text-ver-color=#61afef
+line-color=#17191e
+inside-ver-color=#61afef
+inside-clear-color=#e5c07b
+inside-wrong-color=#e06c75
+ring-ver-color=#98caf6
+ring-wrong-color=#ef9ea1
+key-hl-color=#729c0c

@@ -1,0 +1,46 @@
+rows=2
+fade-in=0.1
+hide-cancel
+screenshots
+font="Segoe UI"
+fa-font="Font Awesome 6 Free"
+symbol-font-size=36
+label-font-size=36
+effect-blur=8x6
+indicator-radius=128
+indicator-thickness=16
+line-uses-inside
+ring-color=#1e2127
+text-color=#efefef
+line-color=#17191e
+inside-color=#22282f
+ring-selection-color=#e5c07b
+inside-selection-color=#2c333d
+text-selection-color=#efefef
+line-selection-color=#17191e
+lock-command="swaymsg exec '$locking'"
+lock-label="[l] Lock"
+lock-symbol=""
+lock-shortcut="l"
+logout-command="loginctl terminate-user $USER"
+logout-label="[L] Logout"
+logout-symbol=""
+logout-shortcut="L"
+suspend-command="systemctl suspend"
+suspend-label="[s] Suspend"
+suspend-symbol=""
+lock-shortcut="s"
+hibernate-command="systemctl hibernate"
+hibernate-label="[S] Hibernate"
+hibernate-symbol=""
+hibernate-shortcut="S"
+poweroff-command="systemctl poweroff"
+poweroff-label="[Q] Shutdown"
+poweroff-symbol=""
+poweroff-shortcut="Q"
+reboot-command="systemctl reboot"
+reboot-label="[R] Reboot"
+reboot-symbol=""
+reboot-shortcut="R"
+labels
+reverse-arrows
