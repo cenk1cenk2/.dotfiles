@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+case "$1" in
+"sound-sink")
+  $HOME/.config/sway/scripts/sound-sink.sh "${@:2}"
+  ;;
+*)
+  echo "Usage: $0 [sound-sink]"
+  ;;
+esac
