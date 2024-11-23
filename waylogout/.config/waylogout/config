@@ -42,5 +42,6 @@ reboot-command="systemctl reboot"
 reboot-label="[R] Reboot"
 reboot-symbol=""
 reboot-shortcut="R"
+default-action=lock
 labels
 reverse-arrows
