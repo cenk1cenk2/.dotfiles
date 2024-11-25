@@ -4,12 +4,12 @@ ARGS=("${@:2}")
 
 case "$1" in
 "sound-sink")
-  $HOME/.config/sway/scripts/sound-sink.sh "${ARGS[@]}"
+  $HOME/.config/sway/scripts/sound.sh "${ARGS[@]}"
   ;;
 "display-profile")
-  $HOME/.config/sway/scripts/display-profile.sh "${ARGS[@]}"
+  $HOME/.config/sway/scripts/display.sh "${ARGS[@]}"
   ;;
 *)
-  echo "Usage: $0 [sound-sink|display-profile]"
+  echo "Usage: $0 [sound|display]"
   ;;
 esac
