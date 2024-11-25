@@ -15,6 +15,8 @@ bindsym $mod+Shift+Return exec $term_cwd
 ## Action // Kill focused window ##
 bindsym $mod+Shift+q kill
 
+exec_always swaymsg -t SUBSCRIBE -m '["workspace"]' | jq --unbuffered -r 'select(.change == "focus") | .current.output' | xargs -L1 swaymsg input type:tablet_tool map_to_output
+
 ## Launch // Open launcher ##
 bindsym $mod+Space exec $menu
 
