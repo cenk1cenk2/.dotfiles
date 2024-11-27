@@ -80,6 +80,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -121,6 +122,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -160,6 +162,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -192,6 +195,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -222,6 +226,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -254,6 +259,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -284,6 +290,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -307,6 +314,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -330,9 +338,9 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  # "exec wl-gammactl -g 0.89",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay /outputs/DP_2 rs.wl.gammarelay Gamma d 1.05",
 ]
 
 [[profile.output]]
@@ -354,9 +362,9 @@ exec = [
   '''
 notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ''',
-  # "exec wl-gammactl -g 0.89",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay /outputs/DP_2 rs.wl.gammarelay Gamma d 1.05",
 ]
 
 [[profile.output]]
@@ -378,6 +386,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay /outputs/DP_2 rs.wl.gammarelay Gamma d 1.05",
 ]
 
 [[profile.output]]
@@ -408,6 +417,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -431,6 +441,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -450,6 +461,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
@@ -475,6 +487,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
   ''',
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
   "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
 ]
 
 [[profile.output]]
