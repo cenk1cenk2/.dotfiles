@@ -37,3 +37,4 @@ brew "clipboard"
 
 # personal
 cask "slack"
+cask "xournal++"

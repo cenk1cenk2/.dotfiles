@@ -112,4 +112,4 @@ set $mic_mute $onscreen_bar $(pactl set-source-mute @DEFAULT_SOURCE@ toggle && p
 
 set $recorder $HOME/.config/sway/scripts/recorder.sh
 
-set $tablet_map_to_output swaymsg input type:tablet_tool map_to_output `swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name'`
+set $tablet_map_to_output swaymsg input type:tablet_tool map_to_output $(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name')

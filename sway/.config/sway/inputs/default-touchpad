@@ -23,6 +23,14 @@ input type:touchpad {
   drag enabled
 }
 
+input type:tablet_tool {
+  dwt disabled
+  dwtp disabled
+  tap enabled
+  drag enabled
+  middle_emulation enabled
+}
+
 input "12068:309:Mouse_for_Windows" {
   accel_profile "adaptive"
   pointer_accel 1
