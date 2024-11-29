@@ -67,9 +67,9 @@
   <property name="autosaveEnabled" value="true"/>
   <property name="autosaveTimeout" value="3"/>
   <property name="addHorizontalSpace" value="true"/>
-  <property name="addHorizontalSpaceAmount" value="50"/>
+  <property name="addHorizontalSpaceAmount" value="1000"/>
   <property name="addVerticalSpace" value="true"/>
-  <property name="addVerticalSpaceAmount" value="50"/>
+  <property name="addVerticalSpaceAmount" value="1000"/>
   <property name="drawDirModsEnabled" value="false"/>
   <property name="drawDirModsRadius" value="50"/>
   <property name="snapRotation" value="true"/>
@@ -154,10 +154,12 @@
       <attribute name="tool" type="string" value="none"/>
     </data>
     <data name="stylus">
-      <attribute name="tool" type="string" value="none"/>
+      <attribute name="tool" type="string" value="hand"/>
     </data>
     <data name="stylus2">
-      <attribute name="tool" type="string" value="none"/>
+      <attribute name="eraserMode" type="string" value="none"/>
+      <attribute name="size" type="string" value="none"/>
+      <attribute name="tool" type="string" value="eraser"/>
     </data>
     <data name="touch">
       <attribute name="device" type="string" value=""/>
@@ -179,6 +181,10 @@
       <attribute name="deviceSource" type="int" value="0"/>
     </data>
     <data name="Wayland Wheel Scrolling">
+      <attribute name="deviceClass" type="int" value="1"/>
+      <attribute name="deviceSource" type="int" value="0"/>
+    </data>
+    <data name="xwayland-pointer:47">
       <attribute name="deviceClass" type="int" value="1"/>
       <attribute name="deviceSource" type="int" value="0"/>
     </data>
