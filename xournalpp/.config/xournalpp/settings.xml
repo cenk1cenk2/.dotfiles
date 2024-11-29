@@ -6,17 +6,17 @@
   <property name="pressureMultiplier" value="1"/>
   <property name="zoomGesturesEnabled" value="true"/>
   <property name="selectedToolbar" value="Toolbar Left"/>
-  <property name="lastSavePath" value="/home/cenk/notes/Templates"/>
+  <property name="lastSavePath" value="/home/cenk/notes/Infastructure/Kubernetes"/>
   <property name="lastOpenPath" value=""/>
   <property name="lastImagePath" value=""/>
   <property name="edgePanSpeed" value="20"/>
   <property name="edgePanMaxMult" value="5"/>
   <property name="zoomStep" value="10"/>
-  <property name="zoomStepScroll" value="2"/>
+  <property name="zoomStepScroll" value="3"/>
   <property name="displayDpi" value="72"/>
-  <property name="mainWndWidth" value="1762"/>
-  <property name="mainWndHeight" value="884"/>
-  <property name="maximized" value="true"/>
+  <property name="mainWndWidth" value="3646"/>
+  <property name="mainWndHeight" value="1495"/>
+  <property name="maximized" value="false"/>
   <property name="showToolbar" value="true"/>
   <property name="showSidebar" value="true"/>
   <property name="sidebarWidth" value="150"/>
@@ -66,10 +66,10 @@
   <property name="defaultPdfExportName" value="%{name}_annotated"/>
   <property name="autosaveEnabled" value="true"/>
   <property name="autosaveTimeout" value="3"/>
-  <property name="addHorizontalSpace" value="false"/>
-  <property name="addHorizontalSpaceAmount" value="150"/>
-  <property name="addVerticalSpace" value="false"/>
-  <property name="addVerticalSpaceAmount" value="150"/>
+  <property name="addHorizontalSpace" value="true"/>
+  <property name="addHorizontalSpaceAmount" value="50"/>
+  <property name="addVerticalSpace" value="true"/>
+  <property name="addVerticalSpaceAmount" value="50"/>
   <property name="drawDirModsEnabled" value="false"/>
   <property name="drawDirModsRadius" value="50"/>
   <property name="snapRotation" value="true"/>
@@ -137,7 +137,7 @@
   <property name="font" font="Sans" size="12"/>
   <data name="buttonConfig">
     <data name="default">
-      <attribute name="color" type="hex" value="ff000000"/>
+      <attribute name="color" type="hex" value="ffffffff"/>
       <attribute name="drawingType" type="string" value="default"/>
       <attribute name="size" type="string" value="thick"/>
       <attribute name="tool" type="string" value="pen"/>
