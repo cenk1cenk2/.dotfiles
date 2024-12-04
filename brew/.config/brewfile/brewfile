@@ -36,5 +36,5 @@ brew "borders"
 brew "clipboard"
 
 # personal
-cask "slack"
+cask "obsidian"
 cask "xournal++"
