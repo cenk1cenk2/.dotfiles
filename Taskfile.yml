@@ -80,7 +80,10 @@ tasks:
     platforms:
       - darwin
     cmds:
-      - stow --no-folding -{{ .verbosity }}t ~ chrome commitizen gitconfig yabai sketchybar janky-borders kitty xournalpp
+      - task: deploy
+        vars:
+          to: '~'
+          CLI_ARGS: chrome commitizen gitconfig yabai sketchybar janky-borders kitty xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
