@@ -498,3 +498,27 @@ position = "0,0"
 scale = 1.0
 transform = "normal"
 adaptive_sync = false
+
+[[profile.output]]
+enable = false
+search = ["v=ASUSTek COMPUTER INC", "m=VG27WQ", "s=L4LMDW007740"]
+
+[[profile]]
+name = "tv-4k"
+exec = [
+  '''
+notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  ''',
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'",
+  "~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'",
+  "busctl --user set-property rs.wl-gammarelay / rs.wl.gammarelay Gamma d 1",
+]
+
+[[profile.output]]
+enable = true
+search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+mode = "3840x2160@60.00Hz"
+position = "0,0"
+scale = 1.0
+transform = "normal"
+adaptive_sync = false
