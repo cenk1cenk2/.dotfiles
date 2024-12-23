@@ -3,6 +3,7 @@ tap "homebrew/services"
 
 # gui program
 cask "google-chrome"
+cask "brave-browser"
 cask "bitwarden"
 cask "spotify"
 cask "kitty"

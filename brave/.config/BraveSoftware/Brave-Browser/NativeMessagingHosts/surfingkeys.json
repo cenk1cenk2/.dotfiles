@@ -1,0 +1,7 @@
+{
+  "allowed_origins": ["chrome-extension://aajlcoiaogpknhgninhopncaldipjdnp/", "chrome-extension://gfbliohnnapiefjpjlpjnehglfpaknnc/"],
+  "description": "Neovim UI client from Surfingkeys",
+  "name": "surfingkeys",
+  "type": "stdio",
+  "path": "/home/cenk/.config/nvim/utils/surfing-keys/sk.sh"
+}
