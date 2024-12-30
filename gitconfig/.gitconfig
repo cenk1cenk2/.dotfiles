@@ -51,7 +51,7 @@
   line-numbers = true
   zero-style = dim syntax
   diff-highlight = false
-  side-by-side = true
+  side-by-side = false
   diff-so-fancy = true
   true-color = always
   tabs = 2
