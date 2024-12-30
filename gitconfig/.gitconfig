@@ -63,7 +63,7 @@
   right-arrow = " "
   minus-style = syntax auto
   plus-style = syntax auto
-  minus-empty-line-marker-style = syntax "#3f0001"
+  minus-empty-line-marker-style = syntax "#291718"
   plus-empty-line-marker-style = syntax "#002800"
   minus-emph-style = syntax auto
   plus-emph-style = syntax auto
