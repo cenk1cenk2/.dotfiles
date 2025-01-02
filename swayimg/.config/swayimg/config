@@ -137,6 +137,7 @@ p = prev_file
 ; Left = prev_file
 ; Right = next_file
 n = next_file
+Shift+n = rand_file
 Shift+d = prev_dir
 d = next_dir
 Shift+o = prev_frame
