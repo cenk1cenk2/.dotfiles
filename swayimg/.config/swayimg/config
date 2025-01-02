@@ -80,7 +80,7 @@ shadow = #000000ff
 ################################################################################
 [list]
 # Default order (none/alpha/reverse/random)
-order = none
+order = alpha
 # Looping list of images (yes/no)
 loop = yes
 # Read directories recursively (yes/no)
@@ -142,23 +142,22 @@ Shift+d = prev_dir
 d = next_dir
 Shift+o = prev_frame
 o = next_frame
-comma = order random
 c = skip_file
 Shift+s = slideshow
 s = animation
 f = fullscreen
 Return = mode
-Left = step_left 16
-Right = step_right 16
-Up = step_up 16
-Down = step_down 16
-Equal = zoom +16
-Plus = zoom +16
+Left = step_left 12
+Right = step_right 12
+Up = step_up 12
+Down = step_down 12
+Equal = zoom +12
+Plus = zoom +12
 Shift+Left = prev_file
 Shift+Right = next_file
-Shift+Up = zoom +16
-Shift+Down = zoom -16
-Minus = zoom -16
+Shift+Up = zoom +12
+Shift+Down = zoom -12
+Minus = zoom -12
 w = zoom width
 Shift+w = zoom height
 z = zoom fit
@@ -176,12 +175,12 @@ Shift+Delete = exec rm "%"; skip_file
 Escape = exit
 q = exit
 # Mouse related
-ScrollUp = zoom +16
-ScrollDown = zoom -16
-ScrollLeft = step_right 16
-ScrollRight = step_left 16
-Ctrl+ScrollUp = step_up 16
-Ctrl+ScrollDown = step_down 16
+ScrollUp = zoom +12
+ScrollDown = zoom -12
+ScrollLeft = step_right 12
+ScrollRight = step_left 12
+Ctrl+ScrollUp = step_up 12
+Ctrl+ScrollDown = step_down 12
 Shift+ScrollUp = prev_file
 Shift+ScrollDown = next_file
 Alt+ScrollUp = prev_frame
