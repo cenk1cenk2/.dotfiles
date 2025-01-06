@@ -45,11 +45,13 @@ configuration {
 	drun-use-desktop-cache: false;
 	drun-reload-desktop-cache: false;
 	drun {
-		/** Parse user desktop files. */
+    /** Scan the current users desktop for desktop files. */
+    scan-desktop: true;
+    /** Parse user desktop files. */
 		parse-user:   true;
 		/** Parse system desktop files. */
 		parse-system: true;
-    }
+  }
 
 	/*---------- Run settings ----------*/
 	run-command: "{cmd}";
