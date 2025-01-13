@@ -12,6 +12,12 @@ ATTR{status}=="Discharging", \
 ATTR{capacity}=="1[0-9]", \
 RUN+="/etc/udev/scripts/wayland-user.sh 'notify-send -u normal -i battery-caution \"Battery\" \"Battery is getting low at $attr{capacity}%\"'"
 
+ACTION=="change", KERNEL=="BAT[0-9]", \
+SUBSYSTEM=="power_supply", \
+ATTR{status}=="Charging", \
+ATTR{capacity}=="100", \
+RUN+="/etc/udev/scripts/wayland-user.sh 'notify-send -u normal -i battery-full-charging \"Battery\" \"Battery is fully charged.\"'"
+
 SUBSYSTEM=="power_supply", ACTION=="change", \
 ENV{POWER_SUPPLY_ONLINE}=="0", ENV{POWER}="off", \
 OPTIONS+="last_rule", \
