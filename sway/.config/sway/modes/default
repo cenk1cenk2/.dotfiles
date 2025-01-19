@@ -31,7 +31,7 @@ bindsym $mod+p exec $clipboard
 floating_modifier $mod normal
 
 ## Action // Reload Sway Configuration ##
-bindsym $mod+Shift+w reload
+bindsym $mod+Ctrl+Shift+w reload
 
 ## Action // Toggle Waybar ##
 bindsym $mod+Shift+b exec pkill -SIGUSR1 waybar
