@@ -77,7 +77,7 @@ yabai -m signal --add event=space_changed action="~/.config/yabai/scripts/auto-d
 # yabai -m signal --add label="flash_focus" event="window_focused" action="yabai -m window \$YABAI_WINDOW_ID --opacity 0.95 && sleep $(yabai -m config window_opacity_duration) && yabai -m window \$YABAI_WINDOW_ID --opacity 0.0"
 
 yabai -m signal --add event=window_created action="~/.config/yabai/scripts/focus-under-cursor.sh"
-yabai -m signal --add event=window_moved action="~/.config/yabai/scripts/focus-under-cursor.sh"
+# yabai -m signal --add event=window_moved action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_destroyed action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_minimized action="~/.config/yabai/scripts/focus-under-cursor.sh"
 yabai -m signal --add event=window_deminimized action="~/.config/yabai/scripts/focus-under-cursor.sh"
