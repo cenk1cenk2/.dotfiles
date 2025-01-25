@@ -179,12 +179,12 @@ bindsym $mod+f fullscreen
 bindsym $mod+Shift+f fullscreen global
 
 ## Action // Toggle floating ##
-bindsym $mod+Shift+space floating toggle
+bindsym $mod+w floating toggle
+bindsym $mod+Shift+w sticky toggle
 
 ## Navigation // Toggle focus between tiling and floating ##
 bindsym $mod+a focus mode_toggle
 bindsym $mod+Shift+a focus parent
-bindsym $mod+w sticky toggle
 
 ## Launch // Toggle Help ##
 # bindsym $mod+question exec $help
