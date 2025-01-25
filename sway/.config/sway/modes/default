@@ -90,7 +90,7 @@ bindsym $mod+Shift+l move right
 bindsym Alt+Tab $alt_tab
 
 ## Navigation // List all open windows in last-recently-used order ##
-bindsym $mod+Tab swayr switch-window &>> /tmp/swayr.log
+bindsym $mod+Tab exec swayr switch-window &>> /tmp/swayr.log
 
 #
 # Workspaces:
