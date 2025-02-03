@@ -63,8 +63,8 @@
   right-arrow = " "
   minus-style = syntax auto
   plus-style = syntax auto
-  minus-empty-line-marker-style = syntax "#320f10"
-  plus-empty-line-marker-style = syntax "#002800"
+  minus-empty-line-marker-style = syntax "#432023"
+  plus-empty-line-marker-style = syntax "#2e3a24"
   minus-emph-style = syntax auto
   plus-emph-style = syntax auto
   grep-file-style = blue
