@@ -12,6 +12,12 @@
 ##
 ## See `man 1 grimshot` or `grimshot usage` for further details.
 
+function cleanup {
+  killall wayfreeze
+}
+
+trap cleanup EXIT
+
 get_target_directory() {
   test -f "${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" &&
     . "${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs"
@@ -114,7 +120,11 @@ take_screenshot() {
   else
     grim ${CURSOR:+-c} -g "$GEOM" "$FILE" || die "Unable to invoke grim"
   fi
+
 }
+
+wayfreeze &
+sleep 0.1
 
 if [ "$ACTION" = "check" ]; then
   echo "Checking if required tools are installed. If something is missing, install it to your system and make it available in PATH..."
@@ -124,6 +134,7 @@ if [ "$ACTION" = "check" ]; then
   check wl-copy
   check jq
   check notify-send
+  check wayfreeze
   exit
 elif [ "$SUBJECT" = "area" ]; then
   GEOM=$(slurp -d)
