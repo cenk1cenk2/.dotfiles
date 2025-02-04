@@ -4,6 +4,8 @@
 #
 # Read `man 5 sway` for a complete reference.
 
+exec --no-startup-id systemctl import-environment --user DISPLAY WAYLAND_DISPLAY
+
 # styles - set the folder for your theme definition file
 set $theme $HOME/.config/sway/themes/custom
 
@@ -25,5 +27,4 @@ include $HOME/.config/sway/modes/*
 # user config
 include $HOME/.config/sway/config.d/*
 
-exec --no-startup-id systemctl import-environment --user DISPLAY WAYLAND_DISPLAY
 exec --no-startup-id systemctl start --user sway-session.service
