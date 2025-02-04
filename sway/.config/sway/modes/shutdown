@@ -38,4 +38,4 @@ mode --pango_markup $mode_shutdown {
 
 ## Launch // Exit Menu ##
 # bindsym $mod+Shift+e mode $mode_shutdown
-bindsym $mod+Shift+e exec $shutdown
+bindsym $mod+Ctrl+Shift+e exec $shutdown

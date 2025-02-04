@@ -34,7 +34,7 @@ floating_modifier $mod normal
 bindsym $mod+Ctrl+Shift+w reload
 
 ## Action // Toggle Waybar ##
-bindsym $mod+Shift+b exec pkill -SIGUSR1 waybar
+bindsym $mod++b exec pkill -SIGUSR1 waybar
 
 # --locked flags allow the buttons to be used whilst the screen is locked.
 bindsym --locked XF86AudioRaiseVolume exec $volume_up
@@ -120,7 +120,7 @@ bindsym $mod+Shift+9 move container to workspace $ws9, exec $focus_ws $ws9
 bindsym $mod+Shift+0 move container to workspace $ws10, exec $focus_ws $ws10
 # bindsym $mod+Alt+Right move to workspace next
 # bindsym $mod+Alt+Left move to workspace prev
-bindsym $mod+Control+Space exec \
+bindsym $mod+Shift+Space exec \
     swayr steal-window >> /tmp/swayr.log 2>&1
 
 # swap workspaces
