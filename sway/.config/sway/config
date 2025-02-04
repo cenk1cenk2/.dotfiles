@@ -4,6 +4,8 @@
 #
 # Read `man 5 sway` for a complete reference.
 
+exec --no-startup-id systemctl start --user sway-session.service
+
 # styles - set the folder for your theme definition file
 set $theme $HOME/.config/sway/themes/custom
 
