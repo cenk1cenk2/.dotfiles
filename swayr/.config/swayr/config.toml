@@ -2,7 +2,9 @@
 executable = "rofi"
 args = [
   "-dmenu",
+  "-window-thumbnail",
   "-markup",
+  "-markup-rows",
   "-show-icons",
   "-i",
   "-no-drun-use-desktop-cache",
@@ -11,15 +13,21 @@ args = [
 ]
 
 [format]
-window_format = "{urgency_start}{title}{urgency_end} — {app_name} on workspace {workspace_name} \u0000icon\u001f{app_icon}"
-workspace_format = "{name}"
+indent = '  '
+output_format = '<b>{name}</b> <span alpha=\"20000\">({id})</span>'
+workspace_format = '<b>{name} [{layout}]</b> <span alpha="20000">({id})</span>'
+container_format = '<b>{layout}</b> on workspace {workspace_name} <i>{marks}</i> <span alpha="20000">({id})</span>'
+window_format = "{urgency_start}{title}{urgency_end} | <b>{app_name}</b> on {workspace_name} \u0000icon\u001f{app_icon}"
 urgency_start = '<span background="darkred" foreground="yellow">'
 urgency_end = '</span>'
 html_escape = false
 icon_dirs = [
-  "/usr/share/icons/hicolor/scalable/apps",
-  "/usr/share/icons/hicolor/48x48/apps",
-  "/usr/share/pixmaps",
+  '/usr/share/icons/hicolor/scalable/apps',
+  '/usr/share/icons/hicolor/64x64/apps',
+  '/usr/share/icons/hicolor/48x48/apps',
+  '/usr/share/icons/Adwaita/64x64/apps',
+  '/usr/share/icons/Adwaita/48x48/apps',
+  '/usr/share/pixmaps',
 ]
 
 [layout]
