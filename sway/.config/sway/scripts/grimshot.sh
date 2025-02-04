@@ -16,7 +16,7 @@ function cleanup {
   killall wayfreeze
 }
 
-trap cleanup EXIT
+trap cleanup EXIT HUP INT QUIT ABRT TERM
 
 get_target_directory() {
   test -f "${XDG_CONFIG_HOME:-$HOME/.config}/user-dirs.dirs" &&
