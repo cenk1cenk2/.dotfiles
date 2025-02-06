@@ -7,6 +7,7 @@ set $icon-theme Tela-dracula-dark
 set $kvantum-theme Graphite-rimlessDark
 set $cursor-theme Breeze_Light
 set $term-font ConsolasLG Nerd Font 11
+set $gtk-color-scheme prefer-dark
 
 set $gui-font Segoe UI 11
 set $gui-font-big Segoe UI 14
@@ -37,7 +38,6 @@ set $text-color #eeeeee
 set $selection-color #282a2b
 #color12
 set $accent-color #e5c07b
-set $theme_template_script "s/GTK_THEME/$gtk-theme/g; s/ICON_THEME/$icon-theme/g; s/CURSOR_THEME/$cursor-theme/g; s/GUI_FONT/$gui-font/g; s/KVANTUM_THEME/$kvantum-theme/g; s/BACKGROUND_COLOR/$base00/g; s/ACCENT_COLOR/$base0D/g; s/TEXT_COLOR/$base06/g; s/TERM_FONT/$term-font/g;"
 
 # Basic color configuration using the Base16 variables for windows and borders.
 # Property Name         Border  BG      Text    Indicator Child Border
