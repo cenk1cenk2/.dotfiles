@@ -112,7 +112,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 
 [[profile]]
 name = "main"
@@ -185,7 +185,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 
 [[profile]]
 name = "main-top"
@@ -249,7 +249,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 
 [[profile]]
 name = "main-bottom"
@@ -304,7 +304,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 
 [[profile]]
 name = "main-solo"
@@ -354,7 +354,7 @@ adaptive_sync = false
 
 [[profile.output]]
 enable = false
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 
 [[profile]]
 name = "aux"
@@ -391,7 +391,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@60.00Hz"
 position = "0,190"
 scale = 2.0
@@ -422,7 +422,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@59.929Hz"
 position = "0,0"
 scale = 2.0
@@ -446,7 +446,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@60.00Hz"
 position = "0,0"
 scale = 2.0
@@ -466,7 +466,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["v=LG Electronics", "m=LG TV", "s=0x01010101"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@59.929Hz"
 position = "0,0"
 scale = 2.0
@@ -492,7 +492,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@60.00Hz"
 position = "0,0"
 scale = 1.0
@@ -516,7 +516,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=LG TV", "s=0x01010101", "v=LG Electronics"]
+search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
 mode = "3840x2160@60.00Hz"
 position = "0,0"
 scale = 1.0
