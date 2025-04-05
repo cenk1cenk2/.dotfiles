@@ -115,7 +115,7 @@ wol-systemd
 wpa_supplicant
 xclip-git
 xcursor-breeze
-xdg-desktop-portal-termfilechooser-git
+xdg-desktop-portal-termfilechooser-boydaihungst-git
 xdg-desktop-portal-wlr-git
 xdg-user-dirs
 xdg-utils-handlr
