@@ -78,6 +78,7 @@
   prompt = false
 
 [diff]
+  external = difft
   tool = nvim
   context = 5
 
@@ -89,6 +90,9 @@
 
 [difftool "delta"]
   cmd = "delta --paging=never \"$LOCAL\" \"$REMOTE\""
+
+[difftool "difft"]
+  cmd = difft "$MERGED" "$LOCAL" "abcdef1" "100644" "$REMOTE" "abcdef2" "100644"
 
 [merge]
   tool = nvim
