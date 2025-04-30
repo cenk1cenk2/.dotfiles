@@ -40,6 +40,7 @@
 
 [core]
   pager = delta
+  attributesfiles = ~/.gitattributes
 
 [interactive]
   diffFilter = delta --color-only --features=interactive
@@ -99,6 +100,10 @@
 
 [mergetool "nvim"]
   cmd = "nvim -b -d \"$LOCAL\" \"$MERGED\" \"$REMOTE\""
+
+[merge "mergiraf"]
+  name = mergiraf
+  driver = mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L
 
 [color "status"]
   branch = normal
