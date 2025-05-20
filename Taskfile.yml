@@ -1,37 +1,37 @@
 ---
 # https://taskfile.dev
 
-version: '3'
+version: "3"
 
 env: {}
 
 vars:
-  to: '~'
-  args: ''
+  to: "~"
+  args: ""
   sudo: false
   verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
 
 tasks:
   plan:
-    label: 'plan: {{ .to }} -> {{ .CLI_ARGS }}'
+    label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
     desc: Plan to target.
     cmds:
       - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}
 
   deploy:
     desc: Deploy to a target.
-    label: 'deploy: {{ .to }} -> {{ .CLI_ARGS }}'
+    label: "deploy: {{ .to }} -> {{ .CLI_ARGS }}"
     cmds:
       # - task: plan
       #   vars:
       #     CLI_ARGS: '{{ .CLI_ARGS }}'
       #     to: '{{ .to }}'
-      - '{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}'
+      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}"
     status:
       - '{{ .status | default "false" }}'
 
   undeploy:
-    label: 'undeploy: {{ .to }} -> {{ .CLI_ARGS }}'
+    label: "undeploy: {{ .to }} -> {{ .CLI_ARGS }}"
     desc: Remove a stowed target.
     cmds:
       - stow {{ .args }} -{{ .verbosity }}t {{ .to }} -D {{ .CLI_ARGS }}
@@ -51,19 +51,19 @@ tasks:
     cmds:
       - task: deploy
         vars:
-          to: '~'
-          CLI_ARGS: avizo commitizen desktop file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
+          to: "~"
+          CLI_ARGS: avizo desktop file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
-          to: '~'
+          to: "~"
           CLI_ARGS: brave chrome electron
           # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
           status: test -d /usr/lib/nvidia
       - task: deploy
         vars:
-          to: '~'
+          to: "~"
           CLI_ARGS: brave-nvidia chrome-nvidia electron-nvidia
           # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
           status: test ! -d /usr/lib/nvidia
@@ -71,7 +71,7 @@ tasks:
       - task: deploy
         vars:
           sudo: true
-          to: '/'
+          to: "/"
           CLI_ARGS: rootfs
           args: --adopt
 
@@ -82,8 +82,8 @@ tasks:
     cmds:
       - task: deploy
         vars:
-          to: '~'
-          CLI_ARGS: brave chrome commitizen gitconfig yabai sketchybar janky-borders kitty xournalpp
+          to: "~"
+          CLI_ARGS: brave chrome gitconfig yabai sketchybar janky-borders kitty xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
@@ -92,6 +92,6 @@ tasks:
     cmds:
       - task: deploy
         vars:
-          to: '~'
+          to: "~"
           CLI_ARGS: mangohud steamtinkerlaunch
           args: --adopt
