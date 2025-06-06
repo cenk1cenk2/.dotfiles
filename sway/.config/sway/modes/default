@@ -75,16 +75,24 @@ bindsym $mod+j focus down
 bindsym $mod+k focus up
 bindsym $mod+l focus right
 
-## Navigation // Move focused window // $mod + Shift + ↑ ↓ ← → ##
-bindsym $mod+Shift+Left move output left, exec $focus_output left
-bindsym $mod+Shift+Down move output down, exec $focus_output down
-bindsym $mod+Shift+Up move output up, exec $focus_output up
-bindsym $mod+Shift+Right move output right, exec $focus_output right
-
+# move focused window in current output
 bindsym $mod+Shift+h move left
 bindsym $mod+Shift+j move down
 bindsym $mod+Shift+k move up
 bindsym $mod+Shift+l move right
+
+## Navigation // Move focused window // $mod + Shift + ↑ ↓ ← → ##
+bindsym $mod+Shift+Left move container output left, exec $focus_output left
+bindsym $mod+Shift+Down move container output down, exec $focus_output down
+bindsym $mod+Shift+Up move container output up, exec $focus_output up
+bindsym $mod+Shift+Right move container output right, exec $focus_output right
+
+# move workspaces
+
+bindsym $mod+Control+Shift+Left move workspace to output left
+bindsym $mod+Control+Shift+Right move workspace to output right
+bindsym $mod+Control+Shift+Up move workspace to output up
+bindsym $mod+Control+Shift+Down move workspace to output down
 
 ## Navigation // Switch to the last recently used workspace ##
 bindsym Alt+Tab $alt_tab
@@ -142,13 +150,6 @@ bindsym $mod+Control+Shift+l exec $HOME/.config/sway/scripts/swap-workspace.py -
 
 bindsym $mod+Control+Right workspace next_on_output
 bindsym $mod+Control+Left workspace prev_on_output
-
-# move workspaces
-
-bindsym $mod+Control+Shift+Left move workspace to output left
-bindsym $mod+Control+Shift+Right move workspace to output right
-bindsym $mod+Control+Shift+Up move workspace to output up
-bindsym $mod+Control+Shift+Down move workspace to output down
 
 ## workspaces
 bindsym $mod+c exec --no-startup-id $HOME/.config/sway/scripts/new-workspace.py --switch

@@ -12,6 +12,8 @@ set $background $HOME/.dotfiles/sway/.config/sway/background/narli.jpg
 set $alt_tab exec swayr switch-to-urgent-or-lru-window &> /tmp/swayr.log
 set $super_tab exec swayr switch-window &> /tmp/swayr.log
 
+set $focus_after_move true
+
 # Your preferred terminal emulator
 # set $term $HOME/.config/sway/scripts/foot.sh
 set $term kitty
