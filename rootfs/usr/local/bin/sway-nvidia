@@ -13,4 +13,4 @@ export PROTON_ENABLE_NGX_UPDATER=1
 export VKD3D_CONFIG=dxr,dxr11
 export VKD3D_FEATURE_LEVEL=12_2
 
-exec sway --unsupported-gpu >/tmp/sway.log 2>&1
+exec sway --unsupported-gpu 2>&1 | tee /tmp/sway.log
