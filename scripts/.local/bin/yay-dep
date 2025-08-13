@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# vim: ft=bash
+
+case "$1" in
+clean)
+  echo "All orphaned packages will be removed."
+
+  yay -Qdtq | yay -Rns -
+  ;;
+mark-explicit)
+  echo "Marked as explicit: ${*:2}"
+
+  yay -D --asexplicit "${@:2}"
+  ;;
+mark-dependency)
+  echo "Marked as dependency: ${*:2}"
+
+  yay -D --asdeps "${@:2}"
+  ;;
+*)
+  echo "Usage: $0 [clean|mark-explicit|mark-dependency] [packages?...]"
+  exit 1
+  ;;
+esac
