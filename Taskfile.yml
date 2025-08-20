@@ -95,3 +95,13 @@ tasks:
           to: "~"
           CLI_ARGS: mangohud steamtinkerlaunch
           args: --adopt
+
+  deploy:host:mau5:
+    desc: Deploy to mau5 host.
+    cmds:
+      - task: deploy
+        vars:
+          sudo: true
+          to: "/"
+          CLI_ARGS: host-mau5-rootfs
+          args: --adopt
