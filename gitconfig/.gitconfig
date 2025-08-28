@@ -18,6 +18,9 @@
 [pull]
   rebase = false
 
+[push]
+	autoSetupRemote = true
+
 [includeIf "gitdir/i:~/development/work/"]
   path = ~/development/work/.gitconfig
 
@@ -164,5 +167,3 @@
   stash = normal dim
   grafted = normal bold
   HEAD = normal italic
-[push]
-	autoSetupRemote = true
