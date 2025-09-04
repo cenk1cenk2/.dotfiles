@@ -1,3 +1,4 @@
+[Added Associations]
 [Default Applications]
 application/*zip=yazi.desktop;
 application/json=nvim.desktop;
@@ -9,6 +10,7 @@ application/vnd.ms-publisher=nvim.desktop;
 application/x-virt-viewer=remote-viewer.desktop;
 application/x-yaml=nvim.desktop;
 application/x-zerosize=nvim.desktop;
+text/calendar=brave-browser.desktop;
 application/yaml=nvim.desktop;
 application/zip=yazi.desktop;
 image/*=swayimg.desktop;
@@ -17,36 +19,13 @@ image/png=swayimg.desktop;
 image/svg+xml=swayimg.desktop;
 inode/directory=yazi.desktop;
 inode/x-shortcut=yazi.desktop;
+message/rfc822=userapp-Thunderbird-X53JC3.desktop;
 text/*=nvim.desktop;
-text/calendar=userapp-Thunderbird-HX48B3.desktop
+text/calendar=userapp-Thunderbird-HX48B3.desktop;
 text/html=brave-browser.desktop;
-video/mp4=vlc.desktop;
+video/*=vlc.desktop;
 x-scheme-handler/about=brave-browser.desktop;
 x-scheme-handler/http=brave-browser.desktop;
 x-scheme-handler/https=brave-browser.desktop;
 x-scheme-handler/obsidian=obsidian.desktop;
 x-scheme-handler/terminal=kitty.desktop;
-x-scheme-handler/mailto=userapp-Thunderbird-X53JC3.desktop
-message/rfc822=userapp-Thunderbird-X53JC3.desktop
-x-scheme-handler/mid=userapp-Thunderbird-X53JC3.desktop
-x-scheme-handler/news=userapp-Thunderbird-MG7GC3.desktop
-x-scheme-handler/snews=userapp-Thunderbird-MG7GC3.desktop
-x-scheme-handler/nntp=userapp-Thunderbird-MG7GC3.desktop
-x-scheme-handler/feed=userapp-Thunderbird-PN6DC3.desktop
-application/rss+xml=userapp-Thunderbird-PN6DC3.desktop
-application/x-extension-rss=userapp-Thunderbird-PN6DC3.desktop
-x-scheme-handler/webcal=userapp-Thunderbird-HX48B3.desktop
-application/x-extension-ics=userapp-Thunderbird-HX48B3.desktop
-x-scheme-handler/webcals=userapp-Thunderbird-HX48B3.desktop
-
-[Added Associations]
-x-scheme-handler/mailto=userapp-Thunderbird-X53JC3.desktop;
-x-scheme-handler/mid=userapp-Thunderbird-X53JC3.desktop;
-x-scheme-handler/news=userapp-Thunderbird-MG7GC3.desktop;
-x-scheme-handler/snews=userapp-Thunderbird-MG7GC3.desktop;
-x-scheme-handler/nntp=userapp-Thunderbird-MG7GC3.desktop;
-x-scheme-handler/feed=userapp-Thunderbird-PN6DC3.desktop;
-application/rss+xml=userapp-Thunderbird-PN6DC3.desktop;
-application/x-extension-rss=userapp-Thunderbird-PN6DC3.desktop;
-x-scheme-handler/webcal=userapp-Thunderbird-HX48B3.desktop;
-x-scheme-handler/webcals=userapp-Thunderbird-HX48B3.desktop;
