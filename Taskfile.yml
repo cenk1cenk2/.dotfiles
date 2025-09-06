@@ -16,7 +16,7 @@ tasks:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
     desc: Plan to target.
     cmds:
-      - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}
+      - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}
 
   deploy:
     desc: Deploy to a target.
@@ -26,7 +26,7 @@ tasks:
       #   vars:
       #     CLI_ARGS: '{{ .CLI_ARGS }}'
       #     to: '{{ .to }}'
-      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .CLI_ARGS }}"
+      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}"
     status:
       - '{{ .status | default "false" }}'
 
@@ -34,7 +34,7 @@ tasks:
     label: "undeploy: {{ .to }} -> {{ .CLI_ARGS }}"
     desc: Remove a stowed target.
     cmds:
-      - stow {{ .args }} -{{ .verbosity }}t {{ .to }} -D {{ .CLI_ARGS }}
+      - stow {{ .args }} -{{ .verbosity }}t {{ .to }} -D {{ .packages }} {{ .CLI_ARGS }}
     status:
       - '{{ .status | default "false" }}'
 
@@ -52,19 +52,19 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          CLI_ARGS: avizo desktop file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
+          packages: avizo desktop file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
           to: "~"
-          CLI_ARGS: brave chrome electron
+          packages: brave chrome electron
           # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
           status: test -d /usr/lib/nvidia
       - task: deploy
         vars:
           to: "~"
-          CLI_ARGS: brave-nvidia chrome-nvidia electron-nvidia
+          packages: brave-nvidia chrome-nvidia electron-nvidia
           # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
           status: test ! -d /usr/lib/nvidia
       # HACK: little trick to change the configuration for nvidia
@@ -72,7 +72,7 @@ tasks:
         vars:
           sudo: true
           to: "/"
-          CLI_ARGS: rootfs
+          packages: rootfs
           args: --adopt
 
   deploy:macos:
@@ -83,7 +83,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          CLI_ARGS: brave chrome gitconfig yabai sketchybar janky-borders kitty xournalpp
+          packages: brave chrome gitconfig yabai sketchybar janky-borders kitty xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
@@ -93,7 +93,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          CLI_ARGS: mangohud steamtinkerlaunch
+          packages: mangohud steamtinkerlaunch
           args: --adopt
 
   deploy:host:mau5:

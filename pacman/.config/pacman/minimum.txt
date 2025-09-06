@@ -49,8 +49,6 @@ khal
 kitty
 kitty-shell-integration
 kitty-terminfo
-kvantum
-kvantum-theme-materia
 libpulse
 libva-utils
 libva-vdpau-driver
@@ -80,7 +78,7 @@ polkit-gnome
 poweralertd
 pulsemixer
 qt5-wayland
-qt5ct
+qt6ct-kde
 rclone
 rebuild-detector
 ripdrag-git
@@ -152,6 +150,7 @@ xorg-xhost
 xorg-xinit
 xorg-xwayland
 xsel
+xsettingsd
 yay
 zathura
 zathura-pdf-poppler

@@ -1,3 +1,4 @@
+# vim: ft=bash
 #
 # This file is parsed by pam_env module
 #
@@ -14,9 +15,8 @@ WLR_RENDERER_ALLOW_SOFTWARE=1
 # for nouveau compatibility
 # WLR_DRM_NO_MODIFIERS=1
 WLR_XWAYLAND=/usr/local/bin/Xwayland
-QT_QPA_PLATFORM=wayland;xcb
-QT_QPA_PLATFORMTHEME=qt5ct
-QT_STYLE_OVERRIDE=kvantum
+QT_QPA_PLATFORM=wayland
+QT_QPA_PLATFORMTHEME=qt6ct
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 GTK_USE_PORTAL=1
 GDK_DEBUG=portals
