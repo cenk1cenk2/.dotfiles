@@ -1,5 +1,4 @@
-autotiling
-avizo
+autotiling-rs
 base
 base-devel
 bind
@@ -42,7 +41,6 @@ libpulse
 libsecret
 libva-utils
 libva-vdpau-driver
-light
 lxappearance
 man-db
 net-tools
@@ -85,6 +83,7 @@ swaycwd
 swayidle
 swaylock-effects-git
 swaync
+swayosd
 swayr
 sworkstyle
 themechanger-git

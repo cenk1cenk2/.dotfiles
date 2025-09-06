@@ -94,21 +94,17 @@ set $screenshot_snipping_tool swappy -f -
 set $screenshot_upload $HOME/.config/sway/scripts/upload-image.sh
 
 # onscreen bar
-# set $onscreen_bar bash $HOME/.config/sway/scripts/wob.sh "$accent-colorFF" "$background-colorFF"
-set $onscreen_bar $HOME/.config/sway/scripts/avizo.sh
+set $onscreen_bar swayosd-client --monitor "$(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true).name')"
 
 # brightness control
-set $brightness_step bash -c 'echo $(( $(light -Mr) / 100 * 5 < 1 ? 1 : $(( $(light -Mr) / 100 * 5 )) ))'
-set $brightness_up light -r -A $($brightness_step) && $onscreen_bar $(light -G | cut -d'.' -f1) b
-set $brightness_down light -r -U $($brightness_step) && $onscreen_bar $(light -G | cut -d'.' -f1) b
+set $brightness_up exec $onscreen_bar --brightness raise
+set $brightness_down exec $onscreen_bar --brightness lower
 
 # audio control
-set $sink_volume pactl get-sink-volume @DEFAULT_SINK@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
-set $source_volume pactl get-source-volume @DEFAULT_SOURCE@ | grep '^Volume:' | cut -d / -f 2 | tr -d ' ' | sed 's/%//'
-set $volume_down $onscreen_bar $(pactl set-sink-volume @DEFAULT_SINK@ -5% && $sink_volume) v
-set $volume_up $onscreen_bar $(pactl set-sink-volume @DEFAULT_SINK@ +5% && $sink_volume) v
-set $volume_mute $onscreen_bar $(pactl set-sink-mute @DEFAULT_SINK@ toggle && pactl get-sink-mute @DEFAULT_SINK@ | sed -En "/no/ s/.*/$($sink_volume)/p; /yes/ s/.*/0/p") v
-set $mic_mute $onscreen_bar $(pactl set-source-mute @DEFAULT_SOURCE@ toggle && pactl get-source-mute @DEFAULT_SOURCE@ | sed -En "/no/ s/.*/$($source_volume)/p; /yes/ s/.*/0/p") m
+set $volume_up exec $onscreen_bar --output-volume raise
+set $volume_down exec $onscreen_bar --output-volume lower
+set $volume_mute exec $onscreen_bar --output-volume mute-toggle
+set $mic_mute exec $onscreen_bar --input-volume mute-toggle
 
 set $recorder $HOME/.config/sway/scripts/recorder.py
 
