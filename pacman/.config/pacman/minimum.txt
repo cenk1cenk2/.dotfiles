@@ -69,7 +69,7 @@ qt5ct
 rclone
 rebuild-detector
 ripdrag-git
-rofi-lbonn-wayland-git
+rofi
 rsync
 seahorse
 shikane
