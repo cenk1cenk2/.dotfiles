@@ -53,14 +53,15 @@ kvantum
 kvantum-theme-materia
 libpulse
 libva-utils
+libva-vdpau-driver
 linux-firmware
 linux-headers
 linux-zen
-libva-vdpau-driver
 linux-zen-headers
 lxappearance
 man-db
 mesa-utils
+nemo
 net-tools
 networkmanager
 nmap
@@ -70,7 +71,6 @@ openssh
 pamac-aur
 pamixer
 pavucontrol
-pcmanfm-gtk3
 pipewire
 pipewire-alsa
 pipewire-jack
@@ -92,8 +92,8 @@ slurp
 smartmontools
 spotify
 stow
-sudo-rs
 strace
+sudo-rs
 swappy-git
 sway
 sway-audio-idle-inhibit-git
