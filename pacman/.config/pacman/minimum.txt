@@ -31,6 +31,7 @@ git
 git-lfs
 gnome-keyring
 gnu-netcat
+gnupg
 greetd
 greetd-tuigreet
 grim
@@ -69,6 +70,7 @@ openssh
 pamac-aur
 pamixer
 pavucontrol
+pinentry
 pipewire
 pipewire-alsa
 pipewire-jack
@@ -77,8 +79,8 @@ playerctl
 polkit-gnome
 poweralertd
 pulsemixer
-qt5-wayland
 qt5-styleplugins
+qt5-wayland
 qt6gtk2
 rclone
 rebuild-detector

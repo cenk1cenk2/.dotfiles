@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: avizo desktop file-manager-actions fonts foot gitconfig khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
+          packages: avizo desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
