@@ -125,7 +125,7 @@ xorg-xauth
 xorg-xhost
 xorg-xinit
 xorg-xwayland
-xsel-git
+xsel
 yay
 zathura
 zathura-pdf-poppler
