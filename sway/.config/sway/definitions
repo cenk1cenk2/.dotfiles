@@ -97,14 +97,19 @@ set $screenshot_upload $HOME/.config/sway/scripts/upload-image.sh
 set $onscreen_bar swayosd-client --monitor "$(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true).name')"
 
 # brightness control
-set $brightness_up exec $onscreen_bar --brightness raise
-set $brightness_down exec $onscreen_bar --brightness lower
+set $brightness_up $onscreen_bar --brightness raise
+set $brightness_down $onscreen_bar --brightness lower
 
 # audio control
-set $volume_up exec $onscreen_bar --output-volume raise
-set $volume_down exec $onscreen_bar --output-volume lower
-set $volume_mute exec $onscreen_bar --output-volume mute-toggle
-set $mic_mute exec $onscreen_bar --input-volume mute-toggle
+set $volume_up $onscreen_bar --output-volume raise
+set $volume_down $onscreen_bar --output-volume lower
+set $volume_mute $onscreen_bar --output-volume mute-toggle
+set $mic_mute $onscreen_bar --input-volume mute-toggle
+
+# playerctl
+set $player_toggle $onscreen_bar --player spotify --playerctl=play-pause
+set $player_next $onscreen_bar --player spotify --playerctl=next
+set $player_prev $onscreen_bar --player spotify --playerctl=previous
 
 set $recorder $HOME/.config/sway/scripts/recorder.py
 

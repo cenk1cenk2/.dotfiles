@@ -43,17 +43,17 @@ bindsym --locked XF86AudioLowerVolume exec $volume_down
 
 bindsym --locked XF86AudioMute exec $volume_mute
 
-bindsym XF86AudioMicMute exec $mic_mute
+bindsym --locked XF86AudioMicMute exec $mic_mute
 
 bindsym --locked XF86MonBrightnessUp exec $brightness_up
 
 bindsym --locked XF86MonBrightnessDown exec $brightness_down
 
-bindsym --locked XF86AudioPlay exec playerctl play-pause
+bindsym --locked XF86AudioPlay exec $player_toggle
 
-bindsym XF86AudioNext exec playerctl next
+bindsym XF86AudioNext exec $player_next
 
-bindsym XF86AudioPrev exec playerctl previous
+bindsym XF86AudioPrev exec $player_prev
 
 bindsym XF86Search exec $menu
 
