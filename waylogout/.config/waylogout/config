@@ -3,7 +3,6 @@ fade-in=0.1
 hide-cancel
 screenshots
 font="Segoe UI"
-fa-font="RobotoMono Nerd Font"
 symbol-font-size=36
 label-font-size=36
 effect-blur=8x6
