@@ -1,0 +1,10 @@
+cuda
+egl-wayland
+lib32-nvidia-utils
+lib32-opencl-nvidia
+libva-nvidia-driver
+nvidia-open-dkms
+nvidia-settings
+nvidia-utils
+nvtop
+opencl-nvidia

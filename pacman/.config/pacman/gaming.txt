@@ -1,6 +1,7 @@
 gamemode
 gamescope-git
-luajit
+goverlay
+input-remapper-git
 lutris
 mangohud
 steam

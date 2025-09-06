@@ -1,0 +1,4 @@
+qemu-full
+qemu-user-static
+qemu-user-static-binfmt
+virt-manager

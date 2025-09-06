@@ -1,0 +1,7 @@
+alsa-scarlett-gui
+coppwr
+lib32-pipewire-jack
+pipewire-jack
+reaper
+yabridge
+yabridgectl
