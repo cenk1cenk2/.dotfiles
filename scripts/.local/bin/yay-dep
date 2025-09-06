@@ -8,6 +8,11 @@ clean)
 
   yay -Qdtq | yay -Rns -
   ;;
+list)
+  echo "All orphaned packages."
+
+  yay -Qdtq
+  ;;
 mark-explicit)
   echo "Marked as explicit: ${*:2}"
 
