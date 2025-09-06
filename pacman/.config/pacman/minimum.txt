@@ -156,4 +156,3 @@ yay
 zathura
 zathura-pdf-poppler
 zenity
-zram-generator
