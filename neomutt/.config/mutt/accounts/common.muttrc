@@ -8,3 +8,7 @@ set mail_check_stats_interval = 30
 set read_inc=500
 set write_inc=100
 set use_threads=reverse sort=date sort_aux=date
+
+macro index,pager u "<undelete-pattern>~A<enter>" "undo all pending delete operations"
+
+color index black brightyellow "~N"

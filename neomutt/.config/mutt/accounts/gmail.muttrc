@@ -18,7 +18,7 @@ macro index,pager gs "<change-folder>=[Gmail]/Sent Mail<enter>" "go to sent"
 macro index,pager gt "<change-folder>=[Gmail]/Trash<enter>" "go to trash"
 macro index,pager ga "<change-folder>=[Gmail]/All Mail<enter>" "go to archive"
 macro index,pager gj "<change-folder>=[Gmail]/Spam<enter>" "go to junk"
-macro index,pager gw "<pipe-message>~/.config/mutt/accounts/gmail-open.sh<enter>" "open in Gmail web"
+macro index,pager gw "<pipe-message>~/.config/mutt/accounts/gmail-open.py<enter>" "open in Gmail web"
 
 macro index,pager Mi ";<save-message>=INBOX<enter>" "move mail to inbox"
 macro index,pager Mt ";<save-message>=[Gmail]/Trash<enter>" "move mail to trash"
