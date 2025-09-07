@@ -73,7 +73,7 @@ tasks:
           sudo: true
           to: "/"
           packages: rootfs
-          args: --adopt
+          # args: --adopt
 
   deploy:macos:
     desc: Deploy to target.
@@ -104,4 +104,4 @@ tasks:
           sudo: true
           to: "/"
           CLI_ARGS: host-mau5-rootfs
-          args: --adopt
+          # args: --adopt
