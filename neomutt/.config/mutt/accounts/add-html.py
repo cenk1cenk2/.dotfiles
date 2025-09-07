@@ -60,37 +60,39 @@ def with_html(msg: EmailMessage) -> EmailMessage:
     alternatives = create_alternatives_structure(content)
 
     if not msg.is_multipart():
-        msg_mixed = EmailMessage()
-        msg_mixed.set_type('multipart/mixed')
+        mixed = EmailMessage()
+        mixed.set_type('multipart/mixed')
 
         for key, value in msg.items():
             if key.lower() not in ['content-type', 'content-transfer-encoding', 'mime-version']:
-                msg_mixed[key] = value
+                mixed[key] = value
 
-        msg_mixed.attach(alternatives)
-        return msg_mixed
+        mixed.attach(alternatives)
+
+        return mixed
 
     elif msg.get_content_type() == "multipart/mixed":
         payload = list(msg.get_payload())
         payload[index] = alternatives
         msg.set_payload(payload)
+
         return msg
 
     else:
-        msg_mixed = EmailMessage()
-        msg_mixed.set_type('multipart/mixed')
+        mixed = EmailMessage()
+        mixed.set_type('multipart/mixed')
 
         for key, value in msg.items():
             if key.lower() not in ['content-type', 'content-transfer-encoding', 'mime-version']:
-                msg_mixed[key] = value
+                mixed[key] = value
 
-        msg_mixed.attach(alternatives)
+        mixed.attach(alternatives)
 
         for i, part in enumerate(msg.get_payload()):
             if i != index:
-                msg_mixed.attach(part)
+                mixed.attach(part)
 
-        return msg_mixed
+        return mixed
 
     return msg
 
