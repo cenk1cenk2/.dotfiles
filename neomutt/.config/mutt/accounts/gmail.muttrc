@@ -1,17 +1,11 @@
+source "~/.config/mutt/accounts/common.muttrc"
 # vim: filetype=neomuttrc
 set spoolfile = +INBOX
-set postponed = +[Gmail]/Drafts
-set trash = +[Gmail]/Trash
+set postponed = "+[Gmail]/Drafts"
+set trash = "+[Gmail]/All Mail"
 set record = "+[Gmail]/Sent Mail"
 set ssl_starttls = yes
 set ssl_force_tls = yes
-set timeout = 30
-set mail_check = 5
-set mail_check_stats_interval = 30
-set read_inc=500
-set write_inc=100
-
-set abort_key = "<Esc>"
 
 macro index \eg "<enter-command>unset wait_key<enter><shell-escape>gpg --list-secret-keys; printf 'Enter email ID of user to publish: '; read eID; printf 'Enter fingerprint of GPG key to publish: '; read eFGPT; /usr/libexec/gpg-wks-client --create \$eFGPT \$eID | msmtp --read-envelope-from --read-recipients -a cenk1cenk2cenk3@gmail.com<enter>"  "publish GPG key to WKS provider"
 macro index \eh "<pipe-message>/usr/libexec/gpg-wks-client --receive | msmtp --read-envelope-from --read-recipients -a cenk1cenk2cenk3@gmail.com<enter>" "confirm GPG publication"

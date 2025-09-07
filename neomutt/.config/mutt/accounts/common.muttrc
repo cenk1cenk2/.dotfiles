@@ -1,0 +1,10 @@
+# vim: filetype=neomuttrc
+set new_mail_command="notify-send --icon='/usr/share/icons/Adwaita/symbolic/status/mail-unread-symbolic.svg' \
+'New Email' '%n new messages, %u unread.' &"
+
+set timeout = 30
+set mail_check = 5
+set mail_check_stats_interval = 30
+set read_inc=500
+set write_inc=100
+set use_threads=reverse sort=date sort_aux=date
