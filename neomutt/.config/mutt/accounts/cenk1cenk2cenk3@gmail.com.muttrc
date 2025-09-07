@@ -8,9 +8,8 @@ set header_cache = /home/cenk/.cache/mutt-wizard/cenk1cenk2cenk3@gmail.com/heade
 set message_cachedir = /home/cenk/.cache/mutt-wizard/cenk1cenk2cenk3@gmail.com/bodies
 set mbox_type = Maildir
 set hostname = "gmail.com"
-source /usr/share/mutt-wizard/switch.muttrc
-set sendmail = "~/.config/mutt/accounts/sendmail.sh -a cenk@laravel.com"
+source "/usr/share/mutt-wizard/switch.muttrc"
 set imap_user = "cenk1cenk2cenk3@gmail.com"
 set imap_pass = "`pass cenk1cenk2cenk3@gmail.com`"
-
 source "~/.config/mutt/accounts/gmail.muttrc"
+set sendmail = "~/.config/mutt/accounts/sendmail.sh -a cenk1cenk2cenk3@gmail.com"

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 
 set -e
+set -o pipefail
 
-# TODO: enable when oclif fixes shit
-# ~/.config/mutt/accounts/add-html.py | msmtp "$@"
-
-msmtp "$@"
+~/.config/mutt/accounts/add-html.py | msmtp "$@"
