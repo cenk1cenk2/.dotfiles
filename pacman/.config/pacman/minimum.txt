@@ -58,9 +58,13 @@ linux-headers
 linux-zen
 linux-zen-headers
 lxappearance
+lynx
+mailcap
 man-db
 mesa-utils
+mutt-wizard
 nemo
+neomutt
 net-tools
 networkmanager
 nmap
