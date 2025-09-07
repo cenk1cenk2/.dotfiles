@@ -118,4 +118,4 @@ def to_html(text: str) -> str:
             pass
 
 if __name__ == "__main__":
-    os.write(1, with_html(Parser(policy=policy.SMTP).parse(sys.stdin)).as_bytes())
+    sys.stdout.write(with_html(Parser(policy=policy.SMTP).parse(sys.stdin)).as_string())
