@@ -1,0 +1,7 @@
+text/html; lynx -assume_charset=%{charset} -display_charset=utf-8 -dump %s; nametemplate=%s.html; copiousoutput;
+text/plain; bat %s
+
+application/pdf; zathura %s pdf
+
+image/png; swayimg %s
+image/jpeg; swayimg %s

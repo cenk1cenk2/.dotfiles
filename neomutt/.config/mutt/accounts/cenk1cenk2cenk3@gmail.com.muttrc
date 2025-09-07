@@ -1,0 +1,16 @@
+# vim: filetype=neomuttrc
+# muttrc file for account cenk1cenk2cenk3@gmail.com
+set realname = "cenk1cenk2cenk3"
+set from = "cenk1cenk2cenk3@gmail.com"
+set sendmail = "msmtp -a cenk1cenk2cenk3@gmail.com"
+alias me cenk1cenk2cenk3 <cenk1cenk2cenk3@gmail.com>
+set folder = "imaps://cenk1cenk2cenk3@gmail.com@imap.gmail.com:993"
+set header_cache = /home/cenk/.cache/mutt-wizard/cenk1cenk2cenk3@gmail.com/headers
+set message_cachedir = /home/cenk/.cache/mutt-wizard/cenk1cenk2cenk3@gmail.com/bodies
+set mbox_type = Maildir
+set hostname = "gmail.com"
+source /usr/share/mutt-wizard/switch.muttrc
+set imap_user = "cenk1cenk2cenk3@gmail.com"
+set imap_pass = "`pass cenk1cenk2cenk3@gmail.com`"
+
+source "~/.config/mutt/accounts/gmail.muttrc"
