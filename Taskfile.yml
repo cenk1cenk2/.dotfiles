@@ -58,13 +58,13 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: brave chrome electron
+          packages: brave electron
           # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
           status: test -d /usr/lib/nvidia
       - task: deploy
         vars:
           to: "~"
-          packages: brave-nvidia chrome-nvidia electron-nvidia
+          packages: brave-nvidia electron-nvidia
           # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
           status: test ! -d /usr/lib/nvidia
       # HACK: little trick to change the configuration for nvidia
@@ -83,7 +83,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: brave chrome gitconfig yabai sketchybar janky-borders kitty xournalpp
+          packages: brave gitconfig yabai sketchybar janky-borders kitty xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
