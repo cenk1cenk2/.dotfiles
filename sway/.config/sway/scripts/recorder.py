@@ -46,28 +46,10 @@ def get_videos_dir():
         return os.path.expanduser("~/Videos")
 
 def get_region_selection():
-    """Get region selection using swaymsg, jq and slurp - exactly like the original"""
     try:
-        # Use the exact same pipeline as the original script
-        swaymsg_proc = subprocess.Popen(
-            ["swaymsg", "-t", "get_tree"], stdout=subprocess.PIPE
-        )
-        jq_proc = subprocess.Popen(
-            [
-                "jq",
-                "-r",
-                '.. | select(.pid? and .visible?) | .rect | "\\(.x),\\(.y) \\(.width)x\\(.height)"',
-            ],
-            stdin=swaymsg_proc.stdout,
-            stdout=subprocess.PIPE,
-            text=True,
-        )
-        swaymsg_proc.stdout.close()
-
         slurp_result = subprocess.run(
-            ["slurp"], stdin=jq_proc.stdout, capture_output=True, text=True, check=True
+            ["slurp"], capture_output=True, text=True, check=True
         )
-        jq_proc.wait()
         return slurp_result.stdout.strip()
     except subprocess.CalledProcessError:
         return None
