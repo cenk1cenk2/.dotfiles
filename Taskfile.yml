@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: avizo desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser xournalpp
+          packages: desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts shikane swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
@@ -73,6 +73,12 @@ tasks:
           sudo: true
           to: "/"
           packages: rootfs
+          # args: --adopt
+      # TODO: remove after deploying to all instances
+      - task: undeploy
+        vars:
+          to: "~"
+          packages: chrome chrome-nvidia xournalpp
           # args: --adopt
 
   deploy:macos:
