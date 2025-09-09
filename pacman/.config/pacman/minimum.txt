@@ -132,6 +132,7 @@ vlc-plugins-all
 vulkan-tools
 waybar
 wayfreeze-git
+wayland-utils
 waylogout-git
 wdisplays
 wf-recorder

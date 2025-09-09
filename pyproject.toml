@@ -3,3 +3,9 @@ include = ["."]
 exclude = ["**/node_modules", "**/__pycache__"]
 
 reportOptionalMemberAccess = false
+
+[project]
+requires-python = ">= 3.13"
+name = "dotfiles"
+version = "1.0.0"
+dependencies = ["i3ipc"]

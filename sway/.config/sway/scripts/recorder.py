@@ -5,6 +5,7 @@ import sys
 import os
 import time
 from datetime import datetime
+import i3ipc
 
 def notify(
     message,
@@ -99,17 +100,27 @@ def main():
     file_path = os.path.join(target_path, f"{timestamp}.{format_ext}")
 
     # Build command as string like the original
-    command = f"wl-screenrec -f='{file_path}' --codec hevc"
+    command = f"wl-screenrec -f='{file_path}' --experimental-vulkan"
 
     # Handle region selection
     if region_mode:
         notify("Select a region to record", timeout=1000)
         area = get_region_selection()
-        if area:
-            command = f"{command} -g '{area}'"
-        else:
+        if not area:
             notify("Failed to select region")
             sys.exit(1)
+        command = f"{command} -g '{area}'"
+    else:
+        # get the current output
+        ipc = i3ipc.Connection()
+        outputs = ipc.get_outputs()
+        focused_output = next((o for o in outputs if o.focused), None)
+
+        if not focused_output:
+            notify("Failed to select output")
+            sys.exit(1)
+
+        command = f"{command} -o '{focused_output.name}'"
 
     # Handle audio
     if audio_mode:
@@ -119,7 +130,11 @@ def main():
     countdown()
 
     # Start recording using shell=True like eval in original
-    subprocess.run(command, shell=True)
+    process = subprocess.Popen(command, shell=True)
+
+    subprocess.run(["waybar-signal.sh", "recorder"])
+
+    process.communicate()
 
     notify(f"Finished recording: {file_path}")
 

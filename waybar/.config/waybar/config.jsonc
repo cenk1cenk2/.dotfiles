@@ -13,13 +13,13 @@
   "modules-left": ["sway/workspaces", "custom/scratchpad"],
   "modules-center": ["custom/recorder", "sway/mode", "sway/window"],
   "modules-right": [
+    // "custom/github",
     "custom/playerctl",
     // system
     "custom/pacman",
 
     // informational
     "sway/language",
-    // "custom/github",
     // "custom/clipboard",
     "group/hardware",
 

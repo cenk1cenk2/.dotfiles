@@ -5,7 +5,7 @@ set $mode_recording "<span foreground='$color10'></span>  \
 <span foreground='$color3'><b>Record</b></span> <span foreground='$color10'>(<b>r</b>)</span> \
 <span foreground='$color3'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span> \
 <span foreground='$color3'><b>Record Area</b></span> <span foreground='$color10'>(<b>s</b>)</span> \
-<span foreground='$color3'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span>" 
+<span foreground='$color3'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span>"
 
 mode --pango_markup $mode_recording {
         bindsym r exec $recorder mp4, mode "default"
@@ -13,7 +13,7 @@ mode --pango_markup $mode_recording {
         bindsym s exec $recorder mp4 region, mode "default"
         bindsym Shift+s exec $recorder mp4 region audio, mode "default"
 
-        bindsym q exec $recorder kill
+        bindsym q exec $recorder kill, mode "default"
 
         bindsym Escape mode "default"
 }
