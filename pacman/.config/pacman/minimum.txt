@@ -136,6 +136,7 @@ wayfreeze-git
 wayland-utils
 waylogout-git
 wdisplays
+wev
 wf-recorder
 wget
 wireplumber
