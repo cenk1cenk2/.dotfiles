@@ -7,7 +7,7 @@ set mail_check = 5
 set mail_check_stats_interval = 30
 set read_inc=500
 set write_inc=100
-set use_threads=reverse sort=date sort_aux=date
+set use_threads=reverse sort=last-date sort_aux=date
 # set sendmail = "~/.config/mutt/accounts/sendmail.sh -a whatever@whatever.com"
 
 macro index,pager u "<undelete-pattern>~A<enter><untag-pattern>~A<enter>" "undo all pending operations (deletions and tags)"
