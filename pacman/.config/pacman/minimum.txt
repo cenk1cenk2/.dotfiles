@@ -140,7 +140,7 @@ wev
 wf-recorder
 wget
 wireplumber
-wl-clipboard
+wl-clipboard-rs
 wl-gammarelay-rs
 wl-mirror
 wl-screenrec
