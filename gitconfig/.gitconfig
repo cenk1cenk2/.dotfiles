@@ -170,3 +170,11 @@
   stash = normal dim
   grafted = normal bold
   HEAD = normal italic
+
+; go does not seem to work with included gitconfig files
+
+[url "ssh://git@github.com/laravel/"]
+  insteadOf = https://github.com/laravel/
+
+[url "ssh://git@gitlab.kilic.dev/"]
+  insteadOf = https://gitlab.kilic.dev/
