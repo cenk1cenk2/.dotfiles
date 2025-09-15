@@ -27,6 +27,9 @@
 [includeIf "gitdir/i:/mnt/laravel/"]
   path = /mnt/laravel/.gitconfig
 
+[includeIf "gitdir/i:~/development/laravel/"]
+  path = ~/development/laravel/.gitconfig
+
 [filter "lfs"]
   clean = git-lfs clean -- %f
   smudge = git-lfs smudge -- %f
