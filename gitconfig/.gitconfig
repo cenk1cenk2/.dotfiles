@@ -21,15 +21,6 @@
 [push]
 	autoSetupRemote = true
 
-[includeIf "gitdir/i:~/development/work/"]
-  path = ~/development/work/.gitconfig
-
-[includeIf "gitdir/i:/mnt/laravel/"]
-  path = /mnt/laravel/.gitconfig
-
-[includeIf "gitdir/i:~/development/laravel/"]
-  path = ~/development/laravel/.gitconfig
-
 [filter "lfs"]
   clean = git-lfs clean -- %f
   smudge = git-lfs smudge -- %f
@@ -171,10 +162,11 @@
   grafted = normal bold
   HEAD = normal italic
 
-; go does not seem to work with included gitconfig files
+[includeIf "gitdir/i:~/development/work/"]
+  path = ~/development/work/.gitconfig
 
-[url "ssh://git@github.com/laravel/"]
-  insteadOf = https://github.com/laravel/
+[includeIf "gitdir/i:~/development/laravel/"]
+  path = ~/development/laravel/.gitconfig
 
 [url "ssh://git@gitlab.kilic.dev/"]
   insteadOf = https://gitlab.kilic.dev/
