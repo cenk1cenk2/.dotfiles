@@ -159,7 +159,7 @@ bindsym $mod+Control+Shift+c exec $HOME/.config/sway/scripts/new-workspace.py --
 ## ui elements quick access
 bindsym $mod+n exec swaync-client -t
 bindsym $mod+Shift+n exec $network_manager
-bindsym $mod+m exec $pulseaudio
+bindsym $mod+m exec $audio_mixer
 bindsym $mod+Shift+m exec $bluetooth
 bindsym $mod+t exec $process_manager
 bindsym $mod+Shift+t exec $calendar

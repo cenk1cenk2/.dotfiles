@@ -74,16 +74,15 @@ obsidian
 openssh
 pamac-aur
 pamixer
-pavucontrol
 pinentry
 pipewire
 pipewire-alsa
+pipewire-audio
 pipewire-jack
 pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
-pulsemixer
 qt5-styleplugins
 qt5-wayland
 qt6gtk2
@@ -139,6 +138,7 @@ wdisplays
 wev
 wf-recorder
 wget
+wiremix
 wireplumber
 wl-clipboard-rs
 wl-gammarelay-rs
