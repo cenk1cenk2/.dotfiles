@@ -7,7 +7,7 @@
  * =========================================================================== */
 
 /* import css definitions for current theme */
-@import url('theme.css');
+@import url("theme.css");
 
 /* import css definitions for current theme */
 
@@ -48,7 +48,7 @@
   min-height: 0;
   margin: 0;
   padding: 0;
-  font-family: 'RobotoMono Nerd Font', 'Roboto Mono', sans-serif;
+  font-family: "RobotoMono Nerd Font", "Roboto Mono", sans-serif;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
   animation-direction: alternate;
@@ -83,6 +83,7 @@ window.eDP-1 * {
 #mode,
 #network,
 #pulseaudio,
+#wireplumber,
 #temperature,
 #idle_inhibitor,
 #backlight,
@@ -91,8 +92,8 @@ window.eDP-1 * {
 #custom-sunset,
 #custom-playerctl,
 #tray {
-  padding-left: 8px;
-  padding-right: 8px;
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 /* -----------------------------------------------------------------------------
@@ -160,7 +161,8 @@ window.eDP-1 * {
   color: @warning_color;
 }
 
-#pulseaudio.muted {
+#pulseaudio.muted,
+#wireplumber.muted {
   animation-name: blink-critical;
 }
 
@@ -264,6 +266,7 @@ window#waybar .modules-right {
 #mode,
 #network,
 #pulseaudio,
+#wireplumber,
 #temperature,
 #idle_inhibitor,
 #backlight,
@@ -342,7 +345,8 @@ window#waybar .modules-right {
   color: @bg_color_100;
 }
 
-#pulseaudio.muted {
+#pulseaudio.muted,
+#wireplumber.muted {
   background-color: @error_color;
   color: @bg_color_100;
 }

@@ -27,6 +27,7 @@
     "group/connection",
 
     // media
+    // "wireplumber",
     "pulseaudio",
 
     "tray",
