@@ -173,6 +173,3 @@
 
 [url "ssh://git@gitlab.kilic.dev/"]
   insteadOf = https://gitlab.kilic.dev/
-
-[url "ssh://git@github.com/laravel"]
-  insteadOf = https://github.com/laravel
