@@ -171,5 +171,5 @@
 [includeIf "gitdir/i:/mnt/laravel/"]
   path = /mnt/laravel/.gitconfig
 
-[url "git@gitlab.kilic.dev:"]
+[url "ssh://git@gitlab.kilic.dev/"]
   insteadOf = https://gitlab.kilic.dev/
