@@ -173,3 +173,6 @@
 
 [url "git@gitlab.kilic.dev:"]
   insteadOf = https://gitlab.kilic.dev/
+
+[url "git@github.com:laravel"]
+  insteadOf = https://github.com/laravel
