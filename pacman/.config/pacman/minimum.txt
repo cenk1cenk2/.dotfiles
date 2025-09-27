@@ -28,6 +28,7 @@ efibootmgr
 ethtool
 ffmpeg
 fprintd
+gawk
 git
 git-lfs
 gnome-keyring
@@ -92,6 +93,7 @@ ripdrag-git
 rofi
 rsync
 seahorse
+sed
 shikane
 slurp
 smartmontools
