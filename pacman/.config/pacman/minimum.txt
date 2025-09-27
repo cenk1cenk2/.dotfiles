@@ -138,6 +138,7 @@ wdisplays
 wev
 wf-recorder
 wget
+which
 wiremix
 wireplumber
 wl-clipboard-rs
