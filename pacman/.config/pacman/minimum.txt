@@ -15,7 +15,6 @@ clipboard
 clipboard-sync
 cliphist
 cmake
-coolercontrol
 cronie
 cups
 dconf-editor
