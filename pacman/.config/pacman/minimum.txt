@@ -147,7 +147,7 @@ wl-screenrec
 wlogout
 wol-systemd
 wpa_supplicant
-xclip-git
+xclip
 xcursor-breeze
 xdg-desktop-portal
 xdg-desktop-portal-wlr
