@@ -150,6 +150,7 @@ wpa_supplicant
 xclip
 xcursor-breeze
 xdg-desktop-portal
+xdg-desktop-portal-termfilechooser-hunkyburrito-git
 xdg-desktop-portal-wlr
 xdg-user-dirs
 xdg-utils-handlr
