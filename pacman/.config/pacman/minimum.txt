@@ -80,6 +80,7 @@ pipewire
 pipewire-alsa
 pipewire-audio
 pipewire-jack
+pipewire-libcamera
 pipewire-pulse
 playerctl
 polkit-gnome
