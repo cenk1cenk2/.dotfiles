@@ -75,6 +75,7 @@ obsidian
 openssh
 pamac-aur
 pamixer
+pavucontrol
 pinentry
 pipewire
 pipewire-alsa
