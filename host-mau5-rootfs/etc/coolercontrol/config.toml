@@ -61,8 +61,8 @@ fan2 = { profile_uid = "70b6b9ff-6883-4eed-9828-01909bd54ac9" }
 fan4 = { profile_uid = "70b6b9ff-6883-4eed-9828-01909bd54ac9" }
 fan5 = { profile_uid = "d2e0737a-d8d0-45a3-b20e-7c44b5a6d7ca" }
 fan6 = { profile_uid = "d2e0737a-d8d0-45a3-b20e-7c44b5a6d7ca" }
-led1 = { lighting = { mode = "fixed", colors = [[160, 160, 160]] } }
-led2 = { lighting = { mode = "fixed", colors = [[160, 160, 160]] } }
+led1 = { lighting = { mode = "off", colors = [] } }
+led2 = { lighting = { mode = "off", colors = [] } }
 
 [device-settings.0aacbb482229b8eb6284aa3b6620625ea2e2b50d4aed15d1ceed549a775aebc9]
 fan2 = { profile_uid = "70b6b9ff-6883-4eed-9828-01909bd54ac9" }
