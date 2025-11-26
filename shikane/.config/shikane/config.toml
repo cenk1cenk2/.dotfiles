@@ -229,7 +229,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
+search = ["m=SONY TV  *30", "v=Sony"]
 mode = "3840x2160@119.880Hz"
 position = "0,0"
 scale = 2.0
@@ -255,7 +255,7 @@ notify-send "display" "Applied profile $SHIKANE_PROFILE_NAME." -i /usr/share/ico
 
 [[profile.output]]
 enable = true
-search = ["m=SONY TV  *30", "s=0x01010101", "v=Sony"]
+search = ["m=SONY TV  *30", "v=Sony"]
 mode = "3840x2160@119.880Hz"
 position = "0,0"
 scale = 1.0
