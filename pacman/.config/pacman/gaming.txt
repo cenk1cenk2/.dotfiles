@@ -5,6 +5,5 @@ input-remapper-git
 lutris
 mangohud
 steam
-steamtinkerlaunch
 wine
 winetricks
