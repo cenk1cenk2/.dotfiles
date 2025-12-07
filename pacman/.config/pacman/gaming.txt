@@ -6,5 +6,5 @@ lutris
 mangohud
 steam
 steamtinkerlaunch
-wine-staging
+wine
 winetricks
