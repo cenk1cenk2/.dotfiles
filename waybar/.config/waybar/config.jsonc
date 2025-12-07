@@ -292,12 +292,7 @@
 
   "group/hardware": {
     "orientation": "horizontal",
-    "modules": [
-      "cpu",
-      "memory",
-      "temperature#cpu"
-      // "temperature#gpu"
-    ]
+    "modules": ["cpu", "memory", "temperature#cpu", "temperature#gpu"]
   },
 
   "group/connection": {
@@ -307,7 +302,7 @@
 
   "temperature#cpu": {
     "critical-threshold": 72,
-    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon3/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon5/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
@@ -317,7 +312,7 @@
 
   "temperature#gpu": {
     "critical-threshold": 72,
-    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:74:00.0/hwmon/hwmon6/temp1_input"],
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
