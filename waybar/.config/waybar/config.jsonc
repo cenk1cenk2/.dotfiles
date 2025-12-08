@@ -59,7 +59,7 @@
     "interval": 5,
     "format": " {usage}%",
     "states": {
-      "warning": 70,
+      "warning": 75,
       "critical": 90
     },
     "on-click": "swaymsg exec \\$process_manager"
@@ -69,7 +69,7 @@
     "interval": 5,
     "format": "󰍛 {}%",
     "states": {
-      "warning": 70,
+      "warning": 75,
       "critical": 90
     },
     "on-click": "swaymsg exec \\$process_manager"
@@ -301,7 +301,8 @@
   },
 
   "temperature#cpu": {
-    "critical-threshold": 72,
+    "warning-threshold": 72,
+    "critical-threshold": 78,
     "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon5/temp3_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
@@ -311,7 +312,8 @@
   },
 
   "temperature#gpu": {
-    "critical-threshold": 72,
+    "warning-threshold": 72,
+    "critical-threshold": 78,
     "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",

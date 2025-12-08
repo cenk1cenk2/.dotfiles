@@ -170,6 +170,10 @@ window.eDP-1 * {
   animation-name: blink-critical;
 }
 
+#temperature.warning {
+  animation-name: blink-warning;
+}
+
 #workspaces button {
   padding-left: 8px;
   padding-right: 8px;
