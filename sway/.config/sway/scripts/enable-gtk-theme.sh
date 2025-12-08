@@ -21,4 +21,4 @@ CONFIG_DIR="$HOME/.config/gtk-4.0/"
 
 [ -d "$THEME_DIR/icons" ] && cp -rf --backup "${THEME_DIR}/icons" "$CONFIG_DIR"
 
-sed -Ei 's/^(gtk-application-prefer-dark-theme=).*$/\1true/' "$CONFIG_DIR/settings.ini"
+# sed -Ei 's/^(gtk-application-prefer-dark-theme=).*$/\1true/' "$CONFIG_DIR/settings.ini"
