@@ -1,4 +1,3 @@
-[Added Associations]
 [Default Applications]
 application/*zip=yazi.desktop;
 application/json=nvim.desktop;
@@ -10,7 +9,6 @@ application/vnd.ms-publisher=nvim.desktop;
 application/x-virt-viewer=remote-viewer.desktop;
 application/x-yaml=nvim.desktop;
 application/x-zerosize=nvim.desktop;
-text/calendar=brave-browser.desktop;
 application/yaml=nvim.desktop;
 application/zip=yazi.desktop;
 image/*=swayimg.desktop;
@@ -29,4 +27,4 @@ x-scheme-handler/http=brave-browser.desktop;
 x-scheme-handler/https=brave-browser.desktop;
 x-scheme-handler/obsidian=obsidian.desktop;
 x-scheme-handler/terminal=kitty.desktop;
-x-scheme-handler/webcal=brave-browser.desktop
+x-scheme-handler/webcal=brave-browser.desktop;
