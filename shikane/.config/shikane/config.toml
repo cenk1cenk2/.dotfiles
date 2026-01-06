@@ -45,6 +45,30 @@ scale = 2.0
 transform = "normal"
 adaptive_sync = false
 
+[[profile]]
+name = "portable"
+exec = [
+  "notify-send shikane \"Profile $SHIKANE_PROFILE_NAME has been applied.\"",
+]
+
+[[profile.output]]
+enable = true
+search = ["v=ASUSTek COMPUTER INC", "m=MB16QHG", "s=T6LMTF161825"]
+mode = "2560x1600@119.963Hz"
+position = "0,0"
+scale = 1.5
+transform = "normal"
+adaptive_sync = false
+
+[[profile.output]]
+enable = true
+search = ["v=Japan Display Inc.", "m=GPD1001H", "s=0x00000001"]
+mode = "2560x1600@60.009Hz"
+position = "250,1067"
+scale = 2.0
+transform = "normal"
+adaptive_sync = false
+
 # gpd docked at main setup
 
 [[profile]]
