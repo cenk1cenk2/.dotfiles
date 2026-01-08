@@ -99,5 +99,5 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: mangohud steamtinkerlaunch
+          packages: mangohud
           args: --adopt
