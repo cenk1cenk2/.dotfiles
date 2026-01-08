@@ -20,13 +20,13 @@ EOF
   )"
   ;;
 "reload")
-  shikanectl reload
+  kanshictl reload
   ;;
 "ls")
-  cat "$HOME/.config/shikane/config.toml" | grep 'name\s=\s".*"' | uniq
+  cat "$HOME/.config/kanshi/config" | grep -E '^profile ' | awk '{print $2}' | uniq
   ;;
 *)
-  shikanectl switch "$1"
+  kanshictl switch "$1"
   # notify-send "display" "Applied profile $1." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ;;
 esac

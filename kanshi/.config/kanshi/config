@@ -1,0 +1,100 @@
+####################################################################################################
+# gpd win max 2
+####################################################################################################
+
+# gpd only
+profile gpd {
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0 transform normal adaptive_sync off
+    exec notify-send kanshi "Profile gpd has been applied."
+}
+
+# gpd with portable monitor (XG17A)
+profile portable {
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 0,0 scale 1.0 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 2.0 transform normal adaptive_sync off
+    exec notify-send kanshi "Profile portable has been applied."
+}
+
+# gpd with portable monitor (MB16QHG)
+profile portable {
+    output "ASUSTek COMPUTER INC MB16QHG T6LMTF161825" enable mode 2560x1600@119.963Hz position 0,0 scale 1.5 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 250,1067 scale 2.0 transform normal adaptive_sync off
+    exec notify-send kanshi "Profile portable has been applied."
+}
+
+# gpd docked at main setup
+profile docked {
+    output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@119.982Hz position 0,0 scale 1.0 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" disable
+    exec notify-send kanshi "Profile docked has been applied."
+}
+
+####################################################################################################
+# main configuration
+####################################################################################################
+
+# triple monitor
+profile main {
+    output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 scale 1.0 transform normal adaptive_sync off
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,3040 scale 1.0 transform 180 adaptive_sync off
+    output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
+    output "*" disable
+    exec notify-send "display" "Applied profile main." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}
+
+# main monitor and bottom monitor
+profile main-bottom {
+    output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 scale 1.0 transform normal adaptive_sync off
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,1600 scale 1.0 transform 180 adaptive_sync off
+    output "*" disable
+    exec notify-send "display" "Applied profile main-bottom." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}
+
+# main monitor and top monitor
+profile main-top {
+    output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 scale 1.0 transform normal adaptive_sync off
+    output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
+    output "*" disable
+    exec notify-send "display" "Applied profile main-top." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}
+
+# main monitor only
+profile main-solo {
+    output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 scale 1.0 transform normal adaptive_sync off
+    output "*" disable
+    exec notify-send "display" "Applied profile main-solo." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}
+
+####################################################################################################
+# auxiliary configuration
+####################################################################################################
+
+# tv
+profile tv {
+    output "Sony SONY TV  \*30 0x01010101" enable mode 3840x2160@119.880Hz position 0,0 scale 2.0 transform normal adaptive_sync off
+    output "LG Electronics 38GN950 207NTSU62014" disable
+    output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
+    exec notify-send "display" "Applied profile tv." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}
+
+# only tv force no scaling
+profile tv-4k {
+    output "Sony SONY TV  \*30 0x01010101" enable mode 3840x2160@119.880Hz position 0,0 scale 1.0 transform normal adaptive_sync off
+    output "LG Electronics 38GN950 207NTSU62014" disable
+    output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
+    exec notify-send "display" "Applied profile tv-4k." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'
+    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+}

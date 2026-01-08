@@ -96,7 +96,7 @@ rofi
 rsync
 seahorse
 sed
-shikane
+kanshi
 slurp
 smartmontools
 spotify

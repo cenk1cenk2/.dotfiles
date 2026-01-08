@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts shikane ssh-config swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
+          packages: desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts kanshi ssh-config swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
@@ -78,7 +78,7 @@ tasks:
       - task: undeploy
         vars:
           to: "~"
-          packages: chrome chrome-nvidia xournalpp
+          packages: chrome chrome-nvidia xournalpp shikane
           # args: --adopt
 
   deploy:macos:
