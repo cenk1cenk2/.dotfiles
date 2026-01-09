@@ -26,7 +26,6 @@ EOF
   cat "$HOME/.config/kanshi/config" | grep -E '^profile ' | awk '{print $2}' | uniq
   ;;
 *)
-  kanshictl switch "$1"
-  # notify-send "display" "Applied profile $1." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+  /etc/udev/scripts/wayland-user.sh kanshictl switch "$1" && notify-send "display" "Trigger profile $1." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
   ;;
 esac

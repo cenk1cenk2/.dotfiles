@@ -19,7 +19,25 @@ for user_dir in /run/user/*/; do
   # Check if user has an active session
   [ -S "/run/user/$uid/bus" ] || continue
 
-  # Set DBUS session bus address and run command for this user
+  # Set up environment for Wayland session
   export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
-  sudo -u "$user" "$1"
+  export XDG_RUNTIME_DIR="/run/user/$uid"
+
+  # Find the first available Wayland display socket
+  wayland_display=""
+  for socket in /run/user/$uid/wayland-*; do
+    [ -S "$socket" ] && {
+      wayland_display="$(basename "$socket")"
+      break
+    }
+  done
+
+  # Export WAYLAND_DISPLAY if found
+  [ -n "$wayland_display" ] && export WAYLAND_DISPLAY="$wayland_display"
+
+  # Run command for this user with proper environment
+  sudo -u "$user" env DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+    WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+    zsh -ic "$*"
 done
