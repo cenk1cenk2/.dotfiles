@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+DBus FileManager1 implementation for yazi terminal file manager.
+This allows applications like Brave to open yazi when clicking "Show in folder".
+"""
+
+import os
+import sys
+import subprocess
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+class FileManager1(dbus.service.Object):
+    """Implementation of org.freedesktop.FileManager1 DBus interface."""
+
+    def __init__(self):
+        bus_name = dbus.service.BusName(
+            "org.freedesktop.FileManager1", bus=dbus.SessionBus()
+        )
+        dbus.service.Object.__init__(self, bus_name, "/org/freedesktop/FileManager1")
+
+    def _get_terminal_cmd(self):
+        """Get the terminal command from termfilechooser config."""
+        config_file = Path.home() / ".config/xdg-desktop-portal-termfilechooser/config"
+        if config_file.exists():
+            with open(config_file) as f:
+                for line in f:
+                    if line.strip().startswith("terminal="):
+                        return line.split("=", 1)[1].strip()
+        # Fallback to kitty
+        return "kitty -e"
+
+    def _uri_to_path(self, uri):
+        """Convert file:// URI to local path."""
+        parsed = urlparse(uri)
+        path = unquote(parsed.path)
+        return Path(path)
+
+    def _open_yazi(self, path):
+        """Open yazi in terminal at the given path."""
+        term_cmd = self._get_terminal_cmd()
+        cmd = f"{term_cmd} yazi {path}"
+        subprocess.Popen(cmd, shell=True, start_new_session=True)
+
+    @dbus.service.method(
+        "org.freedesktop.FileManager1",
+        in_signature="ass",
+        out_signature="",
+    )
+    def ShowFolders(self, uris, startup_id):
+        """Open folders in yazi."""
+        for uri in uris:
+            path = self._uri_to_path(uri)
+            if path.exists():
+                self._open_yazi(path)
+                break
+
+    @dbus.service.method(
+        "org.freedesktop.FileManager1",
+        in_signature="ass",
+        out_signature="",
+    )
+    def ShowItems(self, uris, startup_id):
+        """Show items (open parent folder) in yazi."""
+        for uri in uris:
+            path = self._uri_to_path(uri)
+            if path.exists():
+                # Open parent directory for files
+                target = path.parent if path.is_file() else path
+                self._open_yazi(target)
+                break
+
+    @dbus.service.method(
+        "org.freedesktop.FileManager1",
+        in_signature="ass",
+        out_signature="",
+    )
+    def ShowItemProperties(self, uris, startup_id):
+        """Show item properties (just open folder for now)."""
+        self.ShowItems(uris, startup_id)
+
+if __name__ == "__main__":
+    DBusGMainLoop(set_as_default=True)
+
+    try:
+        fm = FileManager1()
+        loop = GLib.MainLoop()
+        loop.run()
+    except KeyboardInterrupt:
+        sys.exit(0)
