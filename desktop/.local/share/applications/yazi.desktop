@@ -2,9 +2,9 @@
 Name=Yazi
 Icon=yazi
 Comment=Blazing fast terminal file manager written in Rust, based on async I/O
-Terminal=true
+Terminal=false
 TryExec=yazi
-Exec=env ZNAP_HEADLESS="1" zsh -ic 'yazi %u'
+Exec=kitty -e yazi-wrapper %u
 Type=Application
 MimeType=inode/directory
 Categories=Utility;Core;System;FileTools;FileManager;ConsoleOnly
