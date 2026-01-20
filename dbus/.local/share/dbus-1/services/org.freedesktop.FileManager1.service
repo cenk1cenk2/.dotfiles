@@ -1,3 +1,3 @@
 [D-BUS Service]
 Name=org.freedesktop.FileManager1
-Exec=%h/.local/bin/filemanager1
+Exec=%h/.local/bin/dbus-filemanager1
