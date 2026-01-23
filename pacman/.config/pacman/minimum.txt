@@ -27,6 +27,7 @@ efibootmgr
 ethtool
 ffmpeg
 findutils
+flatpak
 fprintd
 gawk
 git
@@ -48,6 +49,7 @@ gzip
 handlr-regex
 inxi
 iptables-nft
+kanshi
 khal
 kitty
 kitty-shell-integration
@@ -96,7 +98,6 @@ rofi
 rsync
 seahorse
 sed
-kanshi
 slurp
 smartmontools
 spotify
