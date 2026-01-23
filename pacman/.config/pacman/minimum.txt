@@ -1,6 +1,7 @@
 autotiling-rs
 base
 base-devel
+bazaar
 bind
 bitwarden
 bluetooth-autoconnect
@@ -28,6 +29,8 @@ ethtool
 ffmpeg
 findutils
 flatpak
+flatpak-builder
+flatpak-xdg-utils
 fprintd
 gawk
 git
