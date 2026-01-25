@@ -1,0 +1,119 @@
+{
+  // -------------------------------------------------------------------------
+  // Hyprland-specific configuration
+  // -------------------------------------------------------------------------
+
+  "modules-left": ["hyprland/workspaces"],
+  "modules-center": ["custom/recorder", "hyprland/submap", "hyprland/window"],
+  "modules-right": ["group/extras", "group/hardware", "group/connection", "group/audio", "tray", "group/status"],
+
+  // -------------------------------------------------------------------------
+  // Hyprland-specific modules
+  // -------------------------------------------------------------------------
+
+  "hyprland/workspaces": {
+    "format": "{name}",
+    "on-click": "activate",
+    "all-outputs": false,
+    "show-special": true
+  },
+
+  "hyprland/window": {
+    "max-length": 80,
+    "separate-outputs": true
+  },
+
+  "hyprland/submap": {
+    "format": "{}",
+    "tooltip": false
+  },
+
+  // -------------------------------------------------------------------------
+  // Module overrides with hyprctl commands
+  // -------------------------------------------------------------------------
+
+  "cpu": {
+    "interval": 5,
+    "format": " {usage}%",
+    "states": {
+      "warning": 75,
+      "critical": 90
+    },
+    "on-click": "hyprctl dispatch exec [float] kitty btop"
+  },
+
+  "memory": {
+    "interval": 5,
+    "format": " {}%",
+    "states": {
+      "warning": 75,
+      "critical": 90
+    },
+    "on-click": "hyprctl dispatch exec [float] kitty btop"
+  },
+
+  "network": {
+    "interval": 5,
+    "format-wifi": "󱚻  {signaldBm}",
+    "format-ethernet": "󰈀 ",
+    "format-disconnected": "󰤠",
+    "tooltip-format": "{ifname} ({essid}): {ipaddr}",
+    "on-click": "hyprctl dispatch exec [float] nm-connection-editor"
+  },
+
+  "pulseaudio": {
+    "scroll-step": 5,
+    "format": "{icon} {volume}%{format_source}",
+    "format-muted": " {format_source}",
+    "format-source": "",
+    "format-source-muted": "󰍭",
+    "format-icons": {
+      "headphone": "󰋋",
+      "headset": "󰋎",
+      "default": ["", "󰕾", ""]
+    },
+    "tooltip-format": "{icon} {volume}% {format_source}",
+    "on-click": "hyprctl dispatch exec [float] pavucontrol",
+    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
+  },
+
+  "clock": {
+    "interval": 60,
+    "format": "{:%H:%M}",
+    "tooltip": true,
+    "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
+    "on-click": "hyprctl dispatch exec [float] gnome-calendar"
+  },
+
+  "temperature#cpu": {
+    "warning-threshold": 72,
+    "critical-threshold": 78,
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
+    "interval": 3,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", "", "", "", "", "", ""],
+    "tooltip": false,
+    "on-click": "hyprctl dispatch exec [float] kitty watch sensors"
+  },
+
+  "temperature#gpu": {
+    "warning-threshold": 72,
+    "critical-threshold": 78,
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input"],
+    "interval": 3,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", "", "", "", "", "", ""],
+    "tooltip": false,
+    "on-click": "hyprctl dispatch exec [float] kitty watch sensors"
+  },
+
+  "bluetooth": {
+    "format": "󰂯 {num_connections}",
+    "format-disabled": "󰂲",
+    "on-click": "hyprctl dispatch exec [float] blueman-manager",
+    "on-click-right": "rfkill toggle bluetooth",
+    "tooltip-format": "{}"
+  }
+}

@@ -1,5 +1,4 @@
 # hyprshutdown
-ashell
 clipse
 cpio
 hyprcursor

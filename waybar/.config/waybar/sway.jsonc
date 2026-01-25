@@ -1,0 +1,164 @@
+{
+  // -------------------------------------------------------------------------
+  // Sway-specific configuration
+  // -------------------------------------------------------------------------
+
+  "modules-left": ["sway/workspaces", "custom/scratchpad"],
+  "modules-center": ["custom/recorder", "sway/mode", "sway/window"],
+  "modules-right": [
+    // "custom/github",
+    "group/extras",
+    // "group/input",  // Disabled: sway/language not available
+    "group/hardware",
+    "group/connection",
+    "group/audio",
+    "tray",
+    "group/status"
+  ],
+
+  // -------------------------------------------------------------------------
+  // Sway-specific modules
+  // -------------------------------------------------------------------------
+
+  "sway/workspaces": {
+    "disable-scroll": true,
+    "all-outputs": false
+  },
+
+  "sway/window": {
+    "max-length": 80
+  },
+
+  "sway/mode": {
+    "format": "{}",
+    "tooltip": false
+  },
+
+  "sway/language": {
+    "format": "󰌓 {}",
+    "min-length": 5,
+    "tooltip": false,
+    "on-click": "swaymsg input $(swaymsg -t get_inputs --raw | jq '[.[] | select(.type == \"keyboard\")][0] | .identifier') xkb_switch_layout next"
+  },
+
+  "custom/scratchpad": {
+    "interval": "once",
+    "return-type": "json",
+    "format": "{icon}",
+    "format-icons": {
+      "one": "",
+      "many": ""
+    },
+    "exec": "~/.config/sway/scripts/scratchpad.sh",
+    "on-click": "swaymsg 'scratchpad show'",
+    "signal": 7
+  },
+
+  // -------------------------------------------------------------------------
+  // Module overrides with swaymsg commands
+  // -------------------------------------------------------------------------
+
+  "cpu": {
+    "interval": 5,
+    "format": " {usage}%",
+    "states": {
+      "warning": 75,
+      "critical": 90
+    },
+    "on-click": "swaymsg exec \\$process_manager"
+  },
+
+  "memory": {
+    "interval": 5,
+    "format": " {}%",
+    "states": {
+      "warning": 75,
+      "critical": 90
+    },
+    "on-click": "swaymsg exec \\$process_manager"
+  },
+
+  "network": {
+    "interval": 5,
+    "format-wifi": "󱚻  {signaldBm}",
+    "format-ethernet": "󰈀 ",
+    "format-disconnected": "󰤠",
+    "tooltip-format": "{ifname} ({essid}): {ipaddr}",
+    "on-click": "swaymsg exec \\$network_manager"
+  },
+
+  "backlight": {
+    "format": "{icon} {percent}%",
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
+    "on-scroll-up": "swaymsg exec \\$brightness_up",
+    "on-scroll-down": "swaymsg exec \\$brightness_down"
+  },
+
+  "pulseaudio": {
+    "scroll-step": 5,
+    "format": "{icon} {volume}%{format_source}",
+    "format-muted": " {format_source}",
+    "format-source": "",
+    "format-source-muted": "󰍭",
+    "format-icons": {
+      "headphone": "󰋋",
+      "headset": "󰋎",
+      "default": ["", "󰕾", ""]
+    },
+    "tooltip-format": "{icon} {volume}% {format_source}",
+    "on-click": "swaymsg exec \\$audio_mixer",
+    "on-click-middle": "swaymsg exec \\$volume_mute",
+    "on-scroll-up": "swaymsg exec \\$volume_up",
+    "on-scroll-down": "swaymsg exec \\$volume_down"
+  },
+
+  "custom/clipboard": {
+    "format": "󰅍",
+    "interval": "once",
+    "return-type": "json",
+    "on-click": "swaymsg -q exec '$clipboard'; waybar-signal.sh clipboard",
+    "on-click-right": "swaymsg -q exec '$clipboard-del'; waybar-signal.sh clipboard",
+    "on-click-middle": "rm -f ~/.cache/cliphist/db; waybar-signal.sh clipboard",
+    "exec": "printf '{\"tooltip\":\"%s\"}' $(cliphist list | wc -l)' item(s) in the clipboard\r(Mid click to clear)'",
+    "exec-if": "[ -x \"$(command -v cliphist)\" ] && [ $(cliphist list | wc -l) -gt 0 ]",
+    "signal": 9
+  },
+
+  "clock": {
+    "interval": 60,
+    "format": "{:%H:%M}",
+    "tooltip": true,
+    "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
+    "on-click": "swaymsg exec \\$calendar"
+  },
+
+  "temperature#cpu": {
+    "warning-threshold": 72,
+    "critical-threshold": 78,
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
+    "interval": 3,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", "", "", "", "", "", ""],
+    "tooltip": false,
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
+  },
+
+  "temperature#gpu": {
+    "warning-threshold": 72,
+    "critical-threshold": 78,
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input"],
+    "interval": 3,
+    "format": "{icon} {temperatureC}°C",
+    "format-icons": ["", "", "", "", "", "", "", ""],
+    "tooltip": false,
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
+  },
+
+  "bluetooth": {
+    "format": "󰂯 {num_connections}",
+    "format-disabled": "󰂲",
+    "on-click": "swaymsg exec \\$bluetooth",
+    "on-click-right": "rfkill toggle bluetooth",
+    "tooltip-format": "{}"
+  }
+}
