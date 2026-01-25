@@ -109,7 +109,7 @@ window#waybar .modules-right {
 }
 
 #workspaces button.special {
-  background-color: @theme_selected_bg_color;
+  background-color: @bg_color_900;
   color: @bg_color_100;
   padding: 0 8px 0 8px;
 }
