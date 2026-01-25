@@ -5,7 +5,14 @@
 
   "modules-left": ["hyprland/workspaces"],
   "modules-center": ["custom/recorder", "hyprland/submap", "hyprland/window"],
-  "modules-right": ["group/extras", "group/hardware", "group/connection", "group/audio", "tray", "group/status"],
+  "modules-right": [
+    "group/extras",
+    "group/hardware",
+    "group/connection",
+    "group/audio",
+    "tray",
+    "group/status",
+  ],
 
   // -------------------------------------------------------------------------
   // Hyprland-specific modules
@@ -15,17 +22,23 @@
     "format": "{name}",
     "on-click": "activate",
     "all-outputs": false,
-    "show-special": true
+    "show-special": true,
   },
 
   "hyprland/window": {
     "max-length": 80,
-    "separate-outputs": true
+    "separate-outputs": true,
   },
 
   "hyprland/submap": {
     "format": "{}",
-    "tooltip": false
+    "tooltip": false,
+  },
+
+  "hyprland/language": {
+    "format": "󰌓 {short}",
+    "tooltip-format": "{long}",
+    "on-click": "hyprctl switchxkblayout $(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .name') next",
   },
 
   // -------------------------------------------------------------------------
@@ -37,9 +50,9 @@
     "format": " {usage}%",
     "states": {
       "warning": 75,
-      "critical": 90
+      "critical": 90,
     },
-    "on-click": "hyprctl dispatch exec [float] kitty btop"
+    "on-click": "hyprctl dispatch exec [float] kitty btop",
   },
 
   "memory": {
@@ -47,9 +60,9 @@
     "format": " {}%",
     "states": {
       "warning": 75,
-      "critical": 90
+      "critical": 90,
     },
-    "on-click": "hyprctl dispatch exec [float] kitty btop"
+    "on-click": "hyprctl dispatch exec [float] kitty btop",
   },
 
   "network": {
@@ -58,7 +71,7 @@
     "format-ethernet": "󰈀 ",
     "format-disconnected": "󰤠",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "hyprctl dispatch exec [float] kitty nmtui"
+    "on-click": "hyprctl dispatch exec [float] kitty nmtui",
   },
 
   "pulseaudio": {
@@ -70,13 +83,13 @@
     "format-icons": {
       "headphone": "󰋋",
       "headset": "󰋎",
-      "default": ["", "󰕾", ""]
+      "default": ["", "󰕾", ""],
     },
     "tooltip-format": "{icon} {volume}% {format_source}",
     "on-click": "hyprpwcenter",
     "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
-    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
   },
 
   "clock": {
@@ -84,29 +97,34 @@
     "format": "{:%H:%M}",
     "tooltip": true,
     "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
-    "on-click": "hyprctl dispatch exec [float] kitty ikhal"
+    "on-click": "hyprctl dispatch exec [float] kitty ikhal",
   },
 
   "temperature#cpu": {
     "warning-threshold": 72,
     "critical-threshold": 78,
-    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
+    "hwmon-path": [
+      "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input",
+      "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input",
+    ],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "hyprctl dispatch exec [float] kitty watch sensors"
+    "on-click": "hyprctl dispatch exec [float] kitty watch sensors",
   },
 
   "temperature#gpu": {
     "warning-threshold": 72,
     "critical-threshold": 78,
-    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input"],
+    "hwmon-path": [
+      "/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input",
+    ],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "hyprctl dispatch exec [float] kitty watch sensors"
+    "on-click": "hyprctl dispatch exec [float] kitty watch sensors",
   },
 
   "bluetooth": {
@@ -114,6 +132,6 @@
     "format-disabled": "󰂲",
     "on-click": "hyprctl dispatch exec [float] kitty bluetuith",
     "on-click-right": "rfkill toggle bluetooth",
-    "tooltip-format": "{}"
-  }
+    "tooltip-format": "{}",
+  },
 }

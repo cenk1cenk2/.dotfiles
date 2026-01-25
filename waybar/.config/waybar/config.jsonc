@@ -69,7 +69,7 @@
 
   "group/extras": {
     "orientation": "horizontal",
-    "modules": ["custom/pacman", "custom/playerctl"]
+    "modules": ["custom/pacman", "custom/playerctl", "hyprland/language"]
   },
 
   "group/input": {
