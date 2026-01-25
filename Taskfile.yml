@@ -83,7 +83,6 @@ tasks:
             swayr
             sworkstyle
             waybar
-            waylogout
             wireplumber
             wl-gamma-relay-rs
             wlogout
@@ -118,6 +117,7 @@ tasks:
           packages: >-
             chrome
             chrome-nvidia
+            waylogout
           # args: --adopt
 
   deploy:macos:

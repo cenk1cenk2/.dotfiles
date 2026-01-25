@@ -1,6 +1,6 @@
 {
     "label" : "lock",
-    "action" : "hyprlock",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprlock || swaymsg exec '$locking'",
     "text" : "[l] Lock",
     "keybind" : "l"
 }
