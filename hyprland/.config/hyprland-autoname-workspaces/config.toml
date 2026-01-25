@@ -1,5 +1,6 @@
 # hyprland-autoname-workspaces configuration
 # Icons copied from sworkstyle config
+# https://github.com/hyprland-community/hyprland-autoname-workspaces/blob/main/config.toml.example
 
 version = "1.2.0"
 
