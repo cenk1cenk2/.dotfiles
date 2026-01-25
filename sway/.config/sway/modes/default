@@ -133,16 +133,6 @@ bindsym $mod+Shift+Space exec \
 
 # swap workspaces
 
-bindsym $mod+Control+Shift+1 exec $HOME/.config/sway/scripts/swap-workspace.py -t 1
-bindsym $mod+Control+Shift+2 exec $HOME/.config/sway/scripts/swap-workspace.py -t 2
-bindsym $mod+Control+Shift+3 exec $HOME/.config/sway/scripts/swap-workspace.py -t 3
-bindsym $mod+Control+Shift+4 exec $HOME/.config/sway/scripts/swap-workspace.py -t 4
-bindsym $mod+Control+Shift+5 exec $HOME/.config/sway/scripts/swap-workspace.py -t 5
-bindsym $mod+Control+Shift+6 exec $HOME/.config/sway/scripts/swap-workspace.py -t 6
-bindsym $mod+Control+Shift+7 exec $HOME/.config/sway/scripts/swap-workspace.py -t 7
-bindsym $mod+Control+Shift+8 exec $HOME/.config/sway/scripts/swap-workspace.py -t 8
-bindsym $mod+Control+Shift+9 exec $HOME/.config/sway/scripts/swap-workspace.py -t 9
-bindsym $mod+Control+Shift+0 exec $HOME/.config/sway/scripts/swap-workspace.py -t 0
 bindsym $mod+Control+Shift+h exec $HOME/.config/sway/scripts/swap-workspace.py -s left
 bindsym $mod+Control+Shift+l exec $HOME/.config/sway/scripts/swap-workspace.py -s right
 
