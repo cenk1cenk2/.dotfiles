@@ -1,7 +1,7 @@
 [Unit]
 Description=Power alert daemon with custom flags
 PartOf=graphical-session.target
-After=hyprland-session.target
+After=hyprland-session.target sway-session.target
 
 [Service]
 Type=simple
@@ -14,4 +14,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=graphical-session.target

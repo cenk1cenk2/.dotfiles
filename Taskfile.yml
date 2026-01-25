@@ -52,7 +52,46 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: dbus desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts kanshi ssh-config swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser hyprland
+          packages: >-
+            autotiling-rs
+            clipse
+            dbus
+            desktop
+            dex
+            file-manager-actions
+            fonts
+            foot
+            gitconfig
+            gnupg
+            hyprland
+            input-remapper
+            kanshi
+            khal
+            kitty
+            mako
+            mimetypes
+            neomutt
+            pacman
+            pipewire
+            rofi
+            scripts
+            ssh-config
+            swappy
+            sway
+            swayimg
+            swaylock
+            swaync
+            swayosd
+            swayr
+            sworkstyle
+            waybar
+            waylogout
+            wireplumber
+            wl-gamma-relay-rs
+            wlogout
+            xauthority
+            xdg-desktop-portal
+            xdg-desktop-portal-termfilechooser
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
@@ -78,7 +117,11 @@ tasks:
       - task: undeploy
         vars:
           to: "~"
-          packages: chrome chrome-nvidia xournalpp shikane
+          packages: >-
+            chrome
+            chrome-nvidia
+            xournalpp
+            shikane
           # args: --adopt
 
   deploy:macos:
@@ -89,7 +132,14 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: brave gitconfig yabai sketchybar janky-borders kitty xournalpp
+          packages: >-
+            brave
+            gitconfig
+            yabai
+            sketchybar
+            janky-borders
+            kitty
+            xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
@@ -99,5 +149,6 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: mangohud
+          packages: >-
+            mangohud
           args: --adopt

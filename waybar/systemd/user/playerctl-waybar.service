@@ -2,7 +2,7 @@
 Description=Playerctl waybar monitor for Spotify
 Documentation=https://github.com/altdesktop/playerctl
 PartOf=graphical-session.target
-After=hyprland-session.target waybar.service
+After=hyprland-session.target sway-session.target waybar.service
 
 [Service]
 Type=simple
@@ -15,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=graphical-session.target

@@ -2,7 +2,7 @@
 Description=Gamma control for Wayland compositors
 Documentation=https://github.com/jeremija/wl-gammarelay-rs
 PartOf=graphical-session.target
-After=hyprland-session.target
+After=hyprland-session.target sway-session.target
 
 [Service]
 Type=simple
@@ -15,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=graphical-session.target
