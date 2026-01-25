@@ -1,3 +1,4 @@
+# hyprqt6engine
 # hyprshutdown
 clipse
 cpio
@@ -10,5 +11,4 @@ hyprlock
 hyprpaper
 hyprpolkitagent
 hyprpwcenter
-hyprqt6engine
 xdg-desktop-portal-hyprland
