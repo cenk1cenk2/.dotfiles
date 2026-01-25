@@ -14,7 +14,37 @@ position = "Bottom"
 enable_esc_key = true
 
 [appearance]
-# Theme and styling options will be configured here
+# General appearance settings
+
+font_name = "Segoe UI"
+
+# Color palette matching waybar theme
+[appearance.background_color]
+base = "#17191e"
+weak = "#22282f"
+strong = "#4b5263"
+text = "#ffffff"
+
+[appearance.primary_color]
+base = "#5c6370"
+text = "#ffffff"
+
+[appearance.secondary_color]
+base = "#38404b"
+strong = "#4b5263"
+
+[appearance.success_color]
+base = "#a6e3a1"
+
+[appearance.danger_color]
+base = "#f38ba8"
+weak = "#f9e2af"
+
+[appearance.text_color]
+base = "#ffffff"
+
+workspace_colors = ["#5c6370", "#4b5263", "#38404b"]
+special_workspace_colors = ["#979eab"]
 
 [modules]
 # Left modules
