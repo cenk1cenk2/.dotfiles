@@ -58,9 +58,7 @@ tasks:
             dbus
             desktop
             dex
-            file-manager-actions
             fonts
-            foot
             gitconfig
             gnupg
             hyprland
@@ -120,7 +118,9 @@ tasks:
           packages: >-
             chrome
             chrome-nvidia
+            foot
             shikane
+            file-manager-actions
           # args: --adopt
 
   deploy:macos:
@@ -135,7 +135,6 @@ tasks:
             brave
             gitconfig
             yabai
-            sketchybar
             janky-borders
             kitty
 
