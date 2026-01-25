@@ -120,7 +120,6 @@ tasks:
           packages: >-
             chrome
             chrome-nvidia
-            xournalpp
             shikane
           # args: --adopt
 
@@ -139,7 +138,6 @@ tasks:
             sketchybar
             janky-borders
             kitty
-            xournalpp
 
   deploy:gaming:
     desc: Deploy to target.
