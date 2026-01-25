@@ -13,7 +13,7 @@ export WLR_XWAYLAND=/usr/local/bin/Xwayland
 
 # Qt configuration
 export QT_QPA_PLATFORM=wayland
-export QT_QPA_PLATFORMTHEME=gtk2
+export QT_QPA_PLATFORMTHEME=gtk3
 export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
 # GTK configuration

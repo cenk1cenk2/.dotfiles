@@ -89,7 +89,6 @@ polkit-gnome
 poweralertd
 qt5-styleplugins
 qt5-wayland
-qt6gtk2
 rclone
 rebuild-detector
 ripdrag-git
