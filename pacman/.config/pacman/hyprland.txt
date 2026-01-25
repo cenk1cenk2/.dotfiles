@@ -11,4 +11,5 @@ hyprlock
 hyprpaper
 hyprpolkitagent
 hyprpwcenter
+wlogout
 xdg-desktop-portal-hyprland

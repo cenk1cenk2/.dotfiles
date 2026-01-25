@@ -1,6 +1,6 @@
 {
     "label" : "lock",
-    "action" : "swaymsg exec '$locking'",
+    "action" : "hyprlock",
     "text" : "Lock",
     "keybind" : "l"
 }
