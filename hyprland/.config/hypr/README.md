@@ -118,6 +118,7 @@ Use the appropriate script when launching Hyprland from your display manager or 
 - **Qt Application Styling**: hyprland-qt-support (UI styling for Qt apps)
 - **Polkit Agent**: hyprpolkitagent (authentication agent)
 - **PipeWire Control**: hyprpwcenter (GUI audio control center)
+- **Cursor Theme**: hyprcursor (native Wayland cursor support, replaces xcursor)
 
 ## Qt Application Theming
 
@@ -140,6 +141,33 @@ Application styling configured in `application-style.conf`:
 - **roundness** (0-3): UI element rounding level
 - **border_width** (0-3): Border thickness
 - **reduce_motion** (true/false): Disable transitions/hover effects
+
+## Cursor Configuration
+
+### hyprcursor
+
+Hyprcursor provides native Wayland cursor support with improved performance over xcursor.
+
+Configuration in `config.d/90-theming.conf`:
+
+```hyprlang
+# Environment variables
+env = HYPRCURSOR_THEME, $cursor-theme
+env = HYPRCURSOR_SIZE, 24
+
+# Native cursor settings
+cursor {
+    no_hardware_cursors = false
+    enable_hyprcursor = true
+}
+```
+
+- **HYPRCURSOR_THEME**: Cursor theme name (uses `$cursor-theme` variable from theme definitions)
+- **HYPRCURSOR_SIZE**: Cursor size in pixels (default: 24)
+- **enable_hyprcursor**: Enable native hyprcursor support (true)
+- **no_hardware_cursors**: Disable hardware cursors if needed (false by default)
+
+The cursor theme is also set via gsettings for GTK application compatibility.
 
 ## Wallpaper Configuration
 
