@@ -1,4 +1,7 @@
+# hyprshutdown
+ashell
 clipse
+cpio
 hyprcursor
 hypridle
 hyprland
@@ -9,6 +12,4 @@ hyprpaper
 hyprpolkitagent
 hyprpwcenter
 hyprqt6engine
-cpio
-# hyprshutdown
 xdg-desktop-portal-hyprland

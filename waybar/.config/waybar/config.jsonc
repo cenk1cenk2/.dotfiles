@@ -10,8 +10,8 @@
   "position": "bottom",
   "spacing": 0,
 
-  "modules-left": ["sway/workspaces", "hyprland/workspaces", "custom/scratchpad"],
-  "modules-center": ["custom/recorder", "sway/mode", "hyprland/submap", "sway/window", "hyprland/window"],
+  "modules-left": ["sway/workspaces", "custom/scratchpad"],
+  "modules-center": ["custom/recorder", "sway/mode", "sway/window"],
   "modules-right": [
     // "custom/github",
     "custom/playerctl",
@@ -20,7 +20,6 @@
 
     // informational
     "sway/language",
-    "hyprland/language",
     // "custom/clipboard",
     "group/hardware",
 
@@ -63,7 +62,7 @@
       "warning": 75,
       "critical": 90
     },
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$process_manager"
+    "on-click": "swaymsg exec \"kitty --class=floating_shell_portrait_lg btop\""
   },
 
   "memory": {
@@ -73,7 +72,7 @@
       "warning": 75,
       "critical": 90
     },
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$process_manager"
+    "on-click": "swaymsg exec \"kitty --class=floating_shell_portrait_lg btop\""
   },
 
   "network": {
@@ -82,7 +81,7 @@
     "format-ethernet": "󰈀 ",
     "format-disconnected": "",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$network_manager"
+    "on-click": "swaymsg exec \"kitty --class=floating_shell nmtui\""
   },
 
   "sway/mode": {
@@ -105,8 +104,8 @@
   "backlight": {
     "format": "{icon} {percent}%",
     "format-icons": ["󰃞", "󰃟", "󰃠"],
-    "on-scroll-up": "~/.config/waybar/scripts/compositor-exec.sh \\$brightness_up",
-    "on-scroll-down": "~/.config/waybar/scripts/compositor-exec.sh \\$brightness_down"
+    "on-scroll-up": "swayosd-client --brightness raise",
+    "on-scroll-down": "swayosd-client --brightness lower"
   },
 
   "pulseaudio": {
@@ -121,10 +120,10 @@
       "default": ["", "󰕾", ""]
     },
     "tooltip-format": "{icon} {volume}% {format_source}",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$audio_mixer",
-    "on-click-middle": "~/.config/waybar/scripts/compositor-exec.sh \\$volume_mute",
-    "on-scroll-up": "~/.config/waybar/scripts/compositor-exec.sh \\$volume_up",
-    "on-scroll-down": "~/.config/waybar/scripts/compositor-exec.sh \\$volume_down"
+    "on-click": "swaymsg exec \"kitty --class=floating_shell wiremix\"",
+    "on-click-middle": "swayosd-client --output-volume mute-toggle",
+    "on-scroll-up": "swayosd-client --output-volume raise",
+    "on-scroll-down": "swayosd-client --output-volume lower"
   },
 
   "tray": {
@@ -143,7 +142,7 @@
 
   "custom/menu": {
     "format": "",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$menu",
+    "on-click": "swaymsg exec \"rofi -modi run,drun run -show drun -terminal kitty\"",
     "tooltip": false
   },
 
@@ -156,7 +155,7 @@
       "many": ""
     },
     "exec": "~/.config/waybar/scripts/scratchpad.sh",
-    "on-click": "[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ] && hyprctl dispatch togglespecialworkspace scratch || swaymsg 'scratchpad show'",
+    "on-click": "swaymsg 'scratchpad show'",
     "signal": 7
   },
 
@@ -201,8 +200,8 @@
     "format": "󰅍",
     "interval": "once",
     "return-type": "json",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh '$clipboard'; waybar-signal.sh clipboard",
-    "on-click-right": "~/.config/waybar/scripts/compositor-exec.sh '$clipboard-del'; waybar-signal.sh clipboard",
+    "on-click": "swaymsg exec \"cliphist list | rofi -dmenu | cliphist decode | wl-copy\"; waybar-signal.sh clipboard",
+    "on-click-right": "swaymsg exec \"cliphist list | rofi -dmenu | cliphist delete\"; waybar-signal.sh clipboard",
     "on-click-middle": "rm -f ~/.cache/cliphist/db; waybar-signal.sh clipboard",
     "exec": "printf '{\"tooltip\":\"%s\"}' $(cliphist list | wc -l)' item(s) in the clipboard\r(Mid click to clear)'",
     "exec-if": "[ -x \"$(command -v cliphist)\" ] && [ $(cliphist list | wc -l) -gt 0 ]",
@@ -288,7 +287,7 @@
     "format": "{:%H:%M}",
     "tooltip": true,
     "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$calendar"
+    "on-click": "swaymsg exec \"kitty --class=floating_shell ikhal\""
   },
 
   "group/hardware": {
@@ -309,7 +308,7 @@
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \"\\$term_float watch sensors\""
+    "on-click": "swaymsg exec \"kitty --class=floating_shell watch sensors\""
   },
 
   "temperature#gpu": {
@@ -320,7 +319,7 @@
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \"\\$term_float watch sensors\""
+    "on-click": "swaymsg exec \"kitty --class=floating_shell watch sensors\""
   },
 
   "custom/playerctl": {
@@ -366,39 +365,12 @@
   "bluetooth": {
     "format": "󰂯 {num_connections}",
     "format-disabled": "󰂲",
-    "on-click": "~/.config/waybar/scripts/compositor-exec.sh \\$bluetooth",
+    "on-click": "swaymsg exec \"kitty --class=floating_shell bluetuith\"",
     "on-click-right": "rfkill toggle bluetooth",
     "tooltip-format": "{}"
-  },
-
-  // -------------------------------------------------------------------------
-  // Hyprland modules
-  // -------------------------------------------------------------------------
-
-  "hyprland/workspaces": {
-    "format": "{name}",
-    "on-click": "activate",
-    "sort-by-number": true
-  },
-
-  "hyprland/window": {
-    "format": "{}",
-    "separate-outputs": true,
-    "max-length": 50
-  },
-
-  "hyprland/submap": {
-    "format": "{}",
-    "max-length": 150,
-    "tooltip": false,
-    "on-click": "hyprctl dispatch submap reset"
-  },
-
-  "hyprland/language": {
-    "format": "{shortDescription}",
-    "tooltip": true,
-    "tooltip-format": "{long}",
-    "on-click": "hyprctl switchxkblayout at-translated-set-2-keyboard next",
-    "keyboard-name": "at-translated-set-2-keyboard"
   }
+
+  // -------------------------------------------------------------------------
+  // Sway modules only - Hyprland uses ashell instead
+  // -------------------------------------------------------------------------
 }

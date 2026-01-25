@@ -5,7 +5,7 @@ PartOf=graphical-session.target
 After=hyprland-session.target
 
 [Service]
-Type=simple
+Type=forking
 ExecCondition=/bin/sh -c 'command -v clipse'
 ExecStart=clipse -listen
 Restart=on-failure

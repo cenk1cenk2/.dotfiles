@@ -12,7 +12,7 @@ for plugin_entry in "${PLUGINS[@]}"; do
   # Check if plugin is already in hyprpm list
   if ! hyprpm list 2>/dev/null | grep -q "$plugin_url"; then
     echo "Installing $plugin_name from $plugin_url..."
-    hyprpm add "$plugin_url" -f
+    hyprpm add "$plugin_url"
     hyprpm enable "$plugin_name"
   fi
 done

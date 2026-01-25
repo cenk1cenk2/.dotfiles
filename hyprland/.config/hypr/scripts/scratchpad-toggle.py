@@ -20,6 +20,15 @@ def get_current_workspace():
             return monitor.get("activeWorkspace", {}).get("id")
     return 1  # fallback
 
+def get_scratchpad_windows():
+    """Get list of window addresses in scratchpad."""
+    clients = run_hyprctl(["clients"])
+    return {
+        client["address"]
+        for client in clients
+        if client.get("workspace", {}).get("name", "") == "special:scratch"
+    }
+
 def main():
     try:
         # Get active window info
@@ -29,18 +38,28 @@ def main():
             print("No active window")
             sys.exit(1)
 
+        window_address = active_window.get("address")
         current_workspace = active_window.get("workspace", {}).get("name", "")
+        scratchpad_windows = get_scratchpad_windows()
 
         if current_workspace == "special:scratch":
-            # Window is in scratchpad, move it back to the workspace we're looking at
+            # Window is currently in scratchpad, move it to current workspace
             visible_workspace_id = get_current_workspace()
             subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspace", str(visible_workspace_id)]
+                ["hyprctl", "dispatch", "movetoworkspace", str(visible_workspace_id)],
+                check=True,
+            )
+        elif window_address in scratchpad_windows:
+            # Window was in scratchpad but is now visible, move it back
+            subprocess.run(
+                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"],
+                check=True,
             )
         else:
-            # Window is not in scratchpad, move it there
+            # Window is on a regular workspace, move it to scratchpad
             subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"]
+                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"],
+                check=True,
             )
 
     except Exception as e:

@@ -1,0 +1,37 @@
+# Ashell Configuration for Hyprland
+# https://malpenzibo.github.io/ashell/
+
+# Log level: "debug", "info", "warn", "error"
+log_level = "warn"
+
+# Outputs: "All", "Active", or { Targets = ["monitor-name"] }
+outputs = "All"
+
+# Position: "Top" or "Bottom"
+position = "Bottom"
+
+# Enable ESC key to close menus
+enable_esc_key = true
+
+[appearance]
+# Theme and styling options will be configured here
+
+[modules]
+# Left modules
+left = ["Workspaces"]
+
+# Center modules
+center = ["WindowTitle"]
+
+# Right modules
+right = [
+  "MediaPlayer",
+  "SystemInfo",
+  "KeyboardLayout",
+  "Tray",
+  [
+    "Clock",
+    "Privacy",
+    "Settings",
+  ],
+]
