@@ -58,7 +58,7 @@
     "format-ethernet": "󰈀 ",
     "format-disconnected": "󰤠",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "hyprctl dispatch exec [float] nm-connection-editor"
+    "on-click": "hyprctl dispatch exec [float] kitty nmtui"
   },
 
   "pulseaudio": {
@@ -73,7 +73,7 @@
       "default": ["", "󰕾", ""]
     },
     "tooltip-format": "{icon} {volume}% {format_source}",
-    "on-click": "hyprctl dispatch exec [float] pavucontrol",
+    "on-click": "hyprpwcenter",
     "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
     "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
@@ -84,7 +84,7 @@
     "format": "{:%H:%M}",
     "tooltip": true,
     "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
-    "on-click": "hyprctl dispatch exec [float] gnome-calendar"
+    "on-click": "hyprctl dispatch exec [float] kitty ikhal"
   },
 
   "temperature#cpu": {
@@ -112,7 +112,7 @@
   "bluetooth": {
     "format": "󰂯 {num_connections}",
     "format-disabled": "󰂲",
-    "on-click": "hyprctl dispatch exec [float] blueman-manager",
+    "on-click": "hyprctl dispatch exec [float] kitty bluetuith",
     "on-click-right": "rfkill toggle bluetooth",
     "tooltip-format": "{}"
   }
