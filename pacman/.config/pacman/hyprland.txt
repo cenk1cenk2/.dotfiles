@@ -1,0 +1,13 @@
+clipse
+hypridle
+hyprland
+hyprland-autoname-workspaces
+hyprlock
+hyprpaper
+xdg-desktop-portal-hyprland
+hyprpolkitagent
+hyprland-qt-support
+hyprqt6engine
+hyprpwcenter
+hyprshutdown
+hyprcursor

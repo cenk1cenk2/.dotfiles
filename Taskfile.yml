@@ -52,7 +52,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: dbus desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts kanshi ssh-config swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser
+          packages: dbus desktop file-manager-actions fonts foot gitconfig gnupg khal kitty mako mimetypes neomutt pacman pipewire rofi scripts kanshi ssh-config swappy sway swaync swayosd swayr swayimg sworkstyle swaylock waybar wireplumber waylogout wlogout xauthority xdg-desktop-portal xdg-desktop-portal-termfilechooser hyprland
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
