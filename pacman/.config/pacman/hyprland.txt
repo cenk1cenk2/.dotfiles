@@ -1,13 +1,13 @@
 clipse
+hyprcursor
 hypridle
 hyprland
 hyprland-autoname-workspaces
+hyprland-qt-support
 hyprlock
 hyprpaper
-xdg-desktop-portal-hyprland
 hyprpolkitagent
-hyprland-qt-support
-hyprqt6engine
 hyprpwcenter
+hyprqt6engine
 hyprshutdown
-hyprcursor
+xdg-desktop-portal-hyprland
