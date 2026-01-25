@@ -11,9 +11,6 @@
   "position": "bottom",
   "spacing": 4,
 
-  // Include compositor-specific configuration
-  "include": ["~/.config/waybar/hyprland.jsonc"],
-
   // -------------------------------------------------------------------------
   // Modules
   // -------------------------------------------------------------------------
