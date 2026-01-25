@@ -12,6 +12,14 @@ def run_hyprctl(args):
     )
     return json.loads(result.stdout)
 
+def get_current_workspace():
+    """Get the current visible workspace ID."""
+    monitors = run_hyprctl(["monitors"])
+    for monitor in monitors:
+        if monitor.get("focused"):
+            return monitor.get("activeWorkspace", {}).get("id")
+    return 1  # fallback
+
 def main():
     try:
         # Get active window info
@@ -24,12 +32,15 @@ def main():
         current_workspace = active_window.get("workspace", {}).get("name", "")
 
         if current_workspace == "special:scratch":
-            # Window is in scratchpad, move it back to current workspace
-            subprocess.run(["hyprctl", "dispatch", "movetoworkspacesilent", "e+0"])
+            # Window is in scratchpad, move it back to the workspace we're looking at
+            visible_workspace_id = get_current_workspace()
+            subprocess.run(
+                ["hyprctl", "dispatch", "movetoworkspace", str(visible_workspace_id)]
+            )
         else:
             # Window is not in scratchpad, move it there
             subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspacesilent", "special:scratch"]
+                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"]
             )
 
     except Exception as e:
