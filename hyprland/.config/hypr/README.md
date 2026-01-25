@@ -188,6 +188,25 @@ hyprctl hyprpaper reload ,"~/new-wallpaper.png"
 hyprctl hyprpaper reload "DP-1,~/new-wallpaper.png"
 ```
 
+## Scratchpad
+
+The scratchpad is a hidden workspace (special workspace) where you can temporarily store windows and toggle them on/off with a single keybind.
+
+**Usage:**
+
+- Press `$mod + Shift + D` to send any window to the scratchpad
+- Press `$mod + D` to toggle the scratchpad (show/hide all windows in it)
+- Multiple windows can exist in the scratchpad - they all appear/disappear together
+- Windows in the scratchpad overlay on top of your current workspace
+
+**Use cases:**
+
+- Quick access to terminal, music player, or notes
+- Temporary storage for windows you want to hide but keep running
+- Multi-monitor workflows where you want windows available on any screen
+
+The scratchpad uses Hyprland's native `special:scratch` workspace feature - no plugins required.
+
 ## Recording Mode
 
 The recording mode provides quick access to screen recording features:
@@ -248,6 +267,13 @@ The following scripts have been successfully ported to Hyprland:
 - `$mod + 1-9/0` - Switch workspace
 - `$mod + Shift + 1-9/0` - Move window to workspace
 - `$mod + Ctrl + arrows` - Next/prev workspace on monitor
+- `$mod + C` - Go to empty workspace
+- `$mod + Shift + C` - Move window to empty workspace
+
+### Scratchpad
+
+- `$mod + D` - Toggle scratchpad (show/hide all scratchpad windows)
+- `$mod + Shift + D` - Move current window to scratchpad
 
 ### Modes
 

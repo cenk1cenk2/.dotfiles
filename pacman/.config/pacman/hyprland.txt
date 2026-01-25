@@ -9,5 +9,5 @@ hyprpaper
 hyprpolkitagent
 hyprpwcenter
 hyprqt6engine
-hyprshutdown
+# hyprshutdown
 xdg-desktop-portal-hyprland
