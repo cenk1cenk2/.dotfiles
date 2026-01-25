@@ -388,14 +388,17 @@
   },
 
   "hyprland/submap": {
-    "format": "<span style=\"italic\">{}</span>",
-    "tooltip": false
+    "format": "{}",
+    "max-length": 150,
+    "tooltip": false,
+    "on-click": "hyprctl dispatch submap reset"
   },
 
   "hyprland/language": {
-    "format": "  {}",
-    "min-length": 5,
-    "tooltip": false,
+    "format": "⌨ {shortDescription}",
+    "tooltip": true,
+    "tooltip-format": "{long}",
+    "on-click": "hyprctl switchxkblayout at-translated-set-2-keyboard next",
     "keyboard-name": "at-translated-set-2-keyboard"
   }
 }

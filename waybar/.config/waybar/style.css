@@ -309,8 +309,11 @@ window#waybar .modules-right {
   border-radius: 8px;
 }
 
-#mode {
+#mode,
+#submap {
   background-color: @bg_color_200;
+  color: @accent_color;
+  padding: 0 10px;
 }
 
 #battery.warning {
