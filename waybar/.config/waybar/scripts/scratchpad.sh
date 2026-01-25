@@ -3,12 +3,20 @@
 
 if [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
     # Hyprland: Get windows in special:scratch workspace
-    count=$(hyprctl clients -j | jq '[.[] | select(.workspace.name == "special:scratch")] | length')
     tooltip=$(hyprctl clients -j | jq -r '.[] | select(.workspace.name == "special:scratch") | "\(.class) | \(.title)"')
+    if [ -z "$tooltip" ]; then
+        count=0
+    else
+        count=$(echo "$tooltip" | wc -l)
+    fi
 elif [ -n "$SWAYSOCK" ]; then
     # Sway: Get windows in scratchpad
     tooltip=$(swaymsg -r -t get_tree | jq -r 'recurse(.nodes[]) | first(select(.name=="__i3_scratch")) | .floating_nodes | .[] | "\(.app_id) | \(.name)"')
-    count=$(echo -n "$tooltip" | grep -c '^' || echo 0)
+    if [ -z "$tooltip" ]; then
+        count=0
+    else
+        count=$(echo "$tooltip" | wc -l)
+    fi
 else
     count=0
     tooltip=""
