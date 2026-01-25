@@ -118,9 +118,6 @@ tasks:
           packages: >-
             chrome
             chrome-nvidia
-            foot
-            shikane
-            file-manager-actions
           # args: --adopt
 
   deploy:macos:
