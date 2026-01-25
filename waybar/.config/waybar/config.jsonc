@@ -22,29 +22,29 @@
     "interval": 30,
     "states": {
       "warning": 30,
-      "critical": 15
+      "critical": 15,
     },
     "format-charging": "󰚥 {capacity}%",
     "format": "{icon} {capacity}%",
     "format-icons": ["󰂃", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"],
-    "tooltip": true
+    "tooltip": true,
   },
 
   "idle_inhibitor": {
     "format": "{icon}",
     "format-icons": {
       "activated": "󰒲",
-      "deactivated": "󰒳"
+      "deactivated": "󰒳",
     },
     "tooltip": true,
     "tooltip-format-activated": "active",
     "tooltip-format-deactivated": "idle",
-    "signal": 15
+    "signal": 15,
   },
 
   "tray": {
     "icon-size": 18,
-    "spacing": 4
+    "spacing": 4,
   },
 
   "custom/pacman": {
@@ -53,7 +53,7 @@
     "exec-if": "[ $(pamac checkupdates -q | wc -l) -gt 0 ]",
     "exec": "pamac checkupdates -q | wc -l",
     "on-click": "pamac-manager --updates; waybar-signal.sh pacman",
-    "signal": 14
+    "signal": 14,
   },
 
   "custom/recorder": {
@@ -64,37 +64,37 @@
     "exec": "echo '{\"class\": \"recording\",\"text\":\"󰻂\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
     "exec-if": "pgrep wl-screenrec",
     "on-click": "killall -s SIGINT wl-screenrec",
-    "signal": 8
+    "signal": 8,
   },
 
   "group/extras": {
     "orientation": "horizontal",
-    "modules": ["custom/pacman", "custom/playerctl", "hyprland/language"]
+    "modules": ["custom/pacman", "custom/playerctl", "hyprland/language"],
   },
 
   "group/input": {
     "orientation": "horizontal",
-    "modules": ["sway/language"]
+    "modules": ["sway/language"],
   },
 
   "group/hardware": {
     "orientation": "horizontal",
-    "modules": ["cpu", "memory", "temperature#cpu", "temperature#gpu"]
+    "modules": ["cpu", "memory", "temperature#cpu", "temperature#gpu"],
   },
 
   "group/connection": {
     "orientation": "horizontal",
-    "modules": ["bluetooth", "network"]
+    "modules": ["bluetooth", "network"],
   },
 
   "group/audio": {
     "orientation": "horizontal",
-    "modules": ["pulseaudio"]
+    "modules": ["pulseaudio"],
   },
 
   "group/status": {
     "orientation": "horizontal",
-    "modules": ["battery", "backlight", "custom/notification", "clock"]
+    "modules": ["battery", "backlight", "custom/notification", "clock"],
   },
 
   "custom/playerctl": {
@@ -104,13 +104,13 @@
     "format": "{icon}",
     "format-icons": {
       "Playing": "",
-      "Paused": ""
+      "Paused": "",
     },
     "exec": "playerctl --player=spotify metadata --format '{\"alt\": \"{{status}}\", \"tooltip\": \"{{playerName}}:  {{markup_escape(title)}} - {{markup_escape(artist)}}\" }'",
     "on-click": "playerctl play-pause; waybar-signal.sh playerctl",
     "on-scroll-up": "playerctl next; waybar-signal.sh playerctl",
     "on-scroll-down": "playerctl previous; waybar-signal.sh playerctl",
-    "signal": 5
+    "signal": 5,
   },
 
   "custom/notification": {
@@ -120,13 +120,13 @@
       "notification": "<span foreground='red'><sup></sup></span>",
       "none": "<sup> </sup>",
       "dnd-notification": "<span foreground='red'><sup></sup></span>",
-      "dnd-none": "<sup> </sup>"
+      "dnd-none": "<sup> </sup>",
     },
     "return-type": "json",
     "exec-if": "which swaync-client",
     "exec": "swaync-client -swb",
     "on-click": "swaync-client -t -sw",
     "on-click-right": "swaync-client -d -sw",
-    "escape": true
-  }
+    "escape": true,
+  },
 }
