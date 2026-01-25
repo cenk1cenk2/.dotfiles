@@ -46,4 +46,6 @@ export PROTON_ENABLE_NGX_UPDATER=1
 export VKD3D_CONFIG=dxr,dxr11
 export VKD3D_FEATURE_LEVEL=12_2
 
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
 exec sway --unsupported-gpu 2>&1 | tee /tmp/sway.log
