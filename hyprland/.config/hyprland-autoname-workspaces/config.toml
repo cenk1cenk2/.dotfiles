@@ -6,12 +6,9 @@ version = "1.2.0"
 [format]
 dedup = true
 dedup_inactive_fullscreen = false
-delim = " "
-client = "{icon}"
-workspace = "{clients}"
 
 [class]
-DEFAULT = ""
+DEFAULT = ""
 "Alacritty" = ""
 "Bitwarden" = ""
 "Brave" = ""
