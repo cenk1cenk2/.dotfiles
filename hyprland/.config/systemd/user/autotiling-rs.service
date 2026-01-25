@@ -1,0 +1,18 @@
+[Unit]
+Description=Autotiling for Hyprland
+Documentation=https://github.com/Dimev/autotiling-rs
+PartOf=graphical-session.target
+After=hyprland-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/autotiling
+Restart=on-failure
+RestartSec=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=hyprland-session.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Playerctl waybar monitor for Spotify
+Documentation=https://github.com/altdesktop/playerctl
+PartOf=graphical-session.target
+After=hyprland-session.target waybar.service
+
+[Service]
+Type=simple
+ExecStart=%h/.config/hypr/scripts/start-playerctl-monitor.sh
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=hyprland-session.target
