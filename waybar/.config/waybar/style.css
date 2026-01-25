@@ -174,13 +174,15 @@ window.eDP-1 * {
   animation-name: blink-warning;
 }
 
-#workspaces button {
+#workspaces button,
+#workspaces button.active {
   padding-left: 8px;
   padding-right: 8px;
   color: @theme_selected_bg_color;
 }
 
-#workspaces button.focused {
+#workspaces button.focused,
+#workspaces button.active {
   border-color: @theme_selected_bg_color;
 }
 
@@ -232,13 +234,15 @@ window#waybar .modules-right {
   background-color: @bg_color_100;
 }
 
-#workspaces button {
+#workspaces button,
+#workspaces button.active {
   color: @theme_unfocused_text_color;
   border-radius: 8px;
   font-weight: 700;
 }
 
-#workspaces button.focused {
+#workspaces button.focused,
+#workspaces button.active {
   color: @bg_color_100;
   background-color: @theme_selected_bg_color;
 }
@@ -371,4 +375,17 @@ window#waybar .modules-right {
 #bluetooth.disabled {
   background-color: @error_color;
   color: @bg_color_100;
+}
+
+/* Hyprland-specific module styling (matching Sway equivalents) */
+#window,
+#hyprland-window {
+  font-weight: 600;
+  color: @theme_text_color;
+}
+
+#language,
+#hyprland-language {
+  padding-left: 6px;
+  padding-right: 6px;
 }

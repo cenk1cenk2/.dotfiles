@@ -395,7 +395,7 @@
   },
 
   "hyprland/language": {
-    "format": "⌨ {shortDescription}",
+    "format": "{shortDescription}",
     "tooltip": true,
     "tooltip-format": "{long}",
     "on-click": "hyprctl switchxkblayout at-translated-set-2-keyboard next",
