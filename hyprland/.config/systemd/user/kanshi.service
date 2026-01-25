@@ -6,10 +6,10 @@ After=hyprland-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kanshi
+ExecCondition=/bin/sh -c 'command -v kanshi'
+ExecStart=kanshi
 Restart=on-failure
 RestartSec=3
-
 # Logging
 StandardOutput=journal
 StandardError=journal

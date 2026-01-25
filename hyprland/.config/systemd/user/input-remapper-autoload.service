@@ -6,9 +6,9 @@ After=hyprland-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/input-remapper-control --command autoload -d
+ExecCondition=/bin/sh -c 'command -v input-remapper-control'
+ExecStart=input-remapper-control --command autoload -d
 RemainAfterExit=yes
-
 # Logging
 StandardOutput=journal
 StandardError=journal

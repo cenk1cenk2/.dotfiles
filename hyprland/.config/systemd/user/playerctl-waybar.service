@@ -6,7 +6,8 @@ After=hyprland-session.target waybar.service
 
 [Service]
 Type=simple
-ExecStart=%h/.config/hypr/scripts/start-playerctl-monitor.sh
+ExecCondition=/bin/sh -c 'command -v playerctl'
+ExecStart=/bin/bash -c 'playerctl --player=spotify -a metadata --format "{{status}} {{title}}" --follow | while read line; do pkill -RTMIN+5 waybar; done'
 Restart=on-failure
 RestartSec=3
 # Logging

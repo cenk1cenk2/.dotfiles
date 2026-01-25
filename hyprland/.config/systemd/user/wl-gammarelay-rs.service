@@ -6,10 +6,10 @@ After=hyprland-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/wl-gammarelay-rs run
+ExecCondition=/bin/sh -c 'command -v wl-gammarelay-rs'
+ExecStart=wl-gammarelay-rs run
 Restart=on-failure
 RestartSec=3
-
 # Logging
 StandardOutput=journal
 StandardError=journal

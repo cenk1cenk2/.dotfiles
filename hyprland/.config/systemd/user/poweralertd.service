@@ -1,14 +1,14 @@
 [Unit]
-Description=Power alert daemon
+Description=Power alert daemon with custom flags
 PartOf=graphical-session.target
 After=hyprland-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/poweralertd -s -i "line power"
+ExecCondition=/bin/sh -c 'command -v poweralertd'
+ExecStart=poweralertd -s -i "line power"
 Restart=on-failure
 RestartSec=3
-
 # Logging
 StandardOutput=journal
 StandardError=journal

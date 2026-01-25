@@ -6,9 +6,9 @@ After=hyprland-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/dex -a
+ExecCondition=/bin/sh -c 'command -v dex'
+ExecStart=dex -a
 RemainAfterExit=yes
-
 # Logging
 StandardOutput=journal
 StandardError=journal

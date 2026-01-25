@@ -6,10 +6,10 @@ After=hyprland-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/clipse -listen
+ExecCondition=/bin/sh -c 'command -v clipse'
+ExecStart=clipse -listen
 Restart=on-failure
 RestartSec=3
-
 # Logging
 StandardOutput=journal
 StandardError=journal
