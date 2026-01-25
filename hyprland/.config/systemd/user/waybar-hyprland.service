@@ -7,7 +7,7 @@ After=hyprland-session.target sway-session.target
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'command -v waybar'
-ExecStart=waybar -c ~/.config/waybar/hyprland.jsonc
+ExecStart=waybar -c %h/.config/waybar/hyprland.jsonc
 Restart=on-failure
 RestartSec=3
 # Logging
