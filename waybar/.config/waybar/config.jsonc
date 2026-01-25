@@ -62,7 +62,7 @@
       "warning": 75,
       "critical": 90
     },
-    "on-click": "swaymsg exec \"kitty --class=floating_shell_portrait_lg btop\""
+    "on-click": "swaymsg exec \\$process_manager"
   },
 
   "memory": {
@@ -72,7 +72,7 @@
       "warning": 75,
       "critical": 90
     },
-    "on-click": "swaymsg exec \"kitty --class=floating_shell_portrait_lg btop\""
+    "on-click": "swaymsg exec \\$process_manager"
   },
 
   "network": {
@@ -81,7 +81,7 @@
     "format-ethernet": "󰈀 ",
     "format-disconnected": "",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "swaymsg exec \"kitty --class=floating_shell nmtui\""
+    "on-click": "swaymsg exec \\$network_manager"
   },
 
   "sway/mode": {
@@ -104,8 +104,8 @@
   "backlight": {
     "format": "{icon} {percent}%",
     "format-icons": ["󰃞", "󰃟", "󰃠"],
-    "on-scroll-up": "swayosd-client --brightness raise",
-    "on-scroll-down": "swayosd-client --brightness lower"
+    "on-scroll-up": "swaymsg exec \\$brightness_up",
+    "on-scroll-down": "swaymsg exec \\$brightness_down"
   },
 
   "pulseaudio": {
@@ -120,10 +120,10 @@
       "default": ["", "󰕾", ""]
     },
     "tooltip-format": "{icon} {volume}% {format_source}",
-    "on-click": "swaymsg exec \"kitty --class=floating_shell wiremix\"",
-    "on-click-middle": "swayosd-client --output-volume mute-toggle",
-    "on-scroll-up": "swayosd-client --output-volume raise",
-    "on-scroll-down": "swayosd-client --output-volume lower"
+    "on-click": "swaymsg exec \\$audio_mixer",
+    "on-click-middle": "swaymsg exec \\$volume_mute",
+    "on-scroll-up": "swaymsg exec \\$volume_up",
+    "on-scroll-down": "swaymsg exec \\$volume_down"
   },
 
   "tray": {
@@ -142,7 +142,7 @@
 
   "custom/menu": {
     "format": "",
-    "on-click": "swaymsg exec \"rofi -modi run,drun run -show drun -terminal kitty\"",
+    "on-click": "swaymsg exec \\$menu",
     "tooltip": false
   },
 
@@ -154,7 +154,7 @@
       "one": "",
       "many": ""
     },
-    "exec": "~/.config/waybar/scripts/scratchpad.sh",
+    "exec": "~/.config/sway/scripts/scratchpad.sh",
     "on-click": "swaymsg 'scratchpad show'",
     "signal": 7
   },
@@ -200,8 +200,8 @@
     "format": "󰅍",
     "interval": "once",
     "return-type": "json",
-    "on-click": "swaymsg exec \"cliphist list | rofi -dmenu | cliphist decode | wl-copy\"; waybar-signal.sh clipboard",
-    "on-click-right": "swaymsg exec \"cliphist list | rofi -dmenu | cliphist delete\"; waybar-signal.sh clipboard",
+    "on-click": "swaymsg -q exec '$clipboard'; waybar-signal.sh clipboard",
+    "on-click-right": "swaymsg -q exec '$clipboard-del'; waybar-signal.sh clipboard",
     "on-click-middle": "rm -f ~/.cache/cliphist/db; waybar-signal.sh clipboard",
     "exec": "printf '{\"tooltip\":\"%s\"}' $(cliphist list | wc -l)' item(s) in the clipboard\r(Mid click to clear)'",
     "exec-if": "[ -x \"$(command -v cliphist)\" ] && [ $(cliphist list | wc -l) -gt 0 ]",
@@ -287,7 +287,7 @@
     "format": "{:%H:%M}",
     "tooltip": true,
     "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
-    "on-click": "swaymsg exec \"kitty --class=floating_shell ikhal\""
+    "on-click": "swaymsg exec \\$calendar"
   },
 
   "group/hardware": {
@@ -303,12 +303,12 @@
   "temperature#cpu": {
     "warning-threshold": 72,
     "critical-threshold": 78,
-    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon5/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
+    "hwmon-path": ["/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input", "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input"],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "swaymsg exec \"kitty --class=floating_shell watch sensors\""
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
   },
 
   "temperature#gpu": {
@@ -319,7 +319,7 @@
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "swaymsg exec \"kitty --class=floating_shell watch sensors\""
+    "on-click": "swaymsg exec \"\\$term_float watch sensors\""
   },
 
   "custom/playerctl": {
@@ -365,12 +365,8 @@
   "bluetooth": {
     "format": "󰂯 {num_connections}",
     "format-disabled": "󰂲",
-    "on-click": "swaymsg exec \"kitty --class=floating_shell bluetuith\"",
+    "on-click": "swaymsg exec \\$bluetooth",
     "on-click-right": "rfkill toggle bluetooth",
     "tooltip-format": "{}"
   }
-
-  // -------------------------------------------------------------------------
-  // Sway modules only - Hyprland uses ashell instead
-  // -------------------------------------------------------------------------
 }
