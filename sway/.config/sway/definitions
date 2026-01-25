@@ -6,7 +6,7 @@
 set $mod Mod4
 
 # background
-set $background $HOME/.dotfiles/sway/.config/sway/background/narli.jpg
+set $background $HOME/.config/sway/background/narli.jpg
 
 # set $alt_tab workspace back_and_forth
 set $alt_tab exec swayr switch-to-urgent-or-lru-window &> /tmp/swayr.log
