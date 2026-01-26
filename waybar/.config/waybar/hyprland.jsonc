@@ -54,13 +54,12 @@
   },
 
   "custom/recorder": {
-    "interval": "once",
+    "interval": 10,
     "return-type": "json",
     "format": "{}",
-    "tooltip-format": "{tooltip}",
-    "exec": "echo '{\"class\": \"recording\",\"text\":\"󰻂\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
-    "exec-if": "pgrep wl-screenrec",
-    "on-click": "killall -s SIGINT wl-screenrec",
+    "exec": "~/.config/hypr/scripts/recorder.py status",
+    "exec-if": "~/.config/hypr/scripts/recorder.py is-recording",
+    "on-click": "~/.config/hypr/scripts/recorder.py toggle",
     "signal": 8,
   },
 

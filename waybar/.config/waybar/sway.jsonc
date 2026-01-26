@@ -54,13 +54,13 @@
   },
 
   "custom/recorder": {
-    "interval": "once",
+    "interval": 10,
     "return-type": "json",
-    "format": "{}",
+    "format": "{text}",
     "tooltip-format": "{tooltip}",
-    "exec": "echo '{\"class\": \"recording\",\"text\":\"󰻂\",\"tooltip\":\"press $mod+Esc to stop recording\"}'",
-    "exec-if": "pgrep wl-screenrec",
-    "on-click": "killall -s SIGINT wl-screenrec",
+    "exec": "~/.config/sway/scripts/recorder.py status",
+    "exec-if": "~/.config/sway/scripts/recorder.py is-recording",
+    "on-click": "~/.config/sway/scripts/recorder.py toggle",
     "signal": 8,
   },
 

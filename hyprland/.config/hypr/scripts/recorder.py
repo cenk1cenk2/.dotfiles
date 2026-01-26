@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import subprocess
 import sys
 import time
@@ -79,7 +80,7 @@ def start_recording():
 
     try:
         ws.start_record()
-        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+        subprocess.run(["waybar-signal.sh", "recorder"])
         notify("Recording started")
         return True
     except Exception as e:
@@ -102,7 +103,7 @@ def stop_recording():
             output_path = None
 
         ws.stop_record()
-        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+        subprocess.run(["waybar-signal.sh", "recorder"])
 
         # Show where the file was saved
         if output_path:
@@ -123,15 +124,44 @@ def toggle_pause():
 
     try:
         ws.toggle_record_pause()
-        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
-        if is_paused():
-            notify("Recording paused")
-        else:
-            notify("Recording resumed")
+        subprocess.run(["waybar-signal.sh", "recorder"])
         return True
     except Exception as e:
         notify(f"Failed to toggle pause: {e}")
         return False
+
+def get_status_json():
+    """Get recording status as JSON for waybar"""
+    import json
+
+    if is_recording():
+        if is_paused():
+            return json.dumps(
+                {
+                    "class": "recording paused",
+                    "text": "⏸",
+                    "tooltip": "Recording paused - Click to toggle",
+                }
+            )
+        else:
+            return json.dumps(
+                {
+                    "class": "recording",
+                    "text": "⏺",
+                    "tooltip": "Recording active - Click to stop",
+                }
+            )
+
+    elif is_obs_running():
+        return json.dumps(
+            {
+                "class": "ready",
+                "text": "⏹",
+                "tooltip": "OBS ready - Click to start recording",
+            }
+        )
+
+    return json.dumps({"class": "idle", "text": "", "tooltip": "Not recording"})
 
 def open_obs():
     """Open OBS GUI"""
@@ -144,57 +174,67 @@ def open_obs():
             stderr=subprocess.DEVNULL,
         )
         notify("Opening OBS...", timeout=2000)
+        subprocess.run(["waybar-signal.sh", "recorder"])
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: recorder.py <command>")
-        print("Commands:")
-        print("  toggle  - Toggle recording (start/stop)")
-        print("  start   - Start recording")
-        print("  stop    - Stop recording")
-        print("  pause   - Toggle pause/resume")
-        print("  open    - Open OBS")
+    parser = argparse.ArgumentParser(
+        description="Control OBS recording via WebSocket",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    subparsers = parser.add_subparsers(
+        dest="command", help="Command to execute", required=True
+    )
+
+    subparsers.add_parser("toggle", help="Toggle recording (start/stop)")
+    subparsers.add_parser("start", help="Start recording")
+    subparsers.add_parser("stop", help="Stop recording")
+    subparsers.add_parser("pause", help="Toggle pause/resume")
+    subparsers.add_parser("open", help="Open OBS GUI")
+    subparsers.add_parser("status", help="Get recording status (JSON for waybar)")
+    subparsers.add_parser(
+        "is-recording", help="Check if recording (exit code 0 if yes)"
+    )
+    subparsers.add_parser("kill", help="Stop recording (alias for 'stop')")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
         sys.exit(1)
 
-    command = sys.argv[1]
+    if args.command == "status":
+        print(get_status_json())
 
-    if command == "toggle":
+    elif args.command == "is-recording":
+        sys.exit(0 if (is_recording() or is_obs_running()) else 1)
+
+    elif args.command == "toggle":
         if is_recording():
             stop_recording()
         else:
             start_recording()
 
-    elif command == "start":
+    elif args.command == "start":
         if is_recording():
             notify("Recording already in progress.")
         else:
             start_recording()
 
-    elif command == "stop":
+    elif args.command in ("stop", "kill"):
         if is_recording():
             stop_recording()
         else:
             notify("No recording in progress.")
 
-    elif command == "pause":
+    elif args.command == "pause":
         if is_recording():
             toggle_pause()
         else:
             notify("No recording in progress.")
 
-    elif command == "open":
+    elif args.command == "open":
         open_obs()
-
-    # Keep "kill" as alias for "stop" for backwards compatibility
-    elif command == "kill":
-        if is_recording():
-            stop_recording()
-        else:
-            notify("No recording in progress.")
-
-    else:
-        notify(f"Unknown command: {command}")
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()

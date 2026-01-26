@@ -185,6 +185,19 @@ window#waybar .modules-right {
 #custom-recorder {
   background-color: @error_color;
   color: @bg_color_100;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-weight: bold;
+}
+
+#custom-recorder.paused {
+  background-color: @warning_color;
+  color: @bg_color_100;
+}
+
+#custom-recorder.ready {
+  background-color: @success_color;
+  color: @bg_color_100;
 }
 
 #mode,
