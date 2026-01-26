@@ -91,7 +91,6 @@ set $screenshot_selection_file $grimshot --notify save area
 set $screenshot_window_clipboard $grimshot --notify copy active
 set $screenshot_window_file $grimshot --notify save active
 set $screenshot_snipping_tool swappy -f -
-set $screenshot_upload $HOME/.config/sway/scripts/upload-image.sh
 
 # onscreen bar
 set $onscreen_bar swayosd-client --monitor "$(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true).name')"
