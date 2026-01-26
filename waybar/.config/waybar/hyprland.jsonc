@@ -76,7 +76,7 @@
 
   "group/hardware": {
     "orientation": "horizontal",
-    "modules": ["cpu", "memory", "temperature#cpu", "temperature#gpu"],
+    "modules": ["cpu", "memory", "temperature#cpu"],
   },
 
   "group/connection": {
@@ -84,14 +84,20 @@
     "modules": ["bluetooth", "network"],
   },
 
-  "group/audio": {
-    "orientation": "horizontal",
-    "modules": ["pulseaudio"],
-  },
-
   "group/status": {
     "orientation": "horizontal",
-    "modules": ["battery", "backlight", "custom/notification", "clock"],
+    "modules": [
+      "custom/notification",
+      "pulseaudio",
+      "backlight",
+      "battery",
+      "clock",
+    ],
+  },
+
+  "backlight": {
+    "format": "{icon} {percent}%",
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
   },
 
   "custom/playerctl": {
@@ -137,7 +143,6 @@
     "group/extras",
     "group/hardware",
     "group/connection",
-    "group/audio",
     "tray",
     "group/status",
   ],
@@ -234,19 +239,6 @@
     "hwmon-path": [
       "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input",
       "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input",
-    ],
-    "interval": 3,
-    "format": "{icon} {temperatureC}°C",
-    "format-icons": ["", "", "", "", "", "", "", ""],
-    "tooltip": false,
-    "on-click": "hyprctl dispatch exec [float] kitty watch sensors",
-  },
-
-  "temperature#gpu": {
-    "warning-threshold": 72,
-    "critical-threshold": 78,
-    "hwmon-path": [
-      "/sys/devices/pci0000:00/0000:00:08.1/0000:7a:00.0/hwmon/hwmon4/temp1_input",
     ],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",

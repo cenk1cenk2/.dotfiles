@@ -229,7 +229,6 @@ window#waybar .modules-right {
 #input,
 #hardware,
 #connection,
-#audio,
 #status,
 #tray {
   background-color: @bg_color_200;
