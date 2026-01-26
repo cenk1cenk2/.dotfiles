@@ -185,7 +185,7 @@
       "warning": 75,
       "critical": 90,
     },
-    "on-click": "hyprctl dispatch exec [float] kitty btop",
+    "on-click": "~/.config/hypr/scripts/launch-app.py process_manager",
   },
 
   "memory": {
@@ -195,7 +195,7 @@
       "warning": 75,
       "critical": 90,
     },
-    "on-click": "hyprctl dispatch exec [float] kitty btop",
+    "on-click": "~/.config/hypr/scripts/launch-app.py process_manager",
   },
 
   "network": {
@@ -204,7 +204,7 @@
     "format-ethernet": "󰈀 ",
     "format-disconnected": "󰤠",
     "tooltip-format": "{ifname} ({essid}): {ipaddr}",
-    "on-click": "hyprctl dispatch exec [float] kitty nmtui",
+    "on-click": "~/.config/hypr/scripts/launch-app.py network_manager",
   },
 
   "pulseaudio": {
@@ -230,7 +230,7 @@
     "format": "{:%H:%M}",
     "tooltip": true,
     "tooltip-format": "<big>{:%B %Y}</big>\n<tt>{calendar}</tt>",
-    "on-click": "hyprctl dispatch exec [float] kitty ikhal",
+    "on-click": "~/.config/hypr/scripts/launch-app.py calendar",
   },
 
   "temperature#cpu": {
@@ -244,13 +244,13 @@
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
     "tooltip": false,
-    "on-click": "hyprctl dispatch exec [float] kitty watch sensors",
+    "on-click": "~/.config/hypr/scripts/launch-app.py sensors",
   },
 
   "bluetooth": {
     "format": "󰂯 {num_connections}",
     "format-disabled": "󰂲",
-    "on-click": "hyprctl dispatch exec [float] kitty bluetuith",
+    "on-click": "~/.config/hypr/scripts/launch-app.py bluetooth",
     "on-click-right": "rfkill toggle bluetooth",
     "tooltip-format": "{}",
   },
