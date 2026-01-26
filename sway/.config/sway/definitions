@@ -60,7 +60,7 @@ set $bluetooth $term_float bluetuith
 set $audio_mixer $term_float_portrait pulsemixer
 # calendar application
 set $calendar $term_float ikhal
-set $sensors $term_float zsh -ic 'hwatch sensors'
+set $sensors $term_float_lg zsh -ic 'hwatch sensors'
 set $process_manager $term_float_portrait_lg btop
 
 # get-volume commands
