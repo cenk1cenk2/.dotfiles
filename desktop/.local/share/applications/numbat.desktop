@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Numbat
+GenericName=Calculator
+TryExec=numbat
+Exec=kitty --class=numbat numbat
+Icon=numbat
+Terminal=false
+Categories=Education;Science;Math;
+Keywords=maths;numerical computations;physics;quantities;units;dimensions
