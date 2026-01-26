@@ -87,10 +87,10 @@
   "group/status": {
     "orientation": "horizontal",
     "modules": [
-      "custom/notification",
       "pulseaudio",
       "backlight",
       "battery",
+      "custom/notification",
       "clock",
     ],
   },
