@@ -1,0 +1,13 @@
+[Unit]
+Description=Hyprland compositor session
+PartOf=hyprland-session.target
+Wants=hyprland-session.target
+
+# This service is started by Hyprland in its config file
+# It's done like this so Hyprland and its launched child processes
+# are not a service itself, but in the regular session scope.
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+Restart=on-failure

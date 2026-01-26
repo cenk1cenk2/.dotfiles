@@ -1,0 +1,18 @@
+[Unit]
+Description=Autotiling-rs - Automatic tiling for Sway
+Documentation=https://github.com/nwg-piotr/autotiling-rs
+PartOf=graphical-session.target
+After=sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v autotiling-rs'
+ExecStart=autotiling-rs
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

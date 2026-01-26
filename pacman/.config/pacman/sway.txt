@@ -1,0 +1,11 @@
+autotiling-rs
+nwg-wrapper
+sway
+sway-audio-idle-inhibit-git
+swaybg
+swaycwd
+swayidle
+swaylock-effects-git
+swayr
+sworkstyle
+waylogout-git

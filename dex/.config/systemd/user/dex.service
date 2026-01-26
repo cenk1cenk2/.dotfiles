@@ -1,0 +1,17 @@
+[Unit]
+Description=Autostart XDG applications
+Documentation=https://github.com/jceb/dex
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'command -v dex'
+ExecStart=dex -a
+RemainAfterExit=yes
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

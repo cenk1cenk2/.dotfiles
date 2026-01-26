@@ -6,10 +6,8 @@
  *
  * =========================================================================== */
 
-/* import css definitions for current theme */
+/* Import theme colors */
 @import url("theme.css");
-
-/* import css definitions for current theme */
 
 /* -----------------------------------------------------------------------------
  * Keyframes
@@ -41,7 +39,6 @@
  * Base styles
  * -------------------------------------------------------------------------- */
 
-/* Reset all styles */
 * {
   border: none;
   border-radius: 0;
@@ -55,10 +52,9 @@
   animation-duration: 3s;
 }
 
-/* The whole bar */
 window#waybar {
-  background: @theme_selected_bg_color;
-  color: @wm_icon_bg;
+  background: @bg_color_alpha_400;
+  color: @theme_unfocused_text_color;
   font-size: 14px;
 }
 
@@ -66,14 +62,68 @@ window.eDP-1 * {
   font-size: 12.5px;
 }
 
-/* Each module */
+/* -----------------------------------------------------------------------------
+ * Module containers
+ * -------------------------------------------------------------------------- */
+
+window#waybar .modules-left {
+  padding: 0;
+  margin: 0;
+  color: @theme_unfocused_text_color;
+}
+
+window#waybar .modules-center {
+  padding: 0;
+  margin: 0;
+  color: @theme_text_color;
+  font-weight: 600;
+}
+
+window#waybar .modules-right {
+  padding: 0;
+  margin: 0;
+  color: @theme_unfocused_text_color;
+}
+
+/* -----------------------------------------------------------------------------
+ * Workspaces (Sway and Hyprland)
+ * -------------------------------------------------------------------------- */
+
+#workspaces button {
+  padding: 0 8px;
+  margin: 0 1px;
+  color: @theme_unfocused_text_color;
+  background-color: @bg_color_200;
+  font-weight: 700;
+}
+
+#workspaces button.focused,
+#workspaces button.active {
+  color: @bg_color_100;
+  background-color: @theme_selected_bg_color;
+}
+
+#workspaces button.urgent {
+  border-color: @error_color;
+  color: @error_color;
+}
+
+#workspaces button.special {
+  background-color: @bg_color_900;
+  color: @bg_color_100;
+  padding: 0 8px 0 8px;
+}
+
+/* -----------------------------------------------------------------------------
+ * Individual modules - default styling
+ * -------------------------------------------------------------------------- */
+
 #custom-pacman,
 #custom-menu,
 #custom-help,
 #custom-scratchpad,
 #custom-github,
 #custom-clipboard,
-#custom-zeit,
 #custom-dnd,
 #bluetooth,
 #battery,
@@ -81,6 +131,7 @@ window.eDP-1 * {
 #cpu,
 #memory,
 #mode,
+#submap,
 #network,
 #pulseaudio,
 #wireplumber,
@@ -91,216 +142,20 @@ window.eDP-1 * {
 #custom-adaptive-light,
 #custom-sunset,
 #custom-playerctl,
-#tray {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-/* -----------------------------------------------------------------------------
- * Module styles
- * -------------------------------------------------------------------------- */
-
-#custom-scratchpad,
-#custom-menu,
-#workspaces button.focused,
-#clock {
-  color: @theme_selected_bg_color;
-  background-color: @theme_selected_bg_color;
-}
-
-#custom-zeit.tracking {
-  background-color: @warning_color;
-}
-
-#battery.warning {
-  color: @warning_color;
-}
-
-#battery.critical {
-  color: @error_color;
-}
-
-#battery.warning.discharging {
-  animation-name: blink-warning;
-}
-
-#battery.critical.discharging {
-  animation-name: blink-critical;
-}
-
-#clock {
-  font-weight: bold;
-}
-
-#cpu.warning {
-  color: @warning_color;
-}
-
-#cpu.critical {
-  animation-name: blink-critical;
-}
-
-#custom-menu {
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-#memory.warning {
-  color: @warning_color;
-}
-
-#memory.critical {
-  animation-name: blink-critical;
-}
-
-#mode {
-  background: @background_color;
-}
-
-#network.disconnected {
-  color: @warning_color;
-}
-
-#pulseaudio.muted,
-#wireplumber.muted {
-  animation-name: blink-critical;
-}
-
-#temperature.critical {
-  animation-name: blink-critical;
-}
-
-#temperature.warning {
-  animation-name: blink-warning;
-}
-
-#workspaces button {
-  padding-left: 8px;
-  padding-right: 8px;
-  color: @theme_selected_bg_color;
-}
-
-#workspaces button.focused {
-  border-color: @theme_selected_bg_color;
-}
-
-#workspaces button.urgent {
-  border-color: @error_color;
-  color: @error_color;
-}
-
-#custom-pacman {
-  color: @warning_color;
-}
-
-#bluetooth.disabled {
-  color: @warning_color;
-}
-
-#custom-recorder {
-  color: @error_color;
-  padding-right: 8px;
-}
-
-/* update */
-
-window#waybar {
-  background: @bg_color_alpha_400;
-}
-
-window > box {
-  padding-top: 0px;
-  padding-bottom: 0px;
-}
-
-window#waybar .modules-center {
-  color: @theme_text_color;
-  background-color: @bg_color_100;
-  font-weight: 600;
-  padding-left: 8px;
-  padding-right: 8px;
-  border-radius: 8px;
-}
-
-window#waybar .modules-left {
-  color: @theme_unfocused_text_color;
-  background-color: @bg_color_100;
-}
-
-window#waybar .modules-right {
-  color: @theme_unfocused_text_color;
-  background-color: @bg_color_100;
-}
-
-#workspaces button {
-  color: @theme_unfocused_text_color;
-  border-radius: 8px;
-  font-weight: 700;
-}
-
-#workspaces button.focused {
-  color: @bg_color_100;
-  background-color: @theme_selected_bg_color;
-}
-
-/* #workspaces button.focused:first-child { */
-/*   border-radius: 0px; */
-/*   border-bottom-right-radius: 8px; */
-/*   border-top-right-radius: 8px; */
-/* } */
-
-/* #custom-scratchpad, */
-/* #custom-menu, */
-/* #clock { */
-/* } */
-
-#custom-pacman,
-#custom-menu,
-#custom-help,
-#custom-scratchpad,
-#custom-github,
-#custom-clipboard,
-#custom-zeit,
-#custom-dnd,
-#bluetooth,
-#battery,
-#clock,
-#cpu,
-#memory,
-#mode,
-#network,
-#pulseaudio,
-#wireplumber,
-#temperature,
-#idle_inhibitor,
-#backlight,
-#language,
-#custom-sunset,
-#custom-playerctl,
 #custom-notification,
 #tray {
+  padding: 0 4px;
   background-color: @bg_color_200;
   color: @theme_unfocused_text_color;
 }
 
+/* -----------------------------------------------------------------------------
+ * Special module styling
+ * -------------------------------------------------------------------------- */
+
 #clock {
   background-color: @bg_color_500;
-}
-
-#custom-notification {
-  padding-left: 6px;
-  padding-right: 6px;
-}
-
-#custom-pacman {
-  background-color: @success_color;
-  color: @bg_color_100;
-}
-
-#custom-playerctl {
-  color: @bg_color_100;
-  background-color: #98c379;
-  padding-right: 12px;
+  font-weight: bold;
 }
 
 #custom-scratchpad {
@@ -309,63 +164,106 @@ window#waybar .modules-right {
   border-radius: 8px;
 }
 
-#mode {
-  background-color: @bg_color_200;
+#custom-pacman {
+  color: @success_color;
 }
 
-#battery.warning {
+#custom-playerctl {
+  color: #1db954;
+  margin-right: 4px;
+}
+
+#custom-recorder {
+  background-color: @error_color;
+  color: @bg_color_100;
+}
+
+#mode,
+#submap {
+  color: @accent_color;
+}
+
+/* -----------------------------------------------------------------------------
+ * Module states - warnings and errors
+ * -------------------------------------------------------------------------- */
+
+#battery.warning,
+#cpu.warning,
+#memory.warning,
+#temperature.warning {
   background-color: @warning_color;
   color: @bg_color_100;
 }
 
-#battery.critical {
-  background-color: @error_color;
-  color: @bg_color_100;
-  animation-name: blink-critical;
-}
-
-#cpu.warning {
-  background-color: @warning_color;
-  color: @bg_color_100;
-}
-
-#cpu.critical {
-  background-color: @error_color;
-  color: @bg_color_100;
-}
-
-#memory.warning {
-  background-color: @warning_color;
-  color: @bg_color_100;
-}
-
-#memory.critical {
-  background-color: @error_color;
-  color: @bg_color_100;
-}
-
-#network.disconnected {
-  background-color: @error_color;
-  color: @bg_color_100;
-}
-
+#battery.critical,
+#cpu.critical,
+#memory.critical,
+#temperature.critical,
+#network.disconnected,
+#bluetooth.disabled,
 #pulseaudio.muted,
 #wireplumber.muted {
   background-color: @error_color;
   color: @bg_color_100;
 }
 
-#temperature.warning {
-  background-color: @warning_color;
-  color: @bg_color_100;
+/* Blinking animations for critical states */
+#battery.warning.discharging {
+  animation-name: blink-warning;
 }
 
-#temperature.critical {
-  background-color: @error_color;
-  color: @bg_color_100;
+#battery.critical.discharging,
+#cpu.critical,
+#memory.critical,
+#temperature.critical,
+#pulseaudio.muted,
+#wireplumber.muted {
+  animation-name: blink-critical;
 }
 
-#bluetooth.disabled {
-  background-color: @error_color;
-  color: @bg_color_100;
+/* -----------------------------------------------------------------------------
+ * Island styling for groups
+ * -------------------------------------------------------------------------- */
+
+#extras,
+#input,
+#hardware,
+#connection,
+#audio,
+#status,
+#tray {
+  background-color: @bg_color_200;
+  border-radius: 8px;
+  padding: 0 4px;
+  margin: 0 2px;
+}
+
+/* Rightmost group - flush with right edge */
+#status {
+  padding-right: 0;
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Compositor-specific modules (Sway and Hyprland)
+ * -------------------------------------------------------------------------- */
+
+#window,
+#hyprland-window {
+  font-weight: 600;
+  color: @theme_text_color;
+  background-color: @bg_color_200;
+  border-radius: 8px;
+  padding: 0 8px;
+}
+
+#mode,
+#submap,
+#hyprland-submap {
+  color: @accent_color;
+  background-color: @bg_color_200;
+  border-radius: 8px;
+  padding: 0 4px;
 }

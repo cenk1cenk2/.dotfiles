@@ -1,0 +1,52 @@
+# hyprland-autoname-workspaces configuration
+# Icons copied from sworkstyle config
+# https://github.com/hyprland-community/hyprland-autoname-workspaces/blob/main/config.toml.example
+
+version = "1.2.0"
+
+[format]
+dedup = true
+dedup_inactive_fullscreen = false
+client_active = "<span color='#4676ac'>{icon}</span>"
+
+[class]
+DEFAULT = ""
+"Alacritty" = ""
+"Bitwarden" = ""
+"Brave" = ""
+"Brave-browser" = ""
+"Chromium" = ""
+"Code" = ""
+"Google-chrome" = ""
+"Kitty" = ""
+"Nightly" = ""
+"Postman" = ""
+"Slack" = ""
+"Steam" = ""
+"balena-etcher" = ""
+"brave-browser" = ""
+"code-oss" = ""
+"discord" = ""
+"firefox" = ""
+"firefoxdeveloperedition" = ""
+"kitty" = ""
+"spotify" = ""
+"steam" = ""
+"vlc" = ""
+
+[title_in_class.".*"]
+"(?i)Github.*Firefox" = ""
+"Binance" = ""
+"Chrome" = ""
+"Obsidian" = "🖺"
+"Trilium" = "🖺"
+"WhatsApp" = ""
+"\\[?ranger\\]? ?\\w*" = ""
+"\\[?yazi\\]? ?\\w*" = ""
+"node" = ""
+"npm" = ""
+"nvim ?\\w*" = ""
+"yarn" = ""
+
+[exclude]
+"" = "^$"

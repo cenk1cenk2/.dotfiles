@@ -1,0 +1,18 @@
+[Unit]
+Description=Playerctl waybar monitor for Spotify
+Documentation=https://github.com/altdesktop/playerctl
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target waybar.service
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v playerctl'
+ExecStart=/bin/bash -c 'playerctl --player=spotify -a metadata --format "{{status}} {{title}}" --follow | while read line; do pkill -RTMIN+5 waybar; done'
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

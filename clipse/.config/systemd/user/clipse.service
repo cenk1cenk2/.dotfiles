@@ -1,0 +1,18 @@
+[Unit]
+Description=Clipboard manager with TUI interface
+Documentation=https://github.com/savedra1/clipse
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target
+
+[Service]
+Type=forking
+ExecCondition=/bin/sh -c 'command -v clipse'
+ExecStart=clipse -listen
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

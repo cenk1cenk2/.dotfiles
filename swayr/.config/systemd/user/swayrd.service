@@ -1,0 +1,18 @@
+[Unit]
+Description=Swayrd - Swayr daemon for window switching
+Documentation=https://sr.ht/~tsdh/swayr/
+PartOf=graphical-session.target
+After=sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v swayrd'
+ExecStart=swayrd
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

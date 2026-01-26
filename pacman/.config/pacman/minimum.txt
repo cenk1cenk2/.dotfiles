@@ -1,4 +1,3 @@
-autotiling-rs
 base
 base-devel
 bind
@@ -66,12 +65,10 @@ mailcap
 man-db
 mesa-utils
 mutt-wizard
-nemo
 neomutt
 net-tools
 networkmanager
 nmap
-nwg-wrapper
 obsidian
 openssh
 pamac-aur
@@ -89,7 +86,6 @@ polkit-gnome
 poweralertd
 qt5-styleplugins
 qt5-wayland
-qt6gtk2
 rclone
 rebuild-detector
 ripdrag-git
@@ -104,17 +100,9 @@ stow
 strace
 sudo-rs
 swappy-git
-sway
-sway-audio-idle-inhibit-git
-swaybg
-swaycwd
-swayidle
 swayimg
-swaylock-effects-git
 swaync
 swayosd
-swayr
-sworkstyle
 tailscale
 themechanger-git
 tlp
@@ -137,7 +125,6 @@ vulkan-tools
 waybar
 wayfreeze-git
 wayland-utils
-waylogout-git
 wdisplays
 wev
 wf-recorder
@@ -149,6 +136,7 @@ wl-clipboard
 wl-gammarelay-rs
 wl-mirror
 wl-screenrec
+wlogout
 wlogout
 wol-systemd
 wpa_supplicant

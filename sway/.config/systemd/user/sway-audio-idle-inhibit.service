@@ -1,0 +1,18 @@
+[Unit]
+Description=Sway audio idle inhibit - Prevents idle when audio is playing
+Documentation=https://github.com/ErikReider/SwayAudioIdleInhibit
+PartOf=graphical-session.target
+After=sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v sway-audio-idle-inhibit'
+ExecStart=sway-audio-idle-inhibit
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

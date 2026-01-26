@@ -24,5 +24,3 @@ include $HOME/.config/sway/modes/*
 
 # user config
 include $HOME/.config/sway/config.d/*
-
-exec --no-startup-id systemctl start --user sway-session.service

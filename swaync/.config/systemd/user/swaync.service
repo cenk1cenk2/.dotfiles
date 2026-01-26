@@ -1,0 +1,18 @@
+[Unit]
+Description=Swaync notification daemon
+Documentation=https://github.com/ErikReider/SwayNotificationCenter
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v swaync'
+ExecStart=swaync
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

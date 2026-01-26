@@ -1,0 +1,18 @@
+[Unit]
+Description=Gamma control for Wayland compositors
+Documentation=https://github.com/jeremija/wl-gammarelay-rs
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v wl-gammarelay-rs'
+ExecStart=wl-gammarelay-rs run
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Sworkstyle - Dynamic workspace styling for Sway
+Documentation=https://github.com/Lyr-7D1h/sworkstyle
+PartOf=graphical-session.target
+After=sway-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v sworkstyle'
+ExecStart=sworkstyle -d -l info
+Restart=on-failure
+RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

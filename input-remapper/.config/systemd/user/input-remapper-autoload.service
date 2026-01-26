@@ -1,0 +1,17 @@
+[Unit]
+Description=Input remapper autoload
+Documentation=https://github.com/sezanzeb/input-remapper
+PartOf=graphical-session.target
+After=hyprland-session.target sway-session.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'command -v input-remapper-control'
+ExecStart=input-remapper-control --command autoload -d
+RemainAfterExit=yes
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

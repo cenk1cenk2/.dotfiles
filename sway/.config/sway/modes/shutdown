@@ -11,14 +11,14 @@ set $mode_shutdown "\
 <span foreground='$color3'>(<b>s</b>)</span>shutdown \
 </span>"
 
-set $purge_cliphist [ $purge_cliphist_logout == 'true' ] && rm -f $HOME/.cache/cliphist/db || exit 0
+set $purge_clipse [ $purge_clipse_logout == 'true' ] && rm -f $HOME/.local/share/clipse/clipboard_history.json || exit 0
 
 mode --pango_markup $mode_shutdown {
     # lock
     bindsym l mode "default", exec $locking
 
     # logout
-    bindsym e exec $purge_cliphist; exec loginctl terminate-user $USER
+    bindsym e exec $purge_clipse; exec loginctl terminate-user $USER
 
     # suspend
     bindsym u mode "default", exec systemctl suspend
@@ -27,10 +27,10 @@ mode --pango_markup $mode_shutdown {
     bindsym h mode "default", exec systemctl hibernate
 
     # shutdown
-    bindsym s exec $purge_cliphist; exec systemctl poweroff
+    bindsym s exec $purge_clipse; exec systemctl poweroff
 
     # reboot
-    bindsym r exec $purge_cliphist; exec systemctl reboot
+    bindsym r exec $purge_clipse; exec systemctl reboot
 
     # Return to default mode.
     bindsym Escape mode "default"
