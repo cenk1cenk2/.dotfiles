@@ -40,8 +40,8 @@ profile main {
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
     exec notify-send "display" "Applied profile main." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
 
 # main monitor and bottom monitor
@@ -50,8 +50,8 @@ profile main-bottom {
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,1600 scale 1.0 transform 180 adaptive_sync off
     output "*" disable
     exec notify-send "display" "Applied profile main-bottom." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
 
 # main monitor and top monitor
@@ -60,8 +60,8 @@ profile main-top {
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
     exec notify-send "display" "Applied profile main-top." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
 
 # main monitor only
@@ -69,8 +69,8 @@ profile main-solo {
     output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
     exec notify-send "display" "Applied profile main-solo." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'Scarlett 8i6 USB'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
 
 ####################################################################################################
@@ -84,8 +84,8 @@ profile tv {
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
     exec notify-send "display" "Applied profile tv." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'HDA NVidia'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
 
 # only tv force no scaling
@@ -95,6 +95,6 @@ profile tv-4k {
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
     exec notify-send "display" "Applied profile tv-4k." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Sink' 'HDA NVidia'
-    exec ~/.config/sway/scripts/sound-sink.sh 'Audio/Source' 'Scarlett 8i6 USB'
+    exec jumpy sound 'Audio/Sink' 'HDA NVidia'
+    exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
