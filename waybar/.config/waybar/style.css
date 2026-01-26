@@ -118,7 +118,6 @@ window#waybar .modules-right {
 #workspaces button.special {
   background-color: @bg_color_900;
   color: @bg_color_100;
-  padding: 0 8px 0 8px;
 }
 
 /* -----------------------------------------------------------------------------
@@ -241,7 +240,6 @@ window#waybar .modules-right {
   background-color: @bg_color_200;
   border-radius: 8px;
   padding: 0 4px;
-  margin: 0 2px;
 }
 
 /* Rightmost group - flush with right edge */
