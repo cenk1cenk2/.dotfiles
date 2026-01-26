@@ -24,7 +24,7 @@ def notify(
         cmd.extend(["-t", str(timeout)])
     subprocess.run(cmd)
 
-def get_obs_connection(retry=3, wait=1):
+def get_obs_connection(retry=3, wait=1, silent=False):
     """Get OBS WebSocket connection with retry logic"""
     if not OBS_AVAILABLE:
         return None
@@ -37,7 +37,8 @@ def get_obs_connection(retry=3, wait=1):
             if attempt < retry - 1:
                 time.sleep(wait)
             else:
-                notify(f"Failed to connect to OBS: {e}")
+                if not silent:
+                    notify(f"Failed to connect to OBS: {e}")
                 return None
 
     return None
@@ -47,9 +48,9 @@ def is_obs_running():
     result = subprocess.run(["pgrep", "obs"], capture_output=True)
     return result.returncode == 0
 
-def is_recording():
+def is_recording(silent=False):
     """Check if OBS is recording"""
-    ws = get_obs_connection()
+    ws = get_obs_connection(silent=silent)
     if not ws:
         return False
 
@@ -205,7 +206,7 @@ def main():
         print(get_status_json())
 
     elif args.command == "is-recording":
-        sys.exit(0 if (is_recording() or is_obs_running()) else 1)
+        sys.exit(0 if (is_recording(silent=True) or is_obs_running()) else 1)
 
     elif args.command == "toggle":
         if is_recording():
