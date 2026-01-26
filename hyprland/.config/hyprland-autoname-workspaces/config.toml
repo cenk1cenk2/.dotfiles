@@ -33,6 +33,7 @@ DEFAULT = ""
 "spotify" = ""
 "steam" = ""
 "vlc" = ""
+"mpv" = ""
 
 [title_in_class.".*"]
 "(?i)Github.*Firefox" = ""

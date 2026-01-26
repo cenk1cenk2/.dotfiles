@@ -1,20 +1,20 @@
 # vim:ft=swayconfig
 
-set $mode_recording "<span foreground='$color10'></span>  \
-<span foreground='$color1'><b>Kill</b></span> <span foreground='$color10'>(<b>q</b>)</span> \
-<span foreground='$color3'><b>Record</b></span> <span foreground='$color10'>(<b>r</b>)</span> \
-<span foreground='$color3'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span> \
-<span foreground='$color3'><b>Record Area</b></span> <span foreground='$color10'>(<b>s</b>)</span> \
-<span foreground='$color3'>+ [<span foreground='$color10'><b>Shift</b></span> for 󰍮]</span>"
+### Recording Mode
 
-mode --pango_markup $mode_recording {
-        bindsym r exec $recorder mp4, mode "default"
-        bindsym Shift+r exec $recorder mp4 no-region audio, mode "default"
-        bindsym s exec $recorder mp4 region, mode "default"
-        bindsym Shift+s exec $recorder mp4 region audio, mode "default"
+set $mode_recording "🎥 Recording: (r) toggle | (o) open OBS | (q) stop | ESC exit"
 
-        bindsym q exec $recorder kill, mode "default"
+mode $mode_recording {
+        # Toggle recording (start/stop)
+        bindsym r exec $recorder toggle, mode "default"
 
+        # Open OBS window
+        bindsym o exec $recorder open, mode "default"
+
+        # Stop recording
+        bindsym q exec $recorder stop, mode "default"
+
+        # Exit recording mode
         bindsym Escape mode "default"
 }
 

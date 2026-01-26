@@ -64,11 +64,13 @@ lynx
 mailcap
 man-db
 mesa-utils
+mpv
 mutt-wizard
 neomutt
 net-tools
 networkmanager
 nmap
+obs-studio
 obsidian
 openssh
 pamac-aur
@@ -85,6 +87,7 @@ playerctl
 polkit-gnome
 poweralertd
 pulsemixer
+python-obsws
 qt5-styleplugins
 qt5-wayland
 rclone
@@ -120,15 +123,12 @@ vdirsyncer
 vdpauinfo
 vim
 virt-viewer
-vlc
-vlc-plugins-all
 vulkan-tools
 waybar
 wayfreeze-git
 wayland-utils
 wdisplays
 wev
-wf-recorder
 wget
 which
 wireplumber

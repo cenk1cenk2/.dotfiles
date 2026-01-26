@@ -2,10 +2,15 @@
 
 import subprocess
 import sys
-import os
 import time
-import json
-from datetime import datetime
+
+try:
+    import obsws_python as obs
+
+    OBS_AVAILABLE = True
+except ImportError:
+    OBS_AVAILABLE = False
+    print("Warning: obsws-python not installed. Install with: pip install obsws-python")
 
 def notify(
     message,
@@ -18,119 +23,140 @@ def notify(
         cmd.extend(["-t", str(timeout)])
     subprocess.run(cmd)
 
-def countdown():
-    """Show countdown notifications before recording"""
-    for i in range(1, 4):  # seq 3 gives 1, 2, 3
-        notify(f"Recording in {3 + 1 - i} seconds.", timeout=1000)
-        time.sleep(1)
+def get_obs_connection(retry=3, wait=1):
+    """Get OBS WebSocket connection with retry logic"""
+    if not OBS_AVAILABLE:
+        return None
 
-def is_recording():
-    """Check if wl-screenrec is already running"""
-    result = subprocess.run(["pgrep", "wl-screenrec"], capture_output=True)
+    for attempt in range(retry):
+        try:
+            ws = obs.ReqClient(host="localhost", port=4455, password="")
+            return ws
+        except Exception as e:
+            if attempt < retry - 1:
+                time.sleep(wait)
+            else:
+                notify(f"Failed to connect to OBS: {e}")
+                return None
+
+    return None
+
+def is_obs_running():
+    """Check if OBS is running"""
+    result = subprocess.run(["pgrep", "obs"], capture_output=True)
     return result.returncode == 0
 
-def kill_recording():
-    """Stop any running recording"""
-    subprocess.run(["killall", "-s", "SIGINT", "wl-screenrec"])
-    subprocess.run(["pkill", "-RTMIN+8", "waybar"])
-    notify("Recording stopped.")
+def is_recording():
+    """Check if OBS is recording"""
+    ws = get_obs_connection()
+    if not ws:
+        return False
 
-def get_videos_dir():
-    """Get the user's Videos directory"""
     try:
-        result = subprocess.run(
-            ["xdg-user-dir", "VIDEOS"], capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return os.path.expanduser("~/Videos")
+        status = ws.get_record_status()
+        return status.output_active
+    except Exception:
+        return False
 
-def get_region_selection():
-    try:
-        slurp_result = subprocess.run(
-            ["slurp"], capture_output=True, text=True, check=True
-        )
-        return slurp_result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return None
+def start_recording():
+    """Start OBS recording via WebSocket"""
+    ws = get_obs_connection()
+    if not ws:
+        notify("Could not connect to OBS. Make sure OBS is running.")
+        return False
 
-def get_focused_monitor():
-    """Get the focused monitor using hyprctl"""
     try:
-        result = subprocess.run(
-            ["hyprctl", "monitors", "-j"], capture_output=True, text=True, check=True
+        ws.start_record()
+        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+        notify("Recording started")
+        return True
+    except Exception as e:
+        notify(f"Failed to start recording: {e}")
+        return False
+
+def stop_recording():
+    """Stop OBS recording via WebSocket"""
+    ws = get_obs_connection()
+    if not ws:
+        notify("Could not connect to OBS")
+        return False
+
+    try:
+        # Get the current recording status before stopping to get the output path
+        try:
+            status = ws.get_record_status()
+            output_path = status.output_path if hasattr(status, "output_path") else None
+        except:
+            output_path = None
+
+        ws.stop_record()
+        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+
+        # Show where the file was saved
+        if output_path:
+            notify(f"Recording saved to:\n{output_path}", timeout=5000)
+        else:
+            notify("Recording stopped.", timeout=3000)
+        return True
+    except Exception as e:
+        notify(f"Failed to stop recording: {e}")
+        return False
+
+def open_obs():
+    """Open OBS GUI"""
+    if is_obs_running():
+        notify("OBS is already running")
+    else:
+        subprocess.Popen(
+            ["obs"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
-        monitors = json.loads(result.stdout)
-        focused = next((m for m in monitors if m.get("focused")), None)
-        if focused:
-            return focused.get("name")
-        return None
-    except (subprocess.CalledProcessError, json.JSONDecodeError, StopIteration):
-        return None
+        notify("Opening OBS...", timeout=2000)
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: recorder.py <format> [region] [audio]")
-        print("       recorder.py kill")
+        print("Usage: recorder.py <command>")
+        print("Commands:")
+        print("  toggle  - Toggle recording (start/stop)")
+        print("  start   - Start recording")
+        print("  stop    - Stop recording")
+        print("  open    - Open OBS")
         sys.exit(1)
 
-    # Check if already recording first (like original script)
-    recording_status = is_recording()
+    command = sys.argv[1]
 
-    # Handle kill command
-    if sys.argv[1] == "kill":
-        kill_recording()
-        sys.exit(0)
-    elif recording_status:
-        notify("Recording already in progress.")
-        sys.exit(1)
+    if command == "toggle":
+        if is_recording():
+            stop_recording()
+        else:
+            start_recording()
 
-    # Get parameters
-    format_ext = sys.argv[1]
-    region_mode = len(sys.argv) > 2 and sys.argv[2] == "region"
-    audio_mode = len(sys.argv) > 3 and sys.argv[3] == "audio"
+    elif command == "start":
+        if is_recording():
+            notify("Recording already in progress.")
+        else:
+            start_recording()
 
-    # Setup file path
-    target_path = get_videos_dir()
-    timestamp = datetime.now().strftime("recording_%Y%m%d-%H%M%S")
-    file_path = os.path.join(target_path, f"{timestamp}.{format_ext}")
+    elif command == "stop":
+        if is_recording():
+            stop_recording()
+        else:
+            notify("No recording in progress.")
 
-    # Build command as string like the original
-    command = f"wl-screenrec -f='{file_path}' --experimental-vulkan"
+    elif command == "open":
+        open_obs()
 
-    # Handle region selection
-    if region_mode:
-        notify("Select a region to record", timeout=1000)
-        area = get_region_selection()
-        if not area:
-            notify("Failed to select region")
-            sys.exit(1)
-        command = f"{command} -g '{area}'"
+    # Keep "kill" as alias for "stop" for backwards compatibility
+    elif command == "kill":
+        if is_recording():
+            stop_recording()
+        else:
+            notify("No recording in progress.")
+
     else:
-        # get the current output using hyprctl
-        focused_output = get_focused_monitor()
-
-        if not focused_output:
-            notify("Failed to select output")
-            sys.exit(1)
-
-        command = f"{command} -o '{focused_output}'"
-
-    # Handle audio
-    if audio_mode:
-        command = f"{command} --audio"
-
-    # Start countdown
-    countdown()
-
-    # Start recording using shell=True like eval in original
-    process = subprocess.Popen(command, shell=True)
-
-    subprocess.run(["pkill", "-RTMIN+8", "waybar"])
-
-    process.communicate()
-
-    notify(f"Finished recording: {file_path}")
+        notify(f"Unknown command: {command}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
