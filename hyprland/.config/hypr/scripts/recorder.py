@@ -58,6 +58,18 @@ def is_recording():
     except Exception:
         return False
 
+def is_paused():
+    """Check if OBS recording is paused"""
+    ws = get_obs_connection()
+    if not ws:
+        return False
+
+    try:
+        status = ws.get_record_status()
+        return status.output_paused if hasattr(status, "output_paused") else False
+    except Exception:
+        return False
+
 def start_recording():
     """Start OBS recording via WebSocket"""
     ws = get_obs_connection()
@@ -102,6 +114,25 @@ def stop_recording():
         notify(f"Failed to stop recording: {e}")
         return False
 
+def toggle_pause():
+    """Toggle pause/resume OBS recording"""
+    ws = get_obs_connection()
+    if not ws:
+        notify("Could not connect to OBS")
+        return False
+
+    try:
+        ws.toggle_record_pause()
+        subprocess.run(["pkill", "-RTMIN+8", "waybar"])
+        if is_paused():
+            notify("Recording paused")
+        else:
+            notify("Recording resumed")
+        return True
+    except Exception as e:
+        notify(f"Failed to toggle pause: {e}")
+        return False
+
 def open_obs():
     """Open OBS GUI"""
     if is_obs_running():
@@ -121,6 +152,7 @@ def main():
         print("  toggle  - Toggle recording (start/stop)")
         print("  start   - Start recording")
         print("  stop    - Stop recording")
+        print("  pause   - Toggle pause/resume")
         print("  open    - Open OBS")
         sys.exit(1)
 
@@ -141,6 +173,12 @@ def main():
     elif command == "stop":
         if is_recording():
             stop_recording()
+        else:
+            notify("No recording in progress.")
+
+    elif command == "pause":
+        if is_recording():
+            toggle_pause()
         else:
             notify("No recording in progress.")
 

@@ -2,11 +2,14 @@
 
 ### Recording Mode
 
-set $mode_recording "🎥 Recording: (r) toggle | (o) open OBS | (q) stop | ESC exit"
+set $mode_recording "🎥 Recording: (r) toggle | (p) pause | (o) open OBS | (q) stop | ESC exit"
 
 mode $mode_recording {
         # Toggle recording (start/stop)
         bindsym r exec $recorder toggle, mode "default"
+
+        # Toggle pause/resume
+        bindsym p exec $recorder pause, mode "default"
 
         # Open OBS window
         bindsym o exec $recorder open, mode "default"
