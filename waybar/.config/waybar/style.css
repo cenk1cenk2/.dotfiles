@@ -150,8 +150,9 @@ window#waybar .modules-right {
 #custom-playerctl,
 #custom-notification,
 #tray {
-  padding: 0 4px;
-  background-color: @bg_color_200;
+  padding: 0 6px;
+  border-radius: 8px;
+  background-clip: padding-box;
   color: @theme_unfocused_text_color;
 }
 
@@ -162,6 +163,8 @@ window#waybar .modules-right {
 #clock {
   background-color: @bg_color_500;
   font-weight: bold;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 #custom-scratchpad {
