@@ -84,6 +84,7 @@ pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
+pulsemixer
 qt5-styleplugins
 qt5-wayland
 rclone
@@ -130,7 +131,6 @@ wev
 wf-recorder
 wget
 which
-wiremix
 wireplumber
 wl-clipboard
 wl-gammarelay-rs
