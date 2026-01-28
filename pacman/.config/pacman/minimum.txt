@@ -132,7 +132,7 @@ wev
 wget
 which
 wireplumber
-wl-clipboard
+wl-clipboard-rs
 wl-gammarelay-rs
 wl-mirror
 wl-screenrec
