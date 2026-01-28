@@ -137,7 +137,6 @@ wl-gammarelay-rs
 wl-mirror
 wl-screenrec
 wlogout
-wlogout
 wol-systemd
 wpa_supplicant
 xclip
