@@ -54,10 +54,12 @@ tasks:
           to: "~"
           packages: >-
             autotiling-rs
+            brave
             clipse
             dbus
             desktop
             dex
+            electron
             fonts
             gitconfig
             gnupg
@@ -91,18 +93,18 @@ tasks:
             xdg-desktop-portal-termfilechooser
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
-      - task: deploy
-        vars:
-          to: "~"
-          packages: brave electron
-          # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
-          status: test -d /usr/lib/nvidia
-      - task: deploy
-        vars:
-          to: "~"
-          packages: brave-nvidia electron-nvidia
-          # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
-          status: test ! -d /usr/lib/nvidia
+      # - task: deploy
+      #   vars:
+      #     to: "~"
+      #     packages: brave electron
+      #     # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
+      #     status: test -d /usr/lib/nvidia
+      # - task: deploy
+      #   vars:
+      #     to: "~"
+      #     packages: brave-nvidia electron-nvidia
+      #     # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
+      #     status: test ! -d /usr/lib/nvidia
       # HACK: little trick to change the configuration for nvidia
       - task: deploy
         vars:
