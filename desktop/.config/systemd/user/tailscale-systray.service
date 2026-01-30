@@ -1,0 +1,10 @@
+[Unit]
+Description=Tailscale System Tray
+After=graphical.target
+
+[Service]
+Type=simple
+ExecStart=tailscale systray
+
+[Install]
+WantedBy=default.target
