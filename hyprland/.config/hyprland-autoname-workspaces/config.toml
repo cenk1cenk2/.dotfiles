@@ -4,6 +4,9 @@
 
 version = "1.2.0"
 
+[workspaces_name]
+"special:scratch" = "󰖲"
+
 [format]
 dedup = true
 dedup_inactive_fullscreen = false
