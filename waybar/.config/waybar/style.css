@@ -120,6 +120,11 @@ window#waybar .modules-right {
   color: @bg_color_100;
 }
 
+#workspaces button.special.active {
+  background-color: @theme_selected_bg_color;
+  color: @bg_color_100;
+}
+
 /* -----------------------------------------------------------------------------
  * Individual modules - default styling
  * -------------------------------------------------------------------------- */
