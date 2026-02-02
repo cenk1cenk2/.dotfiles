@@ -3,6 +3,8 @@ Description=Autostart XDG applications
 Documentation=https://github.com/jceb/dex
 PartOf=graphical-session.target
 After=hyprland-session.target sway-session.target
+Wants=xdg-desktop-autostart.target
+Before=xdg-desktop-autostart.target
 
 [Service]
 Type=oneshot
@@ -15,3 +17,4 @@ StandardError=journal
 
 [Install]
 WantedBy=graphical-session.target
+Also=xdg-desktop-autostart.target
