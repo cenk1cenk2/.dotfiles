@@ -1,8 +1,14 @@
+# UNUSED - This service file is not used
+# Use waybar@.service template instead with compositor-specific instances:
+#   - waybar@sway.service for Sway
+#   - waybar@hyprland.service for Hyprland
+#
+# This file is kept as an example of generic waybar service configuration
 [Unit]
-Description=Waybar - Highly customizable Wayland bar
+Description=Waybar - Highly customizable Wayland bar (generic/unused)
 Documentation=https://github.com/Alexays/Waybar
 PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+After=graphical-session.target
 
 [Service]
 Type=simple

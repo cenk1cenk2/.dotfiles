@@ -2,13 +2,17 @@
 Description=SwayOSD server for on-screen display notifications
 Documentation=https://github.com/ErikReider/SwayOSD
 PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/swayosd-server
+ExecCondition=/bin/sh -c 'command -v swayosd-server'
+ExecStart=swayosd-server
 Restart=on-failure
 RestartSec=3
+# Logging
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=graphical-session.target

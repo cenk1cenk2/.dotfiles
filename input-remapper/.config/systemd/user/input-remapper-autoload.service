@@ -2,7 +2,7 @@
 Description=Input remapper autoload
 Documentation=https://github.com/sezanzeb/input-remapper
 PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+After=graphical-session.target
 
 [Service]
 Type=oneshot

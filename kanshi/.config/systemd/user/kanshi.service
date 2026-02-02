@@ -2,7 +2,7 @@
 Description=Dynamic display configuration for Wayland
 Documentation=https://sr.ht/~emersion/kanshi/
 PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+After=graphical-session.target
 
 [Service]
 Type=simple

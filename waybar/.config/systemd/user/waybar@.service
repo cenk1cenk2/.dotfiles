@@ -1,13 +1,13 @@
 [Unit]
-Description=Waybar - Highly customizable Wayland bar
+Description=Waybar - Highly customizable Wayland bar for %i
 Documentation=https://github.com/Alexays/Waybar
-PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+PartOf=%i-session.target
+After=%i-session.target
 
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'command -v waybar'
-ExecStart=waybar -c %h/.config/waybar/sway.jsonc
+ExecStart=waybar -c %h/.config/waybar/%i.jsonc
 Restart=on-failure
 RestartSec=3
 # Logging
@@ -15,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=%i-session.target

@@ -1,17 +1,17 @@
 [Unit]
 Description=Swayidle - Idle management daemon for Wayland
 Documentation=https://github.com/swaywm/swayidle
-PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+PartOf=sway-session.target
+After=sway-session.target
 
 [Service]
 Type=simple
 ExecCondition=/bin/sh -c 'command -v swayidle'
 ExecStart=/bin/sh -c 'swayidle -w \
-    timeout 300 "light -G > /tmp/brightness && light -S 10" resume "light -S $([ -f /tmp/brightness ] && cat /tmp/brightness || echo 100%%)" \
-    timeout 1800 "swaymsg \\"output * dpms off\\"" \
-    resume "swaymsg \\"output * dpms on\\"" \
-    before-sleep "playerctl pause"'
+timeout 300 "light -G > /tmp/brightness && light -S 10" resume "light -S $([ -f /tmp/brightness ] && cat /tmp/brightness || echo 100%%)" \
+timeout 1800 "swaymsg \\"output * dpms off\\"" \
+resume "swaymsg \\"output * dpms on\\"" \
+before-sleep "playerctl pause"'
 Restart=on-failure
 RestartSec=3
 # Logging
@@ -19,4 +19,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=sway-session.target

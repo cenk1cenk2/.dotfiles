@@ -2,7 +2,7 @@
 Description=Swaync notification daemon
 Documentation=https://github.com/ErikReider/SwayNotificationCenter
 PartOf=graphical-session.target
-After=hyprland-session.target sway-session.target
+After=graphical-session.target
 
 [Service]
 Type=simple

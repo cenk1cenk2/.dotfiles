@@ -1,7 +1,7 @@
 [Unit]
 Description=Autotiling-rs - Automatic tiling for Sway
 Documentation=https://github.com/nwg-piotr/autotiling-rs
-PartOf=graphical-session.target
+PartOf=sway-session.target
 After=sway-session.target
 
 [Service]
@@ -15,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=sway-session.target

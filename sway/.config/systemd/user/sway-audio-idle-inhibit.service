@@ -1,7 +1,7 @@
 [Unit]
 Description=Sway audio idle inhibit - Prevents idle when audio is playing
 Documentation=https://github.com/ErikReider/SwayAudioIdleInhibit
-PartOf=graphical-session.target
+PartOf=sway-session.target
 After=sway-session.target
 
 [Service]
@@ -15,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=sway-session.target

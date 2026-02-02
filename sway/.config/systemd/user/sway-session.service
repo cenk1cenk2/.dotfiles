@@ -1,13 +1,14 @@
 [Unit]
 Description=sway window manager session
 PartOf=sway-session.target
-Wants=sway-session.target
-
+Wants=sway-session.target xdg-desktop-autostart.target
 # this service is started by sway in its config file
 # it's done like this so sway and its launched child processes
 # are not a service itself, but in the regular session scope.
+
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/true
+ExecStopPost=systemctl --user stop sway-session.target
 Restart=on-failure
