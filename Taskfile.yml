@@ -55,6 +55,7 @@ tasks:
           packages: >-
             autotiling-rs
             brave
+            claude
             clipse
             dbus
             desktop
