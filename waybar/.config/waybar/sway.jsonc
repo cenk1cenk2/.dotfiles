@@ -64,6 +64,16 @@
     "signal": 8,
   },
 
+  "custom/speech": {
+    "interval": 10,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/sway/scripts/speech.py status",
+    "exec-if": "~/.config/sway/scripts/speech.py is-recording",
+    "on-click": "~/.config/sway/scripts/speech.py toggle clipboard",
+    "signal": 10,
+  },
+
   "group/extras": {
     "orientation": "horizontal",
     "modules": [
@@ -133,7 +143,12 @@
   // -------------------------------------------------------------------------
 
   "modules-left": ["sway/workspaces", "custom/scratchpad"],
-  "modules-center": ["custom/recorder", "sway/mode", "sway/window"],
+  "modules-center": [
+    "custom/recorder",
+    "custom/speech",
+    "sway/mode",
+    "sway/window",
+  ],
   "modules-right": [
     "group/extras",
     "group/hardware",
