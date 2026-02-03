@@ -63,6 +63,16 @@
     "signal": 8,
   },
 
+  "custom/speech": {
+    "interval": 10,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/hypr/scripts/speech.py status",
+    "exec-if": "~/.config/hypr/scripts/speech.py is-recording",
+    "on-click": "~/.config/hypr/scripts/speech.py toggle clipboard",
+    "signal": 10,
+  },
+
   "group/extras": {
     "orientation": "horizontal",
     "modules": [
@@ -137,7 +147,12 @@
   // -------------------------------------------------------------------------
 
   "modules-left": ["hyprland/workspaces"],
-  "modules-center": ["custom/recorder", "hyprland/submap", "hyprland/window"],
+  "modules-center": [
+    "custom/recorder",
+    "custom/speech",
+    "hyprland/submap",
+    "hyprland/window",
+  ],
   "modules-right": [
     "group/extras",
     "group/hardware",
