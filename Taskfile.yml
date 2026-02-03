@@ -86,6 +86,7 @@ tasks:
             swayr
             sworkstyle
             waybar
+            waystt
             wireplumber
             wl-gamma-relay-rs
             wlogout

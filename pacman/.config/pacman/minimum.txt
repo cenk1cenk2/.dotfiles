@@ -155,5 +155,6 @@ xorg-xwayland
 xsel
 xsettingsd
 yay
+ydotool
 zathura
 zathura-pdf-poppler

@@ -209,18 +209,26 @@ The scratchpad uses Hyprland's native `special:scratch` workspace feature - no p
 
 ## Recording Mode
 
-The recording mode provides quick access to screen recording features:
+The recording mode provides quick access to screen recording and speech-to-text features:
 
-- **r** - Record full screen (focused output) to file
-- **Shift + r** - Record full screen with audio
-- **s** - Record selected region
-- **Shift + s** - Record selected region with audio
-- **q** - Kill/stop recording
+### Screen Recording
+
+- **r** - Toggle recording (start/stop)
+- **p** - Pause/resume recording
+- **o** - Open OBS window
+- **q** - Stop recording
+
+### Speech-to-Text
+
+- **s** - Speech-to-text to clipboard (wl-copy)
+- **S** (Shift+s) - Speech-to-text direct typing (ydotool)
+- **Q** (Shift+q) - Terminate waystt process
+
+### General
+
 - **Esc** - Exit recording mode
 
-Recordings are saved to your Videos directory (via `xdg-user-dir VIDEOS`) with timestamp filenames.
-
-Uses `wl-screenrec` for recording and `slurp` for region selection.
+Recordings are managed via the recorder script. Speech-to-text uses `waystt` with Whisper AI for voice transcription.
 
 ## Scripts to Port
 
