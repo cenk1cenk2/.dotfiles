@@ -37,6 +37,7 @@ DEFAULT = ""
 "steam" = ""
 "vlc" = ""
 "mpv" = ""
+"com.obsproject.Studio" = "󰑋"
 
 [title_in_class.".*"]
 "(?i)Github.*Firefox" = ""
