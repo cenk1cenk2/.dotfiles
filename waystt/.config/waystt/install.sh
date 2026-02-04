@@ -17,8 +17,8 @@ if [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]; then
   echo "Building with CUDA support..."
   cargo build --release --features whisper-rs/cuda
 else
-  echo "Building with Vulkan, HIPBLAS, and OpenBLAS support..."
-  cargo build --release --features whisper-rs/vulkan,whisper-rs/hipblas,whisper-rs/openblas
+  echo "Building with Vulkan support..."
+  cargo build --release --features whisper-rs/vulkan
 fi
 
 # Move the binary to ~/.local/bin
