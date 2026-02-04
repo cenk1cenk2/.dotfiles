@@ -13,7 +13,13 @@ git clone https://github.com/sevos/waystt "$TEMP_DIR"
 # Build the application
 echo "Building waystt..."
 cd "$TEMP_DIR"
-cargo build --release --features whisper-rs/cuda
+if [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]; then
+  echo "Building with CUDA support..."
+  cargo build --release --features whisper-rs/cuda
+else
+  echo "Building with Vulkan, HIPBLAS, and OpenBLAS support..."
+  cargo build --release --features whisper-rs/vulkan,whisper-rs/hipblas,whisper-rs/openblas
+fi
 
 # Move the binary to ~/.local/bin
 echo "Installing waystt to ~/.local/bin..."
