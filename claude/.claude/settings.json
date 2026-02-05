@@ -1,11 +1,16 @@
 {
   "permissions": {
-    "allow": ["WebFetch", "WebSearch", "mcp__mcphub", "mcp__plugin_claude-mem_mcp-search"],
+    "allow": [
+      "WebFetch",
+      "WebSearch",
+      "mcp__mcphub",
+      "mcp__plugin_claude-mem_mcp-search"
+    ],
     "deny": [],
     "ask": []
   },
   "enabledPlugins": {
-    "claude-mem@thedotmack": true
+    "claude-mem@thedotmack": false
   },
   "autoUpdatesChannel": "latest"
 }

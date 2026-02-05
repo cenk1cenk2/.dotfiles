@@ -8,4 +8,4 @@ Target = *
 [Action]
 Description =
 When = PostTransaction
-Exec = /usr/local/bin/waybar-signal.sh pacman
+Exec = waybar-signal.sh pacman
