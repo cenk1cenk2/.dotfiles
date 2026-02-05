@@ -6,6 +6,6 @@ Type = Package
 Target = *
 
 [Action]
-Description =
+Description = Signal waybar to update package status.
 When = PostTransaction
 Exec = waybar-signal.sh pacman
