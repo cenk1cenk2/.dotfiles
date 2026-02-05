@@ -12,5 +12,6 @@
   "enabledPlugins": {
     "claude-mem@thedotmack": false
   },
-  "autoUpdatesChannel": "latest"
+  "autoUpdatesChannel": "latest",
+  "model": "opus"
 }
