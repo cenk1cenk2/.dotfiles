@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# set -u
+set -u
 
 declare -A signal
 signal[playerctl]=5
@@ -11,7 +11,7 @@ signal[speech]=10
 signal[pacman]=14
 signal[idle]=15
 
-number=${signal[${1}]}
+number=${signal[${1}]-}
 
 if [[ -z "$number" ]]; then
   echo "No signal mapped for $1"
@@ -23,4 +23,4 @@ fi
 
 echo "Sending waybar signal: $number for $1"
 
-pkill -x -SIGRTMIN+${number} 'waybar'
+pkill -SIGRTMIN+"${number}" -x waybar

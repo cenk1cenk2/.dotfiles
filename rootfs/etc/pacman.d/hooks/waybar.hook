@@ -8,4 +8,4 @@ Target = *
 [Action]
 Description = Signal waybar to update package status.
 When = PostTransaction
-Exec = waybar-signal.sh pacman
+Exec = /usr/local/bin/waybar-signal.sh pacman
