@@ -21,8 +21,8 @@
 - Review entity relationships and observations
 - Refresh knowledge of ongoing tasks
 
-2. **DISCOVER MCP TOOLS** - Use `ToolSearch` to find available MCP server tools
-   - Check which tools are loaded (neovim, cclsp, treesitter, git, etc.)
+2. **DISCOVER MCP TOOLS** - Use `ToolSearch` (Claude Code's internal tool discovery mechanism) to find available MCP server tools
+   - Search for key tool categories: `neovim`, `git`, `treesitter`, `cclsp`, `context7`
    - Understand tool capabilities for this session
    - Note any tool limitations or unavailability
    - **If tools are unavailable, silently skip and continue** - tools may not always be loaded
@@ -41,7 +41,7 @@
 - Changes will span multiple files across different areas (5-10+ files typically)
 - User's request requires exploration before implementation
 - You would normally ask clarifying questions about approach
-- **User invokes specialized mode prompts** (see Special Mode Triggers below)
+- **User invokes specialized mode prompts** (defer to each skill's instructions on whether plan mode is needed — see Special Mode Triggers below)
 
 **Skip plan mode only for:**
 
@@ -310,21 +310,21 @@ Discovered existing token validation in `auth/validator.ts` that we can reuse. U
 
 Use MCP tools when available - they integrate with the editor and user's workflow:
 
-| Task                                         | Tool         | When to Use                                                          |
-| -------------------------------------------- | ------------ | -------------------------------------------------------------------- |
-| Code navigation, find definitions/references | `cclsp`      | LSP server available for the language (900x faster than text search) |
-| Code structure analysis, AST queries         | `treesitter` | Need to understand syntax structure, find patterns                   |
-| Git operations                               | `git` MCP    | Any git operation (status, diff, commit, log, etc.)                  |
-| Documentation lookup                         | `context7`   | Need to reference official docs for libraries/frameworks             |
-| File operations                              | `neovim`     | Editing, writing, listing, finding files (see File Operations)       |
+| Task                                         | Tool         | When to Use                                                                                                                                                                                                                             |
+| -------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Code navigation, find definitions/references | `cclsp`      | LSP server available for the language (900x faster than text search)                                                                                                                                                                    |
+| Code structure analysis, AST queries         | `treesitter` | Need to understand syntax structure, find patterns                                                                                                                                                                                      |
+| Git operations                               | `git` MCP    | Any git operation — available tools: `mcp__mcphub__git__git_status`, `git_diff_unstaged`, `git_diff_staged`, `git_diff`, `git_commit`, `git_add`, `git_reset`, `git_log`, `git_show`, `git_branch`, `git_checkout`, `git_create_branch` |
+| Documentation lookup                         | `context7`   | Need to reference official docs for libraries/frameworks                                                                                                                                                                                |
+| File operations                              | `neovim`     | Editing, reading, listing, finding files (see File Operations)                                                                                                                                                                          |
 
-### 2. mcp**acp** Tools (Built-in MCP Tools)
+### 2. Claude Code Built-in Tools
 
-Use when MCP server tools unavailable or rejected:
+Use when MCP server tools are not loaded or as designated below:
 
-- **mcp**acp**Read** - Reading file contents
-- **mcp**acp**Edit** - Editing files (MUST read file first with mcp**acp**Read - see File Operations)
-- **mcp**acp**Write** - Creating new files
+- `mcp__acp__Read` - Reading file contents (fallback when neovim MCP unavailable)
+- `mcp__acp__Edit` - Editing files (fallback when neovim MCP unavailable; MUST read file first with `mcp__acp__Read`)
+- `mcp__acp__Write` - **Always use for creating new files** (preferred over neovim MCP for writes)
 - **Grep** - Text search across files
 - **Glob** - File pattern matching
 
@@ -334,20 +334,25 @@ Use when MCP server tools unavailable or rejected:
 
 **NEVER USE** CLI tools for operations that specialized tools handle:
 
-- ❌ `sed` or `awk` for editing - use mcp**acp**Edit or neovim MCP
-- ❌ `cat`, `head`, `tail` for reading - use mcp**acp**Read or neovim MCP
-- ❌ `echo >` or heredocs for writing - use mcp**acp**Write or neovim MCP
+- ❌ `sed` or `awk` for editing - use `mcp__acp__Edit` or neovim MCP
+- ❌ `cat`, `head`, `tail` for reading - use `mcp__acp__Read` or neovim MCP
+- ❌ `echo >` or heredocs for writing - use `mcp__acp__Write`
 - ❌ `find` for file search - use Glob tool
 - ❌ `grep` or `rg` for text search - use Grep tool
-- ❌ Raw `git` commands - use git MCP server
+- ❌ Raw `git` commands WHENEVER POSSIBLE - use `mcp__mcphub__git__*` MCP server tools
 
 ### Graceful Degradation
 
-If preferred tool unavailable:
+**Unavailable (tool not loaded):**
 
-1. Try next tool in hierarchy
-2. Inform user of tool substitution if it affects functionality
-3. Continue with best available option
+1. Silently try the next tool in the hierarchy
+2. Continue with best available option
+
+**Rejected (tool loaded but operation failed/denied by user):**
+
+1. STOP immediately — do not silently fall back
+2. Ask the user for guidance before trying an alternative tool
+3. Wait for explicit permission before proceeding
 
 ## IV. FILE OPERATIONS
 
@@ -360,9 +365,9 @@ Reading requirements depend on which editing tool you'll use:
 - Reading first is optional (neovim MCP handles context internally)
 - Recommended to read for better understanding, but not required
 
-**When using mcp**acp**Edit for editing:**
+**When using `mcp__acp__Edit` for editing:**
 
-- MUST read file first using mcp**acp**Read
+- MUST read file first using `mcp__acp__Read`
 - The Edit tool requires fresh context from Read to work properly
 - Read immediately before editing to ensure accurate context
 
@@ -380,27 +385,28 @@ Reading requirements depend on which editing tool you'll use:
 ```
 1. Choose editing approach:
    - Prefer neovim MCP (mcp__mcphub__neovim__edit_file)
-   - Fallback to mcp__acp__Edit if neovim unavailable or rejected
+   - Fallback to mcp__acp__Edit ONLY if neovim MCP is not loaded
 
 2. If using neovim MCP:
    - Can edit directly (reading first is optional but recommended)
-   - If rejected → STOP
+   - If REJECTED (tool loaded but operation denied/failed) → STOP
    - Ask user: "The Neovim MCP adapter rejected that edit. Would you like me to try using mcp__acp__Edit instead, or should I revise my approach?"
    - Wait for explicit permission before trying mcp__acp__Edit
 
-3. If using mcp__acp__Edit:
+3. If neovim MCP is NOT LOADED (unavailable):
+   - Silently fall back to mcp__acp__Edit
    - MUST read file first using mcp__acp__Read
    - Use fresh context from Read for the edit
    - The Edit tool depends on Read output for proper operation
 ```
 
-**Critical Rule:** When neovim MCP rejects an edit, do NOT automatically fall back to mcp**acp**Edit. The rejection is a signal - respect it and ask for guidance.
+**Critical Rule:** When neovim MCP **rejects** an edit, do NOT automatically fall back to `mcp__acp__Edit`. The rejection is a signal — respect it and ask for guidance. Only fall back silently when the tool is not loaded at all.
 
 ### Writing New Files
 
-**Always use `mcp__acp__Write` for creating new files.**
+**Always use `mcp__acp__Write` (Claude Code built-in) for creating new files.**
 
-Writing is different from editing - go directly to the built-in tool:
+Writing is different from editing — always go directly to the Claude Code built-in tool:
 
 1. Use `mcp__acp__Write` to create new files
 2. Do not attempt neovim MCP for writing (unlike editing where neovim is preferred)
@@ -418,16 +424,24 @@ Writing is different from editing - go directly to the built-in tool:
 
 **Required conventions:**
 
-- **Empty line before return** - Always leave an empty line when returning from a function or method
+- **Empty line before return** - Leave an empty line before the return statement when the function body has multiple statements. For single-statement functions or early-return guard clauses that are the only statement in their block, the empty line may be omitted.
 - **No trailing whitespace** - Never leave empty spaces at the end of lines
 
 **Example:**
 
 ```python
+# Required: multi-statement function
 def calculate_total(items):
     total = sum(item.price for item in items)
 
     return total  # Empty line before return
+
+# Not required: single-statement early return / guard clause
+def get_name(self):
+    if not self.name:
+        return None  # No empty line needed — only statement in this block
+
+    return self.name  # Empty line required — multi-statement function body
 ```
 
 ### Comment Policy
@@ -480,7 +494,7 @@ When neovim MCP adapter rejects an edit:
 
 **Response template:**
 
-> "The Neovim MCP adapter rejected that edit. Would you like me to try using mcp\_\_acp\*\*Edit instead, or should I revise my approach?"
+> "The Neovim MCP adapter rejected that edit. Would you like me to try using `mcp__acp__Edit` instead, or should I revise my approach?"
 
 **Actions:**
 
@@ -582,26 +596,13 @@ If you must overwrite for critical reasons, explain why:
 - Issues encountered and resolutions
 - Architectural discoveries and assumptions corrected
 
-**Use:**
-
-**Two memory systems are available:**
-
-**1. mcphub memory (Manual - Knowledge Graph):**
+**Use the mcphub memory (Knowledge Graph):**
 
 - `mcp__mcphub__memory__create_entities` - Create new concepts/components
 - `mcp__mcphub__memory__add_observations` - Add observations to entities
 - `mcp__mcphub__memory__create_relations` - Create relationships between entities
-- **When to use:** Manually store important learnings, patterns, architectural decisions
-- **Nature:** Generic knowledge graph for structured information (similar to a graph database)
-
-**2. claude-mem (Automatic - Claude Code Plugin):**
-
-- `mcp__plugin_claude-mem_mcp-search____IMPORTANT` - Key observations (auto-generated)
-- `mcp__plugin_claude-mem_mcp-search__search` - Search existing observations
-- `mcp__plugin_claude-mem_mcp-search__timeline` - Timeline of events
-- `mcp__plugin_claude-mem_mcp-search__get_observations` - Retrieve past observations
-- **When to use:** Context is automatically read during session start, but you can refer to findings at any given time
-- **Nature:** Provides rich automatic context about recent work
+- **When to use:** Store important learnings, patterns, architectural decisions, project structure insights
+- **Nature:** Persistent knowledge graph for structured information (similar to a graph database)
 
 ### Project Management Integration
 
@@ -633,6 +634,8 @@ If you must overwrite for critical reasons, explain why:
 <type>(<scope>): <brief description>
 
 <detailed body if necessary>
+
+BREAKING CHANGE: <description of breaking change if applicable>
 ```
 
 **Types:** feat, fix, docs, style, refactor, test, chore
@@ -680,12 +683,12 @@ Handles token expiration gracefully with retry logic.
 **User asks to edit a file:**
 
 ```
-1. Choose tool: prefer neovim MCP, fallback to mcp__acp__Edit
+1. Choose tool: prefer neovim MCP; fall back to mcp__acp__Edit only if neovim is not loaded
 2. If using neovim MCP: can edit directly (optional to read first)
 3. If using mcp__acp__Edit: MUST read file first with mcp__acp__Read
 4. Understand context and existing patterns (comment style, conventions)
 5. Make the edit
-6. If neovim MCP rejected → ask permission to try mcp__acp__Edit
+6. If neovim MCP rejected → STOP and ask permission to try mcp__acp__Edit
 ```
 
 **User asks for information you don't know:**
