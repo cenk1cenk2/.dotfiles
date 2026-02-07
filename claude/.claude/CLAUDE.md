@@ -31,45 +31,29 @@
 
 ### When to Use Plan Mode
 
-**ALWAYS** use plan mode (`EnterPlanMode` tool) for non-trivial implementation work.
+**ALWAYS** use plan mode (`EnterPlanMode` tool) for complex implementation work.
 
 **Enter plan mode when:**
 
-- Implementing new features or significant functionality
-- Making architectural changes or refactoring
+- Task spans multiple files across different areas of the codebase
+- User asks you to research, read remote code, or explore before implementing
 - Task has multiple valid approaches or unclear requirements
-- Changes will span multiple files across different areas (5-10+ files typically)
-- User's request requires exploration before implementation
+- Making architectural changes or significant refactoring
 - You would normally ask clarifying questions about approach
-- **User invokes specialized mode prompts** (defer to each skill's instructions on whether plan mode is needed — see Special Mode Triggers below)
 
-**Skip plan mode only for:**
+**Skip plan mode for:**
 
-- Single-line or trivial fixes
+- Single-file or few-file changes where the approach is clear
 - Tasks with explicit, detailed instructions provided by user
 - Pure research/exploration tasks (use Task tool with Explore agent)
 - Simple documentation updates
+- Adding a straightforward feature where the implementation path is obvious
+
+**Evaluate complexity first** — the threshold is whether the task genuinely requires multi-file research and design decisions, not just whether it touches multiple files. A "delete button on user profile" that needs a component + API call is straightforward. A "refactor authentication system" that touches 10 files with design tradeoffs warrants planning.
 
 ### Special Mode Triggers
 
-**CRITICAL:** User invokes specialized modes using personal slash commands (e.g., `/assistant`, `/linear`, `/note`). These are Claude Code personal skills stored in `~/.claude/skills/`. Follow the instructions in each skill's SKILL.md.
-
-**Available specialized modes:**
-
-1. **Assistant Mode** (`/assistant`) - Collaborative planning and implementation tracking
-2. **Evaluation Mode** (`/evaluate`) - Progress evaluation and assessment
-3. **Linear Issue Management** (`/linear`) - Research and issue creation workflow
-4. **Obsidian Note-Taking** (`/note`) - Structured note creation in ~/notes vault
-5. **Quick Todo Capture** (`/todo`) - Quick capture notes in ~/notes/Todo
-
-**Each skill contains:**
-
-- Whether to enter plan mode or not
-- Specific workflow instructions
-- Tool requirements
-- Mode-specific guidelines
-
-**Always read and follow the skill instructions - they are the source of truth for each mode's behavior.**
+User invokes specialized modes using personal slash commands (e.g., `/assistant`, `/linear`, `/note`). These are Claude Code personal skills stored in `~/.claude/skills/`. When a skill is invoked, follow the instructions in its SKILL.md — the skill instructions are the source of truth for each mode's behavior.
 
 ### Plan File Location
 
@@ -263,8 +247,8 @@ Discovered existing token validation in `auth/validator.ts` that we can reuse. U
 
 - Explore thoroughly before planning (understand what, why, where, dependencies)
 - Write specific, actionable implementation steps with file paths and function names
-  - ✅ Good: "Create JWT token generation utility in auth/tokens.ts with generateAccessToken() and generateRefreshToken() functions"
-  - ❌ Bad: "Implement the feature" or "Add token support"
+  - Good: "Create JWT token generation utility in auth/tokens.ts with generateAccessToken() and generateRefreshToken() functions"
+  - Bad: "Implement the feature" or "Add token support"
 - Document architectural decisions and rationale
 - Present plan to user and iterate based on feedback
 - Update the plan when you discover new information during implementation
@@ -287,7 +271,7 @@ Discovered existing token validation in `auth/validator.ts` that we can reuse. U
 **Complete planning process:**
 
 ```
-1. User requests non-trivial implementation
+1. User requests complex implementation
 2. Use EnterPlanMode tool
 3. Explore codebase thoroughly using available tools
 4. Draft detailed plan in ~/.claude/plans/YYYY-MM-DD-<project-name>-<name>.md
@@ -312,19 +296,19 @@ Use MCP tools when available - they integrate with the editor and user's workflo
 
 | Task                                         | Tool         | When to Use                                                                                                                                                                                                                             |
 | -------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Code navigation, find definitions/references | `cclsp`      | LSP server available for the language (900x faster than text search)                                                                                                                                                                    |
+| **File reading and editing**                 | `neovim`     | **ALWAYS first choice** for reading and editing files (see File Operations)                                                                                                                                                             |
+| Code navigation, find definitions/references | `cclsp`      | LSP server available for the language. **No fallback exists** — if cclsp is unavailable, use Grep as a last resort                                                                                                                      |
 | Code structure analysis, AST queries         | `treesitter` | Need to understand syntax structure, find patterns                                                                                                                                                                                      |
 | Git operations                               | `git` MCP    | Any git operation — available tools: `mcp__mcphub__git__git_status`, `git_diff_unstaged`, `git_diff_staged`, `git_diff`, `git_commit`, `git_add`, `git_reset`, `git_log`, `git_show`, `git_branch`, `git_checkout`, `git_create_branch` |
 | Documentation lookup                         | `context7`   | Need to reference official docs for libraries/frameworks                                                                                                                                                                                |
-| File operations                              | `neovim`     | Editing, reading, listing, finding files (see File Operations)                                                                                                                                                                          |
 
 ### 2. Claude Code Built-in Tools
 
-Use when MCP server tools are not loaded or as designated below:
+Use **ONLY** when the corresponding MCP server tools are not loaded:
 
-- `mcp__acp__Read` - Reading file contents (fallback when neovim MCP unavailable)
-- `mcp__acp__Edit` - Editing files (fallback when neovim MCP unavailable; MUST read file first with `mcp__acp__Read`)
-- `mcp__acp__Write` - **Always use for creating new files** (preferred over neovim MCP for writes)
+- **Read** (`mcp__acp__Read`) - Reading file contents. **Only use when neovim MCP is not loaded.**
+- **Edit** (`mcp__acp__Edit`) - Editing files. **Only use when neovim MCP is not loaded.** MUST read file first with Read.
+- **Write** (`mcp__acp__Write`) - **Always use for creating NEW files** (neovim MCP write does not work properly for new file creation)
 - **Grep** - Text search across files
 - **Glob** - File pattern matching
 
@@ -334,12 +318,12 @@ Use when MCP server tools are not loaded or as designated below:
 
 **NEVER USE** CLI tools for operations that specialized tools handle:
 
-- ❌ `sed` or `awk` for editing - use `mcp__acp__Edit` or neovim MCP
-- ❌ `cat`, `head`, `tail` for reading - use `mcp__acp__Read` or neovim MCP
-- ❌ `echo >` or heredocs for writing - use `mcp__acp__Write`
-- ❌ `find` for file search - use Glob tool
-- ❌ `grep` or `rg` for text search - use Grep tool
-- ❌ Raw `git` commands WHENEVER POSSIBLE - use `mcp__mcphub__git__*` MCP server tools
+- `sed` or `awk` for editing - use neovim MCP or Edit
+- `cat`, `head`, `tail` for reading - use neovim MCP or Read
+- `echo >` or heredocs for writing - use Write
+- `find` for file search - use Glob tool
+- `grep` or `rg` for text search - use Grep tool
+- Raw `git` commands WHENEVER POSSIBLE - use `mcp__mcphub__git__*` MCP server tools
 
 ### Graceful Degradation
 
@@ -356,42 +340,44 @@ Use when MCP server tools are not loaded or as designated below:
 
 ## IV. FILE OPERATIONS
 
+> **MANDATORY:** Neovim MCP is the **ABSOLUTE FIRST CHOICE** for all file reading and editing operations. Do NOT drift to using built-in Read/Edit tools when neovim MCP is available. This is the single most important tool preference in this entire document.
+
 ### Reading Files
 
-Reading requirements depend on which editing tool you'll use:
+**Tool priority for reading (strictly enforced):**
+
+1. **`neovim` MCP - `mcp__mcphub__neovim__read_file`** — ALWAYS use this first
+2. `mcp__acp__Read` — ONLY when neovim MCP is not loaded
 
 **When using neovim MCP for editing:**
 
 - Reading first is optional (neovim MCP handles context internally)
 - Recommended to read for better understanding, but not required
 
-**When using `mcp__acp__Edit` for editing:**
+**When using `mcp__acp__Edit` for editing (fallback only):**
 
 - MUST read file first using `mcp__acp__Read`
 - The Edit tool requires fresh context from Read to work properly
 - Read immediately before editing to ensure accurate context
 
-**Tool priority for reading:**
-
-1. `neovim` MCP - `mcp__mcphub__neovim__read_file`
-2. `mcp__acp__Read` - Built-in MCP read tool
-
 **If you think the file is not found at the expected location please search the repository for it because it might be renamed, moved or combined with something else. Do not assume that file that you expect is failed to create in a prior edit. Ask if unsure and can not find it.**
 
 ### Editing Files
+
+> **REMINDER:** Use neovim MCP (`mcp__mcphub__neovim__edit_file`) for editing. Every time. Do not switch to built-in Edit unless neovim MCP is genuinely not loaded.
 
 **Edit Flow:**
 
 ```
 1. Choose editing approach:
-   - Prefer neovim MCP (mcp__mcphub__neovim__edit_file)
+   - USE neovim MCP (mcp__mcphub__neovim__edit_file) — this is NOT optional, it is the required first choice
    - Fallback to mcp__acp__Edit ONLY if neovim MCP is not loaded
 
 2. If using neovim MCP:
    - Can edit directly (reading first is optional but recommended)
    - If REJECTED (tool loaded but operation denied/failed) → STOP
-   - Ask user: "The Neovim MCP adapter rejected that edit. Would you like me to try using mcp__acp__Edit instead, or should I revise my approach?"
-   - Wait for explicit permission before trying mcp__acp__Edit
+   - Ask user: "The Neovim MCP adapter rejected that edit. Would you like me to try using Edit instead, or should I revise my approach?"
+   - Wait for explicit permission before trying Edit
 
 3. If neovim MCP is NOT LOADED (unavailable):
    - Silently fall back to mcp__acp__Edit
@@ -400,16 +386,16 @@ Reading requirements depend on which editing tool you'll use:
    - The Edit tool depends on Read output for proper operation
 ```
 
-**Critical Rule:** When neovim MCP **rejects** an edit, do NOT automatically fall back to `mcp__acp__Edit`. The rejection is a signal — respect it and ask for guidance. Only fall back silently when the tool is not loaded at all.
+**Critical Rule:** When neovim MCP **rejects** an edit, do NOT automatically fall back to Edit. The rejection is a signal — respect it and ask for guidance. Only fall back silently when the tool is not loaded at all.
 
 ### Writing New Files
 
-**Always use `mcp__acp__Write` (Claude Code built-in) for creating new files.**
+**Always use Write (`mcp__acp__Write`) for creating new files.**
 
-Writing is different from editing — always go directly to the Claude Code built-in tool:
+The neovim MCP write tool does not work properly for new file creation. Always go directly to the built-in Write tool:
 
 1. Use `mcp__acp__Write` to create new files
-2. Do not attempt neovim MCP for writing (unlike editing where neovim is preferred)
+2. Do not attempt neovim MCP for writing new files
 
 ### Listing and Finding Files
 
@@ -494,7 +480,7 @@ When neovim MCP adapter rejects an edit:
 
 **Response template:**
 
-> "The Neovim MCP adapter rejected that edit. Would you like me to try using `mcp__acp__Edit` instead, or should I revise my approach?"
+> "The Neovim MCP adapter rejected that edit. Would you like me to try using Edit instead, or should I revise my approach?"
 
 **Actions:**
 
@@ -502,6 +488,12 @@ When neovim MCP adapter rejects an edit:
 2. Ask for explicit guidance
 3. Wait for user decision
 4. Proceed only with permission
+
+### Handling Unexpected File State
+
+When you notice a file doesn't match what you expected (e.g., your previous edits seem missing or changed):
+
+**Analyze the situation.** If the file has been changed by the user and your new edit is to a **different part** of the file, just make your edit — no need to ask. If your new edit would touch the **same area** the user modified, and you believe it needs changing for correctness (syntax errors, security, breaking changes), explain why and make the change. Use your judgment — the goal is to avoid unnecessary interruptions while still being careful with the user's work.
 
 ### Learning from Manual Edits
 
@@ -520,27 +512,7 @@ When user manually modifies your changes:
 
 > "I notice you changed [specific pattern] to [user's pattern]. I'll apply this style to the remaining code and save it to memory for future sessions."
 
-**Apply learned patterns** to all subsequent code in the same session AND save to memory for future sessions (coding style patterns are usually general, not repository-specific).
-
-**NEVER overwrite** user's manual edits unless absolutely required for:
-
-- Syntax errors that prevent compilation/execution
-- Security vulnerabilities
-- Critical breaking changes that affect functionality
-
-**IMPORTANT:** User may make manual changes outside of this conversation while you're working together. If you notice unexpected file state:
-
-- File doesn't have changes you expected to see
-- Changes you made seem to have disappeared
-- File state differs from what you remember
-
-**ALWAYS ask for confirmation before re-applying or overwriting:**
-
-> "I notice the changes in [file] don't match what I expected. The [specific change] I made earlier seems to be missing. Did you modify this file manually? Should I re-apply my changes, or would you like to keep the current version?"
-
-If you must overwrite for critical reasons, explain why:
-
-> "I need to modify the code at line X because [specific reason]. The current code has [specific issue]."
+**Apply learned patterns** to all subsequent code in the same session AND save to memory for future sessions.
 
 ### Information Accuracy
 
@@ -601,8 +573,11 @@ If you must overwrite for critical reasons, explain why:
 - `mcp__mcphub__memory__create_entities` - Create new concepts/components
 - `mcp__mcphub__memory__add_observations` - Add observations to entities
 - `mcp__mcphub__memory__create_relations` - Create relationships between entities
-- **When to use:** Store important learnings, patterns, architectural decisions, project structure insights
-- **Nature:** Persistent knowledge graph for structured information (similar to a graph database)
+
+**Memory scope:**
+
+- **Project-scoped observations** → store on project entity (e.g., "cloud-mysql-operator uses Go modules", "this project's API uses camelCase")
+- **General observations** → store on general entities like `Coding-Style` (e.g., "user prefers snake_case in Python", "conventional commit format", "language-level conventions")
 
 ### Project Management Integration
 
@@ -616,9 +591,7 @@ If you must overwrite for critical reasons, explain why:
 
 **Example:**
 
-> ✅ "refactored authentication to use token-based flow with refresh mechanism"
->
-> ❌ "Updated auth.py, token.py, and middleware.py to add new authentication code"
+> "refactored authentication to use token-based flow with refresh mechanism"
 
 **Including plans:**
 
@@ -667,7 +640,7 @@ Handles token expiration gracefully with retry logic.
 3. Review git status and working directory
 ```
 
-**User requests non-trivial implementation:**
+**User requests complex implementation:**
 
 ```
 1. Use EnterPlanMode
@@ -680,15 +653,15 @@ Handles token expiration gracefully with retry logic.
 8. Implement following the plan
 ```
 
-**User asks to edit a file:**
+**User asks to read or edit a file:**
 
 ```
-1. Choose tool: prefer neovim MCP; fall back to mcp__acp__Edit only if neovim is not loaded
-2. If using neovim MCP: can edit directly (optional to read first)
-3. If using mcp__acp__Edit: MUST read file first with mcp__acp__Read
+1. ALWAYS use neovim MCP first (mcp__mcphub__neovim__read_file / edit_file)
+2. Fall back to built-in Read/Edit ONLY if neovim MCP is not loaded
+3. If using built-in Edit: MUST read file first with Read
 4. Understand context and existing patterns (comment style, conventions)
 5. Make the edit
-6. If neovim MCP rejected → STOP and ask permission to try mcp__acp__Edit
+6. If neovim MCP rejected → STOP and ask permission to try built-in Edit
 ```
 
 **User asks for information you don't know:**
@@ -707,14 +680,14 @@ Handles token expiration gracefully with retry logic.
 2. Identify pattern changes (naming, style, structure)
 3. Acknowledge the pattern in chat
 4. Apply same pattern to future code
-5. Never overwrite unless critical issue
+5. Save pattern to memory for future sessions
 ```
 
 **Need to navigate code:**
 
 ```
 1. Check if cclsp available (ToolSearch)
-2. Use cclsp for definitions/references if available
+2. Use cclsp for definitions/references if available (no fallback for this capability)
 3. Fall back to treesitter for structure analysis
 4. Use Grep only if others unavailable
 ```
@@ -734,10 +707,10 @@ When rules appear to conflict, follow this priority order:
 
 1. **Never fabricate information** (highest priority)
 2. **User explicit instructions** - when user contradicts these guidelines, always ask for confirmation first
-   - Example: User says "skip plan mode" for non-trivial task
+   - Example: User says "skip plan mode" for complex task
    - Response: "I notice this task involves [reasons why plan mode would help]. The guidelines recommend plan mode for this. Would you like me to proceed without planning, or would a quick plan be helpful?"
    - Wait for confirmation before proceeding against guidelines
-3. **Never overwrite user edits** (unless critical for security/functionality)
+3. **Use neovim MCP for reading and editing** (do not drift to built-in tools)
 4. **Use preferred tools** (but degrade gracefully if unavailable)
 5. **Follow coding style** (match project patterns)
 6. **Update memory** (maintain continuity)
