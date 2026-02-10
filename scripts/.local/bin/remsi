@@ -3,16 +3,40 @@
 import argparse
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
 import tempfile
-from collections import namedtuple
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 log = logging.getLogger("remsi")
 
-Segment = namedtuple("Segment", ["start", "end", "fade_in", "fade_out"])
+class RegionKind(StrEnum):
+    SILENCE = "silence"
+    FILLER = "filler"
+    GAP = "gap"
+    SPEECH = "speech"
+
+    @property
+    def priority(self):
+        return {self.SILENCE: 2, self.FILLER: 1, self.GAP: 0, self.SPEECH: -1}[self]
+
+@dataclass
+class Region:
+    start: float
+    end: float
+    kind: RegionKind
+
+@dataclass
+class Segment:
+    start: float
+    end: float
+    left: Region | None = field(default=None, repr=False)
+    right: Region | None = field(default=None, repr=False)
 
 _use_color = sys.stderr.isatty()
 
@@ -25,15 +49,23 @@ def _ansi(code):
 RESET = _ansi(0)
 BOLD = _ansi(1)
 DIM = _ansi(2)
-CYAN = _ansi(36)
 GREEN = _ansi(32)
 YELLOW = _ansi(33)
 RED = _ansi(31)
-MAGENTA = _ansi(35)
+
+def _term_width():
+    try:
+        return os.get_terminal_size().columns
+    except OSError:
+        return 80
 
 def section(label):
-    line = f"{DIM}{'─' * 48}{RESET}"
-    print(f"\n{line}\n{BOLD}{CYAN}{label}{RESET}\n{line}", file=sys.stderr)
+    w = _term_width()
+    pad = max(0, w - len(label) - 2)
+    left = pad // 2
+    right = pad - left
+    line = f"{DIM}{'─' * left}{RESET}{BOLD}{YELLOW} {label} {RESET}{DIM}{'─' * right}{RESET}"
+    print(f"\n{line}", file=sys.stderr)
 
 def status(msg):
     print(msg, file=sys.stderr)
@@ -41,121 +73,12 @@ def status(msg):
 def error(msg):
     print(f"{RED}error:{RESET} {msg}", file=sys.stderr)
 
-def success(msg):
-    print(f"{GREEN}{msg}{RESET}", file=sys.stderr)
-
-def detect_gpu():
-    encoders = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-encoders"],
-        capture_output=True,
-        text=True,
-    ).stdout
-
-    if "hevc_nvenc" in encoders:
-        return "nvidia"
-    if "hevc_amf" in encoders:
-        return "amd"
-    if "hevc_vaapi" in encoders:
-        return "vaapi"
-
-    return None
-
-def gpu_encode_args(gpu):
-    if gpu == "nvidia":
-        return ["-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "23"]
-    if gpu == "amd":
-        return [
-            "-c:v",
-            "hevc_amf",
-            "-quality",
-            "balanced",
-            "-rc",
-            "vbr_latency",
-            "-qp_i",
-            "23",
-            "-qp_p",
-            "23",
-        ]
-    if gpu == "vaapi":
-        return [
-            "-vaapi_device",
-            "/dev/dri/renderD128",
-            "-c:v",
-            "hevc_vaapi",
-            "-qp",
-            "23",
-        ]
-
-    return []
-
 def format_timestamp(seconds):
     s = float(seconds)
     m, s = divmod(s, 60)
     h, m = divmod(m, 60)
 
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
-
-def get_duration(input_file):
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(input_file),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    try:
-        return float(result.stdout.strip())
-    except ValueError:
-        return None
-
-def detect_silence(input_file, noise_db, duration, total):
-    cmd = [
-        "ffmpeg",
-        "-i",
-        str(input_file),
-        "-hide_banner",
-        "-af",
-        f"silencedetect=n={noise_db}:d={duration}",
-        "-f",
-        "null",
-        "-",
-    ]
-    log.debug("silence detect cmd: %s", " ".join(cmd))
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
-    )
-    lines = []
-    for line in proc.stderr:
-        sys.stderr.write(line)
-        lines.append(line)
-    proc.wait()
-    output = "".join(lines)
-
-    silences = []
-    silence_start = None
-
-    for line in output.splitlines():
-        start_match = re.search(r"silence_start: (\d+\.?\d+)", line)
-        end_match = re.search(r"silence_end: (\d+\.?\d+)", line)
-
-        if start_match:
-            silence_start = float(start_match.group(1))
-        if end_match:
-            if silence_start is not None:
-                silences.append((silence_start, float(end_match.group(1))))
-                silence_start = None
-
-    if silence_start is not None:
-        silences.append((silence_start, total))
-
-    return silences
 
 FILLER_WORDS = {
     "um",
@@ -174,244 +97,397 @@ FILLER_WORDS = {
     "ahh",
 }
 
-def transcribe(input_file, model_path):
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-        extract = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                str(input_file),
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-f",
-                "wav",
-                "-y",
-                tmp.name,
-            ],
-            capture_output=True,
-        )
-        if extract.returncode != 0:
-            error("failed to extract audio")
+class Analyzer:
+    def __init__(self, noise, duration, model_path=None):
+        self.noise = noise
+        self.duration = duration
+        self.model_path = model_path
 
-            return None
-        log.info("transcribing %s", input_file)
+    def get_duration(self, input_file):
         result = subprocess.run(
             [
-                "whisper-cli",
-                "-m",
-                str(model_path),
-                "-pp",
-                "--max-len",
-                "1",
-                "--split-on-word",
-                "-oj",
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
                 "-of",
-                tmp.name,
-                tmp.name,
+                "default=noprint_wrappers=1:nokey=1",
+                str(input_file),
             ],
             capture_output=True,
+            text=True,
         )
-        if result.returncode != 0:
-            error("whisper-cli failed")
-
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
             return None
 
-        json_path = f"{tmp.name}.json"
-        try:
-            with open(json_path) as f:
-                return json.load(f)
-        finally:
-            Path(json_path).unlink(missing_ok=True)
-
-def classify_words(transcription):
-    speech = []
-    fillers = []
-    for seg in transcription.get("transcription", []):
-        text = seg["text"].strip()
-        letters = re.sub(r"[^a-z]", "", text.lower())
-        start = seg["offsets"]["from"] / 1000
-        end = seg["offsets"]["to"] / 1000
-        if start >= end:
-            continue
-        is_filler = (not text) or (letters and letters in FILLER_WORDS)
-        if is_filler:
-            fillers.append((start, end))
-            log.debug(
-                "  transcribed filler: '%s' at %s -> %s",
-                text,
-                format_timestamp(start),
-                format_timestamp(end),
-            )
-        else:
-            speech.append((start, end))
-
-    return speech, fillers
-
-def find_uncovered_gaps(known_regions):
-    known_regions.sort()
-    merged = []
-    for start, end in known_regions:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-
-    gaps = []
-    pos = 0.0
-    for start, end in merged:
-        if start > pos:
-            gaps.append((pos, start))
-        pos = end
-
-    return gaps
-
-def detect_filler_words(input_file, model_path, silences):
-    data = transcribe(input_file, model_path)
-    if data is None:
-        return []
-
-    speech, fillers = classify_words(data)
-
-    gaps = find_uncovered_gaps(silences + speech + fillers)
-    fillers.extend(gaps)
-
-    for i, (start, end) in enumerate(fillers, 1):
-        log.info(
-            "  %d. %s -> %s (%.1fs) filler",
-            i,
-            format_timestamp(start),
-            format_timestamp(end),
-            end - start,
+    def detect_silence(self, input_file, total):
+        cmd = [
+            "ffmpeg",
+            "-i",
+            str(input_file),
+            "-hide_banner",
+            "-af",
+            f"silencedetect=n={self.noise}:d={self.duration}",
+            "-f",
+            "null",
+            "-",
+        ]
+        log.debug("silence detect cmd: %s", " ".join(cmd))
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
         )
-    log.info("speech segments: %d, filler gaps: %d", len(speech), len(fillers))
+        lines = []
+        for line in proc.stderr:
+            sys.stderr.write(line)
+            lines.append(line)
+        proc.wait()
+        output = "".join(lines)
 
-    return fillers
+        silences = []
+        silence_start = None
+        for line in output.splitlines():
+            start_match = re.search(r"silence_start: (\d+\.?\d+)", line)
+            end_match = re.search(r"silence_end: (\d+\.?\d+)", line)
+            if start_match:
+                silence_start = float(start_match.group(1))
+            if end_match:
+                if silence_start is not None:
+                    silences.append(
+                        Region(
+                            silence_start, float(end_match.group(1)), RegionKind.SILENCE
+                        )
+                    )
+                    silence_start = None
+        if silence_start is not None:
+            silences.append(Region(silence_start, total, RegionKind.SILENCE))
 
-def merge_regions(silences, fillers):
-    regions = list(silences) + list(fillers)
-    regions.sort()
+        return silences
 
-    if not regions:
+    def _transcribe(self, input_file):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            extract = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-i",
+                    str(input_file),
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "wav",
+                    "-y",
+                    tmp.name,
+                ],
+                capture_output=True,
+            )
+            if extract.returncode != 0:
+                error("failed to extract audio")
+
+                return None
+            log.info("transcribing %s", input_file)
+            result = subprocess.run(
+                [
+                    "whisper-cli",
+                    "-m",
+                    str(self.model_path),
+                    "-pp",
+                    "--max-len",
+                    "1",
+                    "--split-on-word",
+                    "-oj",
+                    "-of",
+                    tmp.name,
+                    tmp.name,
+                ],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                error("whisper-cli failed")
+
+                return None
+
+            json_path = f"{tmp.name}.json"
+            try:
+                with open(json_path) as f:
+                    return json.load(f)
+            finally:
+                Path(json_path).unlink(missing_ok=True)
+
+    @staticmethod
+    def _classify_words(transcription):
+        speech = []
+        fillers = []
+        for seg in transcription.get("transcription", []):
+            text = seg["text"].strip()
+            letters = re.sub(r"[^a-z]", "", text.lower())
+            start = seg["offsets"]["from"] / 1000
+            end = seg["offsets"]["to"] / 1000
+            if start >= end:
+                continue
+            is_filler = (not text) or (letters and letters in FILLER_WORDS)
+            if is_filler:
+                fillers.append(Region(start, end, RegionKind.FILLER))
+                log.debug(
+                    "  transcribed filler: '%s' at %s -> %s",
+                    text,
+                    format_timestamp(start),
+                    format_timestamp(end),
+                )
+            else:
+                speech.append(Region(start, end, RegionKind.SPEECH))
+
+        return speech, fillers
+
+    @staticmethod
+    def _find_uncovered_gaps(known_regions):
+        known_regions.sort(key=lambda r: r.start)
+        merged = []
+        for r in known_regions:
+            if merged and r.start <= merged[-1].end:
+                merged[-1] = Region(
+                    merged[-1].start, max(merged[-1].end, r.end), merged[-1].kind
+                )
+            else:
+                merged.append(r)
+
+        gaps = []
+        pos = 0.0
+        for r in merged:
+            if r.start > pos:
+                gaps.append(Region(pos, r.start, RegionKind.GAP))
+            pos = r.end
+
+        return gaps
+
+    def detect_filler_words(self, input_file, silences):
+        data = self._transcribe(input_file)
+        if data is None:
+            return []
+
+        speech, fillers = self._classify_words(data)
+        gaps = self._find_uncovered_gaps(silences + speech + fillers)
+        fillers.extend(gaps)
+
+        for i, r in enumerate(fillers, 1):
+            log.info(
+                "  %d. %s -> %s (%.1fs) %s",
+                i,
+                format_timestamp(r.start),
+                format_timestamp(r.end),
+                r.end - r.start,
+                r.kind,
+            )
+        log.info("speech segments: %d, filler gaps: %d", len(speech), len(fillers))
+
+        return fillers
+
+    @staticmethod
+    def merge_regions(silences, fillers):
+        regions = list(silences) + list(fillers)
+        regions.sort(key=lambda r: r.start)
+
+        if not regions:
+            return []
+
+        merged = [regions[0]]
+        for r in regions[1:]:
+            prev = merged[-1]
+            if r.start <= prev.end:
+                stronger = (
+                    prev.kind if prev.kind.priority >= r.kind.priority else r.kind
+                )
+                merged[-1] = Region(prev.start, max(prev.end, r.end), stronger)
+            else:
+                merged.append(r)
+
+        return merged
+
+    @staticmethod
+    def regions_to_segments(regions, total):
+        segments = []
+        pos = 0.0
+        for region in regions:
+            if region.start > pos:
+                left = segments[-1].right if segments else None
+                segments.append(
+                    Segment(start=pos, end=region.start, left=left, right=region)
+                )
+            pos = region.end
+        if pos < total:
+            left = segments[-1].right if segments else None
+            segments.append(Segment(start=pos, end=total, left=left))
+
+        return segments
+
+class Encoder:
+    def __init__(self, gpu, codec, fade_time, video_filter, audio_filter):
+        self.gpu = gpu
+        self.codec = codec
+        self.fade_time = fade_time
+        self.video_filter = video_filter
+        self.audio_filter = audio_filter
+
+    @staticmethod
+    def detect_gpu():
+        encoders = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        if "hevc_nvenc" in encoders:
+            return "nvidia"
+        if "hevc_amf" in encoders:
+            return "amd"
+        if "hevc_vaapi" in encoders:
+            return "vaapi"
+
+        return None
+
+    @staticmethod
+    def _gpu_encode_args(gpu):
+        if gpu == "nvidia":
+            return ["-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "23"]
+        if gpu == "amd":
+            return [
+                "-c:v",
+                "hevc_amf",
+                "-quality",
+                "balanced",
+                "-rc",
+                "vbr_latency",
+                "-qp_i",
+                "23",
+                "-qp_p",
+                "23",
+            ]
+        if gpu == "vaapi":
+            return [
+                "-vaapi_device",
+                "/dev/dri/renderD128",
+                "-c:v",
+                "hevc_vaapi",
+                "-qp",
+                "23",
+            ]
+
         return []
 
-    merged = [regions[0]]
-    for start, end in regions[1:]:
-        prev_start, prev_end = merged[-1]
-        if start <= prev_end:
-            merged[-1] = (prev_start, max(prev_end, end))
+    def _video_codec_args(self):
+        if self.gpu and not self.codec:
+            return self._gpu_encode_args(self.gpu)
+        if self.codec:
+            return ["-c:v", self.codec]
+
+        return []
+
+    def _xfade_expr(self, offset):
+        name, _, extra = self.video_filter.partition(":")
+        parts = [f"{name}=offset={offset}:duration={self.fade_time}"]
+        if extra:
+            parts.append(extra)
+
+        return ":".join(parts)
+
+    def _acrossfade_expr(self):
+        name, _, extra = self.audio_filter.partition(":")
+        parts = [f"{name}=duration={self.fade_time}"]
+        if extra:
+            parts.append(extra)
+
+        return ":".join(parts)
+
+    @staticmethod
+    @contextmanager
+    def _filter_script(lines):
+        content = ";\n".join(lines)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix="remsi_filter_", delete=True
+        ) as f:
+            f.write(content)
+            f.flush()
+            log.debug("filter_complex_script %s:\n%s", f.name, content)
+
+            yield f.name
+
+    def _should_crossfade(self, i, segments):
+        return (
+            self.fade_time > 0
+            and i < len(segments) - 1
+            and segments[i].right is not None
+            and segments[i].right.kind == RegionKind.SILENCE
+            and (segments[i].end - segments[i].start) >= self.fade_time
+            and (segments[i + 1].end - segments[i + 1].start) >= self.fade_time
+        )
+
+    def _build_filter_lines(self, segments):
+        n = len(segments)
+
+        lines = []
+        for i, seg in enumerate(segments):
+            lines.append(f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS[v{i}]")
+            lines.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
+
+        if self.fade_time > 0 and n > 1:
+            accumulated = 0.0
+            xfade_count = 0
+            v_label = "[v0]"
+            for i in range(n - 1):
+                accumulated += segments[i].end - segments[i].start
+                if self._should_crossfade(i, segments):
+                    offset = accumulated - (xfade_count + 1) * self.fade_time
+                    out = f"[xf{xfade_count}]"
+                    lines.append(f"{v_label}[v{i + 1}]{self._xfade_expr(offset)}{out}")
+                    v_label = out
+                    xfade_count += 1
+                else:
+                    out = f"[vc{i}]"
+                    lines.append(f"{v_label}[v{i + 1}]concat=n=2:v=1:a=0{out}")
+                    v_label = out
+            lines.append(f"{v_label}null[vout]")
         else:
-            merged.append((start, end))
+            vf_labels = "".join(f"[v{i}]" for i in range(n))
+            lines.append(f"{vf_labels}concat=n={n}:v=1:a=0[vout]")
 
-    return merged
+        if self.fade_time > 0 and n > 1:
+            a_label = "[a0]"
+            for i in range(n - 1):
+                if self._should_crossfade(i, segments):
+                    out = f"[ax{i}]"
+                    lines.append(f"{a_label}[a{i + 1}]{self._acrossfade_expr()}{out}")
+                    a_label = out
+                else:
+                    out = f"[ac{i}]"
+                    lines.append(f"{a_label}[a{i + 1}]concat=n=2:v=0:a=1{out}")
+                    a_label = out
+            lines.append(f"{a_label}anull[aout]")
+        else:
+            af_labels = "".join(f"[a{i}]" for i in range(n))
+            lines.append(f"{af_labels}concat=n={n}:v=0:a=1[aout]")
 
-def regions_to_segments(regions, total, silence_dur):
-    boundaries = []
-    gap_is_silence = []
-    pos = 0.0
-    for start, end in regions:
-        if start > pos:
-            boundaries.append((pos, start))
-            gap_is_silence.append(end - start >= silence_dur)
-        pos = end
-    if pos < total:
-        boundaries.append((pos, total))
+        return lines
 
-    n = len(boundaries)
-    fi = [False] * n
-    fo = [False] * n
-    for i, is_silence in enumerate(gap_is_silence):
-        fo[i] = is_silence
-        fi[i + 1] = is_silence
+    @staticmethod
+    def _run(cmd):
+        log.debug("encode cmd: %s", " ".join(cmd))
 
-    return [
-        Segment(start=s, end=e, fade_in=fade_i, fade_out=fade_o)
-        for (s, e), fade_i, fade_o in zip(boundaries, fi, fo)
-    ]
+        return subprocess.run(cmd)
 
-def video_codec_args(gpu, codec):
-    if gpu and not codec:
-        return gpu_encode_args(gpu)
-    if codec:
-        return ["-c:v", codec]
+    def encode(self, input_file, output_file, segments):
+        n = len(segments)
 
-    return []
-
-def build_filter_command(input_file, output_file, segments, gpu, codec, fade):
-    n = len(segments)
-
-    vf_parts = []
-    af_parts = []
-    for i, seg in enumerate(segments):
-        vf_parts.append(f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS[v{i}]")
-        af_parts.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
-
-    filter_lines = vf_parts + af_parts
-
-    has_fades = fade > 0 and n > 1 and any(s.fade_in or s.fade_out for s in segments)
-    if has_fades:
-        for i, seg in enumerate(segments):
-            dur = seg.end - seg.start
-            af = f"[a{i}]"
-            parts = []
-            if seg.fade_in:
-                parts.append(f"afade=t=in:d={fade}")
-            if seg.fade_out:
-                parts.append(f"afade=t=out:st={max(0, dur - fade)}:d={fade}")
-            if parts:
-                filter_lines.append(f"{af}{','.join(parts)}[a{i}f]")
-            else:
-                filter_lines.append(f"{af}anull[a{i}f]")
-        af_labels = "".join(f"[a{i}f]" for i in range(n))
-    else:
-        af_labels = "".join(f"[a{i}]" for i in range(n))
-
-    concat_v = "".join(f"[v{i}]" for i in range(n))
-    filter_lines.append(f"{concat_v}concat=n={n}:v=1:a=0[vout]")
-    filter_lines.append(f"{af_labels}concat=n={n}:v=0:a=1[aout]")
-
-    filter_complex = ";".join(filter_lines)
-    log.debug("filter_complex: %s", filter_complex)
-
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "warning",
-        "-stats",
-        "-i",
-        str(input_file),
-        "-filter_complex",
-        filter_complex,
-        "-map",
-        "[vout]",
-        "-map",
-        "[aout]",
-    ]
-    cmd.extend(video_codec_args(gpu, codec))
-    cmd.extend(["-c:a", "aac", str(output_file)])
-
-    return cmd
-
-def run_concat(input_file, output_file, segments, gpu, codec, fade):
-    with tempfile.TemporaryDirectory(prefix="remsi_") as seg_dir:
-        seg_paths = []
-        for i, seg in enumerate(segments):
-            seg_path = Path(seg_dir) / f"seg{i:04d}{input_file.suffix}"
-            seg_paths.append(seg_path)
-            af_filters = []
-            if fade > 0:
-                dur = seg.end - seg.start
-                if seg.fade_in:
-                    af_filters.append(f"afade=t=in:d={fade}")
-                if seg.fade_out:
-                    af_filters.append(f"afade=t=out:st={max(0, dur - fade)}:d={fade}")
+        if n == 1:
+            seg = segments[0]
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
                 "-loglevel",
                 "warning",
+                "-stats",
                 "-ss",
                 str(seg.start),
                 "-to",
@@ -419,71 +495,174 @@ def run_concat(input_file, output_file, segments, gpu, codec, fade):
                 "-i",
                 str(input_file),
             ]
-            if af_filters:
-                cmd.extend(["-af", ",".join(af_filters)])
-            cmd.extend(video_codec_args(gpu, codec))
-            cmd.extend(["-c:a", "aac", "-y", str(seg_path)])
-            log.debug("segment %d cmd: %s", i, " ".join(cmd))
-            result = subprocess.run(cmd)
-            if result.returncode != 0:
-                error(f"segment {i} encoding failed")
+            cmd.extend(self._video_codec_args())
+            cmd.extend(["-c:a", "aac", str(output_file)])
 
-                return None
+            return self._run(cmd)
 
-        concat_file = Path(seg_dir) / "concat.txt"
-        with open(concat_file, "w") as f:
-            for p in seg_paths:
-                f.write(f"file '{p}'\n")
+        lines = self._build_filter_lines(segments)
+        with self._filter_script(lines) as script_path:
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-stats",
+                "-i",
+                str(input_file),
+                "-/filter_complex",
+                script_path,
+                "-map",
+                "[vout]",
+                "-map",
+                "[aout]",
+            ]
+            cmd.extend(self._video_codec_args())
+            cmd.extend(["-c:a", "aac", str(output_file)])
 
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-stats",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_file),
-            "-c",
-            "copy",
-            str(output_file),
-        ]
-        log.debug("concat cmd: %s", " ".join(cmd))
+            return self._run(cmd)
 
-        return subprocess.run(cmd)
+class Remsi:
+    def __init__(self, args):
+        self.args = args
+        self.analyzer = Analyzer(
+            noise=args.noise,
+            duration=args.duration,
+            model_path=self._resolve_model_path(),
+        )
+        self.encoder = Encoder(
+            gpu=self._resolve_gpu(),
+            codec=args.codec,
+            fade_time=args.fade_time,
+            video_filter=args.fade_video_filter,
+            audio_filter=args.fade_audio_filter,
+        )
 
-CONCAT_THRESHOLD = 100
+    def _resolve_gpu(self):
+        if self.args.gpu == "auto":
+            gpu = Encoder.detect_gpu()
+            if gpu:
+                log.info("detected gpu encoder: %s", gpu)
+                status(f"GPU encoder: {GREEN}{gpu}{RESET} (HEVC)")
+            else:
+                log.warning("no gpu encoder found, using software encoding")
 
-def build_command(input_file, output_file, segments, gpu, codec, fade):
-    n = len(segments)
+            return gpu
+        if self.args.gpu != "none":
+            return self.args.gpu
 
-    if n == 1:
-        seg = segments[0]
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-stats",
-            "-ss",
-            str(seg.start),
-            "-to",
-            str(seg.end),
-            "-i",
-            str(input_file),
-        ]
-        cmd.extend(video_codec_args(gpu, codec))
-        cmd.extend(["-c:a", "aac", str(output_file)])
+        return None
 
-        return cmd
+    def _resolve_model_path(self):
+        if not self.args.whisper:
+            return None
 
-    if n >= CONCAT_THRESHOLD:
-        return run_concat(input_file, output_file, segments, gpu, codec, fade)
+        model_path = Path(self.args.model_dir).expanduser() / self.args.model
+        if not model_path.exists():
+            error(f"model not found at {model_path}")
+            sys.exit(1)
 
-    return build_filter_command(input_file, output_file, segments, gpu, codec, fade)
+        return model_path
+
+    def _process_file(self, input_file, output_file):
+        section(f"Processing {input_file.name}")
+
+        total = self.analyzer.get_duration(input_file)
+        if total is None:
+            error(f"could not determine duration of {input_file}")
+
+            return
+        status(f"duration: {BOLD}{format_timestamp(total)}{RESET}")
+        log.debug(
+            "silence params: noise=%s duration=%s", self.args.noise, self.args.duration
+        )
+
+        section("Silence Detection")
+        silences = self.analyzer.detect_silence(input_file, total)
+        status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
+
+        fillers = []
+        if self.analyzer.model_path:
+            section("Filler Word Detection")
+            fillers = self.analyzer.detect_filler_words(input_file, silences)
+            status(f"found {YELLOW}{len(fillers)}{RESET} filler region(s)")
+
+        all_regions = Analyzer.merge_regions(silences, fillers)
+        segments = self.analyzer.regions_to_segments(all_regions, total)
+
+        if not all_regions:
+            status(f"{DIM}nothing to remove, skipping{RESET}")
+
+            return
+
+        kept = sum(seg.end - seg.start for seg in segments)
+        removed = total - kept
+        pct = (removed / total * 100) if total > 0 else 0
+        status(f"segments to keep: {BOLD}{len(segments)}{RESET}")
+        status(
+            f"removing {YELLOW}{removed:.1f}s{RESET} of {total:.1f}s "
+            f"({BOLD}{pct:.1f}%{RESET})"
+        )
+
+        section("Summary")
+        for i, r in enumerate(all_regions, 1):
+            kind_color = YELLOW if r.kind == RegionKind.SILENCE else DIM
+            status(
+                f"{DIM}{i:3d}.{RESET} {format_timestamp(r.start)} -> "
+                f"{format_timestamp(r.end)} {DIM}({r.end - r.start:.1f}s){RESET} "
+                f"{kind_color}{r.kind}{RESET}"
+            )
+
+        section("Encoding")
+        status(f"writing {GREEN}{output_file}{RESET}")
+        try:
+            result = self.encoder.encode(input_file, output_file, segments)
+        except KeyboardInterrupt:
+            error("interrupted, cleaning up...")
+            sys.exit(130)
+
+        if result.returncode != 0:
+            error(f"ffmpeg exited with code {result.returncode}")
+
+            return
+
+        section(f"{input_file.name} -> {output_file.stem}")
+        for i, r in enumerate(all_regions, 1):
+            kind_color = YELLOW if r.kind == RegionKind.SILENCE else DIM
+            status(
+                f"{DIM}{i:3d}.{RESET} {format_timestamp(r.start)} -> "
+                f"{format_timestamp(r.end)} {DIM}({r.end - r.start:.1f}s){RESET} "
+                f"{kind_color}{r.kind}{RESET}"
+            )
+        status("")
+        parts = []
+        if silences:
+            parts.append(f"{YELLOW}{len(silences)}{RESET} silence(s)")
+        if fillers:
+            parts.append(f"{YELLOW}{len(fillers)}{RESET} filler(s)")
+        if parts:
+            status(f"detected {' and '.join(parts)}")
+        status(
+            f"trimmed {YELLOW}{removed:.1f}s{RESET} ({BOLD}{pct:.1f}%{RESET}), "
+            f"{format_timestamp(total)} down to {GREEN}{format_timestamp(kept)}{RESET}"
+        )
+        status(f"\n{GREEN}{output_file}{RESET}")
+
+    def run(self):
+        for input_path in self.args.input:
+            input_file = Path(input_path)
+            if not input_file.exists():
+                error(f"{input_file} not found")
+                continue
+
+            if self.args.output:
+                output_file = Path(self.args.output)
+            else:
+                output_file = input_file.with_stem(
+                    f"{input_file.stem}-{self.args.suffix}"
+                )
+
+            self._process_file(input_file, output_file)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -507,16 +686,22 @@ def main():
     )
     parser.add_argument("--codec", help="override video codec")
     parser.add_argument(
-        "--fade",
+        "--fade-time",
         type=float,
-        default=0.1,
-        help="crossfade duration in seconds between segments",
+        default=0.25,
+        help="crossfade duration in seconds (0 to disable)",
     )
     parser.add_argument(
-        "--suffix",
-        default="silencer",
-        help="output filename suffix",
+        "--fade-video-filter",
+        default="xfade:transition=fadefast",
+        help="video crossfade filter spec (name[:extra_params])",
     )
+    parser.add_argument(
+        "--fade-audio-filter",
+        default="acrossfade:curve1=log:curve2=log",
+        help="audio crossfade filter spec (name[:extra_params])",
+    )
+    parser.add_argument("--suffix", default="silencer", help="output filename suffix")
     parser.add_argument(
         "--whisper",
         action="store_true",
@@ -532,12 +717,7 @@ def main():
         default="ggml-large-v3.bin",
         help="whisper GGML model filename",
     )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="verbose logging",
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -548,118 +728,7 @@ def main():
     if args.output and len(args.input) > 1:
         parser.error("-o/--output can only be used with a single input file")
 
-    gpu = None
-    if args.gpu == "auto":
-        gpu = detect_gpu()
-        if gpu:
-            log.info("detected gpu encoder: %s", gpu)
-            status(f"GPU encoder: {MAGENTA}{gpu}{RESET} (HEVC)")
-        else:
-            log.warning("no gpu encoder found, using software encoding")
-    elif args.gpu != "none":
-        gpu = args.gpu
-
-    model_path = None
-    if args.whisper:
-        model_path = Path(args.model_dir).expanduser() / args.model
-        if not model_path.exists():
-            error(f"model not found at {model_path}")
-            sys.exit(1)
-
-    for input_path in args.input:
-        input_file = Path(input_path)
-        if not input_file.exists():
-            error(f"{input_file} not found")
-            continue
-
-        if args.output:
-            output_file = Path(args.output)
-        else:
-            output_file = input_file.with_stem(f"{input_file.stem}-{args.suffix}")
-
-        section(f"Processing {input_file.name}")
-
-        total = get_duration(input_file)
-        if total is None:
-            error(f"could not determine duration of {input_file}")
-            continue
-        status(f"duration: {BOLD}{format_timestamp(total)}{RESET}")
-        log.debug("silence params: noise=%s duration=%s", args.noise, args.duration)
-
-        section("Silence Detection")
-        silences = detect_silence(input_file, args.noise, args.duration, total)
-        status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
-
-        fillers = []
-        if model_path:
-            section("Filler Word Detection")
-            fillers = detect_filler_words(input_file, model_path, silences)
-            status(f"found {YELLOW}{len(fillers)}{RESET} filler region(s)")
-
-        all_regions = merge_regions(silences, fillers)
-        segments = regions_to_segments(all_regions, total, args.duration)
-
-        if not all_regions:
-            status(f"{DIM}nothing to remove, skipping{RESET}")
-            continue
-
-        kept = sum(seg.end - seg.start for seg in segments)
-        removed = total - kept
-        pct = (removed / total * 100) if total > 0 else 0
-        status(f"segments to keep: {BOLD}{len(segments)}{RESET}")
-        status(
-            f"removing {YELLOW}{removed:.1f}s{RESET} of {total:.1f}s "
-            f"({BOLD}{pct:.1f}%{RESET})"
-        )
-        for i, (start, end) in enumerate(all_regions, 1):
-            ts_start = format_timestamp(start)
-            ts_end = format_timestamp(end)
-            log.debug("%d. %s -> %s (%.1fs)", i, ts_start, ts_end, end - start)
-
-        section("Encoding")
-        built = build_command(
-            input_file,
-            output_file,
-            segments,
-            gpu,
-            args.codec,
-            args.fade,
-        )
-        if built is None:
-            continue
-
-        if isinstance(built, subprocess.CompletedProcess):
-            result = built
-        else:
-            log.debug("encode cmd: %s", " ".join(built))
-            status(f"writing {MAGENTA}{output_file}{RESET}")
-            try:
-                result = subprocess.run(built)
-            except KeyboardInterrupt:
-                error("interrupted, cleaning up...")
-                if output_file.exists():
-                    output_file.unlink()
-                    status(f"removed partial {output_file}")
-                sys.exit(130)
-
-        if result.returncode != 0:
-            error(f"ffmpeg exited with code {result.returncode}")
-            continue
-
-        section("Done")
-        status(f"{input_file.name}")
-        parts = []
-        if silences:
-            parts.append(f"{YELLOW}{len(silences)}{RESET} silence(s)")
-        if fillers:
-            parts.append(f"{YELLOW}{len(fillers)}{RESET} filler(s)")
-        if parts:
-            status(f"detected {' and '.join(parts)}")
-        status(
-            f"trimmed {YELLOW}{removed:.1f}s{RESET} ({BOLD}{pct:.1f}%{RESET}), "
-            f"{format_timestamp(total)} down to {GREEN}{format_timestamp(kept)}{RESET}"
-        )
-        status(f"{MAGENTA}{output_file}{RESET}")
+    Remsi(args).run()
 
 if __name__ == "__main__":
     try:
