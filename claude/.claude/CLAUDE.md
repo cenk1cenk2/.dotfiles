@@ -22,10 +22,15 @@
 - Refresh knowledge of ongoing tasks
 
 2. **DISCOVER MCP TOOLS** - Use `ToolSearch` (Claude Code's internal tool discovery mechanism) to find available MCP server tools
-   - Search for key tool categories: `neovim`, `git`, `treesitter`, `cclsp`, `context7`
+   - Search for key tool categories: `neovim`, `git`, `treesitter`, `cclsp`, `context7`, `tmux`
    - Understand tool capabilities for this session
    - Note any tool limitations or unavailability
    - **If tools are unavailable, silently skip and continue** - tools may not always be loaded
+
+3. **DISCOVER TMUX SCRATCH PANE** - If tmux MCP is loaded, identify the scratch pane for the current neovim session
+   - List tmux sessions and find `root/nvim/<project-path>/scratch`
+   - Resolve the pane ID for command execution during the session
+   - **If no scratch session exists, silently skip** - use built-in Bash as fallback
 
 ## II. PLANNING AND IMPLEMENTATION
 
@@ -301,6 +306,53 @@ Use MCP tools when available - they integrate with the editor and user's workflo
 | Code structure analysis, AST queries         | `treesitter` | Need to understand syntax structure, find patterns                                                                                                                                                                                      |
 | Git operations                               | `git` MCP    | Any git operation — available tools: `mcp__mcphub__git__git_status`, `git_diff_unstaged`, `git_diff_staged`, `git_diff`, `git_commit`, `git_add`, `git_reset`, `git_log`, `git_show`, `git_branch`, `git_checkout`, `git_create_branch` |
 | Documentation lookup                         | `context7`   | Need to reference official docs for libraries/frameworks                                                                                                                                                                                |
+| Shell command execution (visible to user)    | `tmux`       | Long-running commands, builds, tests, and commands the user should see — via neovim session's scratch pane                                                                                                                              |
+
+#### Tmux Scratch Pane (Command Runner)
+
+Each neovim session has attached tmux sessions following the pattern `root/nvim/<path>/<type>`. The `scratch` session is the command runner.
+
+**Session types:**
+
+- `root/nvim/<path>/scratch` — **Command runner.** Use this for executing commands.
+- `root/nvim/<path>/lazygit`, `root/nvim/<path>/k9s`, etc. — **Observation panes.** Do NOT send commands to or capture output from these unless explicitly asked.
+
+**Discovery:**
+
+1. List tmux sessions (`mcp__mcphub__tmux__list-sessions`)
+2. Find the session ending in `/scratch` that matches the current project path (dots replaced with underscores in path)
+3. Get the pane ID from the session's active window
+
+**Use tmux scratch pane for:**
+
+- Build commands: `make`, `go build`, `npm run build`
+- Test suites: `go test ./...`, `pytest`, `npm test`
+- Linters and formatters: `golangci-lint run`, `eslint`, `black`
+- Live config testing: `swaymsg reload`, `hyprctl reload`
+- Deploy or infrastructure commands
+- Any command the user should be able to observe in their terminal
+
+**Execution workflow:**
+
+1. Execute command via `mcp__mcphub__tmux__execute-command` with the pane ID
+2. The tool returns a command ID for tracking
+3. Retrieve results via `mcp__mcphub__tmux__get-command-result` using the command ID
+4. **IMPORTANT:** `get-command-result` may return partial output (only lines near the end marker). For full output, use `capture-pane` after the command completes.
+5. For long-running commands: poll `get-command-result` to detect completion (status changes from `pending` to `completed`), then use `capture-pane` if full output is needed.
+6. **Avoid firing multiple commands in rapid succession** to the same pane — `get-command-result` can return output from a different command. Wait for one command to complete before sending the next, or use separate panes for parallel execution.
+
+**Creating windows and panes:**
+
+**ALWAYS** create a dedicated window (`create-window`) in the scratch session for your own command execution. Do NOT use the user's existing window/pane. The user's window is their workspace — create your own and use it for the entire session. For parallel commands, split panes within your dedicated window as needed.
+
+**Use built-in Bash for:**
+
+- Quick and dirty investigative commands that only the LLM needs (not visible to user)
+- Short-lived lookups: `jq`, `wc`, `stat`, quick one-liners
+
+**CRITICAL:** Only use tmux sessions matching `root/nvim/<project-path>/scratch`. Do NOT use other tmux sessions (e.g., `root/scratch`) as substitutes — they are not associated with the neovim session.
+
+**Fallback:** If the correct scratch session does not exist OR tmux MCP is not loaded, silently fall back to the built-in Bash tool.
 
 ### 2. Claude Code Built-in Tools
 

@@ -13,5 +13,8 @@
   "enabledPlugins": {
     "claude-mem@thedotmack": false
   },
-  "autoUpdatesChannel": "latest"
+  "autoUpdatesChannel": "latest",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
 }
