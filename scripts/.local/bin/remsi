@@ -518,7 +518,7 @@ def main():
         help="output filename suffix",
     )
     parser.add_argument(
-        "--ai",
+        "--whisper",
         action="store_true",
         help="also detect filler words using speech recognition",
     )
@@ -560,7 +560,7 @@ def main():
         gpu = args.gpu
 
     model_path = None
-    if args.ai:
+    if args.whisper:
         model_path = Path(args.model_dir).expanduser() / args.model
         if not model_path.exists():
             error(f"model not found at {model_path}")
