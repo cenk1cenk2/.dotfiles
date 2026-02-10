@@ -9,9 +9,9 @@
     "deny": [],
     "ask": []
   },
+  "model": "opus",
   "enabledPlugins": {
     "claude-mem@thedotmack": false
   },
-  "autoUpdatesChannel": "latest",
-  "model": "opus"
+  "autoUpdatesChannel": "latest"
 }
