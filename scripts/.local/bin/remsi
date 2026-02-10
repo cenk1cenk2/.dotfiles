@@ -25,6 +25,14 @@ class RegionKind(StrEnum):
     def priority(self):
         return {self.SILENCE: 2, self.FILLER: 1, self.GAP: 0, self.SPEECH: -1}[self]
 
+    def color(self):
+        return {
+            self.SILENCE: YELLOW,
+            self.FILLER: RED,
+            self.GAP: DIM,
+            self.SPEECH: GREEN,
+        }[self]
+
 @dataclass
 class Region:
     start: float
@@ -37,6 +45,52 @@ class Segment:
     end: float
     left: Region | None = field(default=None, repr=False)
     right: Region | None = field(default=None, repr=False)
+
+@dataclass
+class VideoInfo:
+    codec: str | None = None
+    bitrate: int | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+
+    def __str__(self):
+        parts = []
+        if self.codec:
+            parts.append(self.codec)
+        if self.width and self.height:
+            parts.append(f"{self.width}x{self.height}")
+        if self.fps:
+            parts.append(f"{self.fps:g}fps")
+        if self.bitrate:
+            parts.append(f"{self.bitrate // 1000}k")
+
+        return " ".join(parts) or "?"
+
+@dataclass
+class AudioInfo:
+    codec: str | None = None
+    bitrate: int | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+
+    def __str__(self):
+        parts = []
+        if self.codec:
+            parts.append(self.codec)
+        if self.sample_rate:
+            parts.append(f"{self.sample_rate // 1000}kHz")
+        if self.channels:
+            parts.append(f"{self.channels}ch")
+        if self.bitrate:
+            parts.append(f"{self.bitrate // 1000}k")
+
+        return " ".join(parts) or "?"
+
+@dataclass
+class MediaInfo:
+    video: VideoInfo = field(default_factory=VideoInfo)
+    audio: AudioInfo = field(default_factory=AudioInfo)
 
 _use_color = sys.stderr.isatty()
 
@@ -144,6 +198,8 @@ class Analyzer:
             sys.stderr.write(line)
             lines.append(line)
         proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(f"silence detection failed (exit {proc.returncode})")
         output = "".join(lines)
 
         silences = []
@@ -185,9 +241,7 @@ class Analyzer:
                 capture_output=True,
             )
             if extract.returncode != 0:
-                error("failed to extract audio")
-
-                return None
+                raise RuntimeError("failed to extract audio for transcription")
             log.info("transcribing %s", input_file)
             result = subprocess.run(
                 [
@@ -203,12 +257,10 @@ class Analyzer:
                     tmp.name,
                     tmp.name,
                 ],
-                capture_output=True,
+                stdout=subprocess.DEVNULL,
             )
             if result.returncode != 0:
-                error("whisper-cli failed")
-
-                return None
+                raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
 
             json_path = f"{tmp.name}.json"
             try:
@@ -324,6 +376,12 @@ class Analyzer:
         return segments
 
 class Encoder:
+    GPU_ENCODERS = {
+        "h264": {"nvidia": "h264_nvenc", "amd": "h264_amf", "vaapi": "h264_vaapi"},
+        "hevc": {"nvidia": "hevc_nvenc", "amd": "hevc_amf", "vaapi": "hevc_vaapi"},
+        "av1": {"nvidia": "av1_nvenc", "amd": "av1_amf", "vaapi": "av1_vaapi"},
+    }
+
     def __init__(self, gpu, codec, fade_time, video_filter, audio_filter):
         self.gpu = gpu
         self.codec = codec
@@ -349,41 +407,116 @@ class Encoder:
         return None
 
     @staticmethod
-    def _gpu_encode_args(gpu):
-        if gpu == "nvidia":
-            return ["-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "23"]
-        if gpu == "amd":
-            return [
-                "-c:v",
-                "hevc_amf",
-                "-quality",
-                "balanced",
-                "-rc",
-                "vbr_latency",
-                "-qp_i",
-                "23",
-                "-qp_p",
-                "23",
-            ]
-        if gpu == "vaapi":
-            return [
-                "-vaapi_device",
-                "/dev/dri/renderD128",
-                "-c:v",
-                "hevc_vaapi",
-                "-qp",
-                "23",
-            ]
+    def _ffprobe_stream(input_file, stream_type, fields):
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                f"{stream_type}:0",
+                "-show_entries",
+                f"stream={','.join(fields)}",
+                "-of",
+                "json",
+                str(input_file),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        try:
+            streams = json.loads(result.stdout).get("streams", [])
+            if streams:
+                return streams[0]
+        except (json.JSONDecodeError, IndexError):
+            pass
 
-        return []
+        return {}
 
-    def _video_codec_args(self):
-        if self.gpu and not self.codec:
-            return self._gpu_encode_args(self.gpu)
+    @staticmethod
+    def _parse_fps(r_frame_rate):
+        try:
+            num, den = r_frame_rate.split("/")
+
+            return round(int(num) / int(den), 3)
+        except (ValueError, ZeroDivisionError, AttributeError):
+            return None
+
+    @staticmethod
+    def probe(input_file):
+        vs = Encoder._ffprobe_stream(
+            input_file,
+            "v",
+            ["codec_name", "bit_rate", "width", "height", "r_frame_rate"],
+        )
+        a = Encoder._ffprobe_stream(
+            input_file,
+            "a",
+            ["codec_name", "bit_rate", "sample_rate", "channels"],
+        )
+
+        def _int(v):
+            try:
+                return int(v) if v else None
+            except (ValueError, TypeError):
+                return None
+
+        return MediaInfo(
+            video=VideoInfo(
+                codec=vs.get("codec_name"),
+                bitrate=_int(vs.get("bit_rate")),
+                width=_int(vs.get("width")),
+                height=_int(vs.get("height")),
+                fps=Encoder._parse_fps(vs.get("r_frame_rate")),
+            ),
+            audio=AudioInfo(
+                codec=a.get("codec_name"),
+                bitrate=_int(a.get("bit_rate")),
+                sample_rate=_int(a.get("sample_rate")),
+                channels=_int(a.get("channels")),
+            ),
+        )
+
+    def _video_codec_args(self, info):
         if self.codec:
             return ["-c:v", self.codec]
 
+        family = None
+        if info.codec:
+            name = info.codec.lower()
+            if name in ("h264", "libx264"):
+                family = "h264"
+            elif name in ("hevc", "h265", "libx265"):
+                family = "hevc"
+            elif name in ("av1", "libsvtav1", "libaom-av1"):
+                family = "av1"
+
+        if self.gpu and family and family in self.GPU_ENCODERS:
+            hw_enc = self.GPU_ENCODERS[family].get(self.gpu)
+            if hw_enc:
+                args = ["-c:v", hw_enc]
+                if info.bitrate:
+                    args.extend(["-b:v", str(info.bitrate)])
+                if self.gpu == "vaapi":
+                    args = ["-vaapi_device", "/dev/dri/renderD128"] + args
+
+                return args
+
+        if info.codec:
+            args = ["-c:v", info.codec]
+            if info.bitrate:
+                args.extend(["-b:v", str(info.bitrate)])
+
+            return args
+
         return []
+
+    def _audio_codec_args(self, info):
+        args = ["-c:a", info.codec or "aac"]
+        if info.bitrate:
+            args.extend(["-b:a", str(info.bitrate)])
+
+        return args
 
     def _xfade_expr(self, offset):
         name, _, extra = self.video_filter.partition(":")
@@ -429,7 +562,9 @@ class Encoder:
 
         lines = []
         for i, seg in enumerate(segments):
-            lines.append(f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS[v{i}]")
+            lines.append(
+                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB[v{i}]"
+            )
             lines.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
 
         if self.fade_time > 0 and n > 1:
@@ -477,8 +612,9 @@ class Encoder:
 
         return subprocess.run(cmd)
 
-    def encode(self, input_file, output_file, segments):
+    def encode(self, input_file, output_file, segments, media=None):
         n = len(segments)
+        media = media or MediaInfo()
 
         if n == 1:
             seg = segments[0]
@@ -495,8 +631,9 @@ class Encoder:
                 "-i",
                 str(input_file),
             ]
-            cmd.extend(self._video_codec_args())
-            cmd.extend(["-c:a", "aac", str(output_file)])
+            cmd.extend(self._video_codec_args(media.video))
+            cmd.extend(self._audio_codec_args(media.audio))
+            cmd.append(str(output_file))
 
             return self._run(cmd)
 
@@ -517,8 +654,9 @@ class Encoder:
                 "-map",
                 "[aout]",
             ]
-            cmd.extend(self._video_codec_args())
-            cmd.extend(["-c:a", "aac", str(output_file)])
+            cmd.extend(self._video_codec_args(media.video))
+            cmd.extend(self._audio_codec_args(media.audio))
+            cmd.append(str(output_file))
 
             return self._run(cmd)
 
@@ -543,7 +681,7 @@ class Remsi:
             gpu = Encoder.detect_gpu()
             if gpu:
                 log.info("detected gpu encoder: %s", gpu)
-                status(f"GPU encoder: {GREEN}{gpu}{RESET} (HEVC)")
+                status(f"GPU encoder: {GREEN}{gpu}{RESET}")
             else:
                 log.warning("no gpu encoder found, using software encoding")
 
@@ -572,20 +710,28 @@ class Remsi:
             error(f"could not determine duration of {input_file}")
 
             return
-        status(f"duration: {BOLD}{format_timestamp(total)}{RESET}")
+        media = Encoder.probe(input_file)
+        status(f"duration:\t{BOLD}{format_timestamp(total)}{RESET}")
+        status(f"video:\t\t{YELLOW}{media.video}{RESET}")
+        status(f"audio:\t\t{YELLOW}{media.audio}{RESET}")
         log.debug(
             "silence params: noise=%s duration=%s", self.args.noise, self.args.duration
         )
 
-        section("Silence Detection")
-        silences = self.analyzer.detect_silence(input_file, total)
-        status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
+        try:
+            section("Silence Detection")
+            silences = self.analyzer.detect_silence(input_file, total)
+            status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
 
-        fillers = []
-        if self.analyzer.model_path:
-            section("Filler Word Detection")
-            fillers = self.analyzer.detect_filler_words(input_file, silences)
-            status(f"found {YELLOW}{len(fillers)}{RESET} filler region(s)")
+            fillers = []
+            if self.analyzer.model_path:
+                section("Filler Word Detection")
+                fillers = self.analyzer.detect_filler_words(input_file, silences)
+                status(f"found {YELLOW}{len(fillers)}{RESET} filler region(s)")
+        except RuntimeError as e:
+            error(str(e))
+
+            return
 
         all_regions = Analyzer.merge_regions(silences, fillers)
         segments = self.analyzer.regions_to_segments(all_regions, total)
@@ -598,25 +744,27 @@ class Remsi:
         kept = sum(seg.end - seg.start for seg in segments)
         removed = total - kept
         pct = (removed / total * 100) if total > 0 else 0
-        status(f"segments to keep: {BOLD}{len(segments)}{RESET}")
         status(
             f"removing {YELLOW}{removed:.1f}s{RESET} of {total:.1f}s "
             f"({BOLD}{pct:.1f}%{RESET})"
         )
 
         section("Summary")
-        for i, r in enumerate(all_regions, 1):
-            kind_color = YELLOW if r.kind == RegionKind.SILENCE else DIM
+        timeline = [
+            Region(seg.start, seg.end, RegionKind.SPEECH) for seg in segments
+        ] + list(all_regions)
+        timeline.sort(key=lambda r: r.start)
+        for i, r in enumerate(timeline, 1):
             status(
                 f"{DIM}{i:3d}.{RESET} {format_timestamp(r.start)} -> "
                 f"{format_timestamp(r.end)} {DIM}({r.end - r.start:.1f}s){RESET} "
-                f"{kind_color}{r.kind}{RESET}"
+                f"{r.kind.color()}{r.kind}{RESET}"
             )
 
         section("Encoding")
         status(f"writing {GREEN}{output_file}{RESET}")
         try:
-            result = self.encoder.encode(input_file, output_file, segments)
+            result = self.encoder.encode(input_file, output_file, segments, media)
         except KeyboardInterrupt:
             error("interrupted, cleaning up...")
             sys.exit(130)
@@ -627,14 +775,6 @@ class Remsi:
             return
 
         section(f"{input_file.name} -> {output_file.stem}")
-        for i, r in enumerate(all_regions, 1):
-            kind_color = YELLOW if r.kind == RegionKind.SILENCE else DIM
-            status(
-                f"{DIM}{i:3d}.{RESET} {format_timestamp(r.start)} -> "
-                f"{format_timestamp(r.end)} {DIM}({r.end - r.start:.1f}s){RESET} "
-                f"{kind_color}{r.kind}{RESET}"
-            )
-        status("")
         parts = []
         if silences:
             parts.append(f"{YELLOW}{len(silences)}{RESET} silence(s)")
@@ -646,6 +786,10 @@ class Remsi:
             f"trimmed {YELLOW}{removed:.1f}s{RESET} ({BOLD}{pct:.1f}%{RESET}), "
             f"{format_timestamp(total)} down to {GREEN}{format_timestamp(kept)}{RESET}"
         )
+        out_media = Encoder.probe(output_file)
+        status(f"video:\t\t{YELLOW}{out_media.video}{RESET}")
+        status(f"audio:\t\t{YELLOW}{out_media.audio}{RESET}")
+
         status(f"\n{GREEN}{output_file}{RESET}")
 
     def run(self):
@@ -688,7 +832,7 @@ def main():
     parser.add_argument(
         "--fade-time",
         type=float,
-        default=0.25,
+        default=0.1,
         help="crossfade duration in seconds (0 to disable)",
     )
     parser.add_argument(
