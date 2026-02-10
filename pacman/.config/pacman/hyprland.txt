@@ -2,6 +2,7 @@
 # hyprshutdown
 clipse
 cpio
+hypr-zoom
 hyprcursor
 hypridle
 hyprland
