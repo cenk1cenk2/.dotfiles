@@ -872,9 +872,10 @@ class SmartCutEncoder(Encoder):
 
         return parts if parts else [(seg_start, seg_end, True)]
 
-    def __init__(self, gpu, codec, fade_time, force=False):
+    def __init__(self, gpu, codec, fade_time, fade_curve, force=False):
         super().__init__(gpu, codec, force)
         self.fade_time = fade_time
+        self.fade_curve = fade_curve
 
     @staticmethod
     def _encode_part(
@@ -885,6 +886,7 @@ class SmartCutEncoder(Encoder):
         video_args,
         audio_args,
         fade_time=0,
+        fade_curve="log",
         fade_in=False,
         fade_out=False,
     ):
@@ -903,10 +905,12 @@ class SmartCutEncoder(Encoder):
         ]
         cmd.extend(video_args)
         af_parts = []
-        if fade_in and fade_time > 0:
-            af_parts.append(f"afade=t=in:d={fade_time}")
-        if fade_out and fade_time > 0:
-            af_parts.append(f"afade=t=out:st={duration - fade_time}:d={fade_time}")
+        if fade_in and fade_time > 0 and duration > fade_time:
+            af_parts.append(f"afade=t=in:d={fade_time}:curve={fade_curve}")
+        if fade_out and fade_time > 0 and duration > fade_time:
+            af_parts.append(
+                f"afade=t=out:st={duration - fade_time}:d={fade_time}:curve={fade_curve}"
+            )
         if af_parts:
             cmd.extend(["-af", ",".join(af_parts)])
         cmd.extend(audio_args)
@@ -966,6 +970,7 @@ class SmartCutEncoder(Encoder):
                         video_args,
                         audio_args,
                         fade_time=self.fade_time,
+                        fade_curve=self.fade_curve,
                         fade_in=fade_in,
                         fade_out=fade_out,
                     )
@@ -1017,6 +1022,7 @@ class Remsi:
                 gpu=self._resolve_gpu(),
                 codec=args.codec,
                 fade_time=args.fade_time,
+                fade_curve=args.fade_curve,
                 force=args.force,
             )
         else:
@@ -1226,7 +1232,7 @@ def main():
     parser.add_argument(
         "--min-cut",
         type=float,
-        default=0.05,
+        default=0.1,
         help="minimum region duration to cut (smaller regions are kept)",
     )
     parser.add_argument(
@@ -1251,6 +1257,11 @@ def main():
         "--fade-audio-filter",
         default="acrossfade:curve1=log:curve2=log",
         help="audio crossfade filter spec (name[:extra_params])",
+    )
+    parser.add_argument(
+        "--fade-curve",
+        default="log",
+        help="afade curve for smart-cut stitch points (log, tri, qsin, etc.)",
     )
     parser.add_argument("--suffix", default="silencer", help="output filename suffix")
     parser.add_argument(
