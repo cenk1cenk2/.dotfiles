@@ -8,7 +8,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -570,8 +569,7 @@ class Encoder:
                 else:
                     args = ["-c:v", hw_enc, "-qp", "20"]
         elif info.codec:
-            encoder = self._resolve_encoder(info.codec, self.VIDEO_ENCODER_MAP)
-            args = ["-c:v", encoder, "-crf", "20"]
+            args = ["-c:v", info.codec, "-crf", "20"]
 
         if not args:
             return []
@@ -595,28 +593,8 @@ class Encoder:
 
         return args
 
-    AUDIO_ENCODER_MAP = {
-        "mp3": "libmp3lame",
-        "opus": "libopus",
-        "vorbis": "libvorbis",
-    }
-
-    VIDEO_ENCODER_MAP = {
-        "h264": "libx264",
-        "hevc": "libx265",
-        "av1": "libsvtav1",
-    }
-
-    @staticmethod
-    def _resolve_encoder(codec, encoder_map):
-        if not codec:
-            return codec
-
-        return encoder_map.get(codec.lower(), codec)
-
     def _audio_codec_args(self, info):
-        encoder = self._resolve_encoder(info.codec, self.AUDIO_ENCODER_MAP) or "aac"
-        args = ["-c:a", encoder]
+        args = ["-c:a", info.codec or "aac"]
         if info.bitrate:
             args.extend(["-b:a", str(info.bitrate)])
 
@@ -742,47 +720,35 @@ class Encoder:
 
         return subprocess.run(cmd)
 
-    @staticmethod
-    def _split_segment(input_file, part_path, seg):
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-ss",
-            str(seg.start),
-            "-to",
-            str(seg.end),
-            "-i",
-            str(input_file),
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
-            "-y",
-            str(part_path),
-        ]
-        log.debug("fast split cmd: %s", " ".join(cmd))
-
-        return subprocess.run(cmd)
-
     def _encode_fast(self, input_file, output_file, segments):
         with tempfile.TemporaryDirectory(prefix="remsi_fast_") as tmpdir:
             tmpdir = Path(tmpdir)
-            part_files = [
-                tmpdir / f"part{i:04d}{input_file.suffix}" for i in range(len(segments))
-            ]
-
-            workers = min(len(segments), os.cpu_count() or 4)
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [
-                    pool.submit(self._split_segment, input_file, part, seg)
-                    for part, seg in zip(part_files, segments)
+            part_files = []
+            for i, seg in enumerate(segments):
+                part = tmpdir / f"part{i:04d}{input_file.suffix}"
+                cmd = [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "warning",
+                    "-ss",
+                    str(seg.start),
+                    "-to",
+                    str(seg.end),
+                    "-i",
+                    str(input_file),
+                    "-c",
+                    "copy",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    "-y",
+                    str(part),
                 ]
-                for fut in futures:
-                    result = fut.result()
-                    if result.returncode != 0:
-                        return result
+                log.debug("fast split cmd: %s", " ".join(cmd))
+                result = subprocess.run(cmd)
+                if result.returncode != 0:
+                    return result
+                part_files.append(part)
 
             concat_list = tmpdir / "concat.txt"
             with open(concat_list, "w") as f:
@@ -911,14 +877,14 @@ class Remsi:
 
         return model_path
 
-    def _process_file(self, input_file, output_file) -> bool:
+    def _process_file(self, input_file, output_file):
         section(f"Processing {input_file.name}")
 
         total = self.analyzer.get_duration(input_file)
         if total is None:
             error(f"could not determine duration of {input_file}")
 
-            return False
+            return
         media = Encoder.probe(input_file)
         status(f"duration:\t{BOLD}{format_timestamp(total)}{RESET}")
         status(f"size:\t\t{YELLOW}{media.size_str}{RESET}")
@@ -941,7 +907,7 @@ class Remsi:
         except RuntimeError as e:
             error(str(e))
 
-            return False
+            return
 
         all_regions = Analyzer.merge_regions(silences, fillers)
         min_cut = self.args.min_cut
@@ -959,7 +925,7 @@ class Remsi:
         if not all_regions:
             status(f"{DIM}nothing to remove, skipping{RESET}")
 
-            return True
+            return
 
         kept = sum(seg.end - seg.start for seg in segments)
         removed = total - kept
@@ -982,8 +948,6 @@ class Remsi:
             )
 
         section("Encoding")
-        if self.encoder.fast:
-            status(f"mode:\t\t{YELLOW}fast (stream copy, no crossfade){RESET}")
         status(f"writing {GREEN}{output_file}{RESET}")
         try:
             result = self.encoder.encode(input_file, output_file, segments, media)
@@ -994,7 +958,7 @@ class Remsi:
         if result.returncode != 0:
             error(f"ffmpeg exited with code {result.returncode}")
 
-            return False
+            return
 
         section(f"{input_file.name} -> {output_file.stem}")
         parts = []
@@ -1015,15 +979,11 @@ class Remsi:
 
         status(f"\n{GREEN}{output_file}{RESET}")
 
-        return True
-
-    def run(self) -> int:
-        failures = 0
+    def run(self):
         for input_path in self.args.input:
             input_file = Path(input_path)
             if not input_file.exists():
                 error(f"{input_file} not found")
-                failures += 1
                 continue
 
             if self.args.output:
@@ -1033,10 +993,7 @@ class Remsi:
                     f"{input_file.stem}-{self.args.suffix}"
                 )
 
-            if not self._process_file(input_file, output_file):
-                failures += 1
-
-        return 1 if failures else 0
+            self._process_file(input_file, output_file)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1116,7 +1073,7 @@ def main():
     if args.output and len(args.input) > 1:
         parser.error("-o/--output can only be used with a single input file")
 
-    sys.exit(Remsi(args).run())
+    Remsi(args).run()
 
 if __name__ == "__main__":
     try:
