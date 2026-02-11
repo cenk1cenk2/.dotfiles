@@ -872,8 +872,22 @@ class SmartCutEncoder(Encoder):
 
         return parts if parts else [(seg_start, seg_end, True)]
 
+    def __init__(self, gpu, codec, fade_time, force=False):
+        super().__init__(gpu, codec, force)
+        self.fade_time = fade_time
+
     @staticmethod
-    def _encode_part(input_file, part_path, start, end, video_args, audio_args):
+    def _encode_part(
+        input_file,
+        part_path,
+        start,
+        end,
+        video_args,
+        audio_args,
+        fade_time=0,
+        fade_in=False,
+        fade_out=False,
+    ):
         duration = end - start
         cmd = [
             "ffmpeg",
@@ -888,6 +902,13 @@ class SmartCutEncoder(Encoder):
             str(duration),
         ]
         cmd.extend(video_args)
+        af_parts = []
+        if fade_in and fade_time > 0:
+            af_parts.append(f"afade=t=in:d={fade_time}")
+        if fade_out and fade_time > 0:
+            af_parts.append(f"afade=t=out:st={duration - fade_time}:d={fade_time}")
+        if af_parts:
+            cmd.extend(["-af", ",".join(af_parts)])
         cmd.extend(audio_args)
         cmd.extend(["-y", str(part_path)])
         log.debug("fast part [reencode]: %s", " ".join(cmd))
@@ -934,8 +955,19 @@ class SmartCutEncoder(Encoder):
                 if reencode:
                     part_path = tmpdir / f"part{reencode_idx:04d}{input_file.suffix}"
                     reencode_idx += 1
+                    idx = i - 1
+                    fade_in = idx > 0 and not all_parts[idx - 1][2]
+                    fade_out = idx < n - 1 and not all_parts[idx + 1][2]
                     result = self._encode_part(
-                        input_file, part_path, start, end, video_args, audio_args
+                        input_file,
+                        part_path,
+                        start,
+                        end,
+                        video_args,
+                        audio_args,
+                        fade_time=self.fade_time,
+                        fade_in=fade_in,
+                        fade_out=fade_out,
                     )
                     if result.returncode != 0:
                         return result
@@ -962,9 +994,10 @@ class SmartCutEncoder(Encoder):
                 "0",
                 "-i",
                 str(concat_list),
-                "-c",
+                "-c:v",
                 "copy",
             ]
+            cmd.extend(audio_args)
             if self.force:
                 cmd.append("-y")
             cmd.append(str(output_file))
@@ -983,6 +1016,7 @@ class Remsi:
             self.encoder = SmartCutEncoder(
                 gpu=self._resolve_gpu(),
                 codec=args.codec,
+                fade_time=args.fade_time,
                 force=args.force,
             )
         else:
