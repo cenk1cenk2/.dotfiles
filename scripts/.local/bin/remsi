@@ -873,50 +873,24 @@ class SmartCutEncoder(Encoder):
         return parts if parts else [(seg_start, seg_end, True)]
 
     @staticmethod
-    def _encode_part(
-        input_file, part_path, start, end, reencode, video_args, audio_args
-    ):
+    def _encode_part(input_file, part_path, start, end, video_args, audio_args):
         duration = end - start
-        if reencode:
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-ss",
-                str(start),
-                "-i",
-                str(input_file),
-                "-t",
-                str(duration),
-            ]
-            cmd.extend(video_args)
-            cmd.extend(audio_args)
-            cmd.extend(["-y", str(part_path)])
-        else:
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-ss",
-                str(start),
-                "-i",
-                str(input_file),
-                "-t",
-                str(duration),
-                "-c",
-                "copy",
-                "-avoid_negative_ts",
-                "make_zero",
-                "-y",
-                str(part_path),
-            ]
-        log.debug(
-            "fast part [%s]: %s",
-            "reencode" if reencode else "copy",
-            " ".join(cmd),
-        )
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-ss",
+            str(start),
+            "-i",
+            str(input_file),
+            "-t",
+            str(duration),
+        ]
+        cmd.extend(video_args)
+        cmd.extend(audio_args)
+        cmd.extend(["-y", str(part_path)])
+        log.debug("fast part [reencode]: %s", " ".join(cmd))
 
         return subprocess.run(cmd)
 
@@ -944,33 +918,37 @@ class SmartCutEncoder(Encoder):
             f"{YELLOW}{reencode_dur:.1f}s{RESET} re-encode"
         )
 
+        src = str(input_file.resolve())
         with tempfile.TemporaryDirectory(prefix="remsi_fast_") as tmpdir:
             tmpdir = Path(tmpdir)
-            part_files = [
-                tmpdir / f"part{i:04d}{input_file.suffix}"
-                for i in range(len(all_parts))
-            ]
+            concat_entries = []
+            reencode_idx = 0
 
             n = len(all_parts)
-            for i, (pf, (start, end, reencode)) in enumerate(
-                zip(part_files, all_parts), 1
-            ):
+            for i, (start, end, reencode) in enumerate(all_parts, 1):
                 mode = "reencode" if reencode else "copy"
                 status(
                     f"  [{i}/{n}] {format_timestamp(start)} -> "
                     f"{format_timestamp(end)} ({mode})"
                 )
-                result = self._encode_part(
-                    input_file, pf, start, end, reencode, video_args, audio_args
-                )
-                if result.returncode != 0:
-                    return result
+                if reencode:
+                    part_path = tmpdir / f"part{reencode_idx:04d}{input_file.suffix}"
+                    reencode_idx += 1
+                    result = self._encode_part(
+                        input_file, part_path, start, end, video_args, audio_args
+                    )
+                    if result.returncode != 0:
+                        return result
+                    concat_entries.append(f"file '{part_path}'\n")
+                else:
+                    concat_entries.append(
+                        f"file '{src}'\ninpoint {start}\noutpoint {end}\n"
+                    )
 
             section("Concat")
             concat_list = tmpdir / "concat.txt"
             with open(concat_list, "w") as f:
-                for pf in part_files:
-                    f.write(f"file '{pf}'\n")
+                f.writelines(concat_entries)
 
             cmd = [
                 "ffmpeg",
