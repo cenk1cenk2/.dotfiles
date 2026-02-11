@@ -943,7 +943,6 @@ class SmartCutEncoder(Encoder):
             f"{YELLOW}{reencode_dur:.1f}s{RESET} re-encode"
         )
 
-        src = str(input_file.resolve())
         with tempfile.TemporaryDirectory(prefix="remsi_fast_") as tmpdir:
             tmpdir = Path(tmpdir)
             concat_entries = []
@@ -978,9 +977,30 @@ class SmartCutEncoder(Encoder):
                         return result
                     concat_entries.append(f"file '{part_path}'\n")
                 else:
-                    concat_entries.append(
-                        f"file '{src}'\ninpoint {start}\noutpoint {end}\n"
-                    )
+                    part_path = tmpdir / f"part{reencode_idx:04d}{input_file.suffix}"
+                    reencode_idx += 1
+                    cmd = [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel",
+                        "warning",
+                        "-i",
+                        str(input_file),
+                        "-ss",
+                        str(start),
+                        "-t",
+                        str(end - start),
+                        "-c",
+                        "copy",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-y",
+                        str(part_path),
+                    ]
+                    result = self._run(cmd)
+                    if result.returncode != 0:
+                        return result
+                    concat_entries.append(f"file '{part_path}'\n")
 
             section("Concat")
             concat_list = tmpdir / "concat.txt"
