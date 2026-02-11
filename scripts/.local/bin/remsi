@@ -54,6 +54,10 @@ class VideoInfo:
     height: int | None = None
     fps: float | None = None
     pix_fmt: str | None = None
+    color_space: str | None = None
+    color_transfer: str | None = None
+    color_primaries: str | None = None
+    color_range: str | None = None
 
     def __str__(self):
         parts = []
@@ -65,6 +69,10 @@ class VideoInfo:
             parts.append(f"{self.fps:g}fps")
         if self.pix_fmt:
             parts.append(self.pix_fmt)
+        if self.color_space and self.color_space != "unknown":
+            parts.append(self.color_space)
+        if self.color_range and self.color_range != "unknown":
+            parts.append(self.color_range)
         if self.bitrate:
             parts.append(f"{self.bitrate // 1000}k")
 
@@ -459,7 +467,18 @@ class Encoder:
         vs = Encoder._ffprobe_stream(
             input_file,
             "v",
-            ["codec_name", "bit_rate", "width", "height", "r_frame_rate", "pix_fmt"],
+            [
+                "codec_name",
+                "bit_rate",
+                "width",
+                "height",
+                "r_frame_rate",
+                "pix_fmt",
+                "color_space",
+                "color_transfer",
+                "color_primaries",
+                "color_range",
+            ],
         )
         a = Encoder._ffprobe_stream(
             input_file,
@@ -487,6 +506,10 @@ class Encoder:
                 height=_int(vs.get("height")),
                 fps=Encoder._parse_fps(vs.get("r_frame_rate")),
                 pix_fmt=vs.get("pix_fmt"),
+                color_space=vs.get("color_space"),
+                color_transfer=vs.get("color_transfer"),
+                color_primaries=vs.get("color_primaries"),
+                color_range=vs.get("color_range"),
             ),
             audio=AudioInfo(
                 codec=a.get("codec_name"),
@@ -528,6 +551,21 @@ class Encoder:
             args.extend(["-b:v", str(info.bitrate)])
         if info.pix_fmt:
             args.extend(["-pix_fmt", info.pix_fmt])
+        if info.color_space and info.color_space != "unknown":
+            args.extend(["-colorspace", info.color_space])
+        if info.color_transfer and info.color_transfer != "unknown":
+            args.extend(["-color_trc", info.color_transfer])
+        if info.color_primaries and info.color_primaries != "unknown":
+            args.extend(["-color_primaries", info.color_primaries])
+        if info.color_range and info.color_range != "unknown":
+            cr = (
+                "mpeg"
+                if info.color_range == "tv"
+                else "jpeg"
+                if info.color_range == "pc"
+                else info.color_range
+            )
+            args.extend(["-color_range", cr])
 
         return args
 
@@ -577,13 +615,34 @@ class Encoder:
             and (segments[i + 1].end - segments[i + 1].start) >= self.fade_time
         )
 
-    def _build_filter_lines(self, segments):
+    def _build_filter_lines(self, segments, video_info=None):
         n = len(segments)
+
+        setparams = ""
+        if video_info:
+            sp = []
+            if video_info.color_space and video_info.color_space != "unknown":
+                sp.append(f"colorspace={video_info.color_space}")
+            if video_info.color_transfer and video_info.color_transfer != "unknown":
+                sp.append(f"color_trc={video_info.color_transfer}")
+            if video_info.color_primaries and video_info.color_primaries != "unknown":
+                sp.append(f"color_primaries={video_info.color_primaries}")
+            if video_info.color_range and video_info.color_range != "unknown":
+                r = (
+                    "limited"
+                    if video_info.color_range == "tv"
+                    else "full"
+                    if video_info.color_range == "pc"
+                    else video_info.color_range
+                )
+                sp.append(f"range={r}")
+            if sp:
+                setparams = ",setparams=" + ":".join(sp)
 
         lines = []
         for i, seg in enumerate(segments):
             lines.append(
-                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB[v{i}]"
+                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB{setparams}[v{i}]"
             )
             lines.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
 
@@ -661,7 +720,7 @@ class Encoder:
 
             return self._run(cmd)
 
-        lines = self._build_filter_lines(segments)
+        lines = self._build_filter_lines(segments, media.video)
         with self._filter_script(lines) as script_path:
             cmd = [
                 "ffmpeg",
@@ -762,6 +821,16 @@ class Remsi:
             return
 
         all_regions = Analyzer.merge_regions(silences, fillers)
+        min_cut = self.args.min_cut
+        if min_cut > 0:
+            skipped = [r for r in all_regions if (r.end - r.start) < min_cut]
+            cut = [r for r in all_regions if (r.end - r.start) >= min_cut]
+            if skipped:
+                status(
+                    f"skipping {YELLOW}{len(skipped)}{RESET} region(s) "
+                    f"shorter than {min_cut}s"
+                )
+            all_regions = cut
         segments = self.analyzer.regions_to_segments(all_regions, total)
 
         if not all_regions:
@@ -850,6 +919,12 @@ def main():
         type=float,
         default=0.8,
         help="minimum silence duration in seconds",
+    )
+    parser.add_argument(
+        "--min-cut",
+        type=float,
+        default=0.05,
+        help="minimum region duration to cut (smaller regions are kept)",
     )
     parser.add_argument(
         "--gpu",
