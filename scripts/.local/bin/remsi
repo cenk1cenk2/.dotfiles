@@ -538,17 +538,38 @@ class Encoder:
             hw_enc = self.GPU_ENCODERS[family].get(self.gpu)
             if hw_enc:
                 if self.gpu == "vaapi":
-                    args = ["-vaapi_device", "/dev/dri/renderD128", "-c:v", hw_enc]
+                    args = [
+                        "-vaapi_device",
+                        "/dev/dri/renderD128",
+                        "-c:v",
+                        hw_enc,
+                        "-qp",
+                        "20",
+                    ]
+                elif self.gpu == "nvidia":
+                    args = [
+                        "-c:v",
+                        hw_enc,
+                        "-preset",
+                        "p5",
+                        "-tune",
+                        "hq",
+                        "-rc",
+                        "constqp",
+                        "-qp",
+                        "20",
+                        "-multipass",
+                        "qres",
+                        "-bf",
+                        "2",
+                    ]
                 else:
-                    args = ["-c:v", hw_enc]
+                    args = ["-c:v", hw_enc, "-qp", "20"]
         elif info.codec:
-            args = ["-c:v", info.codec]
+            args = ["-c:v", info.codec, "-crf", "20"]
 
         if not args:
             return []
-
-        if info.bitrate:
-            args.extend(["-b:v", str(info.bitrate)])
         if info.pix_fmt:
             args.extend(["-pix_fmt", info.pix_fmt])
         if info.color_space and info.color_space != "unknown":
@@ -618,8 +639,11 @@ class Encoder:
     def _build_filter_lines(self, segments, video_info=None):
         n = len(segments)
 
-        setparams = ""
+        color_filters = ""
         if video_info:
+            parts = []
+            if video_info.pix_fmt:
+                parts.append(f"format={video_info.pix_fmt}")
             sp = []
             if video_info.color_space and video_info.color_space != "unknown":
                 sp.append(f"colorspace={video_info.color_space}")
@@ -637,12 +661,14 @@ class Encoder:
                 )
                 sp.append(f"range={r}")
             if sp:
-                setparams = ",setparams=" + ":".join(sp)
+                parts.append("setparams=" + ":".join(sp))
+            if parts:
+                color_filters = "," + ",".join(parts)
 
         lines = []
         for i, seg in enumerate(segments):
             lines.append(
-                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB{setparams}[v{i}]"
+                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB{color_filters}[v{i}]"
             )
             lines.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
 
