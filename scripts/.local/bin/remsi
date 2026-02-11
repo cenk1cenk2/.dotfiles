@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import bisect
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -18,17 +20,25 @@ log = logging.getLogger("remsi")
 class RegionKind(StrEnum):
     SILENCE = "silence"
     FILLER = "filler"
+    STUTTER = "stutter"
     GAP = "gap"
     SPEECH = "speech"
 
     @property
     def priority(self):
-        return {self.SILENCE: 2, self.FILLER: 1, self.GAP: 0, self.SPEECH: -1}[self]
+        return {
+            self.SILENCE: 2,
+            self.FILLER: 1,
+            self.STUTTER: 1,
+            self.GAP: 0,
+            self.SPEECH: -1,
+        }[self]
 
     def color(self):
         return {
             self.SILENCE: YELLOW,
             self.FILLER: RED,
+            self.STUTTER: BLUE,
             self.GAP: DIM,
             self.SPEECH: GREEN,
         }[self]
@@ -131,6 +141,7 @@ DIM = _ansi(2)
 GREEN = _ansi(32)
 YELLOW = _ansi(33)
 RED = _ansi(31)
+BLUE = _ansi(34)
 
 def _term_width():
     try:
@@ -292,6 +303,8 @@ class Analyzer:
     def _classify_words(transcription):
         speech = []
         fillers = []
+        stutters = []
+        prev_letters = None
         for seg in transcription.get("transcription", []):
             text = seg["text"].strip()
             letters = re.sub(r"[^a-z]", "", text.lower())
@@ -308,10 +321,20 @@ class Analyzer:
                     format_timestamp(start),
                     format_timestamp(end),
                 )
+                prev_letters = None
+            elif letters and letters == prev_letters:
+                stutters.append(Region(start, end, RegionKind.STUTTER))
+                log.debug(
+                    "  stutter: '%s' at %s -> %s",
+                    text,
+                    format_timestamp(start),
+                    format_timestamp(end),
+                )
             else:
                 speech.append(Region(start, end, RegionKind.SPEECH))
+                prev_letters = letters if letters else None
 
-        return speech, fillers
+        return speech, fillers, stutters
 
     @staticmethod
     def _find_uncovered_gaps(known_regions):
@@ -339,11 +362,11 @@ class Analyzer:
         if data is None:
             return []
 
-        speech, fillers = self._classify_words(data)
-        gaps = self._find_uncovered_gaps(silences + speech + fillers)
-        fillers.extend(gaps)
+        speech, fillers, stutters = self._classify_words(data)
+        gaps = self._find_uncovered_gaps(silences + speech + fillers + stutters)
+        regions = fillers + gaps + stutters
 
-        for i, r in enumerate(fillers, 1):
+        for i, r in enumerate(regions, 1):
             log.info(
                 "  %d. %s -> %s (%.1fs) %s",
                 i,
@@ -352,9 +375,15 @@ class Analyzer:
                 r.end - r.start,
                 r.kind,
             )
-        log.info("speech segments: %d, filler gaps: %d", len(speech), len(fillers))
+        log.info(
+            "speech: %d, fillers: %d, stutters: %d, gaps: %d",
+            len(speech),
+            len(fillers),
+            len(stutters),
+            len(gaps),
+        )
 
-        return fillers
+        return regions
 
     @staticmethod
     def merge_regions(silences, fillers):
@@ -401,12 +430,9 @@ class Encoder:
         "av1": {"nvidia": "av1_nvenc", "amd": "av1_amf", "vaapi": "av1_vaapi"},
     }
 
-    def __init__(self, gpu, codec, fade_time, video_filter, audio_filter, force=False):
+    def __init__(self, gpu, codec, force=False):
         self.gpu = gpu
         self.codec = codec
-        self.fade_time = fade_time
-        self.video_filter = video_filter
-        self.audio_filter = audio_filter
         self.force = force
 
     @staticmethod
@@ -597,6 +623,52 @@ class Encoder:
 
         return args
 
+    @staticmethod
+    def _run(cmd):
+        log.debug("encode cmd: %s", " ".join(cmd))
+
+        return subprocess.run(cmd)
+
+    def encode(self, input_file, output_file, segments, media=None):
+        media = media or MediaInfo()
+
+        if len(segments) == 1:
+            seg = segments[0]
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-stats",
+                "-ss",
+                str(seg.start),
+                "-to",
+                str(seg.end),
+                "-i",
+                str(input_file),
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+            ]
+            if self.force:
+                cmd.append("-y")
+            cmd.append(str(output_file))
+
+            return self._run(cmd)
+
+        return self._encode_segments(input_file, output_file, segments, media)
+
+    def _encode_segments(self, input_file, output_file, segments, media):
+        raise NotImplementedError
+
+class FancyEncoder(Encoder):
+    def __init__(self, gpu, codec, fade_time, video_filter, audio_filter, force=False):
+        super().__init__(gpu, codec, force)
+        self.fade_time = fade_time
+        self.video_filter = video_filter
+        self.audio_filter = audio_filter
+
     def _xfade_expr(self, offset):
         name, _, extra = self.video_filter.partition(":")
         parts = [f"{name}=offset={offset}:duration={self.fade_time}"]
@@ -711,41 +783,7 @@ class Encoder:
 
         return lines
 
-    @staticmethod
-    def _run(cmd):
-        log.debug("encode cmd: %s", " ".join(cmd))
-
-        return subprocess.run(cmd)
-
-    def encode(self, input_file, output_file, segments, media=None):
-        n = len(segments)
-        media = media or MediaInfo()
-
-        if n == 1:
-            seg = segments[0]
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-stats",
-                "-ss",
-                str(seg.start),
-                "-to",
-                str(seg.end),
-                "-i",
-                str(input_file),
-                "-c:v",
-                "copy",
-                "-c:a",
-                "copy",
-            ]
-            if self.force:
-                cmd.append("-y")
-            cmd.append(str(output_file))
-
-            return self._run(cmd)
-
+    def _encode_segments(self, input_file, output_file, segments, media):
         lines = self._build_filter_lines(segments, media.video)
         with self._filter_script(lines) as script_path:
             cmd = [
@@ -771,6 +809,190 @@ class Encoder:
 
             return self._run(cmd)
 
+class SmartCutEncoder(Encoder):
+    @staticmethod
+    def _probe_keyframes(input_file):
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-skip_frame",
+                "nokey",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+                str(input_file),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        keyframes = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                keyframes.append(float(line))
+            except ValueError:
+                continue
+        keyframes.sort()
+        log.info("probed %d keyframes", len(keyframes))
+
+        return keyframes
+
+    @staticmethod
+    def _split_at_keyframes(seg_start, seg_end, keyframes):
+        if not keyframes:
+            return [(seg_start, seg_end, True)]
+
+        idx_start = bisect.bisect_left(keyframes, seg_start)
+        kf_start = keyframes[idx_start] if idx_start < len(keyframes) else None
+
+        idx_end = bisect.bisect_right(keyframes, seg_end) - 1
+        kf_end = keyframes[idx_end] if idx_end >= 0 else None
+
+        if kf_start is None or kf_end is None or kf_start >= seg_end:
+            return [(seg_start, seg_end, True)]
+
+        parts = []
+        if kf_start > seg_start:
+            parts.append((seg_start, kf_start, True))
+        if kf_end > kf_start:
+            parts.append((kf_start, kf_end, False))
+        elif kf_start < seg_end:
+            parts.append((kf_start, seg_end, True))
+
+            return parts
+        if seg_end > kf_end:
+            parts.append((kf_end, seg_end, True))
+
+        return parts if parts else [(seg_start, seg_end, True)]
+
+    @staticmethod
+    def _encode_part(
+        input_file, part_path, start, end, reencode, video_args, audio_args
+    ):
+        duration = end - start
+        if reencode:
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-ss",
+                str(start),
+                "-i",
+                str(input_file),
+                "-t",
+                str(duration),
+            ]
+            cmd.extend(video_args)
+            cmd.extend(audio_args)
+            cmd.extend(["-y", str(part_path)])
+        else:
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-ss",
+                str(start),
+                "-i",
+                str(input_file),
+                "-t",
+                str(duration),
+                "-c",
+                "copy",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-y",
+                str(part_path),
+            ]
+        log.debug(
+            "fast part [%s]: %s",
+            "reencode" if reencode else "copy",
+            " ".join(cmd),
+        )
+
+        return subprocess.run(cmd)
+
+    def _encode_segments(self, input_file, output_file, segments, media):  # noqa: C901
+        keyframes = self._probe_keyframes(input_file)
+        video_args = self._video_codec_args(media.video)
+        audio_args = self._audio_codec_args(media.audio)
+
+        all_parts = []
+        for seg in segments:
+            sub = self._split_at_keyframes(seg.start, seg.end, keyframes)
+            for start, end, reencode in sub:
+                log.info(
+                    "  part %s -> %s (%s)",
+                    format_timestamp(start),
+                    format_timestamp(end),
+                    "reencode" if reencode else "copy",
+                )
+            all_parts.extend(sub)
+
+        copy_dur = sum(e - s for s, e, r in all_parts if not r)
+        reencode_dur = sum(e - s for s, e, r in all_parts if r)
+        status(
+            f"smart-cut:\t{GREEN}{copy_dur:.1f}s{RESET} stream copy, "
+            f"{YELLOW}{reencode_dur:.1f}s{RESET} re-encode"
+        )
+
+        with tempfile.TemporaryDirectory(prefix="remsi_fast_") as tmpdir:
+            tmpdir = Path(tmpdir)
+            part_files = [
+                tmpdir / f"part{i:04d}{input_file.suffix}"
+                for i in range(len(all_parts))
+            ]
+
+            n = len(all_parts)
+            for i, (pf, (start, end, reencode)) in enumerate(
+                zip(part_files, all_parts), 1
+            ):
+                mode = "reencode" if reencode else "copy"
+                status(
+                    f"  [{i}/{n}] {format_timestamp(start)} -> "
+                    f"{format_timestamp(end)} ({mode})"
+                )
+                result = self._encode_part(
+                    input_file, pf, start, end, reencode, video_args, audio_args
+                )
+                if result.returncode != 0:
+                    return result
+
+            section("Concat")
+            concat_list = tmpdir / "concat.txt"
+            with open(concat_list, "w") as f:
+                for pf in part_files:
+                    f.write(f"file '{pf}'\n")
+
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-stats",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+            ]
+            if self.force:
+                cmd.append("-y")
+            cmd.append(str(output_file))
+
+            return self._run(cmd)
+
 class Remsi:
     def __init__(self, args):
         self.args = args
@@ -779,14 +1001,21 @@ class Remsi:
             duration=args.duration,
             model_path=self._resolve_model_path(),
         )
-        self.encoder = Encoder(
-            gpu=self._resolve_gpu(),
-            codec=args.codec,
-            fade_time=args.fade_time,
-            video_filter=args.fade_video_filter,
-            audio_filter=args.fade_audio_filter,
-            force=args.force,
-        )
+        if args.mode == "fast":
+            self.encoder = SmartCutEncoder(
+                gpu=self._resolve_gpu(),
+                codec=args.codec,
+                force=args.force,
+            )
+        else:
+            self.encoder = FancyEncoder(
+                gpu=self._resolve_gpu(),
+                codec=args.codec,
+                fade_time=args.fade_time,
+                video_filter=args.fade_video_filter,
+                audio_filter=args.fade_audio_filter,
+                force=args.force,
+            )
 
     def _resolve_gpu(self):
         if self.args.gpu == "auto":
@@ -816,6 +1045,7 @@ class Remsi:
 
     def _process_file(self, input_file, output_file):
         section(f"Processing {input_file.name}")
+        t_start = time.monotonic()
 
         total = self.analyzer.get_duration(input_file)
         if total is None:
@@ -831,6 +1061,7 @@ class Remsi:
             "silence params: noise=%s duration=%s", self.args.noise, self.args.duration
         )
 
+        t_probe = time.monotonic()
         try:
             section("Silence Detection")
             silences = self.analyzer.detect_silence(input_file, total)
@@ -838,9 +1069,17 @@ class Remsi:
 
             fillers = []
             if self.analyzer.model_path:
-                section("Filler Word Detection")
+                section("Speech Analysis")
                 fillers = self.analyzer.detect_filler_words(input_file, silences)
-                status(f"found {YELLOW}{len(fillers)}{RESET} filler region(s)")
+                n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
+                n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
+                parts = []
+                if n_filler:
+                    parts.append(f"{YELLOW}{n_filler}{RESET} filler(s)")
+                if n_stutter:
+                    parts.append(f"{YELLOW}{n_stutter}{RESET} stutter(s)")
+                if parts:
+                    status(f"found {', '.join(parts)}")
         except RuntimeError as e:
             error(str(e))
 
@@ -884,7 +1123,21 @@ class Remsi:
                 f"{r.kind.color()}{r.kind}{RESET}"
             )
 
+        t_analysis = time.monotonic()
+
+        if self.args.analyze:
+            t_total = t_analysis - t_start
+            status(
+                f"elapsed:\t{YELLOW}{t_total:.1f}s{RESET} "
+                f"({DIM}probe {t_probe - t_start:.1f}s, "
+                f"analysis {t_analysis - t_probe:.1f}s{RESET})"
+            )
+
+            return
+
         section("Encoding")
+        if isinstance(self.encoder, SmartCutEncoder):
+            status(f"mode:\t\t{YELLOW}fast (smart-cut){RESET}")
         status(f"writing {GREEN}{output_file}{RESET}")
         try:
             result = self.encoder.encode(input_file, output_file, segments, media)
@@ -901,8 +1154,12 @@ class Remsi:
         parts = []
         if silences:
             parts.append(f"{YELLOW}{len(silences)}{RESET} silence(s)")
-        if fillers:
-            parts.append(f"{YELLOW}{len(fillers)}{RESET} filler(s)")
+        n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
+        n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
+        if n_filler:
+            parts.append(f"{YELLOW}{n_filler}{RESET} filler(s)")
+        if n_stutter:
+            parts.append(f"{YELLOW}{n_stutter}{RESET} stutter(s)")
         if parts:
             status(f"detected {' and '.join(parts)}")
         status(
@@ -913,6 +1170,14 @@ class Remsi:
         status(f"size:\t\t{YELLOW}{out_media.size_str}{RESET}")
         status(f"video:\t\t{YELLOW}{out_media.video}{RESET}")
         status(f"audio:\t\t{YELLOW}{out_media.audio}{RESET}")
+        t_end = time.monotonic()
+        t_total = t_end - t_start
+        status(
+            f"elapsed:\t{YELLOW}{t_total:.1f}s{RESET} "
+            f"({DIM}probe {t_probe - t_start:.1f}s, "
+            f"analysis {t_analysis - t_probe:.1f}s, "
+            f"encode {t_end - t_analysis:.1f}s{RESET})"
+        )
 
         status(f"\n{GREEN}{output_file}{RESET}")
 
@@ -990,6 +1255,17 @@ def main():
         "--model",
         default="ggml-large-v3.bin",
         help="whisper GGML model filename",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["fancy", "fast"],
+        default="fancy",
+        help="encoding mode: fancy (crossfade/filter_complex) or fast (smart-cut)",
+    )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="analyze only: detect regions and show summary without encoding",
     )
     parser.add_argument(
         "-f", "--force", action="store_true", help="overwrite output file if it exists"
