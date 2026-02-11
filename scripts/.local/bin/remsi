@@ -53,6 +53,7 @@ class VideoInfo:
     width: int | None = None
     height: int | None = None
     fps: float | None = None
+    pix_fmt: str | None = None
 
     def __str__(self):
         parts = []
@@ -62,6 +63,8 @@ class VideoInfo:
             parts.append(f"{self.width}x{self.height}")
         if self.fps:
             parts.append(f"{self.fps:g}fps")
+        if self.pix_fmt:
+            parts.append(self.pix_fmt)
         if self.bitrate:
             parts.append(f"{self.bitrate // 1000}k")
 
@@ -91,6 +94,20 @@ class AudioInfo:
 class MediaInfo:
     video: VideoInfo = field(default_factory=VideoInfo)
     audio: AudioInfo = field(default_factory=AudioInfo)
+    size: int | None = None
+
+    @property
+    def size_str(self):
+        if self.size is None:
+            return "?"
+        if self.size >= 1_073_741_824:
+            return f"{self.size / 1_073_741_824:.2f} GB"
+        if self.size >= 1_048_576:
+            return f"{self.size / 1_048_576:.1f} MB"
+        if self.size >= 1024:
+            return f"{self.size / 1024:.1f} KB"
+
+        return f"{self.size} B"
 
 _use_color = sys.stderr.isatty()
 
@@ -376,12 +393,13 @@ class Encoder:
         "av1": {"nvidia": "av1_nvenc", "amd": "av1_amf", "vaapi": "av1_vaapi"},
     }
 
-    def __init__(self, gpu, codec, fade_time, video_filter, audio_filter):
+    def __init__(self, gpu, codec, fade_time, video_filter, audio_filter, force=False):
         self.gpu = gpu
         self.codec = codec
         self.fade_time = fade_time
         self.video_filter = video_filter
         self.audio_filter = audio_filter
+        self.force = force
 
     @staticmethod
     def detect_gpu():
@@ -441,7 +459,7 @@ class Encoder:
         vs = Encoder._ffprobe_stream(
             input_file,
             "v",
-            ["codec_name", "bit_rate", "width", "height", "r_frame_rate"],
+            ["codec_name", "bit_rate", "width", "height", "r_frame_rate", "pix_fmt"],
         )
         a = Encoder._ffprobe_stream(
             input_file,
@@ -455,13 +473,20 @@ class Encoder:
             except (ValueError, TypeError):
                 return None
 
+        try:
+            size = Path(input_file).stat().st_size
+        except OSError:
+            size = None
+
         return MediaInfo(
+            size=size,
             video=VideoInfo(
                 codec=vs.get("codec_name"),
                 bitrate=_int(vs.get("bit_rate")),
                 width=_int(vs.get("width")),
                 height=_int(vs.get("height")),
                 fps=Encoder._parse_fps(vs.get("r_frame_rate")),
+                pix_fmt=vs.get("pix_fmt"),
             ),
             audio=AudioInfo(
                 codec=a.get("codec_name"),
@@ -485,48 +510,26 @@ class Encoder:
             elif name in ("av1", "libsvtav1", "libaom-av1"):
                 family = "av1"
 
+        args = []
         if self.gpu and family and family in self.GPU_ENCODERS:
             hw_enc = self.GPU_ENCODERS[family].get(self.gpu)
             if hw_enc:
-                args = ["-c:v", hw_enc]
-                if self.gpu == "nvidia":
-                    args.extend(["-preset", "p4", "-cq", "20", "-rc", "vbr"])
-                elif self.gpu == "amd":
-                    args.extend(
-                        [
-                            "-quality",
-                            "balanced",
-                            "-rc",
-                            "vbr_latency",
-                            "-qp_i",
-                            "20",
-                            "-qp_p",
-                            "20",
-                        ]
-                    )
-                elif self.gpu == "vaapi":
-                    args = ["-vaapi_device", "/dev/dri/renderD128"] + args
-                    args.extend(["-qp", "20", "-rc_mode", "CQP"])
-                if info.bitrate:
-                    args.extend(
-                        [
-                            "-maxrate",
-                            str(info.bitrate),
-                            "-bufsize",
-                            str(info.bitrate * 2),
-                        ]
-                    )
-
-                return args
-
-        if info.codec:
+                if self.gpu == "vaapi":
+                    args = ["-vaapi_device", "/dev/dri/renderD128", "-c:v", hw_enc]
+                else:
+                    args = ["-c:v", hw_enc]
+        elif info.codec:
             args = ["-c:v", info.codec]
-            if info.bitrate:
-                args.extend(["-b:v", str(info.bitrate)])
 
-            return args
+        if not args:
+            return []
 
-        return []
+        if info.bitrate:
+            args.extend(["-b:v", str(info.bitrate)])
+        if info.pix_fmt:
+            args.extend(["-pix_fmt", info.pix_fmt])
+
+        return args
 
     def _audio_codec_args(self, info):
         args = ["-c:a", info.codec or "aac"]
@@ -651,8 +654,10 @@ class Encoder:
                 "copy",
                 "-c:a",
                 "copy",
-                str(output_file),
             ]
+            if self.force:
+                cmd.append("-y")
+            cmd.append(str(output_file))
 
             return self._run(cmd)
 
@@ -673,6 +678,8 @@ class Encoder:
                 "-map",
                 "[aout]",
             ]
+            if self.force:
+                cmd.append("-y")
             cmd.extend(self._video_codec_args(media.video))
             cmd.extend(self._audio_codec_args(media.audio))
             cmd.append(str(output_file))
@@ -693,6 +700,7 @@ class Remsi:
             fade_time=args.fade_time,
             video_filter=args.fade_video_filter,
             audio_filter=args.fade_audio_filter,
+            force=args.force,
         )
 
     def _resolve_gpu(self):
@@ -731,6 +739,7 @@ class Remsi:
             return
         media = Encoder.probe(input_file)
         status(f"duration:\t{BOLD}{format_timestamp(total)}{RESET}")
+        status(f"size:\t\t{YELLOW}{media.size_str}{RESET}")
         status(f"video:\t\t{YELLOW}{media.video}{RESET}")
         status(f"audio:\t\t{YELLOW}{media.audio}{RESET}")
         log.debug(
@@ -806,6 +815,7 @@ class Remsi:
             f"{format_timestamp(total)} down to {GREEN}{format_timestamp(kept)}{RESET}"
         )
         out_media = Encoder.probe(output_file)
+        status(f"size:\t\t{YELLOW}{out_media.size_str}{RESET}")
         status(f"video:\t\t{YELLOW}{out_media.video}{RESET}")
         status(f"audio:\t\t{YELLOW}{out_media.audio}{RESET}")
 
@@ -879,6 +889,9 @@ def main():
         "--model",
         default="ggml-large-v3.bin",
         help="whisper GGML model filename",
+    )
+    parser.add_argument(
+        "-f", "--force", action="store_true", help="overwrite output file if it exists"
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
     args = parser.parse_args()
