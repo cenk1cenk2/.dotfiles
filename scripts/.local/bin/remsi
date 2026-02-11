@@ -134,22 +134,16 @@ def format_timestamp(seconds):
 
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
 
-FILLER_WORDS = {
-    "um",
-    "umm",
-    "uh",
-    "uhh",
-    "uhm",
-    "hmm",
-    "hm",
-    "mm",
-    "mmm",
-    "mhm",
-    "erm",
-    "er",
-    "ah",
-    "ahh",
-}
+FILLER_PATTERN = re.compile(
+    r"^("
+    r"u+[hm]+|"  # uh, uhh, um, umm, uhm
+    r"[hm]+m*|"  # hm, hmm, mm, mmm, mhm
+    r"e+r+m*|"  # er, erm, errr
+    r"a+h*|"  # ah, ahh, aaa, aaah
+    r"o+h+|"  # oh, ohh
+    r"e+h+|"  # eh, ehh
+    r")$"
+)
 
 class Analyzer:
     def __init__(self, noise, duration, model_path=None):
@@ -280,7 +274,7 @@ class Analyzer:
             end = seg["offsets"]["to"] / 1000
             if start >= end:
                 continue
-            is_filler = (not text) or (letters and letters in FILLER_WORDS)
+            is_filler = (not text) or (letters and FILLER_PATTERN.match(letters))
             if is_filler:
                 fillers.append(Region(start, end, RegionKind.FILLER))
                 log.debug(
@@ -495,10 +489,33 @@ class Encoder:
             hw_enc = self.GPU_ENCODERS[family].get(self.gpu)
             if hw_enc:
                 args = ["-c:v", hw_enc]
-                if info.bitrate:
-                    args.extend(["-b:v", str(info.bitrate)])
-                if self.gpu == "vaapi":
+                if self.gpu == "nvidia":
+                    args.extend(["-preset", "p4", "-cq", "20", "-rc", "vbr"])
+                elif self.gpu == "amd":
+                    args.extend(
+                        [
+                            "-quality",
+                            "balanced",
+                            "-rc",
+                            "vbr_latency",
+                            "-qp_i",
+                            "20",
+                            "-qp_p",
+                            "20",
+                        ]
+                    )
+                elif self.gpu == "vaapi":
                     args = ["-vaapi_device", "/dev/dri/renderD128"] + args
+                    args.extend(["-qp", "20", "-rc_mode", "CQP"])
+                if info.bitrate:
+                    args.extend(
+                        [
+                            "-maxrate",
+                            str(info.bitrate),
+                            "-bufsize",
+                            str(info.bitrate * 2),
+                        ]
+                    )
 
                 return args
 
@@ -630,10 +647,12 @@ class Encoder:
                 str(seg.end),
                 "-i",
                 str(input_file),
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+                str(output_file),
             ]
-            cmd.extend(self._video_codec_args(media.video))
-            cmd.extend(self._audio_codec_args(media.audio))
-            cmd.append(str(output_file))
 
             return self._run(cmd)
 
