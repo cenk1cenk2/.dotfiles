@@ -38,6 +38,7 @@ DEFAULT = ""
 "vlc" = ""
 "mpv" = ""
 "com.obsproject.Studio" = "󰑋"
+"org.manjaro.pamac.manager" = "󰏔"
 
 [title_in_class.".*"]
 "(?i)Github.*Firefox" = ""
