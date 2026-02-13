@@ -287,7 +287,6 @@ def main():
 
     if args.command == "_wait-and-signal":
         state_notifications = {
-            "recording": "Recording speech...",
             "working": "Processing transcription...",
             "output": "Outputting transcription...",
         }
