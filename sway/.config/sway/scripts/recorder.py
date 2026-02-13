@@ -14,7 +14,6 @@ try:
     OBS_AVAILABLE = True
 except ImportError:
     OBS_AVAILABLE = False
-    print("Warning: obsws-python not installed. Install with: pip install obsws-python")
 
 def notify(
     message,
@@ -28,29 +27,28 @@ def notify(
     subprocess.run(cmd)
 
 def get_obs_connection(retry=3, wait=1, silent=False):
-    """Get OBS WebSocket connection with retry logic"""
     if not OBS_AVAILABLE:
+        if not silent:
+            notify("obsws-python not installed. Install with: pip install obsws-python")
         return None
 
     for attempt in range(retry):
         try:
-            ws = obs.ReqClient(host="localhost", port=4455, password="")
-            return ws
+            return obs.ReqClient(host="localhost", port=4455, password="")
         except Exception as e:
             if attempt < retry - 1:
                 time.sleep(wait)
-            else:
-                if not silent:
-                    notify(f"Failed to connect to OBS: {e}")
-                return None
+            elif not silent:
+                notify(f"Failed to connect to OBS: {e}")
 
     return None
 
 def is_obs_running():
     return any(p.info["name"] == "obs" for p in psutil.process_iter(["name"]))
 
-def get_record_status(silent=False):
-    ws = get_obs_connection(silent=silent)
+def get_record_status(ws=None, silent=False):
+    if not ws:
+        ws = get_obs_connection(silent=silent)
     if not ws:
         return None
 
@@ -64,13 +62,10 @@ def is_recording(silent=False):
 
     return status.output_active if status else False
 
-def is_paused(silent=False):
-    status = get_record_status(silent=silent)
-
-    return getattr(status, "output_paused", False) if status else False
+def signal_waybar():
+    subprocess.run(["waybar-signal.sh", "recorder"], check=False)
 
 def start_recording():
-    """Start OBS recording via WebSocket"""
     ws = get_obs_connection()
     if not ws:
         notify("Could not connect to OBS. Make sure OBS is running.")
@@ -78,7 +73,7 @@ def start_recording():
 
     try:
         ws.start_record()
-        subprocess.run(["waybar-signal.sh", "recorder"])
+        signal_waybar()
         notify("Recording started")
         return True
     except Exception as e:
@@ -86,29 +81,26 @@ def start_recording():
         return False
 
 def stop_recording():
-    """Stop OBS recording via WebSocket"""
     ws = get_obs_connection()
     if not ws:
         notify("Could not connect to OBS")
         return False
 
     try:
-        # Get the current recording status before stopping to get the output path
         try:
             status = ws.get_record_status()
             output_path = status.output_path if hasattr(status, "output_path") else None
-        except:
+        except Exception:
             output_path = None
 
         ws.stop_record()
         for _ in range(25):
             time.sleep(0.2)
-            status = get_record_status(silent=True)
+            status = get_record_status(ws=ws, silent=True)
             if not status or not status.output_active:
                 break
-        subprocess.run(["waybar-signal.sh", "recorder"])
+        signal_waybar()
 
-        # Show where the file was saved
         if output_path:
             notify(f"Recording saved to:\n{output_path}", timeout=5000)
         else:
@@ -119,7 +111,6 @@ def stop_recording():
         return False
 
 def toggle_pause():
-    """Toggle pause/resume OBS recording"""
     ws = get_obs_connection()
     if not ws:
         notify("Could not connect to OBS")
@@ -127,7 +118,7 @@ def toggle_pause():
 
     try:
         ws.toggle_record_pause()
-        subprocess.run(["waybar-signal.sh", "recorder"])
+        signal_waybar()
         return True
     except Exception as e:
         notify(f"Failed to toggle pause: {e}")
@@ -137,22 +128,15 @@ def get_status_json():
     status = get_record_status(silent=True)
 
     if status and status.output_active:
-        if getattr(status, "output_paused", False):
-            return json.dumps(
-                {
-                    "class": "recording paused",
-                    "text": "⏸",
-                    "tooltip": "Recording paused - Click to toggle",
-                }
-            )
+        paused = getattr(status, "output_paused", False)
+        state = "paused" if paused else "recording"
+        status_map = {
+            "paused": ("recording paused", "⏸", "Recording paused - Click to toggle"),
+            "recording": ("recording", "⏺", "Recording active - Click to stop"),
+        }
+        cls, text, tooltip = status_map[state]
 
-        return json.dumps(
-            {
-                "class": "recording",
-                "text": "⏺",
-                "tooltip": "Recording active - Click to stop",
-            }
-        )
+        return json.dumps({"class": cls, "text": text, "tooltip": tooltip})
 
     if is_obs_running():
         return json.dumps(
@@ -166,7 +150,6 @@ def get_status_json():
     return json.dumps({"class": "idle", "text": "", "tooltip": "Not recording"})
 
 def open_obs():
-    """Open OBS GUI"""
     if is_obs_running():
         notify("OBS is already running")
     else:
@@ -176,7 +159,7 @@ def open_obs():
             stderr=subprocess.DEVNULL,
         )
         notify("Opening OBS...", timeout=2000)
-        subprocess.run(["waybar-signal.sh", "recorder"])
+        signal_waybar()
 
 def main():
     parser = argparse.ArgumentParser(
@@ -184,7 +167,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    subparsers = parser.add_subparsers(
+        dest="command",
+        help="Command to execute",
+        required=True,
+    )
 
     subparsers.add_parser("toggle", help="Toggle recording (start/stop)")
     subparsers.add_parser("start", help="Start recording")
@@ -198,10 +185,6 @@ def main():
     subparsers.add_parser("kill", help="Stop recording (alias for 'stop')")
 
     args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
 
     if args.command == "status":
         print(get_status_json())
