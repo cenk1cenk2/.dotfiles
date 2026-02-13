@@ -76,6 +76,29 @@ disable-model-invocation: true
    - Update understanding based on the actual code changes
    - Keep the plan synchronized with reality
 
+### Memory Management (Knowledge Graph)
+
+> **CRITICAL: ALWAYS persist evaluation findings to the memory knowledge graph.**
+>
+> Use `mcp__mcphub__memory__*` tools so future sessions can resume with full context.
+
+**During evaluation, update memory with:**
+
+- **Progress snapshot:** Which plan items are completed, in progress, or blocked — update the plan/project entity observations
+- **Deviations found:** Record any differences between planned and actual implementation, including whether they were intentional improvements or issues
+- **Evaluation findings:** Technical insights, edge cases discovered, risks identified during code review
+- **Updated plan state:** After evaluation adjusts the plan, persist the updated plan summary to memory
+- **Remaining work:** Clearly document what still needs to be done so a future session can pick up where this one left off
+
+**How to store:**
+
+- Use `mcp__mcphub__memory__add_observations` to update existing project/plan entities with evaluation results
+- Use `mcp__mcphub__memory__create_entities` if a new feature or component was discovered during evaluation
+- Use `mcp__mcphub__memory__create_relations` to link newly discovered components to the project
+- Keep observations concise and actionable — they should allow a future session to resume work
+
+**Memory enables continuity:** The knowledge graph is the bridge between sessions. After evaluation, the memory should reflect the true state of the implementation so that future assistant or evaluate invocations can read the graph and immediately understand: what was planned, what was actually implemented, what deviations exist, and what remains.
+
 ### Key Principles
 
 - **Stop planning new approaches** - don't come up with new ideas or alternative solutions
@@ -84,5 +107,6 @@ disable-model-invocation: true
 - **Don't judge deviations immediately** - ask questions to understand reasoning first
 - **Be thorough** in reviewing changes but efficient in feedback
 - **Keep the plan synchronized** by updating it based on actual progress
+- **Keep memory up to date** by persisting evaluation findings and plan state to the knowledge graph
 - **Stay in plan mode** - do not exit plan mode during evaluation
-- **Return to Assistant Mode** after completing evaluation to guide next steps
+- **Return to Assistant Mode** after completing evaluation to guide next steps only WHEN the user asks to do so

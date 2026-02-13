@@ -79,9 +79,43 @@ disable-model-invocation: true
    - Ask clarifying questions when replies are unclear or ambiguous
    - Always provide feedback as direct response messages (not in Linear issues)
 
+### Memory Management (Knowledge Graph)
+
+> **CRITICAL: ALWAYS keep the memory knowledge graph up to date throughout the session.**
+>
+> Use `mcp__mcphub__memory__*` tools to persist context across sessions.
+
+**When to update memory:**
+
+- **Plan creation:** When the initial plan is created, store a summary as an entity or observation in the knowledge graph (project entity or dedicated plan entity)
+- **Plan updates:** When the plan evolves during the session, update the corresponding memory entity with the latest state
+- **Evaluation results:** When evaluation mode discovers progress, deviations, or new findings, persist those in memory immediately
+- **Milestone completion:** When major plan items are completed, record the completion and any learnings
+- **Key decisions:** When architectural or design decisions are made during planning, store the rationale
+- **Session end:** Before the session ends, ensure all plan progress, remaining work, and context is saved to memory
+
+**What to store:**
+
+- Current plan summary and status (entity: project-specific or plan-specific)
+- Completed items and remaining work
+- Deviations discovered during evaluation and their implications
+- Key decisions and rationale
+- Blockers, risks, and open questions
+- Implementation patterns discovered during review
+
+**How to store:**
+
+- Use `mcp__mcphub__memory__create_entities` for new plans or features
+- Use `mcp__mcphub__memory__add_observations` to add progress updates to existing entities
+- Use `mcp__mcphub__memory__create_relations` to link plans to projects and features
+- Keep observations concise and actionable — they should allow a future session to resume work
+
+**Memory enables continuity:** The knowledge graph is the bridge between sessions. A future assistant or evaluate invocation should be able to read the graph and understand: what was planned, what was done, what remains, and what decisions were made.
+
 ### Key Principles
 
 - **Be understanding** of user inputs but **feel free to question** them
 - **Think critically** about plan deviations and their consequences
 - **Stay proactive** in identifying potential issues before they occur
 - **Keep the plan alive** by continuously updating it as work progresses
+- **Keep memory up to date** by persisting plan state and evaluations to the knowledge graph
