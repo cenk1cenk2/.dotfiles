@@ -1,11 +1,11 @@
 {
   "allowDuplicates": false,
   "historyFile": "clipboard_history.json",
-  "maxHistory": 100,
+  "maxHistory": 250,
   "deleteAfter": 0,
   "logFile": "clipse.log",
   "pollInterval": 50,
-  "maxEntryLength": 65,
+  "maxEntryLength": 360,
   "themeFile": "custom_theme.json",
   "tempDir": "tmp_files",
   "keyBindings": {
@@ -31,9 +31,9 @@
     "yankFilter": "ctrl+s"
   },
   "imageDisplay": {
-    "type": "basic",
-    "scaleX": 9,
-    "scaleY": 9,
+    "type": "kitty",
+    "scaleX": 16,
+    "scaleY": 16,
     "heightCut": 2
   },
   "excludedApps": [
