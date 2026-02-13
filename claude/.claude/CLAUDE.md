@@ -165,6 +165,8 @@ Write plan to `~/.claude/plans/YYYY-MM-DD-<project-name>-<name>.md`
 - Identify all files that need changes
 - Note potential issues and solutions
 - Include architectural decisions and rationale
+- **Update memory** with a reference to the new plan file (path, date, task summary)
+- Maintain at least the **last three plan files** in memory for historical context, you can get rid of the ones that are older than 3 months.
 
 **4. Present Plan to User:**
 
