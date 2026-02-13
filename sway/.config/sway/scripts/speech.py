@@ -286,14 +286,24 @@ def main():
         sys.exit(1)
 
     if args.command == "_wait-and-signal":
+        state_notifications = {
+            "recording": "Recording speech...",
+            "working": "Processing transcription...",
+            "output": "Outputting transcription...",
+        }
         last_state = None
         while is_running():
             state = get_speech_state()
             if state != last_state:
                 signal_waybar()
+                msg = state_notifications.get(state)
+                if msg:
+                    notify(msg, timeout=3000)
                 last_state = state
-            time.sleep(0.2)
-        signal_waybar()
+            time.sleep(0.1)
+        if last_state != "idle":
+            signal_waybar()
+            notify("Speech-to-text finished")
 
     elif args.command == "status":
         print(get_status_json())
