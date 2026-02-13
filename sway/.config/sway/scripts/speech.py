@@ -167,8 +167,10 @@ def get_speech_state():
         return "idle"
 
     children = get_waystt_children()
-    if any(c in ("claude", "node", "wl-copy", "ydotool") for c in children):
-        return "processing"
+    if any(c in ("claude", "node") for c in children):
+        return "working"
+    if any(c in ("wl-copy", "ydotool") for c in children):
+        return "output"
 
     return "recording"
 
@@ -185,12 +187,21 @@ def get_status_json():
             }
         )
 
-    if state == "processing":
+    if state == "working":
         return json.dumps(
             {
-                "class": "processing",
+                "class": "working",
                 "text": "󰍬",
                 "tooltip": "Processing transcription",
+            }
+        )
+
+    if state == "output":
+        return json.dumps(
+            {
+                "class": "output",
+                "text": "󰍬",
+                "tooltip": "Outputting transcription",
             }
         )
 

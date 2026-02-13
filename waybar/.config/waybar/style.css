@@ -216,8 +216,12 @@ window#waybar .modules-right {
   background-color: @error_color;
 }
 
-#custom-speech.processing {
+#custom-speech.working {
   background-color: @warning_color;
+}
+
+#custom-speech.output {
+  background-color: @success_color;
 }
 
 #mode,
