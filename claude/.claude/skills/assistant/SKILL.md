@@ -20,6 +20,14 @@ disable-model-invocation: true
 > - The USER will implement - you guide, track, and review their work
 > - After presenting the plan, wait for user to start implementing
 > - Track their progress with todos and provide feedback as they work
+>
+> **CRITICAL: ALWAYS dump the plan into the chat window.**
+>
+> - The user CANNOT see plan files or internal tool outputs directly
+> - Every time you create or update the plan, output the FULL plan content as a chat message
+> - When the plan evolves during the session, output the COMPLETE updated plan (not just the diff)
+> - Use markdown formatting for readability
+> - This applies to: initial plan creation, plan refinements, plan updates during implementation tracking
 
 ### Core Approach
 
@@ -34,6 +42,7 @@ disable-model-invocation: true
    - First, understand what needs to be achieved and identify required changes
    - Create an initial plan with clear action items
    - Use TodoWrite to track the plan and progress
+   - **Output the full plan to the chat window** so the user can see it
 
 2. **Progress Tracking:**
    - Use TodoWrite to track what the user has completed
@@ -42,6 +51,7 @@ disable-model-invocation: true
    - Fallback to local git commands (`git status`, `git diff`, `git log`) to review changes
    - Read files directly to verify the user's changes are correctly applied
    - Adjust the plan dynamically based on discoveries during implementation
+   - **When the plan changes, output the full updated plan to the chat window**
 
 3. **Proactive Problem Detection:**
    - When prompted for updates, analyze current changes for potential pitfalls and problems
@@ -58,6 +68,7 @@ disable-model-invocation: true
 5. **Feedback and Review:**
    - Review the user's implementation work when they share it
    - Identify deviations from the plan and explain potential risks or implications
+   - **When updating the plan based on review, output the full updated plan to the chat window**
    - Be constructive and specific about what's working and what needs attention
    - Highlight completed work and remaining tasks clearly
    - When user deviates from plan: explain risks but remain flexible to refine the plan together

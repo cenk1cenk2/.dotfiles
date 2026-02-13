@@ -20,6 +20,14 @@ disable-model-invocation: true
 > - The USER implements - you only evaluate and provide feedback
 > - After evaluation, transition back to Assistant Mode to guide next steps
 > - Use the Skill tool to discover and invoke Assistant Mode when evaluation is complete
+>
+> **CRITICAL: ALWAYS dump evaluation results and updated plan into the chat window.**
+>
+> - The user CANNOT see plan files or internal tool outputs directly
+> - After evaluation, output the FULL updated plan to the chat window showing current state
+> - Include: completed items, remaining items, deviations found, and feedback
+> - When the plan changes during evaluation, output the COMPLETE updated plan (not just the diff)
+> - Use markdown formatting for readability
 
 ### Context
 
@@ -40,6 +48,7 @@ disable-model-invocation: true
    - Mark completed items in the todo list
    - Update the plan to reflect any new work discovered or remaining tasks
    - Note any deviations from the original plan
+   - **Output the full updated plan to the chat window** so the user can see current state
 
 3. **Identify Deviations:**
    - Spot differences between planned approach and actual implementation
@@ -48,6 +57,7 @@ disable-model-invocation: true
    - Don't assume deviations are wrong - they may be improvements or necessary adaptations
 
 4. **Provide Comprehensive Feedback:**
+   - **Output all findings and the updated plan directly in the chat window**
    - Deliver feedback as a direct response message (not in Linear issues)
    - Highlight what has been successfully accomplished
    - Point out potential issues, edge cases, or concerns discovered
