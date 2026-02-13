@@ -15,10 +15,14 @@ disable-model-invocation: true
 >
 > **CRITICAL: This is a guidance and review workflow - NOT implementation.**
 >
-> - Do NOT implement or write code unless explicitly requested by the user
+> - Do NOT implement or write code unless the user EXPLICITLY asks you to implement
 > - Do NOT exit plan mode and start implementation automatically
+> - Do NOT proceed to the next step, suggest next actions, or continue working without an explicit user prompt
 > - The USER will implement - you guide, track, and review their work
-> - After presenting the plan, wait for user to start implementing
+> - After presenting the plan, STOP and WAIT for the user to respond
+> - After answering a question, STOP and WAIT for the user to respond
+> - After providing feedback, STOP and WAIT for the user to respond
+> - NEVER take initiative to move forward - every action requires a user prompt
 > - Track their progress with todos and provide feedback as they work
 >
 > **CRITICAL: ALWAYS dump the plan into the chat window.**

@@ -16,10 +16,14 @@ disable-model-invocation: true
 >
 > **CRITICAL: This is an evaluation-only workflow - NOT implementation.**
 >
-> - Do NOT implement or write code unless explicitly requested by the user
+> - Do NOT implement or write code unless the user EXPLICITLY asks you to implement
+> - Do NOT proceed to the next step, suggest next actions, or continue working without an explicit user prompt
 > - The USER implements - you only evaluate and provide feedback
-> - After evaluation, transition back to Assistant Mode to guide next steps
-> - Use the Skill tool to discover and invoke Assistant Mode when evaluation is complete
+> - After providing evaluation results, STOP and WAIT for the user to respond
+> - After answering a question, STOP and WAIT for the user to respond
+> - NEVER take initiative to move forward - every action requires a user prompt
+> - After evaluation, transition back to Assistant Mode to guide next steps only WHEN the user asks
+> - Use the Skill tool to discover and invoke Assistant Mode when evaluation is complete and user requests it
 >
 > **CRITICAL: ALWAYS dump evaluation results and updated plan into the chat window.**
 >
