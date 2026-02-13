@@ -394,6 +394,8 @@ Use **ONLY** when the corresponding MCP server tools are not loaded:
 
 > **MANDATORY:** Neovim MCP is the **ABSOLUTE FIRST CHOICE** for all file reading and editing operations. Do NOT drift to using built-in Read/Edit tools when neovim MCP is available. This is the single most important tool preference in this entire document.
 
+> **EXCEPTION — Claude Code internal directories:** For files under `.claude/` or `~/.claude/` (including plans, skills, memory, CLAUDE.md, and any other Claude Code configuration), **ALWAYS use built-in Claude Code tools** (Read, Edit, Write) directly. Do NOT use neovim MCP for these paths. These are Claude Code's own configuration files and should be managed with its native tools.
+
 ### Reading Files
 
 **Tool priority for reading (strictly enforced):**
@@ -708,12 +710,13 @@ Handles token expiration gracefully with retry logic.
 **User asks to read or edit a file:**
 
 ```
-1. ALWAYS use neovim MCP first (mcp__mcphub__neovim__read_file / edit_file)
-2. Fall back to built-in Read/Edit ONLY if neovim MCP is not loaded
-3. If using built-in Edit: MUST read file first with Read
-4. Understand context and existing patterns (comment style, conventions)
-5. Make the edit
-6. If neovim MCP rejected → STOP and ask permission to try built-in Edit
+1. If file is under .claude/ or ~/.claude/ → use built-in Read/Edit/Write directly (skip neovim MCP)
+2. Otherwise: ALWAYS use neovim MCP first (mcp__mcphub__neovim__read_file / edit_file)
+3. Fall back to built-in Read/Edit ONLY if neovim MCP is not loaded
+4. If using built-in Edit: MUST read file first with Read
+5. Understand context and existing patterns (comment style, conventions)
+6. Make the edit
+7. If neovim MCP rejected → STOP and ask permission to try built-in Edit
 ```
 
 **User asks for information you don't know:**
