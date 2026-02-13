@@ -25,6 +25,17 @@ def find_waystt_processes():
 def is_running():
     return len(find_waystt_processes()) > 0
 
+def get_waystt_output_mode():
+    for proc in find_waystt_processes():
+        try:
+            cmdline = proc.cmdline()
+            if any("ydotool" in arg for arg in cmdline):
+                return "type"
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    return "clipboard"
+
 def get_waystt_children():
     children = []
     for proc in find_waystt_processes():
@@ -200,12 +211,25 @@ def get_status_json():
     """Get speech-to-text status as JSON for waybar"""
     state = get_speech_state()
 
+    if state == "idle":
+        return json.dumps(
+            {
+                "class": "idle",
+                "text": "",
+                "tooltip": "Speech-to-text ready",
+            }
+        )
+
+    mode = get_waystt_output_mode()
+    mode_icon = "󰅇" if mode == "clipboard" else "󰌌"
+    mode_label = "clipboard" if mode == "clipboard" else "typing"
+
     if state == "recording":
         return json.dumps(
             {
                 "class": "recording",
-                "text": "󰍬",
-                "tooltip": "Recording speech",
+                "text": f"󰍬 {mode_icon}",
+                "tooltip": f"Recording speech → {mode_label}",
             }
         )
 
@@ -213,25 +237,16 @@ def get_status_json():
         return json.dumps(
             {
                 "class": "working",
-                "text": "󰍬",
-                "tooltip": "Processing transcription",
-            }
-        )
-
-    if state == "output":
-        return json.dumps(
-            {
-                "class": "output",
-                "text": "󰍬",
-                "tooltip": "Outputting transcription",
+                "text": f"󰍬 {mode_icon}",
+                "tooltip": f"Processing transcription → {mode_label}",
             }
         )
 
     return json.dumps(
         {
-            "class": "idle",
-            "text": "",
-            "tooltip": "Speech-to-text ready",
+            "class": "output",
+            "text": mode_icon,
+            "tooltip": f"Outputting transcription → {mode_label}",
         }
     )
 
