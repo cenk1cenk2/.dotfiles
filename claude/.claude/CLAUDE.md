@@ -30,7 +30,7 @@
 3. **DISCOVER TMUX SCRATCH PANE** - If tmux MCP is loaded, identify the scratch pane for the current neovim session
    - List tmux sessions and find `root/nvim/<project-path>/scratch`
    - Resolve the pane ID for command execution during the session
-   - **If no scratch session exists, silently skip** - use built-in Bash as fallback
+   - **If no scratch session exists, CREATE one** — see "Creating a scratch session" below
 
 ## II. PLANNING AND IMPLEMENTATION
 
@@ -354,7 +354,17 @@ Each neovim session has attached tmux sessions following the pattern `root/nvim/
 
 **CRITICAL:** Only use tmux sessions matching `root/nvim/<project-path>/scratch`. Do NOT use other tmux sessions (e.g., `root/scratch`) as substitutes — they are not associated with the neovim session.
 
-**Fallback:** If the correct scratch session does not exist OR tmux MCP is not loaded, silently fall back to the built-in Bash tool.
+**Creating a scratch session:**
+
+If the scratch session does not exist but tmux MCP is loaded and you need to run a command:
+
+1. Derive the session name: `root/nvim/<path>/scratch` where `<path>` is the project directory with dots and special characters (except `/` and `-`) replaced by underscores. Slashes stay as-is.
+   - Example: `/home/cenk/.dotfiles` → `root/nvim//home/cenk/_dotfiles/scratch`
+   - Example: `/home/cenk/development/my-project` → `root/nvim//home/cenk/development/my-project/scratch`
+2. Create a new tmux session with that name using `mcp__mcphub__tmux__execute-command` via Bash: `tmux new-session -d -s 'root/nvim/<path>/scratch'`
+3. Then create your dedicated window in that session as usual
+
+**Fallback:** If tmux MCP is not loaded, silently fall back to the built-in Bash tool.
 
 ### 2. Claude Code Built-in Tools
 
