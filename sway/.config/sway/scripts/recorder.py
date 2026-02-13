@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import subprocess
 import sys
 import time
+
+import psutil
 
 try:
     import obsws_python as obs
@@ -44,33 +47,27 @@ def get_obs_connection(retry=3, wait=1, silent=False):
     return None
 
 def is_obs_running():
-    """Check if OBS is running"""
-    result = subprocess.run(["pgrep", "obs"], capture_output=True)
-    return result.returncode == 0
+    return any(p.info["name"] == "obs" for p in psutil.process_iter(["name"]))
 
-def is_recording(silent=False):
-    """Check if OBS is recording"""
+def get_record_status(silent=False):
     ws = get_obs_connection(silent=silent)
     if not ws:
-        return False
+        return None
 
     try:
-        status = ws.get_record_status()
-        return status.output_active
+        return ws.get_record_status()
     except Exception:
-        return False
+        return None
 
-def is_paused():
-    """Check if OBS recording is paused"""
-    ws = get_obs_connection()
-    if not ws:
-        return False
+def is_recording(silent=False):
+    status = get_record_status(silent=silent)
 
-    try:
-        status = ws.get_record_status()
-        return status.output_paused if hasattr(status, "output_paused") else False
-    except Exception:
-        return False
+    return status.output_active if status else False
+
+def is_paused(silent=False):
+    status = get_record_status(silent=silent)
+
+    return getattr(status, "output_paused", False) if status else False
 
 def start_recording():
     """Start OBS recording via WebSocket"""
@@ -104,6 +101,11 @@ def stop_recording():
             output_path = None
 
         ws.stop_record()
+        for _ in range(25):
+            time.sleep(0.2)
+            status = get_record_status(silent=True)
+            if not status or not status.output_active:
+                break
         subprocess.run(["waybar-signal.sh", "recorder"])
 
         # Show where the file was saved
@@ -132,11 +134,10 @@ def toggle_pause():
         return False
 
 def get_status_json():
-    """Get recording status as JSON for waybar"""
-    import json
+    status = get_record_status(silent=True)
 
-    if is_recording():
-        if is_paused():
+    if status and status.output_active:
+        if getattr(status, "output_paused", False):
             return json.dumps(
                 {
                     "class": "recording paused",
@@ -144,16 +145,16 @@ def get_status_json():
                     "tooltip": "Recording paused - Click to toggle",
                 }
             )
-        else:
-            return json.dumps(
-                {
-                    "class": "recording",
-                    "text": "⏺",
-                    "tooltip": "Recording active - Click to stop",
-                }
-            )
 
-    elif is_obs_running():
+        return json.dumps(
+            {
+                "class": "recording",
+                "text": "⏺",
+                "tooltip": "Recording active - Click to stop",
+            }
+        )
+
+    if is_obs_running():
         return json.dumps(
             {
                 "class": "ready",
