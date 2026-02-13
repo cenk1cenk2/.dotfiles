@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import signal
 import subprocess
 import sys
 import time
@@ -175,9 +176,15 @@ def stop_speech():
         return False
 
     try:
-        for proc in find_waystt_processes():
+        procs = find_waystt_processes()
+        for proc in procs:
             proc.terminate()
-        wait_for_state(running=False)
+        for proc in procs:
+            try:
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                proc.kill()
+        signal_waybar()
         notify("Speech-to-text stopped")
         return True
     except Exception as e:
@@ -190,8 +197,6 @@ def toggle_recording():
         return False
 
     try:
-        import signal
-
         for proc in find_waystt_processes():
             proc.send_signal(signal.SIGUSR1)
         signal_waybar()
@@ -221,47 +226,25 @@ def get_speech_state():
     return "recording"
 
 def get_status_json():
-    """Get speech-to-text status as JSON for waybar"""
     state = get_speech_state()
 
     if state == "idle":
         return json.dumps(
-            {
-                "class": "idle",
-                "text": "",
-                "tooltip": "Speech-to-text ready",
-            }
+            {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
         )
 
     mode = get_waystt_output_mode()
-    mode_icon = "󰅇" if mode == "clipboard" else "󰌌"
-    mode_label = "clipboard" if mode == "clipboard" else "typing"
+    icon = "󰅇" if mode == "clipboard" else "󰌌"
+    label = "clipboard" if mode == "clipboard" else "typing"
 
-    if state == "recording":
-        return json.dumps(
-            {
-                "class": "recording",
-                "text": f"󰍬 {mode_icon}",
-                "tooltip": f"Recording speech → {mode_label}",
-            }
-        )
+    status_map = {
+        "recording": (f"󰍬 {icon}", f"Recording speech → {label}"),
+        "working": (f"󰍬 {icon}", f"Processing transcription → {label}"),
+        "output": (icon, f"Outputting transcription → {label}"),
+    }
+    text, tooltip = status_map[state]
 
-    if state == "working":
-        return json.dumps(
-            {
-                "class": "working",
-                "text": f"󰍬 {mode_icon}",
-                "tooltip": f"Processing transcription → {mode_label}",
-            }
-        )
-
-    return json.dumps(
-        {
-            "class": "output",
-            "text": mode_icon,
-            "tooltip": f"Outputting transcription → {mode_label}",
-        }
-    )
+    return json.dumps({"class": state, "text": text, "tooltip": tooltip})
 
 def main():
     parser = argparse.ArgumentParser(
@@ -309,10 +292,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
-        sys.exit(1)
 
     if args.command == "_wait-and-signal":
         state_notifications = {
