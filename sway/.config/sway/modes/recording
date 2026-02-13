@@ -2,7 +2,7 @@
 
 ### Recording Mode
 
-set $mode_recording "🎥 Recording: (r) toggle | (p) pause | (o) open OBS | (q) stop | (s/S) speech→type | (c/C) speech→clipboard | (Q) kill speech | ESC exit"
+set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (q/Q) stop recording/speech | <ESC>"
 
 mode $mode_recording {
         # Toggle recording (start/stop)

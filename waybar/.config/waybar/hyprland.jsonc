@@ -64,7 +64,7 @@
   },
 
   "custom/speech": {
-    "interval": 10,
+    "interval": 3,
     "return-type": "json",
     "format": "{}",
     "exec": "~/.config/hypr/scripts/speech.py status",

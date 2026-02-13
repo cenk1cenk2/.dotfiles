@@ -6,6 +6,8 @@ import subprocess
 import sys
 import time
 
+import psutil
+
 def notify(
     message,
     timeout=None,
@@ -17,10 +19,22 @@ def notify(
         cmd.extend(["-t", str(timeout)])
     subprocess.run(cmd)
 
+def find_waystt_processes():
+    return [p for p in psutil.process_iter(["name"]) if p.info["name"] == "waystt"]
+
 def is_running():
-    """Check if waystt is running"""
-    result = subprocess.run(["pgrep", "-x", "waystt"], capture_output=True)
-    return result.returncode == 0
+    return len(find_waystt_processes()) > 0
+
+def get_waystt_children():
+    children = []
+    for proc in find_waystt_processes():
+        for child in proc.children(recursive=True):
+            try:
+                children.append(child.name())
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+    return children
 
 AI_SYSTEM_PROMPT = (
     "You are a speech-to-text formatting tool, not a conversational assistant. "
@@ -115,7 +129,8 @@ def stop_speech():
         return False
 
     try:
-        subprocess.run(["pkill", "-x", "waystt"], check=True)
+        for proc in find_waystt_processes():
+            proc.terminate()
         wait_for_state(running=False)
         notify("Speech-to-text stopped")
         return True
@@ -129,7 +144,10 @@ def toggle_recording():
         return False
 
     try:
-        subprocess.run(["pkill", "--signal", "SIGUSR1", "waystt"], check=True)
+        import signal
+
+        for proc in find_waystt_processes():
+            proc.send_signal(signal.SIGUSR1)
         signal_waybar()
 
         return True
@@ -144,14 +162,35 @@ def toggle_speech(output_mode, ai=False):
     else:
         start_speech(output_mode, ai=ai)
 
+def get_speech_state():
+    if not is_running():
+        return "idle"
+
+    children = get_waystt_children()
+    if any(c in ("claude", "node", "wl-copy", "ydotool") for c in children):
+        return "processing"
+
+    return "recording"
+
 def get_status_json():
     """Get speech-to-text status as JSON for waybar"""
-    if is_running():
+    state = get_speech_state()
+
+    if state == "recording":
         return json.dumps(
             {
                 "class": "recording",
-                "text": "🎤",
-                "tooltip": "Speech-to-text active - Click to toggle",
+                "text": "󰍬",
+                "tooltip": "Recording speech",
+            }
+        )
+
+    if state == "processing":
+        return json.dumps(
+            {
+                "class": "processing",
+                "text": "󰍬",
+                "tooltip": "Processing transcription",
             }
         )
 
@@ -215,8 +254,13 @@ def main():
         sys.exit(1)
 
     if args.command == "_wait-and-signal":
+        last_state = None
         while is_running():
-            time.sleep(0.5)
+            state = get_speech_state()
+            if state != last_state:
+                signal_waybar()
+                last_state = state
+            time.sleep(0.2)
         signal_waybar()
 
     elif args.command == "status":
