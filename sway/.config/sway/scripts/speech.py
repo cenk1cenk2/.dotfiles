@@ -88,30 +88,38 @@ AI_SYSTEM_PROMPT = (
 
 AI_USER_PROMPT = "Clean up the following speech transcription:"
 
-def get_pipe_command(output_mode, ai=False):
-    """Get the pipe-to command for the specified output mode"""
-    if output_mode == "clipboard":
-        output_cmd = "wl-copy"
-    elif output_mode == "type":
-        output_cmd = "ydotool type --key-delay 5 --key-hold 5 --file -"
-    else:
-        raise ValueError(
-            f"Invalid output mode: {output_mode}. Use 'clipboard' or 'type'"
-        )
-
-    if ai:
-        system = AI_SYSTEM_PROMPT.replace("'", "'\\''")
-        user = AI_USER_PROMPT.replace("'", "'\\''")
-        return [
-            "sh",
-            "-c",
-            f"claude -p --model haiku --system-prompt '{system}' '{user}' | {output_cmd}",
-        ]
-
+def get_output_command(output_mode):
     if output_mode == "clipboard":
         return ["wl-copy"]
+    if output_mode == "type":
+        return [
+            "ydotool",
+            "type",
+            "--key-delay",
+            "10",
+            "--key-hold",
+            "10",
+            "--file",
+            "-",
+        ]
 
-    return ["ydotool", "type", "--key-delay", "5", "--key-hold", "5", "--file", "-"]
+    raise ValueError(f"Invalid output mode: {output_mode}. Use 'clipboard' or 'type'")
+
+def get_pipe_command(output_mode, ai=False):
+    output_cmd = get_output_command(output_mode)
+
+    if not ai:
+        return output_cmd
+
+    system = AI_SYSTEM_PROMPT.replace("'", "'\\''")
+    user = AI_USER_PROMPT.replace("'", "'\\''")
+    shell_output = " ".join(output_cmd)
+
+    return [
+        "sh",
+        "-c",
+        f"claude -p --model haiku --system-prompt '{system}' '{user}' | {shell_output}",
+    ]
 
 def signal_waybar():
     subprocess.run(["waybar-signal.sh", "speech"], check=False)
