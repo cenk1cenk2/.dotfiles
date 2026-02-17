@@ -37,6 +37,17 @@ def get_waystt_output_mode():
 
     return "clipboard"
 
+def is_ai_mode():
+    for proc in find_waystt_processes():
+        try:
+            cmdline = " ".join(proc.cmdline())
+            if "claude" in cmdline:
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    return False
+
 def get_waystt_children():
     children = []
     for proc in find_waystt_processes():
@@ -295,10 +306,17 @@ def get_status_json():
     icon = "󰅇" if mode == "clipboard" else "󰌌"
     label = "clipboard" if mode == "clipboard" else "typing"
 
+    ai = is_ai_mode()
+    ai_icon = " 󰧑" if ai else ""
+    ai_label = " (AI)" if ai else ""
+
     status_map = {
-        "recording": (f"󰍬 {icon}", f"Recording speech → {label}"),
-        "working": (f"󰍬 {icon}", f"Processing transcription → {label}"),
-        "output": (icon, f"Outputting transcription → {label}"),
+        "recording": (f"󰍬{ai_icon} {icon}", f"Recording speech{ai_label} → {label}"),
+        "working": (
+            f"󰍬{ai_icon} {icon}",
+            f"Processing transcription{ai_label} → {label}",
+        ),
+        "output": (icon, f"Outputting transcription{ai_label} → {label}"),
     }
     text, tooltip = status_map[state]
 
