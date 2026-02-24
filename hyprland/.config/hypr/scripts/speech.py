@@ -37,16 +37,18 @@ def get_waystt_output_mode():
 
     return "clipboard"
 
-def is_ai_mode():
+def get_ai_provider():
     for proc in find_waystt_processes():
         try:
             cmdline = " ".join(proc.cmdline())
             if "claude" in cmdline:
-                return True
+                return "claude"
+            if "codex" in cmdline:
+                return "codex"
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-    return False
+    return None
 
 def get_waystt_children():
     children = []
@@ -175,21 +177,48 @@ def get_output_command(output_mode):
 
     raise ValueError(f"Invalid output mode: {output_mode}. Use 'clipboard' or 'type'")
 
-def get_pipe_command(output_mode, ai=False):
+def get_pipe_command(output_mode, ai=None):
     output_cmd = get_output_command(output_mode)
 
     if not ai:
         return output_cmd
 
-    system = AI_SYSTEM_PROMPT.replace("'", "'\\''")
-    user = AI_USER_PROMPT.replace("'", "'\\''")
-    shell_output = " ".join(output_cmd)
+    return [sys.executable, __file__, "_pipe-process", ai, output_mode]
 
-    return [
-        "sh",
-        "-c",
-        f"claude -p --model haiku --system-prompt '{system}' '{user}' | {shell_output}",
-    ]
+def run_pipe_processing(provider, output_mode):
+    transcription = sys.stdin.read()
+    prompt = f"{AI_USER_PROMPT}\n{transcription}"
+
+    if provider == "claude":
+        ai_proc = subprocess.run(
+            [
+                "claude",
+                "-p",
+                "--model",
+                "haiku",
+                "--system-prompt",
+                AI_SYSTEM_PROMPT,
+                prompt,
+            ],
+            capture_output=True,
+            text=True,
+        )
+    elif provider == "codex":
+        codex_prompt = f"{AI_SYSTEM_PROMPT}\n\n{prompt}"
+        ai_proc = subprocess.run(
+            ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
+            input=codex_prompt,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        sys.exit(1)
+
+    if ai_proc.returncode != 0 or not ai_proc.stdout.strip():
+        sys.exit(1)
+
+    output_cmd = get_output_command(output_mode)
+    subprocess.run(output_cmd, input=ai_proc.stdout.strip(), text=True)
 
 def signal_waybar():
     subprocess.run(["waybar-signal.sh", "speech"], check=False)
@@ -203,7 +232,7 @@ def wait_for_state(running, timeout=5):
 
     return False
 
-def start_speech(output_mode, ai=False):
+def start_speech(output_mode, ai=None):
     """Start waystt with specified output mode"""
     if is_running():
         notify("Speech-to-text is already running")
@@ -232,7 +261,8 @@ def start_speech(output_mode, ai=False):
         )
 
         output_desc = "clipboard" if output_mode == "clipboard" else "typing"
-        notify(f"Speech-to-text started (output: {output_desc})")
+        ai_desc = f", AI: {ai}" if ai else ""
+        notify(f"Speech-to-text started (output: {output_desc}{ai_desc})")
         return True
     except Exception as e:
         notify(f"Failed to start speech-to-text: {e}")
@@ -275,7 +305,7 @@ def toggle_recording():
         notify(f"Failed to toggle recording: {e}")
         return False
 
-def toggle_speech(output_mode, ai=False):
+def toggle_speech(output_mode, ai=None):
     """Toggle speech recording or start if not running"""
     if is_running():
         toggle_recording()
@@ -287,7 +317,7 @@ def get_speech_state():
         return "idle"
 
     children = get_waystt_children()
-    if any(c in ("claude", "node") for c in children):
+    if any(c in ("claude", "node", "codex") for c in children):
         return "working"
     if any(c in ("wl-copy", "ydotool") for c in children):
         return "output"
@@ -306,9 +336,9 @@ def get_status_json():
     icon = "󰅇" if mode == "clipboard" else "󰌌"
     label = "clipboard" if mode == "clipboard" else "typing"
 
-    ai = is_ai_mode()
+    ai = get_ai_provider()
     ai_icon = " 󰧑" if ai else ""
-    ai_label = " (AI)" if ai else ""
+    ai_label = f" ({ai})" if ai else ""
 
     status_map = {
         "recording": (f"󰍬{ai_icon} {icon}", f"Recording speech{ai_label} → {label}"),
@@ -344,7 +374,13 @@ def main():
     toggle_parser.add_argument(
         "--ai",
         action="store_true",
-        help="Pipe text through Claude AI to fix typos and improve readability",
+        help="Pipe text through AI to fix typos and improve readability",
+    )
+    toggle_parser.add_argument(
+        "--ai-provider",
+        choices=["claude", "codex"],
+        default="codex",
+        help="AI provider to use",
     )
 
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
@@ -356,8 +392,18 @@ def main():
     start_parser.add_argument(
         "--ai",
         action="store_true",
-        help="Pipe text through Claude AI to fix typos and improve readability",
+        help="Pipe text through AI to fix typos and improve readability",
     )
+    start_parser.add_argument(
+        "--ai-provider",
+        choices=["claude", "codex"],
+        default="codex",
+        help="AI provider to use",
+    )
+
+    ai_process_parser = subparsers.add_parser("_pipe-process", help=argparse.SUPPRESS)
+    ai_process_parser.add_argument("provider", choices=["claude", "codex"])
+    ai_process_parser.add_argument("output", choices=["clipboard", "type"])
 
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
     subparsers.add_parser("stop", help="Stop waystt process")
@@ -369,7 +415,10 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "_wait-and-signal":
+    if args.command == "_pipe-process":
+        run_pipe_processing(args.provider, args.output)
+
+    elif args.command == "_wait-and-signal":
         state_notifications = {
             "working": "Processing transcription...",
             "output": "Outputting transcription...",
@@ -395,10 +444,10 @@ def main():
         sys.exit(0 if is_running() else 1)
 
     elif args.command == "toggle":
-        toggle_speech(args.output, ai=args.ai)
+        toggle_speech(args.output, ai=args.ai_provider if args.ai else None)
 
     elif args.command == "start":
-        start_speech(args.output, ai=args.ai)
+        start_speech(args.output, ai=args.ai_provider if args.ai else None)
 
     elif args.command in ("stop", "kill"):
         stop_speech()
