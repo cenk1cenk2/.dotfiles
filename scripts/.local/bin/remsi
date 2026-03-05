@@ -182,10 +182,11 @@ FILLER_PATTERN = re.compile(
 )
 
 class Analyzer:
-    def __init__(self, noise, duration, model_path=None):
+    def __init__(self, noise, duration, stt_provider=None, stt_config=None):
         self.noise = noise
         self.duration = duration
-        self.model_path = model_path
+        self.stt_provider = stt_provider
+        self.stt_config = stt_config or {}
 
     def get_duration(self, input_file):
         result = subprocess.run(
@@ -252,52 +253,132 @@ class Analyzer:
 
         return silences
 
+    def _extract_wav(self, input_file, output_path):
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                str(input_file),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-f",
+                "wav",
+                "-y",
+                output_path,
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("failed to extract audio for transcription")
+
     def _transcribe(self, input_file):
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            extract = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i",
-                    str(input_file),
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    "-f",
-                    "wav",
-                    "-y",
-                    tmp.name,
-                ],
-                capture_output=True,
-            )
-            if extract.returncode != 0:
-                raise RuntimeError("failed to extract audio for transcription")
+            self._extract_wav(input_file, tmp.name)
             log.info("transcribing %s", input_file)
-            result = subprocess.run(
-                [
-                    "whisper-cli",
-                    "-m",
-                    str(self.model_path),
-                    "-pp",
-                    "--max-len",
-                    "1",
-                    "--split-on-word",
-                    "-oj",
-                    "-of",
-                    tmp.name,
-                    tmp.name,
-                ],
-                stdout=subprocess.DEVNULL,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
+            if self.stt_provider == "whisper-cpp":
+                return self._transcribe_whisper_cpp(tmp.name)
+            elif self.stt_provider == "http":
+                return self._transcribe_http(tmp.name)
 
-            json_path = f"{tmp.name}.json"
-            try:
-                with open(json_path) as f:
-                    return json.load(f)
-            finally:
-                Path(json_path).unlink(missing_ok=True)
+    def _transcribe_whisper_cpp(self, wav_path):
+        model_path = self.stt_config["model_path"]
+        result = subprocess.run(
+            [
+                "whisper-cli",
+                "-m",
+                str(model_path),
+                "-pp",
+                "--max-len",
+                "1",
+                "--split-on-word",
+                "-oj",
+                "-of",
+                wav_path,
+                wav_path,
+            ],
+            stdout=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
+
+        json_path = f"{wav_path}.json"
+        try:
+            with open(json_path) as f:
+                return json.load(f)
+        finally:
+            Path(json_path).unlink(missing_ok=True)
+
+    def _transcribe_http(self, wav_path):
+        import requests
+
+        url = f"{self.stt_config['base_url']}/audio/transcriptions"
+        api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
+        try:
+            with open(wav_path, "rb") as f:
+                response = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "User-Agent": "remsi/1.0",
+                    },
+                    files={"file": ("audio.wav", f, "audio/wav")},
+                    data={
+                        "model": self.stt_config["model"],
+                        "response_format": "verbose_json",
+                        "timestamp_granularities[]": ["segment", "word"],
+                    },
+                )
+        except requests.RequestException as e:
+            raise RuntimeError(f"HTTP STT request failed: {e}") from e
+        if not response.ok:
+            raise RuntimeError(
+                f"HTTP STT failed: {response.status_code} {response.text}"
+            )
+        data = response.json()
+        log.debug("HTTP STT response keys: %s", list(data.keys()))
+        log.debug("HTTP STT response: %s", json.dumps(data, indent=2)[:4000])
+        words = data.get("words", [])
+        if words:
+            return {
+                "transcription": [
+                    {
+                        "text": w["word"],
+                        "offsets": {
+                            "from": int(w["start"] * 1000),
+                            "to": int(w["end"] * 1000),
+                        },
+                    }
+                    for w in words
+                ]
+            }
+        segments = data.get("segments", [])
+        if segments:
+            log.debug("no word-level timestamps, falling back to segments")
+            result = []
+            for seg in segments:
+                seg_words = seg.get("words", [])
+                if seg_words:
+                    for w in seg_words:
+                        result.append({
+                            "text": w["word"],
+                            "offsets": {
+                                "from": int(w["start"] * 1000),
+                                "to": int(w["end"] * 1000),
+                            },
+                        })
+                else:
+                    result.append({
+                        "text": seg.get("text", ""),
+                        "offsets": {
+                            "from": int(seg["start"] * 1000),
+                            "to": int(seg["end"] * 1000),
+                        },
+                    })
+            return {"transcription": result}
+        log.warning("HTTP STT returned no words or segments")
+        return {"transcription": []}
 
     @staticmethod
     def _classify_words(transcription):
@@ -1032,10 +1113,18 @@ class SmartCutEncoder(Encoder):
 class Remsi:
     def __init__(self, args):
         self.args = args
+        stt_provider = args.stt_provider if args.with_whisper else None
+        stt_config = {}
+        if stt_provider == "whisper-cpp":
+            stt_config["model_path"] = self._resolve_model_path()
+        elif stt_provider == "http":
+            stt_config["base_url"] = args.http_base_url
+            stt_config["model"] = args.http_model
         self.analyzer = Analyzer(
             noise=args.noise,
             duration=args.duration,
-            model_path=self._resolve_model_path(),
+            stt_provider=stt_provider,
+            stt_config=stt_config,
         )
         if args.mode == "fast":
             self.encoder = SmartCutEncoder(
@@ -1071,10 +1160,7 @@ class Remsi:
         return None
 
     def _resolve_model_path(self):
-        if not self.args.whisper:
-            return None
-
-        model_path = Path(self.args.model_dir).expanduser() / self.args.model
+        model_path = Path(self.args.whisper_cpp_model_dir).expanduser() / self.args.whisper_cpp_model
         if not model_path.exists():
             error(f"model not found at {model_path}")
             sys.exit(1)
@@ -1106,8 +1192,8 @@ class Remsi:
             status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
 
             fillers = []
-            if self.analyzer.model_path:
-                section("Speech Analysis")
+            if self.analyzer.stt_provider:
+                section(f"Speech Analysis ({self.analyzer.stt_provider})")
                 fillers = self.analyzer.detect_filler_words(input_file, silences)
                 n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
                 n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
@@ -1285,19 +1371,36 @@ def main():
     )
     parser.add_argument("--suffix", default="silencer", help="output filename suffix")
     parser.add_argument(
-        "--whisper",
+        "-w",
+        "--with-whisper",
         action="store_true",
-        help="also detect filler words using speech recognition",
+        help="enable filler word detection using STT",
     )
     parser.add_argument(
-        "--model-dir",
+        "--stt-provider",
+        choices=["http", "whisper-cpp"],
+        default="whisper-cpp",
+        help="STT provider for filler word detection",
+    )
+    parser.add_argument(
+        "--whisper-cpp-model-dir",
         default="~/.local/share/applications/waystt/models",
         help="directory containing whisper GGML models",
     )
     parser.add_argument(
-        "--model",
+        "--whisper-cpp-model",
         default="ggml-large-v3.bin",
         help="whisper GGML model filename",
+    )
+    parser.add_argument(
+        "--http-base-url",
+        default="https://ai.kilic.dev/api/v1",
+        help="OpenAI-compatible API base URL for STT",
+    )
+    parser.add_argument(
+        "--http-model",
+        default="distil-large-v3",
+        help="model name for HTTP STT provider",
     )
     parser.add_argument(
         "--mode",
