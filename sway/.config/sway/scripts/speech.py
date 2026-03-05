@@ -193,7 +193,15 @@ def get_output_command(output_mode):
         f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'"
     )
 
-def get_pipe_command(output_mode, enrich=None, enrich_base_url=None, enrich_model=None):
+def get_pipe_command(
+    output_mode,
+    enrich=None,
+    enrich_base_url=None,
+    enrich_model=None,
+    enrich_temperature=None,
+    enrich_top_p=None,
+    enrich_thinking=False,
+):
     output_cmd = get_output_command(output_mode)
 
     if not enrich:
@@ -204,23 +212,42 @@ def get_pipe_command(output_mode, enrich=None, enrich_base_url=None, enrich_mode
         cmd.extend(["--enrich-base-url", enrich_base_url])
     if enrich_model:
         cmd.extend(["--enrich-model", enrich_model])
+    if enrich_temperature is not None:
+        cmd.extend(["--enrich-temperature", str(enrich_temperature)])
+    if enrich_top_p is not None:
+        cmd.extend(["--enrich-top-p", str(enrich_top_p)])
+    if enrich_thinking:
+        cmd.append("--enrich-thinking")
     if enrich == "http":
         cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
 
     return cmd
 
-def run_http_completion(base_url, model, api_key, transcription):
+def run_http_completion(
+    base_url, model, api_key, transcription, temperature=0, top_p=0.9, thinking=False
+):
     prompt = f"{AI_USER_PROMPT}\n{transcription}"
 
-    payload = json.dumps(
-        {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": AI_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-        }
-    ).encode()
+    body = {
+        "model": model,
+        "temperature": temperature,
+        "top_p": top_p,
+        "messages": [
+            {"role": "system", "content": AI_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    if thinking:
+        # Qwen3 thinking toggle (vLLM/ollama)
+        body["chat_template_kwargs"] = {"enable_thinking": True}
+        # OpenAI reasoning toggle
+        body["reasoning"] = {}
+
+    log.debug(
+        "HTTP completion request: %s",
+        json.dumps({**body, "messages": ["..."]}, indent=2),
+    )
+    payload = json.dumps(body).encode()
 
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
@@ -232,12 +259,28 @@ def run_http_completion(base_url, model, api_key, transcription):
         },
     )
 
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode(errors="replace")
+        log.error("HTTP %d: %s", e.code, error_body)
+        log.debug("HTTP error response body: %s", error_body)
+        raise
 
+    log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
     return data["choices"][0]["message"]["content"]
 
-def run_pipe_processing(provider, output_mode, base_url=None, model=None, api_key=None):
+def run_pipe_processing(
+    provider,
+    output_mode,
+    base_url=None,
+    model=None,
+    api_key=None,
+    temperature=0,
+    top_p=0.9,
+    thinking=False,
+):
     log.info("reading transcription from stdin")
     transcription = sys.stdin.read()
     log.info("received %d chars from stdin", len(transcription))
@@ -246,10 +289,19 @@ def run_pipe_processing(provider, output_mode, base_url=None, model=None, api_ke
     if provider == "http":
         log.info("sending to %s/chat/completions (model: %s)", base_url, model)
         try:
-            result = run_http_completion(base_url, model, api_key, transcription)
+            result = run_http_completion(
+                base_url,
+                model,
+                api_key,
+                transcription,
+                temperature=temperature,
+                top_p=top_p,
+                thinking=thinking,
+            )
             log.info("enrichment complete (%d chars)", len(result))
         except Exception as e:
             log.error("http completion failed: %s", e)
+            notify(f"HTTP enrichment failed: {e}")
     elif provider == "claude":
         log.info("sending to claude (model: haiku)")
         prompt = f"{AI_USER_PROMPT}\n{transcription}"
@@ -317,6 +369,9 @@ def start_speech(
     enrich=None,
     enrich_base_url=None,
     enrich_model=None,
+    enrich_temperature=None,
+    enrich_top_p=None,
+    enrich_thinking=False,
 ):
     """Start waystt with specified output mode"""
     if is_running():
@@ -329,6 +384,9 @@ def start_speech(
             enrich=enrich,
             enrich_base_url=enrich_base_url,
             enrich_model=enrich_model,
+            enrich_temperature=enrich_temperature,
+            enrich_top_p=enrich_top_p,
+            enrich_thinking=enrich_thinking,
         )
         log.info("pipe command: %s", " ".join(pipe_cmd))
 
@@ -440,6 +498,9 @@ def toggle_speech(
     enrich=None,
     enrich_base_url=None,
     enrich_model=None,
+    enrich_temperature=None,
+    enrich_top_p=None,
+    enrich_thinking=False,
 ):
     """Toggle speech recording or start if not running"""
     if is_running():
@@ -457,6 +518,9 @@ def toggle_speech(
             enrich=enrich,
             enrich_base_url=enrich_base_url,
             enrich_model=enrich_model,
+            enrich_temperature=enrich_temperature,
+            enrich_top_p=enrich_top_p,
+            enrich_thinking=enrich_thinking,
         )
 
 def get_speech_state():
@@ -503,6 +567,8 @@ def get_status_json():
     text, tooltip = status_map[state]
 
     return json.dumps({"class": state, "text": text, "tooltip": tooltip})
+
+DEFAULT_ENRICH_MODEL = "phi4-mini:3.8b"
 
 def main():
     parser = argparse.ArgumentParser(
@@ -560,8 +626,25 @@ def main():
     )
     toggle_parser.add_argument(
         "--enrich-model",
-        default="ministral-3:8b",
+        default=DEFAULT_ENRICH_MODEL,
         help="Model to use for enrichment",
+    )
+    toggle_parser.add_argument(
+        "--enrich-temperature",
+        type=float,
+        default=0,
+        help="Temperature for enrichment (default: 0)",
+    )
+    toggle_parser.add_argument(
+        "--enrich-top-p",
+        type=float,
+        default=0.9,
+        help="Top-p for enrichment (default: 0.9)",
+    )
+    toggle_parser.add_argument(
+        "--enrich-thinking",
+        action="store_true",
+        help="Enable model thinking/reasoning (default: disabled)",
     )
 
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
@@ -606,8 +689,25 @@ def main():
     )
     start_parser.add_argument(
         "--enrich-model",
-        default="ministral-3:8b",
+        default=DEFAULT_ENRICH_MODEL,
         help="Model to use for enrichment",
+    )
+    start_parser.add_argument(
+        "--enrich-temperature",
+        type=float,
+        default=0,
+        help="Temperature for enrichment (default: 0)",
+    )
+    start_parser.add_argument(
+        "--enrich-top-p",
+        type=float,
+        default=0.9,
+        help="Top-p for enrichment (default: 0.9)",
+    )
+    start_parser.add_argument(
+        "--enrich-thinking",
+        action="store_true",
+        help="Enable model thinking/reasoning (default: disabled)",
     )
 
     enrich_process_parser = subparsers.add_parser(
@@ -620,7 +720,10 @@ def main():
     enrich_process_parser.add_argument(
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
-    enrich_process_parser.add_argument("--enrich-model", default="ministral-3:8b")
+    enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_ENRICH_MODEL)
+    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0)
+    enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
+    enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--api-key", default="")
 
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
@@ -645,6 +748,9 @@ def main():
             base_url=args.enrich_base_url,
             model=args.enrich_model,
             api_key=args.api_key,
+            temperature=args.enrich_temperature,
+            top_p=args.enrich_top_p,
+            thinking=args.enrich_thinking,
         )
 
     elif args.command == "_wait-and-signal":
@@ -682,6 +788,9 @@ def main():
             enrich=enrich,
             enrich_base_url=args.enrich_base_url,
             enrich_model=args.enrich_model,
+            enrich_temperature=args.enrich_temperature,
+            enrich_top_p=args.enrich_top_p,
+            enrich_thinking=args.enrich_thinking,
         )
 
     elif args.command == "start":
@@ -694,6 +803,9 @@ def main():
             enrich=enrich,
             enrich_base_url=args.enrich_base_url,
             enrich_model=args.enrich_model,
+            enrich_temperature=args.enrich_temperature,
+            enrich_top_p=args.enrich_top_p,
+            enrich_thinking=args.enrich_thinking,
         )
 
     elif args.command in ("stop", "kill"):
