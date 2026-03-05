@@ -34,6 +34,8 @@ def get_waystt_output_mode():
             cmdline = proc.cmdline()
             if any("ydotool" in arg for arg in cmdline):
                 return "type"
+            if "stdout" in cmdline:
+                return "stdout"
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
@@ -168,6 +170,8 @@ AI_SYSTEM_PROMPT = (
 AI_USER_PROMPT = "Clean up the following speech transcription:"
 
 def get_output_command(output_mode):
+    if output_mode == "stdout":
+        return ["cat"]
     if output_mode == "clipboard":
         return ["wl-copy"]
     if output_mode == "type":
@@ -182,7 +186,7 @@ def get_output_command(output_mode):
             "-",
         ]
 
-    raise ValueError(f"Invalid output mode: {output_mode}. Use 'clipboard' or 'type'")
+    raise ValueError(f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'")
 
 def get_pipe_command(output_mode, ai=None, base_url=None, model=None):
     output_cmd = get_output_command(output_mode)
@@ -297,10 +301,19 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
             env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
             env["TRANSCRIPTION_PROVIDER"] = "openai"
 
+        waystt_cmd = ["waystt", "--pipe-to"] + pipe_cmd
+
+        if output_mode == "stdout":
+            notify("Speech-to-text started (output: stdout" + (f", AI: {ai}" if ai else "") + ")")
+            subprocess.run(waystt_cmd, env=env)
+            signal_waybar()
+
+            return True
+
         # Start waystt in background
         # waystt --pipe-to takes multiple arguments: waystt --pipe-to command arg1 arg2...
         subprocess.Popen(
-            ["waystt", "--pipe-to"] + pipe_cmd,
+            waystt_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env,
@@ -317,7 +330,7 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
             start_new_session=True,
         )
 
-        output_desc = "clipboard" if output_mode == "clipboard" else "typing"
+        output_desc = {"clipboard": "clipboard", "type": "typing"}[output_mode]
         ai_desc = f", AI: {ai}" if ai else ""
         notify(f"Speech-to-text started (output: {output_desc}{ai_desc})")
         return True
@@ -374,7 +387,7 @@ def get_speech_state():
         return "idle"
 
     children = get_waystt_children()
-    if any(c in ("wl-copy", "ydotool") for c in children):
+    if any(c in ("cat", "wl-copy", "ydotool") for c in children):
         return "output"
     if any(c in ("claude", "node", "codex", "python3", "python") for c in children):
         return "working"
@@ -390,8 +403,10 @@ def get_status_json():
         )
 
     mode = get_waystt_output_mode()
-    icon = "󰅇" if mode == "clipboard" else "󰌌"
-    label = "clipboard" if mode == "clipboard" else "typing"
+    icons = {"stdout": "󰞷", "clipboard": "󰅇", "type": "󰌌"}
+    labels = {"stdout": "stdout", "clipboard": "clipboard", "type": "typing"}
+    icon = icons.get(mode, "󰅇")
+    label = labels.get(mode, mode)
 
     ai = get_ai_provider()
     ai_icon = " 󰧑" if ai else ""
@@ -425,7 +440,7 @@ def main():
     )
     toggle_parser.add_argument(
         "output",
-        choices=["clipboard", "type"],
+        choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
     toggle_parser.add_argument(
@@ -453,7 +468,7 @@ def main():
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
     start_parser.add_argument(
         "output",
-        choices=["clipboard", "type"],
+        choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
     start_parser.add_argument(
@@ -480,7 +495,7 @@ def main():
 
     ai_process_parser = subparsers.add_parser("_pipe-process", help=argparse.SUPPRESS)
     ai_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
-    ai_process_parser.add_argument("output", choices=["clipboard", "type"])
+    ai_process_parser.add_argument("output", choices=["stdout", "clipboard", "type"])
     ai_process_parser.add_argument("--base-url", default="https://ai.kilic.dev/v1")
     ai_process_parser.add_argument("--model", default="ministral-3:8b")
 

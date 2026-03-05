@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -10,6 +11,8 @@ import time
 import urllib.request
 
 import psutil
+
+log = logging.getLogger("speech")
 
 def notify(
     message,
@@ -34,6 +37,8 @@ def get_waystt_output_mode():
             cmdline = proc.cmdline()
             if any("ydotool" in arg for arg in cmdline):
                 return "type"
+            if "stdout" in cmdline:
+                return "stdout"
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
@@ -168,6 +173,8 @@ AI_SYSTEM_PROMPT = (
 AI_USER_PROMPT = "Clean up the following speech transcription:"
 
 def get_output_command(output_mode):
+    if output_mode == "stdout":
+        return ["cat"]
     if output_mode == "clipboard":
         return ["wl-copy"]
     if output_mode == "type":
@@ -182,7 +189,9 @@ def get_output_command(output_mode):
             "-",
         ]
 
-    raise ValueError(f"Invalid output mode: {output_mode}. Use 'clipboard' or 'type'")
+    raise ValueError(
+        f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'"
+    )
 
 def get_pipe_command(output_mode, ai=None, base_url=None, model=None):
     output_cmd = get_output_command(output_mode)
@@ -200,22 +209,23 @@ def get_pipe_command(output_mode, ai=None, base_url=None, model=None):
 
 def run_http_completion(base_url, model, transcription):
     prompt = f"{AI_USER_PROMPT}\n{transcription}"
-    api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
 
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": AI_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": AI_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
+    ).encode()
 
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {os.environ.get('AI_KILIC_DEV_API_KEY', '')}",
         },
     )
 
@@ -225,15 +235,20 @@ def run_http_completion(base_url, model, transcription):
     return data["choices"][0]["message"]["content"]
 
 def run_pipe_processing(provider, output_mode, base_url=None, model=None):
+    log.info("reading transcription from stdin")
     transcription = sys.stdin.read()
+    log.info("received %d chars from stdin", len(transcription))
     result = None
 
     if provider == "http":
+        log.info("sending to %s/chat/completions (model: %s)", base_url, model)
         try:
             result = run_http_completion(base_url, model, transcription)
-        except Exception:
-            pass
+            log.info("ai refinement complete (%d chars)", len(result))
+        except Exception as e:
+            log.error("http completion failed: %s", e)
     elif provider == "claude":
+        log.info("sending to claude (model: haiku)")
         prompt = f"{AI_USER_PROMPT}\n{transcription}"
         ai_proc = subprocess.run(
             [
@@ -250,7 +265,11 @@ def run_pipe_processing(provider, output_mode, base_url=None, model=None):
         )
         if ai_proc.returncode == 0 and ai_proc.stdout.strip():
             result = ai_proc.stdout.strip()
+            log.info("claude refinement complete (%d chars)", len(result))
+        else:
+            log.error("claude failed (exit %d)", ai_proc.returncode)
     elif provider == "codex":
+        log.info("sending to codex")
         prompt = f"{AI_USER_PROMPT}\n{transcription}"
         codex_prompt = f"{AI_SYSTEM_PROMPT}\n\n{prompt}"
         ai_proc = subprocess.run(
@@ -261,13 +280,19 @@ def run_pipe_processing(provider, output_mode, base_url=None, model=None):
         )
         if ai_proc.returncode == 0 and ai_proc.stdout.strip():
             result = ai_proc.stdout.strip()
+            log.info("codex refinement complete (%d chars)", len(result))
+        else:
+            log.error("codex failed (exit %d)", ai_proc.returncode)
 
     if not result or not result.strip():
+        log.warning("ai processing failed, falling back to raw transcription")
         notify("AI processing failed, outputting raw transcription")
         result = transcription
 
     output_cmd = get_output_command(output_mode)
+    log.info("outputting to %s (%s)", output_mode, " ".join(output_cmd))
     subprocess.run(output_cmd, input=result.strip(), text=True)
+    log.info("done")
 
 def signal_waybar():
     subprocess.run(["waybar-signal.sh", "speech"], check=False)
@@ -289,6 +314,7 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
 
     try:
         pipe_cmd = get_pipe_command(output_mode, ai=ai, base_url=base_url, model=model)
+        log.info("pipe command: %s", " ".join(pipe_cmd))
 
         env = None
         if ai == "http" and base_url:
@@ -296,20 +322,42 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
             env["OPENAI_BASE_URL"] = base_url
             env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
             env["TRANSCRIPTION_PROVIDER"] = "openai"
+            log.info(
+                "remote stt: OPENAI_BASE_URL=%s TRANSCRIPTION_PROVIDER=openai",
+                base_url,
+            )
 
-        # Start waystt in background
+        waystt_cmd = ["waystt", "--pipe-to"] + pipe_cmd
+        log.info("waystt command: %s", " ".join(waystt_cmd))
+
+        if output_mode == "stdout":
+            log.info("running in synchronous/stdout mode")
+            notify(
+                "Speech-to-text started (output: stdout"
+                + (f", AI: {ai}" if ai else "")
+                + ")"
+            )
+            subprocess.run(waystt_cmd, env=env)
+            signal_waybar()
+            log.info("stdout mode finished")
+
+            return True
+
+        log.info("starting waystt in background")
         # waystt --pipe-to takes multiple arguments: waystt --pipe-to command arg1 arg2...
         subprocess.Popen(
-            ["waystt", "--pipe-to"] + pipe_cmd,
+            waystt_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env,
         )
 
         if not wait_for_state(running=True):
+            log.error("waystt did not start within timeout")
             notify("Failed to start speech-to-text: process did not start")
             return False
 
+        log.info("waystt started, launching wait-and-signal watcher")
         subprocess.Popen(
             [sys.executable, __file__, "_wait-and-signal"],
             stdout=subprocess.DEVNULL,
@@ -317,7 +365,7 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
             start_new_session=True,
         )
 
-        output_desc = "clipboard" if output_mode == "clipboard" else "typing"
+        output_desc = {"clipboard": "clipboard", "type": "typing"}[output_mode]
         ai_desc = f", AI: {ai}" if ai else ""
         notify(f"Speech-to-text started (output: {output_desc}{ai_desc})")
         return True
@@ -333,14 +381,17 @@ def stop_speech():
 
     try:
         procs = find_waystt_processes()
+        log.info("terminating %d waystt process(es)", len(procs))
         for proc in procs:
             proc.terminate()
         for proc in procs:
             try:
                 proc.wait(timeout=5)
             except psutil.TimeoutExpired:
+                log.warning("process %d did not terminate, killing", proc.pid)
                 proc.kill()
         signal_waybar()
+        log.info("stopped")
         notify("Speech-to-text stopped")
         return True
     except Exception as e:
@@ -365,8 +416,10 @@ def toggle_recording():
 def toggle_speech(output_mode, ai=None, base_url=None, model=None):
     """Toggle speech recording or start if not running"""
     if is_running():
+        log.info("waystt running, toggling recording")
         toggle_recording()
     else:
+        log.info("waystt not running, starting (output=%s, ai=%s)", output_mode, ai)
         start_speech(output_mode, ai=ai, base_url=base_url, model=model)
 
 def get_speech_state():
@@ -374,7 +427,7 @@ def get_speech_state():
         return "idle"
 
     children = get_waystt_children()
-    if any(c in ("wl-copy", "ydotool") for c in children):
+    if any(c in ("cat", "wl-copy", "ydotool") for c in children):
         return "output"
     if any(c in ("claude", "node", "codex", "python3", "python") for c in children):
         return "working"
@@ -390,8 +443,10 @@ def get_status_json():
         )
 
     mode = get_waystt_output_mode()
-    icon = "󰅇" if mode == "clipboard" else "󰌌"
-    label = "clipboard" if mode == "clipboard" else "typing"
+    icons = {"stdout": "󰞷", "clipboard": "󰅇", "type": "󰌌"}
+    labels = {"stdout": "stdout", "clipboard": "clipboard", "type": "typing"}
+    icon = icons.get(mode, "󰅇")
+    label = labels.get(mode, mode)
 
     ai = get_ai_provider()
     ai_icon = " 󰧑" if ai else ""
@@ -414,6 +469,7 @@ def main():
         description="Control waystt speech-to-text",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
 
     subparsers = parser.add_subparsers(
         dest="command", help="Command to execute", required=True
@@ -425,7 +481,7 @@ def main():
     )
     toggle_parser.add_argument(
         "output",
-        choices=["clipboard", "type"],
+        choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
     toggle_parser.add_argument(
@@ -441,7 +497,7 @@ def main():
     )
     toggle_parser.add_argument(
         "--base-url",
-        default="https://ai.kilic.dev/v1",
+        default="https://ai.kilic.dev/api/v1",
         help="OpenAI-compatible API base URL",
     )
     toggle_parser.add_argument(
@@ -453,7 +509,7 @@ def main():
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
     start_parser.add_argument(
         "output",
-        choices=["clipboard", "type"],
+        choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
     start_parser.add_argument(
@@ -469,7 +525,7 @@ def main():
     )
     start_parser.add_argument(
         "--base-url",
-        default="https://ai.kilic.dev/v1",
+        default="https://ai.kilic.dev/api/v1",
         help="OpenAI-compatible API base URL",
     )
     start_parser.add_argument(
@@ -480,8 +536,8 @@ def main():
 
     ai_process_parser = subparsers.add_parser("_pipe-process", help=argparse.SUPPRESS)
     ai_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
-    ai_process_parser.add_argument("output", choices=["clipboard", "type"])
-    ai_process_parser.add_argument("--base-url", default="https://ai.kilic.dev/v1")
+    ai_process_parser.add_argument("output", choices=["stdout", "clipboard", "type"])
+    ai_process_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
     ai_process_parser.add_argument("--model", default="ministral-3:8b")
 
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
@@ -494,10 +550,17 @@ def main():
 
     args = parser.parse_args()
 
+    logging.basicConfig(
+        format="%(name)s: %(message)s",
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+    )
+
     if args.command == "_pipe-process":
         run_pipe_processing(
-            args.provider, args.output,
-            base_url=args.base_url, model=args.model,
+            args.provider,
+            args.output,
+            base_url=args.base_url,
+            model=args.model,
         )
 
     elif args.command == "_wait-and-signal":
@@ -528,15 +591,19 @@ def main():
     elif args.command == "toggle":
         ai = args.ai_provider if args.ai else None
         toggle_speech(
-            args.output, ai=ai,
-            base_url=args.base_url, model=args.model,
+            args.output,
+            ai=ai,
+            base_url=args.base_url,
+            model=args.model,
         )
 
     elif args.command == "start":
         ai = args.ai_provider if args.ai else None
         start_speech(
-            args.output, ai=ai,
-            base_url=args.base_url, model=args.model,
+            args.output,
+            ai=ai,
+            base_url=args.base_url,
+            model=args.model,
         )
 
     elif args.command in ("stop", "kill"):
