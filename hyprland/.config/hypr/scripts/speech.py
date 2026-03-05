@@ -44,7 +44,7 @@ def get_waystt_output_mode():
 
     return "clipboard"
 
-def get_ai_provider():
+def get_enrich_provider():
     for proc in find_waystt_processes():
         try:
             cmdline = proc.cmdline()
@@ -193,21 +193,23 @@ def get_output_command(output_mode):
         f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'"
     )
 
-def get_pipe_command(output_mode, ai=None, base_url=None, model=None):
+def get_pipe_command(output_mode, enrich=None, enrich_base_url=None, enrich_model=None):
     output_cmd = get_output_command(output_mode)
 
-    if not ai:
+    if not enrich:
         return output_cmd
 
-    cmd = [sys.executable, __file__, "_pipe-process", ai, output_mode]
-    if base_url:
-        cmd.extend(["--base-url", base_url])
-    if model:
-        cmd.extend(["--model", model])
+    cmd = [sys.executable, __file__, "_pipe-process", enrich, output_mode]
+    if enrich_base_url:
+        cmd.extend(["--enrich-base-url", enrich_base_url])
+    if enrich_model:
+        cmd.extend(["--enrich-model", enrich_model])
+    if enrich == "http":
+        cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
 
     return cmd
 
-def run_http_completion(base_url, model, transcription):
+def run_http_completion(base_url, model, api_key, transcription):
     prompt = f"{AI_USER_PROMPT}\n{transcription}"
 
     payload = json.dumps(
@@ -225,7 +227,8 @@ def run_http_completion(base_url, model, transcription):
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.environ.get('AI_KILIC_DEV_API_KEY', '')}",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "speech/1.0",
         },
     )
 
@@ -234,7 +237,7 @@ def run_http_completion(base_url, model, transcription):
 
     return data["choices"][0]["message"]["content"]
 
-def run_pipe_processing(provider, output_mode, base_url=None, model=None):
+def run_pipe_processing(provider, output_mode, base_url=None, model=None, api_key=None):
     log.info("reading transcription from stdin")
     transcription = sys.stdin.read()
     log.info("received %d chars from stdin", len(transcription))
@@ -243,8 +246,8 @@ def run_pipe_processing(provider, output_mode, base_url=None, model=None):
     if provider == "http":
         log.info("sending to %s/chat/completions (model: %s)", base_url, model)
         try:
-            result = run_http_completion(base_url, model, transcription)
-            log.info("ai refinement complete (%d chars)", len(result))
+            result = run_http_completion(base_url, model, api_key, transcription)
+            log.info("enrichment complete (%d chars)", len(result))
         except Exception as e:
             log.error("http completion failed: %s", e)
     elif provider == "claude":
@@ -285,8 +288,8 @@ def run_pipe_processing(provider, output_mode, base_url=None, model=None):
             log.error("codex failed (exit %d)", ai_proc.returncode)
 
     if not result or not result.strip():
-        log.warning("ai processing failed, falling back to raw transcription")
-        notify("AI processing failed, outputting raw transcription")
+        log.warning("enrichment failed, falling back to raw transcription")
+        notify("Enrichment failed, outputting raw transcription")
         result = transcription
 
     output_cmd = get_output_command(output_mode)
@@ -306,25 +309,41 @@ def wait_for_state(running, timeout=5):
 
     return False
 
-def start_speech(output_mode, ai=None, base_url=None, model=None):
+def start_speech(
+    output_mode,
+    stt_provider="http",
+    stt_base_url=None,
+    stt_model=None,
+    enrich=None,
+    enrich_base_url=None,
+    enrich_model=None,
+):
     """Start waystt with specified output mode"""
     if is_running():
         notify("Speech-to-text is already running")
         return False
 
     try:
-        pipe_cmd = get_pipe_command(output_mode, ai=ai, base_url=base_url, model=model)
+        pipe_cmd = get_pipe_command(
+            output_mode,
+            enrich=enrich,
+            enrich_base_url=enrich_base_url,
+            enrich_model=enrich_model,
+        )
         log.info("pipe command: %s", " ".join(pipe_cmd))
 
         env = None
-        if ai == "http" and base_url:
+        if stt_provider == "http":
             env = os.environ.copy()
-            env["OPENAI_BASE_URL"] = base_url
-            env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
             env["TRANSCRIPTION_PROVIDER"] = "openai"
+            env["OPENAI_BASE_URL"] = stt_base_url or "https://ai.kilic.dev/api/v1"
+            env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
+            if stt_model:
+                env["WHISPER_MODEL"] = stt_model
             log.info(
-                "remote stt: OPENAI_BASE_URL=%s TRANSCRIPTION_PROVIDER=openai",
-                base_url,
+                "remote stt: OPENAI_BASE_URL=%s WHISPER_MODEL=%s",
+                env["OPENAI_BASE_URL"],
+                stt_model or "(default)",
             )
 
         waystt_cmd = ["waystt", "--pipe-to"] + pipe_cmd
@@ -334,7 +353,7 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
             log.info("running in synchronous/stdout mode")
             notify(
                 "Speech-to-text started (output: stdout"
-                + (f", AI: {ai}" if ai else "")
+                + (f", enrich: {enrich}" if enrich else "")
                 + ")"
             )
             subprocess.run(waystt_cmd, env=env)
@@ -366,8 +385,8 @@ def start_speech(output_mode, ai=None, base_url=None, model=None):
         )
 
         output_desc = {"clipboard": "clipboard", "type": "typing"}[output_mode]
-        ai_desc = f", AI: {ai}" if ai else ""
-        notify(f"Speech-to-text started (output: {output_desc}{ai_desc})")
+        enrich_desc = f", enrich: {enrich}" if enrich else ""
+        notify(f"Speech-to-text started (output: {output_desc}{enrich_desc})")
         return True
     except Exception as e:
         notify(f"Failed to start speech-to-text: {e}")
@@ -413,14 +432,32 @@ def toggle_recording():
         notify(f"Failed to toggle recording: {e}")
         return False
 
-def toggle_speech(output_mode, ai=None, base_url=None, model=None):
+def toggle_speech(
+    output_mode,
+    stt_provider="http",
+    stt_base_url=None,
+    stt_model=None,
+    enrich=None,
+    enrich_base_url=None,
+    enrich_model=None,
+):
     """Toggle speech recording or start if not running"""
     if is_running():
         log.info("waystt running, toggling recording")
         toggle_recording()
     else:
-        log.info("waystt not running, starting (output=%s, ai=%s)", output_mode, ai)
-        start_speech(output_mode, ai=ai, base_url=base_url, model=model)
+        log.info(
+            "waystt not running, starting (output=%s, enrich=%s)", output_mode, enrich
+        )
+        start_speech(
+            output_mode,
+            stt_provider=stt_provider,
+            stt_base_url=stt_base_url,
+            stt_model=stt_model,
+            enrich=enrich,
+            enrich_base_url=enrich_base_url,
+            enrich_model=enrich_model,
+        )
 
 def get_speech_state():
     if not is_running():
@@ -448,17 +485,20 @@ def get_status_json():
     icon = icons.get(mode, "󰅇")
     label = labels.get(mode, mode)
 
-    ai = get_ai_provider()
-    ai_icon = " 󰧑" if ai else ""
-    ai_label = f" ({ai})" if ai else ""
+    enrich = get_enrich_provider()
+    enrich_icon = " 󰧑" if enrich else ""
+    enrich_label = f" ({enrich})" if enrich else ""
 
     status_map = {
-        "recording": (f"󰍬{ai_icon} {icon}", f"Recording speech{ai_label} → {label}"),
-        "working": (
-            f"󰍬{ai_icon} {icon}",
-            f"Processing transcription{ai_label} → {label}",
+        "recording": (
+            f"󰍬{enrich_icon} {icon}",
+            f"Recording speech{enrich_label} → {label}",
         ),
-        "output": (icon, f"Outputting transcription{ai_label} → {label}"),
+        "working": (
+            f"󰍬{enrich_icon} {icon}",
+            f"Processing transcription{enrich_label} → {label}",
+        ),
+        "output": (icon, f"Outputting transcription{enrich_label} → {label}"),
     }
     text, tooltip = status_map[state]
 
@@ -484,26 +524,44 @@ def main():
         choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
+    # STT options
     toggle_parser.add_argument(
-        "--ai",
-        action="store_true",
-        help="Pipe text through AI to fix typos and improve readability",
+        "--stt-provider",
+        choices=["http", "local"],
+        default="http",
+        help="STT provider (http: remote OpenAI-compatible, local: local whisper)",
     )
     toggle_parser.add_argument(
-        "--ai-provider",
+        "--stt-base-url",
+        default="https://ai.kilic.dev/api/v1",
+        help="Base URL for remote STT provider",
+    )
+    toggle_parser.add_argument(
+        "--stt-model",
+        default="",
+        help="Whisper model for STT",
+    )
+    # Enrichment options
+    toggle_parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Enrich transcription through AI to fix typos and improve readability",
+    )
+    toggle_parser.add_argument(
+        "--enrich-provider",
         choices=["http", "claude", "codex"],
         default="http",
-        help="AI provider to use",
+        help="AI provider for enrichment",
     )
     toggle_parser.add_argument(
-        "--base-url",
+        "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
-        help="OpenAI-compatible API base URL",
+        help="Base URL for enrichment API",
     )
     toggle_parser.add_argument(
-        "--model",
+        "--enrich-model",
         default="ministral-3:8b",
-        help="Model to use for AI refinement",
+        help="Model to use for enrichment",
     )
 
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
@@ -512,33 +570,58 @@ def main():
         choices=["stdout", "clipboard", "type"],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
     )
+    # STT options
     start_parser.add_argument(
-        "--ai",
-        action="store_true",
-        help="Pipe text through AI to fix typos and improve readability",
+        "--stt-provider",
+        choices=["http", "local"],
+        default="http",
+        help="STT provider (http: remote OpenAI-compatible, local: local whisper)",
     )
     start_parser.add_argument(
-        "--ai-provider",
+        "--stt-base-url",
+        default="https://ai.kilic.dev/api/v1",
+        help="Base URL for remote STT provider",
+    )
+    start_parser.add_argument(
+        "--stt-model",
+        default="distil-large-v3",
+        help="Whisper model for STT",
+    )
+    # Enrichment options
+    start_parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Enrich transcription through AI to fix typos and improve readability",
+    )
+    start_parser.add_argument(
+        "--enrich-provider",
         choices=["http", "claude", "codex"],
         default="http",
-        help="AI provider to use",
+        help="AI provider for enrichment",
     )
     start_parser.add_argument(
-        "--base-url",
+        "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
-        help="OpenAI-compatible API base URL",
+        help="Base URL for enrichment API",
     )
     start_parser.add_argument(
-        "--model",
+        "--enrich-model",
         default="ministral-3:8b",
-        help="Model to use for AI refinement",
+        help="Model to use for enrichment",
     )
 
-    ai_process_parser = subparsers.add_parser("_pipe-process", help=argparse.SUPPRESS)
-    ai_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
-    ai_process_parser.add_argument("output", choices=["stdout", "clipboard", "type"])
-    ai_process_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
-    ai_process_parser.add_argument("--model", default="ministral-3:8b")
+    enrich_process_parser = subparsers.add_parser(
+        "_pipe-process", help=argparse.SUPPRESS
+    )
+    enrich_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
+    enrich_process_parser.add_argument(
+        "output", choices=["stdout", "clipboard", "type"]
+    )
+    enrich_process_parser.add_argument(
+        "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
+    )
+    enrich_process_parser.add_argument("--enrich-model", default="ministral-3:8b")
+    enrich_process_parser.add_argument("--api-key", default="")
 
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
     subparsers.add_parser("stop", help="Stop waystt process")
@@ -559,8 +642,9 @@ def main():
         run_pipe_processing(
             args.provider,
             args.output,
-            base_url=args.base_url,
-            model=args.model,
+            base_url=args.enrich_base_url,
+            model=args.enrich_model,
+            api_key=args.api_key,
         )
 
     elif args.command == "_wait-and-signal":
@@ -589,21 +673,27 @@ def main():
         sys.exit(0 if is_running() else 1)
 
     elif args.command == "toggle":
-        ai = args.ai_provider if args.ai else None
+        enrich = args.enrich_provider if args.enrich else None
         toggle_speech(
             args.output,
-            ai=ai,
-            base_url=args.base_url,
-            model=args.model,
+            stt_provider=args.stt_provider,
+            stt_base_url=args.stt_base_url,
+            stt_model=args.stt_model,
+            enrich=enrich,
+            enrich_base_url=args.enrich_base_url,
+            enrich_model=args.enrich_model,
         )
 
     elif args.command == "start":
-        ai = args.ai_provider if args.ai else None
+        enrich = args.enrich_provider if args.enrich else None
         start_speech(
             args.output,
-            ai=ai,
-            base_url=args.base_url,
-            model=args.model,
+            stt_provider=args.stt_provider,
+            stt_base_url=args.stt_base_url,
+            stt_model=args.stt_model,
+            enrich=enrich,
+            enrich_base_url=args.enrich_base_url,
+            enrich_model=args.enrich_model,
         )
 
     elif args.command in ("stop", "kill"):
