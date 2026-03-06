@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 import json
 import logging
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -73,6 +75,40 @@ def get_waystt_children():
 
     return children
 
+def _get_focused_output():
+    for cmd in [
+        ["swaymsg", "-t", "get_outputs"],
+        ["hyprctl", "monitors", "-j"],
+    ]:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            for monitor in json.loads(result.stdout):
+                if monitor.get("focused"):
+                    return monitor["name"]
+        except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError):
+            continue
+
+    return None
+
+def capture_screenshot():
+    fd, path = tempfile.mkstemp(suffix=".png", prefix="speech-screenshot-")
+    os.close(fd)
+    try:
+        cmd = ["grim"]
+        output = _get_focused_output()
+        if output:
+            cmd.extend(["-o", output])
+            log.info("capturing focused output: %s", output)
+        subprocess.run(cmd + [path], check=True)
+        log.info("screenshot captured: %s", path)
+
+        return path
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        log.warning("screenshot capture failed: %s", e)
+        os.unlink(path)
+
+        return None
+
 def _load_system_prompt():
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "speech.md")
@@ -112,6 +148,7 @@ def get_pipe_command(
     enrich_temperature=None,
     enrich_top_p=None,
     enrich_thinking=False,
+    screenshot_path=None,
 ):
     output_cmd = get_output_command(output_mode)
 
@@ -131,13 +168,44 @@ def get_pipe_command(
         cmd.append("--enrich-thinking")
     if enrich == "http":
         cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
+    if screenshot_path:
+        cmd.extend(["--screenshot-path", screenshot_path])
 
     return cmd
 
 def run_http_completion(
-    base_url, model, api_key, transcription, temperature=0, top_p=0.9, thinking=False
+    base_url,
+    model,
+    api_key,
+    transcription,
+    temperature=0,
+    top_p=0.9,
+    thinking=False,
+    screenshot_path=None,
 ):
-    prompt = f"{AI_USER_PROMPT}\n{transcription}"
+    has_screenshot = screenshot_path and os.path.isfile(screenshot_path)
+
+    if has_screenshot:
+        prompt = (
+            f"{AI_USER_PROMPT}\n{transcription}\n\n"
+            "REMINDER: The image above is SILENT CONTEXT ONLY. "
+            "Do NOT describe or mention it. Output ONLY the cleaned transcription."
+        )
+    else:
+        prompt = f"{AI_USER_PROMPT}\n{transcription}"
+
+    user_content = []
+    if has_screenshot:
+        with open(screenshot_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            }
+        )
+        log.info("attached screenshot to request")
+    user_content.append({"type": "text", "text": prompt})
 
     body = {
         "model": model,
@@ -145,7 +213,7 @@ def run_http_completion(
         "top_p": top_p,
         "messages": [
             {"role": "system", "content": AI_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_content},
         ],
     }
     if thinking:
@@ -191,6 +259,7 @@ def run_pipe_processing(
     temperature=0,
     top_p=0.9,
     thinking=False,
+    screenshot_path=None,
 ):
     log.info("reading transcription from stdin")
     transcription = sys.stdin.read()
@@ -208,6 +277,7 @@ def run_pipe_processing(
                 temperature=temperature,
                 top_p=top_p,
                 thinking=thinking,
+                screenshot_path=screenshot_path,
             )
             log.info("enrichment complete (%d chars)", len(result))
         except Exception as e:
@@ -258,6 +328,11 @@ def run_pipe_processing(
     output_cmd = get_output_command(output_mode)
     log.info("outputting to %s (%s)", output_mode, " ".join(output_cmd))
     subprocess.run(output_cmd, input=result.strip(), text=True)
+
+    if screenshot_path and os.path.isfile(screenshot_path):
+        os.unlink(screenshot_path)
+        log.info("cleaned up screenshot: %s", screenshot_path)
+
     log.info("done")
 
 def signal_waybar():
@@ -283,11 +358,16 @@ def start_speech(
     enrich_temperature=None,
     enrich_top_p=None,
     enrich_thinking=False,
+    screenshot=False,
 ):
     """Start waystt with specified output mode"""
     if is_running():
         notify("Speech-to-text is already running")
         return False
+
+    screenshot_path = None
+    if screenshot and enrich:
+        screenshot_path = capture_screenshot()
 
     try:
         pipe_cmd = get_pipe_command(
@@ -298,6 +378,7 @@ def start_speech(
             enrich_temperature=enrich_temperature,
             enrich_top_p=enrich_top_p,
             enrich_thinking=enrich_thinking,
+            screenshot_path=screenshot_path,
         )
         log.info("pipe command: %s", " ".join(pipe_cmd))
 
@@ -412,6 +493,7 @@ def toggle_speech(
     enrich_temperature=None,
     enrich_top_p=None,
     enrich_thinking=False,
+    screenshot=False,
 ):
     """Toggle speech recording or start if not running"""
     if is_running():
@@ -432,6 +514,7 @@ def toggle_speech(
             enrich_temperature=enrich_temperature,
             enrich_top_p=enrich_top_p,
             enrich_thinking=enrich_thinking,
+            screenshot=screenshot,
         )
 
 def get_speech_state():
@@ -479,7 +562,7 @@ def get_status_json():
 
     return json.dumps({"class": state, "text": text, "tooltip": tooltip})
 
-DEFAULT_ENRICH_MODEL = "deepseek-coder-v2:16b"
+DEFAULT_ENRICH_MODEL = "ministral-3:8b"
 
 def main():
     parser = argparse.ArgumentParser(
@@ -557,6 +640,12 @@ def main():
         action="store_true",
         help="Enable model thinking/reasoning (default: disabled)",
     )
+    toggle_parser.add_argument(
+        "-s",
+        "--screenshot",
+        action="store_true",
+        help="Capture focused screen as context for enrichment",
+    )
 
     start_parser = subparsers.add_parser("start", help="Start speech-to-text")
     start_parser.add_argument(
@@ -620,6 +709,12 @@ def main():
         action="store_true",
         help="Enable model thinking/reasoning (default: disabled)",
     )
+    start_parser.add_argument(
+        "-s",
+        "--screenshot",
+        action="store_true",
+        help="Capture focused screen as context for enrichment",
+    )
 
     enrich_process_parser = subparsers.add_parser(
         "_pipe-process", help=argparse.SUPPRESS
@@ -636,6 +731,7 @@ def main():
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--api-key", default="")
+    enrich_process_parser.add_argument("--screenshot-path", default="")
 
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
     subparsers.add_parser("stop", help="Stop waystt process")
@@ -662,6 +758,7 @@ def main():
             temperature=args.enrich_temperature,
             top_p=args.enrich_top_p,
             thinking=args.enrich_thinking,
+            screenshot_path=args.screenshot_path or None,
         )
 
     elif args.command == "_wait-and-signal":
@@ -702,6 +799,7 @@ def main():
             enrich_temperature=args.enrich_temperature,
             enrich_top_p=args.enrich_top_p,
             enrich_thinking=args.enrich_thinking,
+            screenshot=args.screenshot,
         )
 
     elif args.command == "start":
@@ -717,6 +815,7 @@ def main():
             enrich_temperature=args.enrich_temperature,
             enrich_top_p=args.enrich_top_p,
             enrich_thinking=args.enrich_thinking,
+            screenshot=args.screenshot,
         )
 
     elif args.command in ("stop", "kill"):

@@ -21,13 +21,13 @@ mode $mode_recording {
         bindsym s exec $speech toggle type, mode "default"
 
         # Speech-to-text direct typing with AI enrichment
-        bindsym Shift+s exec $speech toggle type --enrich, mode "default"
+        bindsym Shift+s exec $speech toggle type --enrich --screenshot, mode "default"
 
         # Speech-to-text to clipboard (wl-copy)
         bindsym c exec $speech toggle clipboard, mode "default"
 
         # Speech-to-text to clipboard with AI enrichment
-        bindsym Shift+c exec $speech toggle clipboard --enrich, mode "default"
+        bindsym Shift+c exec $speech toggle clipboard --enrich --screenshot, mode "default"
 
         # Terminate waystt
         bindsym Shift+q exec $speech kill, mode "default"
