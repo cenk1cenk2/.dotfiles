@@ -85,6 +85,7 @@ tasks:
             swayosd
             swayr
             sworkstyle
+            wayland
             waybar
             waystt
             wireplumber

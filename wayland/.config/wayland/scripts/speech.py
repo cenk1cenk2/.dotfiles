@@ -568,7 +568,7 @@ def get_status_json():
 
     return json.dumps({"class": state, "text": text, "tooltip": tooltip})
 
-DEFAULT_ENRICH_MODEL = "phi4-mini:3.8b"
+DEFAULT_ENRICH_MODEL = "deepseek-coder-v2:16b"
 
 def main():
     parser = argparse.ArgumentParser(
