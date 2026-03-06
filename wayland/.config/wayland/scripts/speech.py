@@ -41,6 +41,10 @@ def get_waystt_output_mode():
             cmdline = proc.cmdline()
             if any("ydotool" in arg for arg in cmdline):
                 return "type"
+            if "_pipe-process" in cmdline:
+                idx = cmdline.index("_pipe-process")
+                if idx + 2 < len(cmdline) and cmdline[idx + 2] in ("stdout", "clipboard", "type"):
+                    return cmdline[idx + 2]
             if "stdout" in cmdline:
                 return "stdout"
         except (psutil.NoSuchProcess, psutil.AccessDenied):
