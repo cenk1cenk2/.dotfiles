@@ -14,6 +14,8 @@ import urllib.request
 
 import psutil
 
+DEFAULT_ENRICH_MODEL = "qwen2.5:7b-instruct"
+
 log = logging.getLogger("speech")
 
 def notify(
@@ -561,8 +563,6 @@ def get_status_json():
     text, tooltip = status_map[state]
 
     return json.dumps({"class": state, "text": text, "tooltip": tooltip})
-
-DEFAULT_ENRICH_MODEL = "ministral-3:8b"
 
 def main():
     parser = argparse.ArgumentParser(
