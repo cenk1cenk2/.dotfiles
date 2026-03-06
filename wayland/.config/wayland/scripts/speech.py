@@ -43,7 +43,11 @@ def get_waystt_output_mode():
                 return "type"
             if "_pipe-process" in cmdline:
                 idx = cmdline.index("_pipe-process")
-                if idx + 2 < len(cmdline) and cmdline[idx + 2] in ("stdout", "clipboard", "type"):
+                if idx + 2 < len(cmdline) and cmdline[idx + 2] in (
+                    "stdout",
+                    "clipboard",
+                    "type",
+                ):
                     return cmdline[idx + 2]
             if "stdout" in cmdline:
                 return "stdout"
@@ -123,7 +127,7 @@ def _load_system_prompt():
 
 AI_SYSTEM_PROMPT = _load_system_prompt()
 
-AI_USER_PROMPT = "Clean up the following speech transcription:"
+AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
 def get_output_command(output_mode):
     if output_mode == "stdout":
@@ -191,14 +195,12 @@ def run_http_completion(
 ):
     has_screenshot = screenshot_path and os.path.isfile(screenshot_path)
 
+    prompt = AI_USER_PROMPT.format(text=transcription)
     if has_screenshot:
-        prompt = (
-            f"{AI_USER_PROMPT}\n{transcription}\n\n"
-            "REMINDER: The image above is SILENT CONTEXT ONLY. "
+        prompt += (
+            "\n\nREMINDER: The image above is SILENT CONTEXT ONLY. "
             "Do NOT describe or mention it. Output ONLY the cleaned transcription."
         )
-    else:
-        prompt = f"{AI_USER_PROMPT}\n{transcription}"
 
     user_content = []
     if has_screenshot:
@@ -291,7 +293,7 @@ def run_pipe_processing(
             notify(f"HTTP enrichment failed: {e}")
     elif provider == "claude":
         log.info("sending to claude (model: haiku)")
-        prompt = f"{AI_USER_PROMPT}\n{transcription}"
+        prompt = AI_USER_PROMPT.format(text=transcription)
         ai_proc = subprocess.run(
             [
                 "claude",
@@ -312,7 +314,7 @@ def run_pipe_processing(
             log.error("claude failed (exit %d)", ai_proc.returncode)
     elif provider == "codex":
         log.info("sending to codex")
-        prompt = f"{AI_USER_PROMPT}\n{transcription}"
+        prompt = AI_USER_PROMPT.format(text=transcription)
         codex_prompt = f"{AI_SYSTEM_PROMPT}\n\n{prompt}"
         ai_proc = subprocess.run(
             ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
