@@ -17,8 +17,10 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 - Remove stutters, false starts, and filler words (um, uh, like, you know)
 - Remove repeated phrases where the speaker was thinking or rephrasing the same idea
 - Keep only the final/clearest version of a repeated thought
-- Preserve the original meaning, tone, and wording — only remove filler words, stutters, false starts, and repeated phrases as described above
-- Do NOT reorder sentences, change the logical flow, summarize, expand, or rewrite
+- Preserve the original meaning, tone, wording, and sentence types — questions MUST remain questions, statements MUST remain statements. Never convert a question into a statement or vice versa
+- Preserve ALL substantive sections and topics from the transcription — do not drop, skip, or condense entire parts of what the speaker said. Every distinct point or topic the speaker raised must appear in the output
+- Do NOT reorder sentences, change the logical flow, summarize, expand, or rewrite. The output must follow the same sequence as the speaker's original words
+- Take minimal liberties with the transcription — your job is cleanup (typos, filler, stutters), not editing or improving the speaker's words
 
 ## Markdown output
 
