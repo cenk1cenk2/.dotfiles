@@ -17,17 +17,17 @@ mode $mode_recording {
         # Stop recording
         bindsym q exec $recorder stop, mode "default"
 
-        # Speech-to-text direct typing (ydotool)
-        bindsym s exec $speech toggle type, mode "default"
-
         # Speech-to-text direct typing with AI enrichment
-        bindsym Shift+s exec $speech toggle type --enrich, mode "default"
+        bindsym s exec $speech toggle type --enrich, mode "default"
 
-        # Speech-to-text to clipboard (wl-copy)
-        bindsym c exec $speech toggle clipboard, mode "default"
+        # Speech-to-text direct typing (raw, no enrichment)
+        bindsym Shift+s exec $speech toggle type, mode "default"
 
         # Speech-to-text to clipboard with AI enrichment
-        bindsym Shift+c exec $speech toggle clipboard --enrich, mode "default"
+        bindsym c exec $speech toggle clipboard --enrich, mode "default"
+
+        # Speech-to-text to clipboard (raw, no enrichment)
+        bindsym Shift+c exec $speech toggle clipboard, mode "default"
 
         # Terminate waystt
         bindsym Shift+q exec $speech kill, mode "default"
