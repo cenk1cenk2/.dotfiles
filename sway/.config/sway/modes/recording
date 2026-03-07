@@ -37,4 +37,4 @@ mode $mode_recording {
 }
 
 ## Launch // Recording Mode ##
-bindsym $mod+Shift+r mode $mode_recording
+bindsym $mod+r mode $mode_recording

@@ -40,6 +40,6 @@ mode --pango_markup $mode_resize {
     bindsym Escape mode "default"
 }
 ## Launch // Resize Mode ##
-bindsym $mod+r mode $mode_resize
+bindsym $mod+Shift+r mode $mode_resize
 gaps inner 5px
 gaps outer 5px
