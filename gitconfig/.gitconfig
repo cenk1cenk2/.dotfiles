@@ -85,7 +85,7 @@
   context = 5
 
 [difftool "nvim"]
-; cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
+# cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 cmd = "nvim -b \"$LOCAL\" \"$REMOTE\" +\"CodeDiff file $LOCAL $REMOTE\""
 
 [difftool "batdiff"]
