@@ -14,7 +14,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_ENRICH_MODEL = "qwen2.5:7b-instruct"
+DEFAULT_ENRICH_MODEL = "gemma3:12b"
 
 log = logging.getLogger("speech")
 
@@ -225,9 +225,7 @@ def run_http_completion(
         ],
     }
     if thinking:
-        # Qwen3 thinking toggle (vLLM/ollama)
         body["chat_template_kwargs"] = {"enable_thinking": True}
-        # OpenAI reasoning toggle
         body["reasoning"] = {}
 
     log.debug(
