@@ -64,6 +64,15 @@
     "signal": 8,
   },
 
+  "custom/copywriter": {
+    "interval": 3,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/wayland/scripts/copywriter.py status",
+    "exec-if": "~/.config/wayland/scripts/copywriter.py is-running",
+    "signal": 11,
+  },
+
   "group/extras": {
     "orientation": "horizontal",
     "modules": [

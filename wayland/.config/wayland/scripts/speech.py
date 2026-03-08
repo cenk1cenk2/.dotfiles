@@ -188,7 +188,7 @@ def run_http_completion(
     model,
     api_key,
     transcription,
-    temperature=0,
+    temperature=0.3,
     top_p=0.9,
     thinking=False,
     screenshot_path=None,
@@ -262,7 +262,7 @@ def run_pipe_processing(
     base_url=None,
     model=None,
     api_key=None,
-    temperature=0,
+    temperature=0.3,
     top_p=0.9,
     thinking=False,
     screenshot_path=None,
@@ -630,8 +630,8 @@ def main():
     toggle_parser.add_argument(
         "--enrich-temperature",
         type=float,
-        default=0,
-        help="Temperature for enrichment (default: 0)",
+        default=0.3,
+        help="Temperature for enrichment (default: 0.3)",
     )
     toggle_parser.add_argument(
         "--enrich-top-p",
@@ -699,8 +699,8 @@ def main():
     start_parser.add_argument(
         "--enrich-temperature",
         type=float,
-        default=0,
-        help="Temperature for enrichment (default: 0)",
+        default=0.3,
+        help="Temperature for enrichment (default: 0.3)",
     )
     start_parser.add_argument(
         "--enrich-top-p",
@@ -731,7 +731,7 @@ def main():
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
     enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_ENRICH_MODEL)
-    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0)
+    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.3)
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--api-key", default="")
