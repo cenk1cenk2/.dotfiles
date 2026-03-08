@@ -10,7 +10,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "qwen2.5:7b-instruct"
+DEFAULT_MODEL = "qwen2.5:14b-instruct"
 
 log = logging.getLogger("copywriter")
 

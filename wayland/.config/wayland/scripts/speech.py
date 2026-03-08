@@ -14,7 +14,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_ENRICH_MODEL = "qwen2.5:7b-instruct"
+DEFAULT_ENRICH_MODEL = "qwen2.5:14b-instruct"
 
 log = logging.getLogger("speech")
 
