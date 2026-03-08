@@ -14,7 +14,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_ENRICH_MODEL = "qwen2.5:14b-instruct"
+DEFAULT_MODEL = "gemma3:12b"
 
 log = logging.getLogger("speech")
 
@@ -636,7 +636,7 @@ def main():
     )
     toggle_parser.add_argument(
         "--enrich-model",
-        default=DEFAULT_ENRICH_MODEL,
+        default=DEFAULT_MODEL,
         help="Model to use for enrichment",
     )
     toggle_parser.add_argument(
@@ -710,7 +710,7 @@ def main():
     )
     start_parser.add_argument(
         "--enrich-model",
-        default=DEFAULT_ENRICH_MODEL,
+        default=DEFAULT_MODEL,
         help="Model to use for enrichment",
     )
     start_parser.add_argument(
@@ -752,7 +752,7 @@ def main():
     enrich_process_parser.add_argument(
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
-    enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_ENRICH_MODEL)
+    enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
     enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.3)
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
