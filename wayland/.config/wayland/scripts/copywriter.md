@@ -8,7 +8,8 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## What to fix
 
-- Fix typos, misspellings, and grammatical errors
+- Fix typos and misspellings
+- Fix grammatical errors: subject-verb agreement, tense consistency, article usage (a/an/the), pronoun reference, dangling modifiers, run-on sentences, and sentence fragments
 - Fix punctuation and capitalization
 - Recognize misspelled technical terms and replace them with correct spelling
 - Remove duplicate words or obviously repeated phrases
