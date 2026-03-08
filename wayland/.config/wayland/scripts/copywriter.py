@@ -16,18 +16,15 @@ log = logging.getLogger("copywriter")
 
 ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
 
-
 def _load_system_prompt():
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "copywriter.md")
     ) as f:
         return f.read().strip()
 
-
 SYSTEM_PROMPT = _load_system_prompt()
 
 USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
-
 
 def notify(message, timeout=None):
     cmd = ["notify-send", "Copywriter", message, "-i", ICON]
@@ -35,10 +32,8 @@ def notify(message, timeout=None):
         cmd.extend(["-t", str(timeout)])
     subprocess.run(cmd)
 
-
 def signal_waybar():
     subprocess.run(["waybar-signal.sh", "copywriter"], check=False)
-
 
 def get_output_command(output_mode):
     if output_mode == "stdout":
@@ -61,7 +56,6 @@ def get_output_command(output_mode):
         f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'"
     )
 
-
 def find_copywriter_processes():
     current = os.getpid()
 
@@ -74,15 +68,13 @@ def find_copywriter_processes():
         and "_run" in p.info["cmdline"]
     ]
 
-
 def is_running():
     return len(find_copywriter_processes()) > 0
-
 
 def get_clipboard():
     try:
         result = subprocess.run(
-            ["wl-paste", "--no-newline"], capture_output=True, text=True, check=True
+            ["wl-paste"], capture_output=True, text=True, check=True
         )
 
         return result.stdout
@@ -91,8 +83,9 @@ def get_clipboard():
 
         return None
 
-
-def run_http_completion(base_url, model, api_key, text, temperature=0.3, top_p=0.9, thinking=False):
+def run_http_completion(
+    base_url, model, api_key, text, temperature=0.3, top_p=0.9, thinking=False
+):
     prompt = USER_PROMPT.format(text=text)
     body = {
         "model": model,
@@ -134,7 +127,6 @@ def run_http_completion(base_url, model, api_key, text, temperature=0.3, top_p=0
     log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
 
     return data["choices"][0]["message"]["content"]
-
 
 def run_refinement(
     provider,
@@ -224,13 +216,11 @@ def run_refinement(
 
     return True
 
-
 def get_state():
     if not is_running():
         return "idle"
 
     return "working"
-
 
 def get_status_json():
     state = get_state()
@@ -241,7 +231,6 @@ def get_status_json():
     return json.dumps(
         {"class": "working", "text": "󰼭 󰧑", "tooltip": "Refining clipboard..."}
     )
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -391,7 +380,6 @@ def main():
 
     elif args.command == "is-running":
         sys.exit(0 if is_running() else 1)
-
 
 if __name__ == "__main__":
     main()
