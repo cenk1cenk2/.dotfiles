@@ -14,7 +14,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "kimi-k2.5:cloud"
+DEFAULT_MODEL = "gemma-3:27b-cloud"
 
 log = logging.getLogger("speech")
 
