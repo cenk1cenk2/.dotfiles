@@ -307,6 +307,7 @@ def main():
     internal_parser.add_argument("--thinking", action="store_true")
     internal_parser.add_argument("--api-key", default="")
 
+    subparsers.add_parser("kill", help="Kill running copywriter process")
     subparsers.add_parser("status", help="Get status (JSON for waybar)")
     subparsers.add_parser("is-running", help="Check if running (exit code 0 if yes)")
 
@@ -360,6 +361,17 @@ def main():
             notify(
                 f"Refining clipboard → {output_labels[args.output]}...", timeout=2000
             )
+
+    elif args.command == "kill":
+        procs = find_copywriter_processes()
+        if not procs:
+            notify("Copywriter is not running")
+            return
+        for p in procs:
+            log.info("killing copywriter process %d", p.pid)
+            p.kill()
+        notify("Copywriter killed")
+        signal_waybar()
 
     elif args.command == "_run":
         run_refinement(
