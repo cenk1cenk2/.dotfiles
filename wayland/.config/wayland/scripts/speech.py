@@ -659,8 +659,7 @@ def main():
     toggle_parser.add_argument(
         "--enrich-num-ctx",
         type=int,
-        default=16384,
-        help="Context window size for ollama (default: 16384)",
+        help="Context window size for ollama",
     )
     toggle_parser.add_argument(
         "-s",
@@ -734,8 +733,7 @@ def main():
     start_parser.add_argument(
         "--enrich-num-ctx",
         type=int,
-        default=16384,
-        help="Context window size for ollama (default: 16384)",
+        help="Context window size for ollama",
     )
     start_parser.add_argument(
         "-s",
@@ -758,7 +756,7 @@ def main():
     enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.3)
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
-    enrich_process_parser.add_argument("--enrich-num-ctx", type=int, default=16384)
+    enrich_process_parser.add_argument("--enrich-num-ctx", type=int)
     enrich_process_parser.add_argument("--api-key", default="")
     enrich_process_parser.add_argument("--screenshot-path", default="")
 

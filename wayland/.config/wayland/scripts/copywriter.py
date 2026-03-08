@@ -298,8 +298,7 @@ def main():
     run_parser.add_argument(
         "--num-ctx",
         type=int,
-        default=16384,
-        help="Context window size for ollama (default: 16384)",
+        help="Context window size for ollama ",
     )
 
     # Internal subcommand for background execution
@@ -311,7 +310,7 @@ def main():
     internal_parser.add_argument("--temperature", type=float, default=0.3)
     internal_parser.add_argument("--top-p", type=float, default=0.9)
     internal_parser.add_argument("--thinking", action="store_true")
-    internal_parser.add_argument("--num-ctx", type=int, default=16384)
+    internal_parser.add_argument("--num-ctx", type=int)
     internal_parser.add_argument("--api-key", default="")
 
     subparsers.add_parser("kill", help="Kill running copywriter process")
