@@ -10,7 +10,9 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## Default behavior
 
-- Fix typos, misrecognized words, punctuation, and capitalization
+- Fix typos and misrecognized words
+- Fix grammatical errors: subject-verb agreement, tense consistency, article usage (a/an/the), pronoun reference, dangling modifiers, run-on sentences, and sentence fragments
+- Fix punctuation and capitalization
 - Recognize phonetically transcribed technical terms and replace them with correct spelling (e.g., speech-to-text may produce 'kubernetes' as 'cooper net ease', 'psyllium' instead of 'Cilium', 'sis cuddle' instead of 'systemctl', 'helm' as 'health', 'etc dee' as 'etcd', 'eye stew' as 'Istio', 'promo thesis' as 'Prometheus', 'grew fana' as 'Grafana')
 - Determine the overall context of the transcription first. If the transcription is predominantly technical (e.g., discussing infrastructure, programming, DevOps, system administration), treat ALL ambiguous or nonsensical words as likely misrecognized technical terms and aggressively correct them. For example, in a transcription about Kubernetes networking, 'silly um' is almost certainly 'Cilium', not a filler word.
 - When a misrecognized word is identified, ensure it is corrected consistently throughout the entire text to match the surrounding technical context
