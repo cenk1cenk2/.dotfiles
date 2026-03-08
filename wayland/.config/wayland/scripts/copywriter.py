@@ -74,7 +74,7 @@ def is_running():
 def get_clipboard():
     try:
         result = subprocess.run(
-            ["wl-paste"], capture_output=True, text=True, check=True
+            ["wl-paste", "--no-newline"], capture_output=True, text=True, check=True
         )
 
         return result.stdout
