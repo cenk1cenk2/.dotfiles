@@ -10,7 +10,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "gemma3:12b"
+DEFAULT_MODEL = "kimi-k2.5:cloud"
 
 log = logging.getLogger("copywriter")
 
