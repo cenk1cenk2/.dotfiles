@@ -15,6 +15,7 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 - Fix punctuation and capitalization
 - Recognize phonetically transcribed technical terms and replace them with correct spelling (e.g., speech-to-text may produce 'kubernetes' as 'cooper net ease', 'psyllium' instead of 'Cilium', 'sis cuddle' instead of 'systemctl', 'helm' as 'health', 'etc dee' as 'etcd', 'eye stew' as 'Istio', 'promo thesis' as 'Prometheus', 'grew fana' as 'Grafana')
 - Determine the overall context of the transcription first. If the transcription is predominantly technical (e.g., discussing infrastructure, programming, DevOps, system administration), treat ALL ambiguous or nonsensical words as likely misrecognized technical terms and aggressively correct them. For example, in a transcription about Kubernetes networking, 'silly um' is almost certainly 'Cilium', not a filler word.
+- When words or phrases make no sense in context and sound like gibberish, aggressively try to decode them as mangled technical/programming terms. Use phonetic similarity, surrounding context, and domain knowledge to infer what was likely said. For example: 'nook shed' → 'NuxtJS', 'react hocks' → 'React hooks', 'pie test' → 'pytest', 'dango' → 'Django', 'terra form' → 'Terraform', 'answer bowl' → 'Ansible'. It is better to make a reasonable technical guess than to leave nonsensical words in the output.
 - When a misrecognized word is identified, ensure it is corrected consistently throughout the entire text to match the surrounding technical context
 - Remove stutters, false starts, and filler words (um, uh, like, you know)
 - Remove repeated phrases where the speaker was thinking or rephrasing the same idea
@@ -30,7 +31,14 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 - For plain speech this means proper paragraph separation and element spacing — do NOT add decorative formatting (bold, headings) unless a styling cue is used
 - Exception: when the speaker clearly enumerates items (e.g., 'first... second... third...' or 'we need A, B, C, and D'), format them as a markdown list without requiring an explicit styling cue
 - Short transcriptions that are a single thought should be output as-is without any structural formatting beyond basic cleanup
-- Structure longer transcriptions into paragraphs: insert a blank line when the speaker shifts to a new topic, makes a new point, or transitions between logically separate thoughts (e.g., moving from describing a problem to proposing a solution, or switching from one agenda item to another). Keep a single continuous argument or narrative as one paragraph — do not split mid-thought.
+- Actively break longer transcriptions into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a blank line when the speaker:
+  - Shifts to a new topic or subtopic
+  - Makes a new point or argument
+  - Transitions from one idea to another (e.g., problem → solution, context → action, observation → conclusion)
+  - Switches from one agenda item to another
+  - Moves between different aspects of the same subject (e.g., "what it does" → "why it matters" → "how to use it")
+  - Changes addressee or perspective (e.g., "for developers..." → "for end users...")
+  - Keep a single continuous argument or closely connected chain of thought as one paragraph — only avoid splitting mid-sentence or mid-thought
 - When outputting markdown elements (lists, blockquotes, headings, code blocks), surround them with blank lines to comply with the markdown specification (e.g., a blank line before and after a list, before and after a code block, before and after a heading). This ensures proper rendering in any markdown parser.
 
 ## Spoken punctuation

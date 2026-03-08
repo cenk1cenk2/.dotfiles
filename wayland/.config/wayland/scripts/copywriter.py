@@ -88,7 +88,7 @@ def run_http_completion(
     model,
     api_key,
     text,
-    temperature=0.5,
+    temperature=0.6,
     top_p=0.9,
     thinking=False,
     num_ctx=None,
@@ -143,7 +143,7 @@ def run_refinement(
     base_url=None,
     model=None,
     api_key=None,
-    temperature=0.5,
+    temperature=0.6,
     top_p=0.9,
     thinking=False,
     num_ctx=None,
@@ -281,8 +281,8 @@ def main():
     run_parser.add_argument(
         "--temperature",
         type=float,
-        default=0.3,
-        help="Temperature for refinement (default: 0.3)",
+        default=0.5,
+        help="Temperature for refinement (default: 0.5)",
     )
     run_parser.add_argument(
         "--top-p",
@@ -307,7 +307,7 @@ def main():
     internal_parser.add_argument("--provider", default="http")
     internal_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
     internal_parser.add_argument("--model", default=DEFAULT_MODEL)
-    internal_parser.add_argument("--temperature", type=float, default=0.3)
+    internal_parser.add_argument("--temperature", type=float, default=0.5)
     internal_parser.add_argument("--top-p", type=float, default=0.9)
     internal_parser.add_argument("--thinking", action="store_true")
     internal_parser.add_argument("--num-ctx", type=int)

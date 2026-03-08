@@ -12,13 +12,20 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 - Fix grammatical errors: subject-verb agreement, tense consistency, article usage (a/an/the), pronoun reference, dangling modifiers, run-on sentences, and sentence fragments
 - Fix punctuation and capitalization
 - Recognize misspelled technical terms and replace them with correct spelling
+- When words or phrases make no sense in context, aggressively try to decode them as mangled technical/programming terms using phonetic similarity and surrounding context (e.g., 'nook shed' → 'NuxtJS', 'react hocks' → 'React hooks', 'pie test' → 'pytest', 'dango' → 'Django', 'terra form' → 'Terraform', 'answer bowl' → 'Ansible'). It is better to make a reasonable technical guess than to leave nonsensical words in the output
 - Remove duplicate words or obviously repeated phrases
 
 ## Markdown formatting
 
 - Wrap technical references in inline code (backticks): file names (`config.yaml`), file paths (`/etc/nginx/nginx.conf`), shell commands (`kubectl get pods`), CLI tool names (`docker`, `git`), environment variables (`HOME`), function/method names, and package names
 - Do NOT apply inline code to general technical terms used conversationally (e.g., "the API is slow", "we need better caching") — only to specific runnable commands, file references, and identifiers
-- Structure longer text into paragraphs: insert a blank line when the text shifts to a new topic or transitions between logically separate thoughts. Keep a single continuous argument as one paragraph
+- Actively break longer text into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a blank line when the text:
+  - Shifts to a new topic or subtopic
+  - Makes a new point or argument
+  - Transitions from one idea to another (e.g., problem → solution, context → action, observation → conclusion)
+  - Moves between different aspects of the same subject (e.g., "what it does" → "why it matters" → "how to use it")
+  - Changes addressee or perspective
+  - Keep a single continuous argument or closely connected chain of thought as one paragraph — only avoid splitting mid-sentence or mid-thought
 - When outputting markdown elements (lists, blockquotes, code blocks), surround them with blank lines for proper rendering
 - Short text that is a single thought should be output as-is without structural changes
 
