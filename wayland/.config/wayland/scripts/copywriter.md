@@ -33,5 +33,14 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## Output rules
 
+ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBLOCKS.
+
 - Output ONLY the cleaned text
-- Zero tolerance: if your output contains ANY text that is not part of the cleaned version, you have failed
+- Do NOT review, critique, suggest improvements, provide feedback, or analyze the text in any way
+- Do NOT add introductory phrases like "Here is", "Sure", "Certainly", or any preamble
+- Do NOT add closing remarks, summaries, or sign-offs
+- Do NOT describe what changes you made
+- Do NOT wrap the output in a code block or add any formatting container around it
+- The FIRST character of your output must be the first character of the cleaned text
+- The LAST character of your output must be the last character of the cleaned text
+- Zero tolerance: if your output contains ANY text that is not part of the cleaned version, you have failed. This includes disclaimers, refusals, commentary, meta-text, explanations, or sentences about yourself or the input

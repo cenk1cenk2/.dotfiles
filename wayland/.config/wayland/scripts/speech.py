@@ -14,7 +14,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_ENRICH_MODEL = "gemma3:12b"
+DEFAULT_ENRICH_MODEL = "qwen2.5:7b-instruct"
 
 log = logging.getLogger("speech")
 
@@ -159,6 +159,7 @@ def get_pipe_command(
     enrich_top_p=None,
     enrich_thinking=False,
     screenshot_path=None,
+    enrich_num_ctx=None,
 ):
     output_cmd = get_output_command(output_mode)
 
@@ -176,6 +177,8 @@ def get_pipe_command(
         cmd.extend(["--enrich-top-p", str(enrich_top_p)])
     if enrich_thinking:
         cmd.append("--enrich-thinking")
+    if enrich_num_ctx:
+        cmd.extend(["--enrich-num-ctx", str(enrich_num_ctx)])
     if enrich == "http":
         cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
     if screenshot_path:
@@ -192,6 +195,7 @@ def run_http_completion(
     top_p=0.9,
     thinking=False,
     screenshot_path=None,
+    num_ctx=None,
 ):
     has_screenshot = screenshot_path and os.path.isfile(screenshot_path)
 
@@ -227,6 +231,8 @@ def run_http_completion(
     if thinking:
         body["chat_template_kwargs"] = {"enable_thinking": True}
         body["reasoning"] = {}
+    if num_ctx:
+        body["options"] = {"num_ctx": num_ctx}
 
     log.debug(
         "HTTP completion request: %s",
@@ -266,6 +272,7 @@ def run_pipe_processing(
     top_p=0.9,
     thinking=False,
     screenshot_path=None,
+    num_ctx=None,
 ):
     log.info("reading transcription from stdin")
     transcription = sys.stdin.read()
@@ -284,6 +291,7 @@ def run_pipe_processing(
                 top_p=top_p,
                 thinking=thinking,
                 screenshot_path=screenshot_path,
+                num_ctx=num_ctx,
             )
             log.info("enrichment complete (%d chars)", len(result))
         except Exception as e:
@@ -364,6 +372,7 @@ def start_speech(
     enrich_temperature=None,
     enrich_top_p=None,
     enrich_thinking=False,
+    enrich_num_ctx=None,
     screenshot=False,
 ):
     """Start waystt with specified output mode"""
@@ -385,6 +394,7 @@ def start_speech(
             enrich_top_p=enrich_top_p,
             enrich_thinking=enrich_thinking,
             screenshot_path=screenshot_path,
+            enrich_num_ctx=enrich_num_ctx,
         )
         log.info("pipe command: %s", " ".join(pipe_cmd))
 
@@ -499,6 +509,7 @@ def toggle_speech(
     enrich_temperature=None,
     enrich_top_p=None,
     enrich_thinking=False,
+    enrich_num_ctx=None,
     screenshot=False,
 ):
     """Toggle speech recording or start if not running"""
@@ -520,6 +531,7 @@ def toggle_speech(
             enrich_temperature=enrich_temperature,
             enrich_top_p=enrich_top_p,
             enrich_thinking=enrich_thinking,
+            enrich_num_ctx=enrich_num_ctx,
             screenshot=screenshot,
         )
 
@@ -645,6 +657,12 @@ def main():
         help="Enable model thinking/reasoning (default: disabled)",
     )
     toggle_parser.add_argument(
+        "--enrich-num-ctx",
+        type=int,
+        default=16384,
+        help="Context window size for ollama (default: 16384)",
+    )
+    toggle_parser.add_argument(
         "-s",
         "--screenshot",
         action="store_true",
@@ -714,6 +732,12 @@ def main():
         help="Enable model thinking/reasoning (default: disabled)",
     )
     start_parser.add_argument(
+        "--enrich-num-ctx",
+        type=int,
+        default=16384,
+        help="Context window size for ollama (default: 16384)",
+    )
+    start_parser.add_argument(
         "-s",
         "--screenshot",
         action="store_true",
@@ -734,6 +758,7 @@ def main():
     enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.3)
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
+    enrich_process_parser.add_argument("--enrich-num-ctx", type=int, default=16384)
     enrich_process_parser.add_argument("--api-key", default="")
     enrich_process_parser.add_argument("--screenshot-path", default="")
 
@@ -763,6 +788,7 @@ def main():
             top_p=args.enrich_top_p,
             thinking=args.enrich_thinking,
             screenshot_path=args.screenshot_path or None,
+            num_ctx=args.enrich_num_ctx,
         )
 
     elif args.command == "_wait-and-signal":
@@ -803,6 +829,7 @@ def main():
             enrich_temperature=args.enrich_temperature,
             enrich_top_p=args.enrich_top_p,
             enrich_thinking=args.enrich_thinking,
+            enrich_num_ctx=args.enrich_num_ctx,
             screenshot=args.screenshot,
         )
 
@@ -819,6 +846,7 @@ def main():
             enrich_temperature=args.enrich_temperature,
             enrich_top_p=args.enrich_top_p,
             enrich_thinking=args.enrich_thinking,
+            enrich_num_ctx=args.enrich_num_ctx,
             screenshot=args.screenshot,
         )
 

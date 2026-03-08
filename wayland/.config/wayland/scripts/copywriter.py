@@ -10,7 +10,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "gemma3:12b"
+DEFAULT_MODEL = "qwen2.5:7b-instruct"
 
 log = logging.getLogger("copywriter")
 
@@ -84,7 +84,14 @@ def get_clipboard():
         return None
 
 def run_http_completion(
-    base_url, model, api_key, text, temperature=0.3, top_p=0.9, thinking=False
+    base_url,
+    model,
+    api_key,
+    text,
+    temperature=0.3,
+    top_p=0.9,
+    thinking=False,
+    num_ctx=None,
 ):
     prompt = USER_PROMPT.format(text=text)
     body = {
@@ -99,6 +106,8 @@ def run_http_completion(
     if thinking:
         body["chat_template_kwargs"] = {"enable_thinking": True}
         body["reasoning"] = {}
+    if num_ctx:
+        body["options"] = {"num_ctx": num_ctx}
 
     log.debug(
         "HTTP completion request: %s",
@@ -137,6 +146,7 @@ def run_refinement(
     temperature=0.3,
     top_p=0.9,
     thinking=False,
+    num_ctx=None,
 ):
     text = get_clipboard()
     if not text or not text.strip():
@@ -159,6 +169,7 @@ def run_refinement(
                 temperature=temperature,
                 top_p=top_p,
                 thinking=thinking,
+                num_ctx=num_ctx,
             )
             log.info("refinement complete (%d chars)", len(result))
         except Exception as e:
@@ -284,6 +295,12 @@ def main():
         action="store_true",
         help="Enable model thinking/reasoning",
     )
+    run_parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=16384,
+        help="Context window size for ollama (default: 16384)",
+    )
 
     # Internal subcommand for background execution
     internal_parser = subparsers.add_parser("_run", help=argparse.SUPPRESS)
@@ -294,6 +311,7 @@ def main():
     internal_parser.add_argument("--temperature", type=float, default=0.3)
     internal_parser.add_argument("--top-p", type=float, default=0.9)
     internal_parser.add_argument("--thinking", action="store_true")
+    internal_parser.add_argument("--num-ctx", type=int, default=16384)
     internal_parser.add_argument("--api-key", default="")
 
     subparsers.add_parser("kill", help="Kill running copywriter process")
@@ -335,6 +353,8 @@ def main():
         ]
         if args.thinking:
             cmd.append("--thinking")
+        if args.num_ctx:
+            cmd.extend(["--num-ctx", str(args.num_ctx)])
 
         if args.output == "stdout":
             subprocess.run(cmd)
@@ -372,6 +392,7 @@ def main():
             temperature=args.temperature,
             top_p=args.top_p,
             thinking=args.thinking,
+            num_ctx=args.num_ctx,
         )
         signal_waybar()
 
