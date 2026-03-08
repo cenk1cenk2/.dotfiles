@@ -16,234 +16,314 @@ log = logging.getLogger("copywriter")
 
 ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
 
+
 def _load_system_prompt():
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "copywriter.md")
     ) as f:
         return f.read().strip()
 
+
 SYSTEM_PROMPT = _load_system_prompt()
 
 USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
-def notify(message, timeout=None):
-    cmd = ["notify-send", "Copywriter", message, "-i", ICON]
-    if timeout:
-        cmd.extend(["-t", str(timeout)])
-    subprocess.run(cmd)
 
-def signal_waybar():
-    subprocess.run(["waybar-signal.sh", "copywriter"], check=False)
+class Copywriter:
+    def __init__(self, args):
+        self.args = args
 
-def get_output_command(output_mode):
-    if output_mode == "stdout":
-        return ["cat"]
-    if output_mode == "clipboard":
-        return ["wl-copy"]
-    if output_mode == "type":
+    def run(self):
+        cmd = self.args.command
+        if cmd == "run":
+            self._run_command()
+        elif cmd == "_run":
+            self._run_internal()
+            self._signal_waybar()
+        elif cmd == "kill":
+            self._kill()
+        elif cmd == "status":
+            print(self._get_status_json())
+        elif cmd == "is-running":
+            sys.exit(0 if self._is_running() else 1)
+
+    def _notify(self, message, timeout=None):
+        cmd = ["notify-send", "Copywriter", message, "-i", ICON]
+        if timeout:
+            cmd.extend(["-t", str(timeout)])
+        subprocess.run(cmd)
+
+    def _signal_waybar(self):
+        subprocess.run(["waybar-signal.sh", "copywriter"], check=False)
+
+    def _find_processes(self):
+        current = os.getpid()
+
         return [
-            "ydotool",
-            "type",
-            "--key-delay",
-            "10",
-            "--key-hold",
-            "10",
-            "--file",
-            "-",
+            p
+            for p in psutil.process_iter(["name", "cmdline"])
+            if p.pid != current
+            and p.info["cmdline"]
+            and "copywriter.py" in " ".join(p.info["cmdline"])
+            and "_run" in p.info["cmdline"]
         ]
 
-    raise ValueError(
-        f"Invalid output mode: {output_mode}. Use 'stdout', 'clipboard' or 'type'"
-    )
+    def _is_running(self):
+        return len(self._find_processes()) > 0
 
-def find_copywriter_processes():
-    current = os.getpid()
-
-    return [
-        p
-        for p in psutil.process_iter(["name", "cmdline"])
-        if p.pid != current
-        and p.info["cmdline"]
-        and "copywriter.py" in " ".join(p.info["cmdline"])
-        and "_run" in p.info["cmdline"]
-    ]
-
-def is_running():
-    return len(find_copywriter_processes()) > 0
-
-def get_clipboard():
-    try:
-        result = subprocess.run(
-            ["wl-paste", "--no-newline"], capture_output=True, text=True, check=True
-        )
-
-        return result.stdout
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        log.error("failed to read clipboard: %s", e)
-
-        return None
-
-def run_http_completion(
-    base_url,
-    model,
-    api_key,
-    text,
-    temperature,
-    top_p,
-    thinking,
-    num_ctx=None,
-):
-    prompt = USER_PROMPT.format(text=text)
-    body = {
-        "model": model,
-        "temperature": temperature,
-        "top_p": top_p,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-    }
-    if thinking:
-        body["chat_template_kwargs"] = {"enable_thinking": True}
-        body["reasoning"] = {}
-    if num_ctx:
-        body["options"] = {"num_ctx": num_ctx}
-
-    log.debug(
-        "HTTP completion request: %s",
-        json.dumps({**body, "messages": ["..."]}, indent=2),
-    )
-    payload = json.dumps(body).encode()
-
-    req = urllib.request.Request(
-        f"{base_url}/chat/completions",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "User-Agent": "copywriter/1.0",
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode(errors="replace")
-        log.error("HTTP %d: %s", e.code, error_body)
-        raise
-
-    log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
-    if not data or "choices" not in data or not data["choices"]:
-        raise ValueError(f"unexpected API response: {data}")
-
-    return data["choices"][0]["message"]["content"]
-
-def run_refinement(
-    provider,
-    output_mode,
-    base_url,
-    model,
-    api_key,
-    temperature,
-    top_p,
-    thinking,
-    num_ctx=None,
-):
-    text = get_clipboard()
-    if not text or not text.strip():
-        notify("Clipboard is empty")
-
-        return False
-
-    log.info("clipboard text: %d chars", len(text))
-    signal_waybar()
-    result = None
-
-    if provider == "http":
-        log.info("sending to %s/chat/completions (model: %s)", base_url, model)
+    def _get_clipboard(self):
         try:
-            result = run_http_completion(
-                base_url,
-                model,
-                api_key,
-                text,
-                temperature=temperature,
-                top_p=top_p,
-                thinking=thinking,
-                num_ctx=num_ctx,
+            result = subprocess.run(
+                ["wl-paste", "--no-newline"],
+                capture_output=True,
+                text=True,
+                check=True,
             )
-            log.info("refinement complete (%d chars)", len(result))
-        except Exception as e:
-            log.error("http completion failed: %s", e)
-            notify(f"HTTP refinement failed: {e}")
-    elif provider == "claude":
-        log.info("sending to claude (model: haiku)")
+
+            return result.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            log.error("failed to read clipboard: %s", e)
+
+            return None
+
+    def _get_output_command(self):
+        mode = self.args.output
+        if mode == "stdout":
+            return ["cat"]
+        if mode == "clipboard":
+            return ["wl-copy"]
+        if mode == "type":
+            return [
+                "ydotool",
+                "type",
+                "--key-delay",
+                "10",
+                "--key-hold",
+                "10",
+                "--file",
+                "-",
+            ]
+
+        raise ValueError(
+            f"Invalid output mode: {mode}. Use 'stdout', 'clipboard' or 'type'"
+        )
+
+    def _run_http_completion(self, text):
         prompt = USER_PROMPT.format(text=text)
-        ai_proc = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--model",
-                "haiku",
-                "--system-prompt",
-                SYSTEM_PROMPT,
-                prompt,
+        body = {
+            "model": self.args.model,
+            "temperature": self.args.temperature,
+            "top_p": self.args.top_p,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
             ],
-            capture_output=True,
-            text=True,
+        }
+        if self.args.thinking:
+            body["chat_template_kwargs"] = {"enable_thinking": True}
+            body["reasoning"] = {}
+        if self.args.num_ctx:
+            body["options"] = {"num_ctx": self.args.num_ctx}
+
+        log.debug(
+            "HTTP completion request: %s",
+            json.dumps({**body, "messages": ["..."]}, indent=2),
         )
-        if ai_proc.returncode == 0 and ai_proc.stdout.strip():
-            result = ai_proc.stdout.strip()
-            log.info("claude refinement complete (%d chars)", len(result))
-        else:
-            log.error("claude failed (exit %d)", ai_proc.returncode)
-    elif provider == "codex":
-        log.info("sending to codex")
-        prompt = USER_PROMPT.format(text=text)
-        codex_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
-        ai_proc = subprocess.run(
-            ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
-            input=codex_prompt,
-            capture_output=True,
-            text=True,
+        payload = json.dumps(body).encode()
+
+        req = urllib.request.Request(
+            f"{self.args.base_url}/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.args.api_key}",
+                "User-Agent": "copywriter/1.0",
+            },
         )
-        if ai_proc.returncode == 0 and ai_proc.stdout.strip():
-            result = ai_proc.stdout.strip()
-            log.info("codex refinement complete (%d chars)", len(result))
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode(errors="replace")
+            log.error("HTTP %d: %s", e.code, error_body)
+            raise
+
+        log.debug(
+            "HTTP completion response: %s", json.dumps(data, indent=2)[:2000]
+        )
+        if not data or "choices" not in data or not data["choices"]:
+            raise ValueError(f"unexpected API response: {data}")
+
+        return data["choices"][0]["message"]["content"]
+
+    def _run_ai_provider(self, text):
+        provider = self.args.provider
+        result = None
+
+        if provider == "http":
+            log.info(
+                "sending to %s/chat/completions (model: %s)",
+                self.args.base_url,
+                self.args.model,
+            )
+            try:
+                result = self._run_http_completion(text)
+                log.info("refinement complete (%d chars)", len(result))
+            except Exception as e:
+                log.error("http completion failed: %s", e)
+                self._notify(f"HTTP refinement failed: {e}")
+        elif provider == "claude":
+            log.info("sending to claude (model: haiku)")
+            prompt = USER_PROMPT.format(text=text)
+            ai_proc = subprocess.run(
+                [
+                    "claude",
+                    "-p",
+                    "--model",
+                    "haiku",
+                    "--system-prompt",
+                    SYSTEM_PROMPT,
+                    prompt,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if ai_proc.returncode == 0 and ai_proc.stdout.strip():
+                result = ai_proc.stdout.strip()
+                log.info("claude refinement complete (%d chars)", len(result))
+            else:
+                log.error("claude failed (exit %d)", ai_proc.returncode)
+        elif provider == "codex":
+            log.info("sending to codex")
+            prompt = USER_PROMPT.format(text=text)
+            codex_prompt = f"{SYSTEM_PROMPT}\n\n{prompt}"
+            ai_proc = subprocess.run(
+                ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
+                input=codex_prompt,
+                capture_output=True,
+                text=True,
+            )
+            if ai_proc.returncode == 0 and ai_proc.stdout.strip():
+                result = ai_proc.stdout.strip()
+                log.info("codex refinement complete (%d chars)", len(result))
+            else:
+                log.error("codex failed (exit %d)", ai_proc.returncode)
+
+        return result
+
+    def _build_internal_cmd(self):
+        api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
+        cmd = [sys.executable, __file__]
+        if self.args.verbose:
+            cmd.append("-v")
+        cmd += [
+            "_run",
+            self.args.output,
+            "--provider",
+            self.args.provider,
+            "--base-url",
+            self.args.base_url,
+            "--model",
+            self.args.model,
+            "--temperature",
+            str(self.args.temperature),
+            "--top-p",
+            str(self.args.top_p),
+            "--api-key",
+            api_key,
+        ]
+        if self.args.thinking:
+            cmd.append("--thinking")
+        if self.args.num_ctx:
+            cmd.extend(["--num-ctx", str(self.args.num_ctx)])
+
+        return cmd
+
+    def _run_command(self):
+        if self._is_running():
+            self._notify("Copywriter is already running")
+
+            return
+
+        cmd = self._build_internal_cmd()
+
+        if self.args.output == "stdout":
+            subprocess.run(cmd)
+            self._signal_waybar()
         else:
-            log.error("codex failed (exit %d)", ai_proc.returncode)
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._signal_waybar()
+            output_labels = {"clipboard": "clipboard", "type": "typing"}
+            self._notify(
+                f"Refining clipboard → {output_labels[self.args.output]}...",
+                timeout=2000,
+            )
 
-    if not result or not result.strip():
-        notify("Refinement failed, clipboard unchanged")
+    def _run_internal(self):
+        text = self._get_clipboard()
+        if not text or not text.strip():
+            self._notify("Clipboard is empty")
 
-        return False
+            return
 
-    output_cmd = get_output_command(output_mode)
-    log.info("outputting to %s (%s)", output_mode, " ".join(output_cmd))
-    subprocess.run(output_cmd, input=result.strip(), text=True)
+        log.info("clipboard text: %d chars", len(text))
+        self._signal_waybar()
 
-    output_labels = {"clipboard": "clipboard", "type": "typing", "stdout": "stdout"}
-    notify(f"Clipboard refined → {output_labels[output_mode]}", timeout=3000)
-    log.info("done")
+        result = self._run_ai_provider(text)
 
-    return True
+        if not result or not result.strip():
+            self._notify("Refinement failed, clipboard unchanged")
 
-def get_state():
-    if not is_running():
-        return "idle"
+            return
 
-    return "working"
+        output_cmd = self._get_output_command()
+        log.info(
+            "outputting to %s (%s)", self.args.output, " ".join(output_cmd)
+        )
+        subprocess.run(output_cmd, input=result.strip(), text=True)
 
-def get_status_json():
-    state = get_state()
+        output_labels = {
+            "clipboard": "clipboard",
+            "type": "typing",
+            "stdout": "stdout",
+        }
+        self._notify(
+            f"Clipboard refined → {output_labels[self.args.output]}",
+            timeout=3000,
+        )
+        log.info("done")
 
-    if state == "idle":
-        return json.dumps({"class": "idle", "text": "", "tooltip": "Copywriter ready"})
+    def _kill(self):
+        procs = self._find_processes()
+        if not procs:
+            self._notify("Copywriter is not running")
 
-    return json.dumps(
-        {"class": "working", "text": "󰼭 󰧑", "tooltip": "Refining clipboard..."}
-    )
+            return
+        for p in procs:
+            log.info("killing copywriter process %d", p.pid)
+            p.kill()
+        self._notify("Copywriter killed")
+        self._signal_waybar()
+
+    def _get_status_json(self):
+        if not self._is_running():
+            return json.dumps(
+                {"class": "idle", "text": "", "tooltip": "Copywriter ready"}
+            )
+
+        return json.dumps(
+            {
+                "class": "working",
+                "text": "󰼭 󰧑",
+                "tooltip": "Refining clipboard...",
+            }
+        )
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -326,83 +406,8 @@ def main():
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
 
-    if args.command == "run":
-        if is_running():
-            notify("Copywriter is already running")
+    Copywriter(args).run()
 
-            return
-
-        api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
-
-        cmd = [sys.executable, __file__]
-        if args.verbose:
-            cmd.append("-v")
-        cmd += [
-            "_run",
-            args.output,
-            "--provider",
-            args.provider,
-            "--base-url",
-            args.base_url,
-            "--model",
-            args.model,
-            "--temperature",
-            str(args.temperature),
-            "--top-p",
-            str(args.top_p),
-            "--api-key",
-            api_key,
-        ]
-        if args.thinking:
-            cmd.append("--thinking")
-        if args.num_ctx:
-            cmd.extend(["--num-ctx", str(args.num_ctx)])
-
-        if args.output == "stdout":
-            subprocess.run(cmd)
-            signal_waybar()
-        else:
-            subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            signal_waybar()
-            output_labels = {"clipboard": "clipboard", "type": "typing"}
-            notify(
-                f"Refining clipboard → {output_labels[args.output]}...", timeout=2000
-            )
-
-    elif args.command == "kill":
-        procs = find_copywriter_processes()
-        if not procs:
-            notify("Copywriter is not running")
-            return
-        for p in procs:
-            log.info("killing copywriter process %d", p.pid)
-            p.kill()
-        notify("Copywriter killed")
-        signal_waybar()
-
-    elif args.command == "_run":
-        run_refinement(
-            args.provider,
-            output_mode=args.output,
-            base_url=args.base_url,
-            model=args.model,
-            api_key=args.api_key,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            thinking=args.thinking,
-            num_ctx=args.num_ctx,
-        )
-        signal_waybar()
-
-    elif args.command == "status":
-        print(get_status_json())
-
-    elif args.command == "is-running":
-        sys.exit(0 if is_running() else 1)
 
 if __name__ == "__main__":
     main()
