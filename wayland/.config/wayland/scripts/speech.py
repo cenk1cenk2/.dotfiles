@@ -264,6 +264,9 @@ def run_http_completion(
         raise
 
     log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
+    if not data or "choices" not in data or not data["choices"]:
+        raise ValueError(f"unexpected API response: {data}")
+
     return data["choices"][0]["message"]["content"]
 
 def run_pipe_processing(
