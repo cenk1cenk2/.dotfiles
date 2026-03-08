@@ -332,9 +332,10 @@ def main():
 
         api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
 
-        cmd = [
-            sys.executable,
-            __file__,
+        cmd = [sys.executable, __file__]
+        if args.verbose:
+            cmd.append("-v")
+        cmd += [
             "_run",
             args.output,
             "--provider",

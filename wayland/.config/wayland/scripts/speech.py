@@ -160,13 +160,17 @@ def get_pipe_command(
     enrich_thinking=False,
     screenshot_path=None,
     enrich_num_ctx=None,
+    verbose=False,
 ):
     output_cmd = get_output_command(output_mode)
 
     if not enrich:
         return output_cmd
 
-    cmd = [sys.executable, __file__, "_pipe-process", enrich, output_mode]
+    cmd = [sys.executable, __file__]
+    if verbose:
+        cmd.append("-v")
+    cmd += ["_pipe-process", enrich, output_mode]
     if enrich_base_url:
         cmd.extend(["--enrich-base-url", enrich_base_url])
     if enrich_model:
@@ -374,6 +378,7 @@ def start_speech(
     enrich_thinking=False,
     enrich_num_ctx=None,
     screenshot=False,
+    verbose=False,
 ):
     """Start waystt with specified output mode"""
     if is_running():
@@ -395,6 +400,7 @@ def start_speech(
             enrich_thinking=enrich_thinking,
             screenshot_path=screenshot_path,
             enrich_num_ctx=enrich_num_ctx,
+            verbose=verbose,
         )
         log.info("pipe command: %s", " ".join(pipe_cmd))
 
@@ -511,6 +517,7 @@ def toggle_speech(
     enrich_thinking=False,
     enrich_num_ctx=None,
     screenshot=False,
+    verbose=False,
 ):
     """Toggle speech recording or start if not running"""
     if is_running():
@@ -533,6 +540,7 @@ def toggle_speech(
             enrich_thinking=enrich_thinking,
             enrich_num_ctx=enrich_num_ctx,
             screenshot=screenshot,
+            verbose=verbose,
         )
 
 def get_speech_state():
@@ -829,6 +837,7 @@ def main():
             enrich_thinking=args.enrich_thinking,
             enrich_num_ctx=args.enrich_num_ctx,
             screenshot=args.screenshot,
+            verbose=args.verbose,
         )
 
     elif args.command == "start":
@@ -846,6 +855,7 @@ def main():
             enrich_thinking=args.enrich_thinking,
             enrich_num_ctx=args.enrich_num_ctx,
             screenshot=args.screenshot,
+            verbose=args.verbose,
         )
 
     elif args.command in ("stop", "kill"):
