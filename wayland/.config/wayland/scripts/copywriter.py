@@ -88,9 +88,9 @@ def run_http_completion(
     model,
     api_key,
     text,
-    temperature=0.6,
-    top_p=0.9,
-    thinking=False,
+    temperature,
+    top_p,
+    thinking,
     num_ctx=None,
 ):
     prompt = USER_PROMPT.format(text=text)
@@ -139,13 +139,13 @@ def run_http_completion(
 
 def run_refinement(
     provider,
-    output_mode="clipboard",
-    base_url=None,
-    model=None,
-    api_key=None,
-    temperature=0.6,
-    top_p=0.9,
-    thinking=False,
+    output_mode,
+    base_url,
+    model,
+    api_key,
+    temperature,
+    top_p,
+    thinking,
     num_ctx=None,
 ):
     text = get_clipboard()
