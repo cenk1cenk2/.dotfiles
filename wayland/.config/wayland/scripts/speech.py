@@ -18,18 +18,15 @@ log = logging.getLogger("speech")
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
 
-
 def _load_system_prompt():
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "speech.md")
     ) as f:
         return f.read().strip()
 
-
 AI_SYSTEM_PROMPT = _load_system_prompt()
 
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
-
 
 class Speech:
     def __init__(self, args):
@@ -62,9 +59,7 @@ class Speech:
         subprocess.run(["waybar-signal.sh", "speech"], check=False)
 
     def _find_processes(self):
-        return [
-            p for p in psutil.process_iter(["name"]) if p.info["name"] == "waystt"
-        ]
+        return [p for p in psutil.process_iter(["name"]) if p.info["name"] == "waystt"]
 
     def _is_running(self):
         return len(self._find_processes()) > 0
@@ -190,9 +185,7 @@ class Speech:
             log.debug("HTTP error response body: %s", error_body)
             raise
 
-        log.debug(
-            "HTTP completion response: %s", json.dumps(data, indent=2)[:2000]
-        )
+        log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
         if not data or "choices" not in data or not data["choices"]:
             raise ValueError(f"unexpected API response: {data}")
 
@@ -267,9 +260,7 @@ class Speech:
         if self.args.enrich_model:
             cmd.extend(["--enrich-model", self.args.enrich_model])
         if self.args.enrich_temperature is not None:
-            cmd.extend(
-                ["--enrich-temperature", str(self.args.enrich_temperature)]
-            )
+            cmd.extend(["--enrich-temperature", str(self.args.enrich_temperature)])
         if self.args.enrich_top_p is not None:
             cmd.extend(["--enrich-top-p", str(self.args.enrich_top_p)])
         if self.args.enrich_thinking:
@@ -279,9 +270,7 @@ class Speech:
         if self.args.save:
             cmd.append("--save")
         if enrich == "http":
-            cmd.extend(
-                ["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")]
-            )
+            cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
 
         return cmd
 
@@ -291,9 +280,7 @@ class Speech:
 
         env = os.environ.copy()
         env["TRANSCRIPTION_PROVIDER"] = "openai"
-        env["OPENAI_BASE_URL"] = (
-            self.args.stt_base_url or "https://ai.kilic.dev/api/v1"
-        )
+        env["OPENAI_BASE_URL"] = self.args.stt_base_url or "https://ai.kilic.dev/api/v1"
         env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
         if self.args.stt_model:
             env["WHISPER_MODEL"] = self.args.stt_model
@@ -367,9 +354,7 @@ class Speech:
 
             if not self._wait_for_state(running=True):
                 log.error("waystt did not start within timeout")
-                self._notify(
-                    "Failed to start speech-to-text: process did not start"
-                )
+                self._notify("Failed to start speech-to-text: process did not start")
 
                 return False
 
@@ -381,14 +366,10 @@ class Speech:
                 start_new_session=True,
             )
 
-            output_desc = {"clipboard": "clipboard", "type": "typing"}[
-                self.args.output
-            ]
+            output_desc = {"clipboard": "clipboard", "type": "typing"}[self.args.output]
             enrich = self._enrich()
             enrich_desc = f", enrich: {enrich}" if enrich else ""
-            self._notify(
-                f"Speech-to-text started (output: {output_desc}{enrich_desc})"
-            )
+            self._notify(f"Speech-to-text started (output: {output_desc}{enrich_desc})")
 
             return True
         except Exception as e:
@@ -411,9 +392,7 @@ class Speech:
                 try:
                     proc.wait(timeout=5)
                 except psutil.TimeoutExpired:
-                    log.warning(
-                        "process %d did not terminate, killing", proc.pid
-                    )
+                    log.warning("process %d did not terminate, killing", proc.pid)
                     proc.kill()
             self._signal_waybar()
             log.info("stopped")
@@ -447,9 +426,7 @@ class Speech:
 
         if self.args.save:
             log.info("saving raw transcription to clipboard before enrichment")
-            subprocess.run(
-                ["wl-copy"], input=transcription.strip(), text=True
-            )
+            subprocess.run(["wl-copy"], input=transcription.strip(), text=True)
 
         result = self._run_ai_provider(transcription)
 
@@ -459,9 +436,7 @@ class Speech:
             result = transcription
 
         output_cmd = self._get_output_command()
-        log.info(
-            "outputting to %s (%s)", self.args.output, " ".join(output_cmd)
-        )
+        log.info("outputting to %s (%s)", self.args.output, " ".join(output_cmd))
         subprocess.run(output_cmd, input=result.strip(), text=True)
 
         log.info("done")
@@ -492,10 +467,7 @@ class Speech:
         children = self._get_children()
         if any(c in ("cat", "wl-copy", "ydotool") for c in children):
             return "output"
-        if any(
-            c in ("claude", "node", "codex", "python3", "python")
-            for c in children
-        ):
+        if any(c in ("claude", "node", "codex", "python3", "python") for c in children):
             return "working"
 
         return "recording"
@@ -535,7 +507,6 @@ class Speech:
         text, tooltip = status_map[state]
 
         return json.dumps({"class": state, "text": text, "tooltip": tooltip})
-
 
 def _add_common_args(parser):
     parser.add_argument(
@@ -583,7 +554,7 @@ def _add_common_args(parser):
     parser.add_argument(
         "--enrich-temperature",
         type=float,
-        default=0.5,
+        default=0.6,
         help="Temperature for enrichment (default: 0.5)",
     )
     parser.add_argument(
@@ -609,7 +580,6 @@ def _add_common_args(parser):
         help="Save transcription to clipboard before AI enrichment (default: True)",
     )
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Control waystt speech-to-text",
@@ -634,9 +604,7 @@ def main():
     enrich_process_parser = subparsers.add_parser(
         "_pipe-process", help=argparse.SUPPRESS
     )
-    enrich_process_parser.add_argument(
-        "provider", choices=["http", "claude", "codex"]
-    )
+    enrich_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
     enrich_process_parser.add_argument(
         "output", choices=["stdout", "clipboard", "type"]
     )
@@ -644,15 +612,9 @@ def main():
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
     enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
-    enrich_process_parser.add_argument(
-        "--enrich-temperature", type=float, default=0.5
-    )
-    enrich_process_parser.add_argument(
-        "--enrich-top-p", type=float, default=0.9
-    )
-    enrich_process_parser.add_argument(
-        "--enrich-thinking", action="store_true"
-    )
+    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.6)
+    enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
+    enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--enrich-num-ctx", type=int)
     enrich_process_parser.add_argument("--api-key", default="")
     enrich_process_parser.add_argument("--save", action="store_true")
@@ -660,9 +622,7 @@ def main():
     subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
     subparsers.add_parser("stop", help="Stop waystt process")
     subparsers.add_parser("kill", help="Stop waystt process (alias for 'stop')")
-    subparsers.add_parser(
-        "status", help="Get speech-to-text status (JSON for waybar)"
-    )
+    subparsers.add_parser("status", help="Get speech-to-text status (JSON for waybar)")
     subparsers.add_parser(
         "is-recording", help="Check if waystt is running (exit code 0 if yes)"
     )
@@ -675,7 +635,6 @@ def main():
     )
 
     Speech(args).run()
-
 
 if __name__ == "__main__":
     main()

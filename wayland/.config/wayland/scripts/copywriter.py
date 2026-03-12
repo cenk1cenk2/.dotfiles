@@ -16,18 +16,15 @@ log = logging.getLogger("copywriter")
 
 ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
 
-
 def _load_system_prompt():
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "copywriter.md")
     ) as f:
         return f.read().strip()
 
-
 SYSTEM_PROMPT = _load_system_prompt()
 
 USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
-
 
 class Copywriter:
     def __init__(self, args):
@@ -149,9 +146,7 @@ class Copywriter:
             log.error("HTTP %d: %s", e.code, error_body)
             raise
 
-        log.debug(
-            "HTTP completion response: %s", json.dumps(data, indent=2)[:2000]
-        )
+        log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
         if not data or "choices" not in data or not data["choices"]:
             raise ValueError(f"unexpected API response: {data}")
 
@@ -282,9 +277,7 @@ class Copywriter:
             return
 
         output_cmd = self._get_output_command()
-        log.info(
-            "outputting to %s (%s)", self.args.output, " ".join(output_cmd)
-        )
+        log.info("outputting to %s (%s)", self.args.output, " ".join(output_cmd))
         subprocess.run(output_cmd, input=result.strip(), text=True)
 
         output_labels = {
@@ -324,7 +317,6 @@ class Copywriter:
             }
         )
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Refine clipboard text through AI",
@@ -363,7 +355,7 @@ def main():
     run_parser.add_argument(
         "--temperature",
         type=float,
-        default=0.5,
+        default=0.6,
         help="Temperature for refinement (default: 0.5)",
     )
     run_parser.add_argument(
@@ -389,7 +381,7 @@ def main():
     internal_parser.add_argument("--provider", default="http")
     internal_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
     internal_parser.add_argument("--model", default=DEFAULT_MODEL)
-    internal_parser.add_argument("--temperature", type=float, default=0.5)
+    internal_parser.add_argument("--temperature", type=float, default=0.6)
     internal_parser.add_argument("--top-p", type=float, default=0.9)
     internal_parser.add_argument("--thinking", action="store_true")
     internal_parser.add_argument("--num-ctx", type=int)
@@ -407,7 +399,6 @@ def main():
     )
 
     Copywriter(args).run()
-
 
 if __name__ == "__main__":
     main()
