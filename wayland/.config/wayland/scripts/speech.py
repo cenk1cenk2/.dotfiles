@@ -561,7 +561,7 @@ def _add_common_args(parser):
     parser.add_argument(
         "--enrich-temperature",
         type=float,
-        default=0.6,
+        default=0.4,
         help="Temperature for enrichment (default: 0.5)",
     )
     parser.add_argument(
@@ -619,7 +619,7 @@ def main():
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
     enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
-    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.6)
+    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.4)
     enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--enrich-num-ctx", type=int)

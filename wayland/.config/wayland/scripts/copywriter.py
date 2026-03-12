@@ -355,7 +355,7 @@ def main():
     run_parser.add_argument(
         "--temperature",
         type=float,
-        default=0.6,
+        default=0.4,
         help="Temperature for refinement (default: 0.5)",
     )
     run_parser.add_argument(
@@ -381,7 +381,7 @@ def main():
     internal_parser.add_argument("--provider", default="http")
     internal_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
     internal_parser.add_argument("--model", default=DEFAULT_MODEL)
-    internal_parser.add_argument("--temperature", type=float, default=0.6)
+    internal_parser.add_argument("--temperature", type=float, default=0.4)
     internal_parser.add_argument("--top-p", type=float, default=0.9)
     internal_parser.add_argument("--thinking", action="store_true")
     internal_parser.add_argument("--num-ctx", type=int)
