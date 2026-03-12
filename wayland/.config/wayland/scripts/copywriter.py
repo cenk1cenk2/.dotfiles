@@ -10,7 +10,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "kimi-k2.5:cloud"
+DEFAULT_MODEL = "ministral-3:14b-cloud"
 
 log = logging.getLogger("copywriter")
 
