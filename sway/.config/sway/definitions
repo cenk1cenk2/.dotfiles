@@ -90,6 +90,9 @@ set $screenshot_selection_clipboard $grimshot --notify copy area
 set $screenshot_selection_file $grimshot --notify save area
 set $screenshot_window_clipboard $grimshot --notify copy active
 set $screenshot_window_file $grimshot --notify save active
+set $screenshot_selection_edit $grimshot --notify save area - | swappy -f -
+set $screenshot_screen_edit $grimshot --notify save output - | swappy -f -
+set $screenshot_window_edit $grimshot --notify save active - | swappy -f -
 set $screenshot_snipping_tool swappy -f -
 
 # onscreen bar
