@@ -12,7 +12,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "gemma3:27b-cloud"
+DEFAULT_MODEL = "kimi-k2.5:cloud"
 
 log = logging.getLogger("speech")
 
@@ -178,7 +178,14 @@ class Speech:
 
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read())
+                raw_body = resp.read()
+                log.debug(
+                    "HTTP %d, headers: %s", resp.status, dict(resp.headers.items())
+                )
+                log.debug(
+                    "HTTP raw body (%d bytes): %s", len(raw_body), raw_body[:2000]
+                )
+                data = json.loads(raw_body) if raw_body else None
         except urllib.error.HTTPError as e:
             error_body = e.read().decode(errors="replace")
             log.error("HTTP %d: %s", e.code, error_body)
