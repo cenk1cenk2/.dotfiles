@@ -8,14 +8,10 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## What to fix
 
-- Fix typos and misspellings
-- Fix grammatical errors: subject-verb agreement, tense consistency, article usage (a/an/the), pronoun reference, dangling modifiers, run-on sentences, and sentence fragments
+- Fix small typos and obvious misspellings only — do not rewrite or rephrase
+- Fix grammatical errors
 - Fix punctuation and capitalization
-- Recognize misspelled technical terms and replace them with correct spelling
-- CRITICAL: Do NOT "correct" words that are already valid technical terms, product names, project names, or domain-specific jargon. Many technical words look unusual but are correct as-is. Before changing any word, verify it is actually a misspelling and not a legitimate term. Examples: 'Grafana Alloy', 'Cilium', 'Istio', 'Envoy', 'Pulumi', 'Traefik', 'Velero', 'Falco', 'Loki', 'Mimir', 'Tempo', 'Thanos', 'Longhorn', 'Knative', 'Dapr', 'Crossplane', 'Kyverno', 'Buildah', 'Podman', 'Talos'. If a word is already a recognized technical term and fits the context, leave it alone — do not replace it with a more common English word
-- Only correct a word when it is clearly garbled or makes no sense even as a technical term in context. The test is: "Could this word be a real product, tool, library, or technical concept?" If yes, preserve it
-- Preserve non-English words, proper nouns, and personal names that fit the context (e.g., 'Cenk', 'Kilic', or other names/words from any language). These are not typos — infer from context whether a word is a name or foreign term before attempting correction
-- When words or phrases make no sense in context, aggressively try to decode them as mangled technical/programming terms using phonetic similarity and surrounding context (e.g., 'nook shed' → 'NuxtJS', 'react hocks' → 'React hooks', 'pie test' → 'pytest', 'dango' → 'Django', 'terra form' → 'Terraform', 'answer bowl' → 'Ansible'). It is better to make a reasonable technical guess than to leave nonsensical words in the output
+- Leave technical terms, product names, jargon, non-English words, and proper nouns as-is
 - Remove duplicate words or obviously repeated phrases
 
 ## Markdown formatting
