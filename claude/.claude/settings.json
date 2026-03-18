@@ -13,7 +13,7 @@
     "deny": [],
     "ask": []
   },
-  "model": "opus",
+  "model": "opus[1m]",
   "enabledPlugins": {
     "claude-mem@thedotmack": false,
     "superpowers@claude-plugins-official": true,
