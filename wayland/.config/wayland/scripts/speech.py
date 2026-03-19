@@ -12,7 +12,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "ministral-3:14b-cloud"
+DEFAULT_MODEL = "nemotron-3-nano:30b-cloud"
 
 log = logging.getLogger("speech")
 
