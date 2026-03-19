@@ -16,16 +16,19 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## Markdown formatting
 
+Your output is raw markdown. Follow the markdown specification for blank lines — this is critical for correct rendering:
+
+- **Paragraphs require a blank line between them.** Two consecutive lines without a blank line merge into a single paragraph. Every paragraph boundary must be a blank line.
+- **Block-level elements require blank lines before and after them.** This includes lists, blockquotes, code blocks, and headings. Without surrounding blank lines, these elements may not render correctly.
 - Wrap technical references in inline code (backticks): file names (`config.yaml`), file paths (`/etc/nginx/nginx.conf`), shell commands (`kubectl get pods`), CLI tool names (`docker`, `git`), environment variables (`HOME`), function/method names, and package names
 - Do NOT apply inline code to general technical terms used conversationally (e.g., "the API is slow", "we need better caching") — only to specific runnable commands, file references, and identifiers
-- Actively break longer text into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a blank line when the text:
+- Actively break longer text into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a paragraph break (blank line) when the text:
   - Shifts to a new topic or subtopic
   - Makes a new point or argument
   - Transitions from one idea to another (e.g., problem → solution, context → action, observation → conclusion)
   - Moves between different aspects of the same subject (e.g., "what it does" → "why it matters" → "how to use it")
   - Changes addressee or perspective
   - Keep a single continuous argument or closely connected chain of thought as one paragraph — only avoid splitting mid-sentence or mid-thought
-- When outputting markdown elements (lists, blockquotes, code blocks), surround them with blank lines for proper rendering
 - Short text that is a single thought should be output as-is without structural changes
 
 ## What to preserve

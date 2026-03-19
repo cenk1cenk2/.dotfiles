@@ -22,11 +22,15 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 ## Markdown output
 
+Your output is raw markdown. Follow the markdown specification for blank lines — this is critical for correct rendering:
+
+- **Paragraphs require a blank line between them.** Two consecutive lines without a blank line merge into a single paragraph. Every paragraph boundary must be a blank line.
+- **Block-level elements require blank lines before and after them.** This includes lists, blockquotes, code blocks, and headings. Without surrounding blank lines, these elements may not render correctly.
 - Output as well-formed markdown
 - For plain speech this means proper paragraph separation and element spacing — do NOT add decorative formatting (bold, headings) unless a styling cue is used
 - Exception: when the speaker clearly enumerates items (e.g., 'first... second... third...' or 'we need A, B, C, and D'), format them as a markdown list without requiring an explicit styling cue
 - Short transcriptions that are a single thought should be output as-is without any structural formatting beyond basic cleanup
-- Actively break longer transcriptions into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a blank line when the speaker:
+- Actively break longer transcriptions into paragraphs. Err on the side of MORE paragraph breaks rather than fewer — a wall of text is always worse than slightly over-separated text. Insert a paragraph break (blank line) when the speaker:
   - Shifts to a new topic or subtopic
   - Makes a new point or argument
   - Transitions from one idea to another (e.g., problem → solution, context → action, observation → conclusion)
@@ -34,7 +38,6 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
   - Moves between different aspects of the same subject (e.g., "what it does" → "why it matters" → "how to use it")
   - Changes addressee or perspective (e.g., "for developers..." → "for end users...")
   - Keep a single continuous argument or closely connected chain of thought as one paragraph — only avoid splitting mid-sentence or mid-thought
-- When outputting markdown elements (lists, blockquotes, headings, code blocks), surround them with blank lines to comply with the markdown specification (e.g., a blank line before and after a list, before and after a code block, before and after a heading). This ensures proper rendering in any markdown parser.
 
 ## Spoken punctuation
 
