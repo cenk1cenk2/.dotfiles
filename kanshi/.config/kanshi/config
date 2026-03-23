@@ -17,7 +17,7 @@ profile portable {
 
 # gpd with portable monitor (MB16QHG)
 profile portable {
-    output "ASUSTek COMPUTER INC MB16QHG T6LMTF161825" enable mode 2560x1600@119.963Hz position 0,0 scale 1.6 transform normal adaptive_sync off
+    output "ASUSTek COMPUTER INC MB16QHG T6LMTF161825" enable mode 2560x1600@119.963Hz position 0,0 scale 1.25 transform normal adaptive_sync off
     output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 200,1000 scale 2.0 transform normal adaptive_sync off
     exec notify-send kanshi "Profile portable has been applied."
 }
