@@ -1,39 +1,45 @@
 #!/usr/bin/env python3
 
 """
-Swap workspace positions in Hyprland by moving all windows between workspaces.
+Swap workspace positions in Hyprland using renameworkspace.
 
 This script allows you to:
 - Move current workspace to a specific number (-t/--to): swaps with existing
-- Swap left (-s left): moves windows to previous workspace on current monitor
-- Swap right (-s right): moves windows to next workspace on current monitor
+- Swap left (-s left): swaps with previous workspace on current monitor
+- Swap right (-s right): swaps with next workspace on current monitor
 
-For -s left/right, uses Hyprland's m+1/m-1 to find the next workspace on the
-current monitor, keeping workspaces monitor-local.
+Uses renameworkspace to preserve window layout/splits during swap.
 """
 
 import json
 import subprocess
+import sys
 from argparse import ArgumentParser
-from typing import List, Dict, Any
+from typing import List, Any
+
 
 def hyprctl_json(command: str) -> Any:
-    """Execute hyprctl command and return JSON output."""
     result = subprocess.run(
         ["hyprctl", "-j"] + command.split(),
         capture_output=True,
         text=True,
-        check=True,
     )
-    return json.loads(result.stdout)
+    if result.returncode != 0:
+        print(f"hyprctl {command} failed: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"Failed to parse hyprctl {command} output", file=sys.stderr)
+        sys.exit(1)
+
 
 def hyprctl_batch(commands: List[str]) -> None:
-    """Execute multiple hyprctl dispatch commands in a batch."""
     if not commands:
         return
 
     batch_cmd = " ; ".join(commands)
-
     result = subprocess.run(
         ["hyprctl", "--batch", batch_cmd],
         capture_output=True,
@@ -41,98 +47,68 @@ def hyprctl_batch(commands: List[str]) -> None:
     )
 
     if result.returncode != 0:
-        print(f"Batch command failed: {result.stderr}")
+        print(f"Batch command failed: {result.stderr}", file=sys.stderr)
 
-def get_windows_on_workspace(workspace_id: int) -> List[str]:
-    """Get all window addresses on a specific workspace."""
-    clients = hyprctl_json("clients")
-    return [
-        client["address"]
-        for client in clients
-        if client["workspace"]["id"] == workspace_id
-    ]
 
-def get_workspace_numbers() -> List[int]:
-    """Get list of existing workspace numbers."""
+def get_active_workspace_id() -> int:
+    ws = hyprctl_json("activeworkspace")
+
+    return ws["id"]
+
+
+def get_monitor_workspace_ids(monitor_id: int) -> List[int]:
     workspaces = hyprctl_json("workspaces")
-    return [ws["id"] for ws in workspaces if ws["id"] > 0]
-
-def get_active_workspace() -> Dict[str, Any]:
-    """Get current active workspace info."""
-    return hyprctl_json("activeworkspace")
-
-def get_workspace_after_relative_move(direction: str) -> int:
-    """Get the workspace ID after a relative move (m+1 or m-1)."""
-    current_ws = get_active_workspace()
-    current_id = current_ws["id"]
-
-    # Execute the relative move
-    subprocess.run(
-        ["hyprctl", "dispatch", "workspace", direction],
-        capture_output=True,
-        check=True,
+    ids = sorted(
+        ws["id"]
+        for ws in workspaces
+        if ws["monitorID"] == monitor_id and ws["id"] > 0
     )
 
-    # Get the new workspace ID
-    new_ws = get_active_workspace()
-    target_id = new_ws["id"]
+    return ids
 
-    # Move back to original workspace
-    subprocess.run(
-        ["hyprctl", "dispatch", "workspace", str(current_id)],
-        capture_output=True,
-        check=True,
-    )
 
-    return target_id
+def get_active_monitor_id() -> int:
+    monitors = hyprctl_json("monitors")
+    for mon in monitors:
+        if mon["focused"]:
+            return mon["id"]
 
-def move_all_windows(from_ws: int, to_ws: int) -> None:
-    """Move all windows from one workspace to another."""
-    windows = get_windows_on_workspace(from_ws)
+    return monitors[0]["id"]
 
-    if not windows:
-        return
 
-    commands = []
-    for addr in windows:
-        commands.append(f"dispatch movetoworkspacesilent {to_ws},address:{addr}")
+def get_neighbor_workspace(direction: str) -> int:
+    monitor_id = get_active_monitor_id()
+    current_id = get_active_workspace_id()
+    ws_ids = get_monitor_workspace_ids(monitor_id)
 
-    hyprctl_batch(commands)
+    if not ws_ids or current_id not in ws_ids:
+        return current_id
+
+    idx = ws_ids.index(current_id)
+
+    if direction == "left":
+        return ws_ids[idx - 1] if idx > 0 else ws_ids[-1]
+    else:
+        return ws_ids[idx + 1] if idx < len(ws_ids) - 1 else ws_ids[0]
+
 
 def swap_workspaces(current: int, target: int) -> None:
-    """Swap all windows between two workspaces."""
-    workspace_numbers = get_workspace_numbers()
-
-    # Get windows on both workspaces
-    current_windows = get_windows_on_workspace(current)
-    target_windows = get_windows_on_workspace(target)
-
-    if not current_windows and not target_windows:
-        # Nothing to swap
-        subprocess.run(["hyprctl", "dispatch", "workspace", str(target)], check=False)
+    if current == target:
         return
 
-    # Use a temporary workspace that doesn't exist
-    temp_ws = max(workspace_numbers + [current, target]) + 1
+    # Use renameworkspace to swap IDs — preserves layout/splits
+    # Strategy: current -> temp, target -> current, temp -> target
+    temp_name = "__swap_temp__"
 
-    commands = []
-
-    # Move target workspace windows to temp
-    for addr in target_windows:
-        commands.append(f"dispatch movetoworkspacesilent {temp_ws},address:{addr}")
-
-    # Move current workspace windows to target
-    for addr in current_windows:
-        commands.append(f"dispatch movetoworkspacesilent {target},address:{addr}")
-
-    # Move temp windows to current
-    for addr in target_windows:
-        commands.append(f"dispatch movetoworkspacesilent {current},address:{addr}")
-
-    # Switch to the target workspace
-    commands.append(f"dispatch workspace {target}")
+    commands = [
+        f"dispatch renameworkspace {current} {temp_name}",
+        f"dispatch renameworkspace {target} {current}",
+        f"dispatch renameworkspace {temp_name} {target}",
+        f"dispatch workspace {target}",
+    ]
 
     hyprctl_batch(commands)
+
 
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Hyprland")
@@ -154,23 +130,14 @@ def main():
     if not args.to and not args.swap:
         parser.error("Either -t/--to or -s/--swap must be specified")
 
-    # Get current state
-    active_ws = get_active_workspace()
-    current_workspace = active_ws["id"]
+    current_workspace = get_active_workspace_id()
 
     if args.to:
-        target = args.to
-        swap_workspaces(current_workspace, target)
-
+        swap_workspaces(current_workspace, args.to)
     elif args.swap:
-        # Use Hyprland's m+1/m-1 to find the next workspace on current monitor
-        if args.swap == "left":
-            target = get_workspace_after_relative_move("m-1")
-        else:  # right
-            target = get_workspace_after_relative_move("m+1")
-
-        # Swap with the target workspace
+        target = get_neighbor_workspace(args.swap)
         swap_workspaces(current_workspace, target)
+
 
 if __name__ == "__main__":
     main()
