@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 
 """
-Swap workspace positions in Hyprland using renameworkspace.
+Swap workspace positions in Hyprland by moving all windows between workspaces.
 
 This script allows you to:
 - Move current workspace to a specific number (-t/--to): swaps with existing
 - Swap left (-s left): swaps with previous workspace on current monitor
 - Swap right (-s right): swaps with next workspace on current monitor
-
-Uses renameworkspace to preserve window layout/splits during swap.
 """
 
 import json
@@ -16,7 +14,6 @@ import subprocess
 import sys
 from argparse import ArgumentParser
 from typing import List, Any
-
 
 def hyprctl_json(command: str) -> Any:
     result = subprocess.run(
@@ -34,38 +31,20 @@ def hyprctl_json(command: str) -> Any:
         print(f"Failed to parse hyprctl {command} output", file=sys.stderr)
         sys.exit(1)
 
-
-def hyprctl_batch(commands: List[str]) -> None:
-    if not commands:
-        return
-
-    batch_cmd = " ; ".join(commands)
+def hyprctl_dispatch(command: str, args: str) -> None:
     result = subprocess.run(
-        ["hyprctl", "--batch", batch_cmd],
+        ["hyprctl", "dispatch", command, args],
         capture_output=True,
         text=True,
     )
 
     if result.returncode != 0:
-        print(f"Batch command failed: {result.stderr}", file=sys.stderr)
-
+        print(f"dispatch {command} {args} failed: {result.stderr}", file=sys.stderr)
 
 def get_active_workspace_id() -> int:
     ws = hyprctl_json("activeworkspace")
 
     return ws["id"]
-
-
-def get_monitor_workspace_ids(monitor_id: int) -> List[int]:
-    workspaces = hyprctl_json("workspaces")
-    ids = sorted(
-        ws["id"]
-        for ws in workspaces
-        if ws["monitorID"] == monitor_id and ws["id"] > 0
-    )
-
-    return ids
-
 
 def get_active_monitor_id() -> int:
     monitors = hyprctl_json("monitors")
@@ -75,6 +54,22 @@ def get_active_monitor_id() -> int:
 
     return monitors[0]["id"]
 
+def get_monitor_workspace_ids(monitor_id: int) -> List[int]:
+    workspaces = hyprctl_json("workspaces")
+    ids = sorted(
+        ws["id"] for ws in workspaces if ws["monitorID"] == monitor_id and ws["id"] > 0
+    )
+
+    return ids
+
+def get_windows_on_workspace(workspace_id: int) -> List[str]:
+    clients = hyprctl_json("clients")
+
+    return [
+        client["address"]
+        for client in clients
+        if client["workspace"]["id"] == workspace_id
+    ]
 
 def get_neighbor_workspace(direction: str) -> int:
     monitor_id = get_active_monitor_id()
@@ -91,24 +86,27 @@ def get_neighbor_workspace(direction: str) -> int:
     else:
         return ws_ids[idx + 1] if idx < len(ws_ids) - 1 else ws_ids[0]
 
-
 def swap_workspaces(current: int, target: int) -> None:
     if current == target:
         return
 
-    # Use renameworkspace to swap IDs — preserves layout/splits
-    # Strategy: current -> temp, target -> current, temp -> target
-    temp_name = "__swap_temp__"
+    current_windows = get_windows_on_workspace(current)
+    target_windows = get_windows_on_workspace(target)
 
-    commands = [
-        f"dispatch renameworkspace {current} {temp_name}",
-        f"dispatch renameworkspace {target} {current}",
-        f"dispatch renameworkspace {temp_name} {target}",
-        f"dispatch workspace {target}",
-    ]
+    if not current_windows and not target_windows:
+        hyprctl_dispatch("workspace", str(target))
 
-    hyprctl_batch(commands)
+        return
 
+    # No temp workspace needed — we track windows by address, so we can
+    # move current→target first, then move original target windows back
+    for addr in current_windows:
+        hyprctl_dispatch("movetoworkspacesilent", f"{target},address:{addr}")
+
+    for addr in target_windows:
+        hyprctl_dispatch("movetoworkspacesilent", f"{current},address:{addr}")
+
+    hyprctl_dispatch("workspace", str(target))
 
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Hyprland")
@@ -137,7 +135,6 @@ def main():
     elif args.swap:
         target = get_neighbor_workspace(args.swap)
         swap_workspaces(current_workspace, target)
-
 
 if __name__ == "__main__":
     main()
