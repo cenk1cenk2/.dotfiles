@@ -7,31 +7,31 @@ gfx)
 	sudo ryzenadj --gfx-clk $2
 	;;
 30)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=35000 --slow-limit=32000 --max-performance
+	sudo ryzenadj --stapm-limit=28000 --fast-limit=35000 --slow-limit=32000 --tctl-temp=95 --max-performance
 	;;
 28)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=30000 --slow-limit=30000 --max-performance
+	sudo ryzenadj --stapm-limit=28000 --fast-limit=30000 --slow-limit=30000 --tctl-temp=95 --max-performance
 	;;
 25)
-	sudo ryzenadj --stapm-limit=25000 --fast-limit=28000 --slow-limit=28000 --max-performance
+	sudo ryzenadj --stapm-limit=25000 --fast-limit=28000 --slow-limit=28000 --tctl-temp=90 --max-performance
 	;;
 20)
-	sudo ryzenadj --stapm-limit=20000 --fast-limit=20000 --slow-limit=20000 --max-performance
+	sudo ryzenadj --stapm-limit=20000 --fast-limit=25000 --slow-limit=22000 --tctl-temp=90 --max-performance
 	;;
 18)
-	sudo ryzenadj --stapm-limit=18000 --fast-limit=18000 --slow-limit=18000 --max-performance
+	sudo ryzenadj --stapm-limit=18000 --fast-limit=22000 --slow-limit=20000 --tctl-temp=85 --max-performance
 	;;
 15)
-	sudo ryzenadj --stapm-limit=15000 --fast-limit=15000 --slow-limit=15000 --max-performance
+	sudo ryzenadj --stapm-limit=15000 --fast-limit=18000 --slow-limit=17000 --tctl-temp=85 --max-performance
 	;;
 12)
-	sudo ryzenadj --stapm-limit=12000 --fast-limit=15000 --slow-limit=15000 --power-saving
+	sudo ryzenadj --stapm-limit=12000 --fast-limit=15000 --slow-limit=15000 --tctl-temp=85 --power-saving
 	;;
 9)
-	sudo ryzenadj --stapm-limit=6000 --fast-limit=12000 --slow-limit=12000 --power-saving
+	sudo ryzenadj --stapm-limit=9000 --fast-limit=12000 --slow-limit=12000 --tctl-temp=80 --power-saving
 	;;
 5)
-	sudo ryzenadj --stapm-limit=5000 --fast-limit=9000 --slow-limit=9000 --power-saving
+	sudo ryzenadj --stapm-limit=5000 --fast-limit=9000 --slow-limit=9000 --tctl-temp=75 --power-saving
 	;;
 show) ;;
 *)
