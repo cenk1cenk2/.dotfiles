@@ -147,13 +147,15 @@ class Speech:
 
         body = {
             "model": self.args.enrich_model,
-            "temperature": self.args.enrich_temperature,
-            "top_p": self.args.enrich_top_p,
             "messages": [
                 {"role": "system", "content": AI_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
         }
+        if self.args.enrich_temperature is not None:
+            body["temperature"] = self.args.enrich_temperature
+        if self.args.enrich_top_p is not None:
+            body["top_p"] = self.args.enrich_top_p
         if self.args.enrich_thinking:
             body["chat_template_kwargs"] = {"enable_thinking": True}
             body["reasoning"] = {}
@@ -561,14 +563,12 @@ def _add_common_args(parser):
     parser.add_argument(
         "--enrich-temperature",
         type=float,
-        default=0.4,
-        help="Temperature for enrichment (default: 0.5)",
+        help="Temperature for enrichment (omit to use server default)",
     )
     parser.add_argument(
         "--enrich-top-p",
         type=float,
-        default=0.9,
-        help="Top-p for enrichment (default: 0.9)",
+        help="Top-p for enrichment (omit to use server default)",
     )
     parser.add_argument(
         "--enrich-thinking",
@@ -619,8 +619,8 @@ def main():
         "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
     )
     enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
-    enrich_process_parser.add_argument("--enrich-temperature", type=float, default=0.4)
-    enrich_process_parser.add_argument("--enrich-top-p", type=float, default=0.9)
+    enrich_process_parser.add_argument("--enrich-temperature", type=float)
+    enrich_process_parser.add_argument("--enrich-top-p", type=float)
     enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
     enrich_process_parser.add_argument("--enrich-num-ctx", type=int)
     enrich_process_parser.add_argument("--api-key", default="")

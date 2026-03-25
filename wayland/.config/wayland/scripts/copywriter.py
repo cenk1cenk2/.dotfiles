@@ -109,13 +109,15 @@ class Copywriter:
         prompt = USER_PROMPT.format(text=text)
         body = {
             "model": self.args.model,
-            "temperature": self.args.temperature,
-            "top_p": self.args.top_p,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
         }
+        if self.args.temperature is not None:
+            body["temperature"] = self.args.temperature
+        if self.args.top_p is not None:
+            body["top_p"] = self.args.top_p
         if self.args.thinking:
             body["chat_template_kwargs"] = {"enable_thinking": True}
             body["reasoning"] = {}
@@ -221,13 +223,13 @@ class Copywriter:
             self.args.base_url,
             "--model",
             self.args.model,
-            "--temperature",
-            str(self.args.temperature),
-            "--top-p",
-            str(self.args.top_p),
             "--api-key",
             api_key,
         ]
+        if self.args.temperature is not None:
+            cmd.extend(["--temperature", str(self.args.temperature)])
+        if self.args.top_p is not None:
+            cmd.extend(["--top-p", str(self.args.top_p)])
         if self.args.thinking:
             cmd.append("--thinking")
         if self.args.num_ctx:
@@ -355,14 +357,12 @@ def main():
     run_parser.add_argument(
         "--temperature",
         type=float,
-        default=0.4,
-        help="Temperature for refinement (default: 0.5)",
+        help="Temperature for refinement (omit to use server default)",
     )
     run_parser.add_argument(
         "--top-p",
         type=float,
-        default=0.9,
-        help="Top-p for refinement (default: 0.9)",
+        help="Top-p for refinement (omit to use server default)",
     )
     run_parser.add_argument(
         "--thinking",
@@ -381,8 +381,8 @@ def main():
     internal_parser.add_argument("--provider", default="http")
     internal_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
     internal_parser.add_argument("--model", default=DEFAULT_MODEL)
-    internal_parser.add_argument("--temperature", type=float, default=0.4)
-    internal_parser.add_argument("--top-p", type=float, default=0.9)
+    internal_parser.add_argument("--temperature", type=float)
+    internal_parser.add_argument("--top-p", type=float)
     internal_parser.add_argument("--thinking", action="store_true")
     internal_parser.add_argument("--num-ctx", type=int)
     internal_parser.add_argument("--api-key", default="")
