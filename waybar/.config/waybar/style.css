@@ -46,10 +46,6 @@
   margin: 0;
   padding: 0;
   font-family: "RobotoMono Nerd Font", "Roboto Mono", sans-serif;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-  animation-direction: alternate;
-  animation-duration: 3s;
 }
 
 window#waybar {
@@ -267,7 +263,11 @@ window#waybar .modules-right {
 
 /* Blinking animations for critical states */
 #battery.warning.discharging {
-  animation-name: blink-warning;
+  /* animation-name: blink-warning; */
+  /* animation-timing-function: linear; */
+  /* animation-iteration-count: infinite; */
+  /* animation-direction: alternate; */
+  /* animation-duration: 3s; */
 }
 
 #battery.critical.discharging,
@@ -276,7 +276,11 @@ window#waybar .modules-right {
 #temperature.critical,
 #pulseaudio.muted,
 #wireplumber.muted {
-  animation-name: blink-critical;
+  /* animation-name: blink-critical; */
+  /* animation-timing-function: linear; */
+  /* animation-iteration-count: infinite; */
+  /* animation-direction: alternate; */
+  /* animation-duration: 3s; */
 }
 
 /* -----------------------------------------------------------------------------
