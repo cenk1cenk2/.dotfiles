@@ -54,7 +54,7 @@
   },
 
   "custom/recorder": {
-    "interval": 10,
+    "interval": 5,
     "return-type": "json",
     "format": "{}",
     "exec": "~/.config/wayland/scripts/recorder.py status",
