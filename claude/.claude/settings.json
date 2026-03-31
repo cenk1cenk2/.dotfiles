@@ -7,10 +7,34 @@
       "WebFetch",
       "WebSearch",
       "mcp__mcphub",
-      "mcp__plugin_claude-mem_mcp-search"
+      "mcp__plugin_claude-mem_mcp-search",
+      "Grep(*)",
+      "Glob(*)",
+      "Read(*)",
+      "ToolSearch(*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git remote -v:*)",
+      "Bash(git tag:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(stat:*)",
+      "Bash(which:*)",
+      "Bash(file:*)",
+      "Bash(pwd:*)",
+      "Bash(type:*)"
     ],
     "deny": [],
     "ask": []
+  },
+  "showClearContextOnPlanAccept": true,
+  "attribution": {
+    "commit": "",
+    "pr": ""
   },
   "model": "opus[1m]",
   "enabledPlugins": {
