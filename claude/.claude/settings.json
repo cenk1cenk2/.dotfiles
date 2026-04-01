@@ -31,7 +31,7 @@
     "deny": [],
     "ask": []
   },
-  "showClearContextOnPlanAccept": true,
+  "showClearContextOnPlanAccept": false,
   "attribution": {
     "commit": "",
     "pr": ""
