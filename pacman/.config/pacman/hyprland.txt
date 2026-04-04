@@ -12,4 +12,5 @@ hyprlock
 hyprpaper
 hyprpolkitagent
 hyprpwcenter
+hyprshutdown
 xdg-desktop-portal-hyprland
