@@ -156,9 +156,7 @@ class Speech:
             body["temperature"] = self.args.enrich_temperature
         if self.args.enrich_top_p is not None:
             body["top_p"] = self.args.enrich_top_p
-        if self.args.enrich_thinking:
-            body["chat_template_kwargs"] = {"enable_thinking": True}
-            body["reasoning"] = {}
+        body["reasoning_effort"] = self.args.enrich_thinking
         if self.args.enrich_num_ctx:
             body["options"] = {"num_ctx": self.args.enrich_num_ctx}
 
@@ -272,8 +270,7 @@ class Speech:
             cmd.extend(["--enrich-temperature", str(self.args.enrich_temperature)])
         if self.args.enrich_top_p is not None:
             cmd.extend(["--enrich-top-p", str(self.args.enrich_top_p)])
-        if self.args.enrich_thinking:
-            cmd.append("--enrich-thinking")
+        cmd.extend(["--enrich-thinking", self.args.enrich_thinking])
         if self.args.enrich_num_ctx:
             cmd.extend(["--enrich-num-ctx", str(self.args.enrich_num_ctx)])
         if self.args.save:
@@ -572,8 +569,11 @@ def _add_common_args(parser):
     )
     parser.add_argument(
         "--enrich-thinking",
-        action="store_true",
-        help="Enable model thinking/reasoning (default: disabled)",
+        nargs="?",
+        const="high",
+        default="none",
+        choices=["high", "medium", "low", "none"],
+        help="Reasoning effort level (default: none, --enrich-thinking without value: high)",
     )
     parser.add_argument(
         "--enrich-num-ctx",
@@ -621,7 +621,7 @@ def main():
     enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
     enrich_process_parser.add_argument("--enrich-temperature", type=float)
     enrich_process_parser.add_argument("--enrich-top-p", type=float)
-    enrich_process_parser.add_argument("--enrich-thinking", action="store_true")
+    enrich_process_parser.add_argument("--enrich-thinking", default="none")
     enrich_process_parser.add_argument("--enrich-num-ctx", type=int)
     enrich_process_parser.add_argument("--api-key", default="")
     enrich_process_parser.add_argument("--save", action="store_true")

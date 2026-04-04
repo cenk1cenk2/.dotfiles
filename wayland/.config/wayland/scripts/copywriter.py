@@ -118,9 +118,7 @@ class Copywriter:
             body["temperature"] = self.args.temperature
         if self.args.top_p is not None:
             body["top_p"] = self.args.top_p
-        if self.args.thinking:
-            body["chat_template_kwargs"] = {"enable_thinking": True}
-            body["reasoning"] = {}
+        body["reasoning_effort"] = self.args.thinking
         if self.args.num_ctx:
             body["options"] = {"num_ctx": self.args.num_ctx}
 
@@ -230,8 +228,7 @@ class Copywriter:
             cmd.extend(["--temperature", str(self.args.temperature)])
         if self.args.top_p is not None:
             cmd.extend(["--top-p", str(self.args.top_p)])
-        if self.args.thinking:
-            cmd.append("--thinking")
+        cmd.extend(["--thinking", self.args.thinking])
         if self.args.num_ctx:
             cmd.extend(["--num-ctx", str(self.args.num_ctx)])
 
@@ -366,8 +363,11 @@ def main():
     )
     run_parser.add_argument(
         "--thinking",
-        action="store_true",
-        help="Enable model thinking/reasoning",
+        nargs="?",
+        const="high",
+        default="none",
+        choices=["high", "medium", "low", "none"],
+        help="Reasoning effort level (default: none, --thinking without value: high)",
     )
     run_parser.add_argument(
         "--num-ctx",
@@ -383,7 +383,7 @@ def main():
     internal_parser.add_argument("--model", default=DEFAULT_MODEL)
     internal_parser.add_argument("--temperature", type=float)
     internal_parser.add_argument("--top-p", type=float)
-    internal_parser.add_argument("--thinking", action="store_true")
+    internal_parser.add_argument("--thinking", default="none")
     internal_parser.add_argument("--num-ctx", type=int)
     internal_parser.add_argument("--api-key", default="")
 
