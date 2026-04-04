@@ -6,19 +6,19 @@
 }
 {
     "label" : "logout",
-    "action" : "loginctl terminate-user $USER",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown || loginctl terminate-user $USER",
     "text" : "[L] Logout",
     "keybind" : "L"
 }
 {
     "label" : "reboot",
-    "action" : "systemctl reboot",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl reboot' || systemctl reboot",
     "text" : " [R] Reboot",
     "keybind" : "R"
 }
 {
     "label" : "shutdown",
-    "action" : "systemctl poweroff",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl poweroff' || systemctl poweroff",
     "text" : "[Q] Shutdown",
     "keybind" : "Q"
 }
