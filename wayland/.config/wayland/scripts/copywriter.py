@@ -10,7 +10,7 @@ import urllib.request
 
 import psutil
 
-DEFAULT_MODEL = "gemma3:27b-cloud"
+DEFAULT_MODEL = "gemma4:31b-cloud"
 
 log = logging.getLogger("copywriter")
 
