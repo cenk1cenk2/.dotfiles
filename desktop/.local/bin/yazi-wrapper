@@ -2,8 +2,8 @@
 
 # If argument is a file, open parent directory and highlight the file
 if [ -f "$1" ]; then
-  exec env ZNAP_HEADLESS=1 zsh -ic "yazi --entry=\"$1\""
+  exec env zsh -c "yazi --entry=\"$1\""
 else
   # Otherwise just open the directory
-  exec env ZNAP_HEADLESS=1 zsh -ic "yazi $*"
+  exec env zsh -c "yazi $*"
 fi
