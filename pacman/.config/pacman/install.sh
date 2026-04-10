@@ -1,12 +1,13 @@
 #!/usr/bin/env zsh
 
 LOAD="${1:-minimum.txt}"
+shift
 
 echo "Loading packages from: $LOAD"
 
 cat "$LOAD"
 
-yay -S --needed --noconfirm --overwrite '*' "${@:2}" - <"$LOAD"
+yay -S --needed --noconfirm --overwrite '*' "${@}" - <"$LOAD"
 
 case "$LOAD" in
 "gaming.txt")
