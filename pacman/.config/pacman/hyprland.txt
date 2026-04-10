@@ -1,5 +1,4 @@
 # hyprqt6engine
-# hyprshutdown
 clipse
 cpio
 hypr-zoom
