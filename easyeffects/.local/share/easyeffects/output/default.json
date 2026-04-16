@@ -1,0 +1,102 @@
+{
+  "output": {
+    "blocklist": [],
+    "equalizer#0": {
+      "bypass": false,
+      "input-gain": -3.0,
+      "output-gain": 0.0,
+      "mode": "IIR",
+      "num-bands": 3,
+      "split-channels": false,
+      "left": {
+        "band0": {
+          "frequency": 80.0,
+          "gain": 3.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 0.71,
+          "slope": "x1",
+          "solo": false,
+          "type": "Lo-shelf"
+        },
+        "band1": {
+          "frequency": 250.0,
+          "gain": -1.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 1.5,
+          "slope": "x1",
+          "solo": false,
+          "type": "Bell"
+        },
+        "band2": {
+          "frequency": 1000.0,
+          "gain": 0.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 1.5,
+          "slope": "x1",
+          "solo": false,
+          "type": "Bell"
+        }
+      },
+      "right": {
+        "band0": {
+          "frequency": 80.0,
+          "gain": 3.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 0.71,
+          "slope": "x1",
+          "solo": false,
+          "type": "Lo-shelf"
+        },
+        "band1": {
+          "frequency": 250.0,
+          "gain": -1.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 1.5,
+          "slope": "x1",
+          "solo": false,
+          "type": "Bell"
+        },
+        "band2": {
+          "frequency": 1000.0,
+          "gain": 0.0,
+          "mode": "RLC (BT)",
+          "mute": false,
+          "q": 1.5,
+          "slope": "x1",
+          "solo": false,
+          "type": "Bell"
+        }
+      }
+    },
+    "limiter#0": {
+      "bypass": false,
+      "input-gain": 0.0,
+      "output-gain": 0.0,
+      "attack": 5.0,
+      "release": 5.0,
+      "lookahead": 5.0,
+      "threshold": -1.5,
+      "gain-boost": false,
+      "stereo-link": 100.0,
+      "alr": false,
+      "mode": "Herm Thin",
+      "oversampling": "None",
+      "dithering": "None",
+      "sidechain-type": "Internal",
+      "sidechain-preamp": -80.01
+    },
+    "crossfeed#0": {
+      "bypass": false,
+      "fcut": 650,
+      "feed": 9.5,
+      "input-gain": 0.0,
+      "output-gain": 0.0
+    },
+    "plugins_order": ["equalizer#0", "limiter#0", "crossfeed#0"]
+  }
+}

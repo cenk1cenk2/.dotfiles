@@ -60,6 +60,7 @@ tasks:
             dbus
             desktop
             dex
+            easyeffects
             electron
             fonts
             gitconfig
@@ -70,8 +71,8 @@ tasks:
             khal
             kitty
             mako
-            mpv
             mimetypes
+            mpv
             neomutt
             pacman
             pipewire
@@ -86,8 +87,8 @@ tasks:
             swayosd
             swayr
             sworkstyle
-            wayland
             waybar
+            wayland
             waystt
             wiremix
             wireplumber
