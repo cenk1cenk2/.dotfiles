@@ -1,3 +1,6 @@
+max_volume_percent = 100.0
+enforce_max_volume = true
+
 [names]
 stream = [
   "{client:application.name}: {node:media.name}",
