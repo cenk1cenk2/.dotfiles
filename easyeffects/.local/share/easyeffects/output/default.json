@@ -3,7 +3,7 @@
     "blocklist": [],
     "equalizer#0": {
       "bypass": false,
-      "input-gain": -3.0,
+      "input-gain": -0.3,
       "output-gain": 0.0,
       "mode": "IIR",
       "num-bands": 3,
