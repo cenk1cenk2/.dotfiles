@@ -3,7 +3,7 @@
     "blocklist": [],
     "equalizer#0": {
       "bypass": false,
-      "input-gain": -1.0,
+      "input-gain": -3.0,
       "output-gain": 0.0,
       "mode": "IIR",
       "num-bands": 9,
@@ -200,12 +200,12 @@
       "attack": 5.0,
       "release": 5.0,
       "lookahead": 5.0,
-      "threshold": -1.5,
+      "threshold": -1.0,
       "gain-boost": false,
       "stereo-link": 100.0,
       "alr": false,
       "mode": "Herm Thin",
-      "oversampling": "None",
+      "oversampling": "True Peak/24 bit",
       "dithering": "None",
       "sidechain-type": "Internal",
       "sidechain-preamp": -80.01
