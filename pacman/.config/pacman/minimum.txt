@@ -86,7 +86,7 @@ pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
-pulsemixer
+wiremix
 python-obsws
 qt5-styleplugins
 qt5-wayland

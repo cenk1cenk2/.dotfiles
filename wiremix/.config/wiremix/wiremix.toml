@@ -1,0 +1,5 @@
+[names]
+stream = [
+  "{client:application.name}: {node:media.name}",
+  "{node:node.name}: {node:media.name}",
+]

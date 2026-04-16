@@ -89,6 +89,7 @@ tasks:
             wayland
             waybar
             waystt
+            wiremix
             wireplumber
             wl-gamma-relay-rs
             wlogout
