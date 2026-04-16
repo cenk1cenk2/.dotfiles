@@ -211,7 +211,7 @@
       "sidechain-preamp": -80.01
     },
     "crossfeed#0": {
-      "bypass": false,
+      "bypass": true,
       "fcut": 650,
       "feed": 9.5,
       "input-gain": 0.0,
