@@ -35,7 +35,7 @@ mode $mode_recording {
         # Kill copywriter
         bindsym Shift+w exec $copywriter kill, mode "default"
 
-        # Terminate waystt
+        # Stop speech-to-text
         bindsym Shift+q exec $speech kill, mode "default"
 
         # Exit recording mode

@@ -222,13 +222,13 @@ The recording mode provides quick access to screen recording and speech-to-text 
 
 - **s** - Speech-to-text to clipboard (wl-copy)
 - **S** (Shift+s) - Speech-to-text direct typing (ydotool)
-- **Q** (Shift+q) - Terminate waystt process
+- **Q** (Shift+q) - Cancel speech recording
 
 ### General
 
 - **Esc** - Exit recording mode
 
-Recordings are managed via the recorder script. Speech-to-text uses `waystt` with Whisper AI for voice transcription.
+Recordings are managed via the recorder script. Speech-to-text uses `hyprwhspr` with Whisper AI for voice transcription via OpenWebUI.
 
 ## Scripts to Port
 

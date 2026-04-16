@@ -90,7 +90,6 @@ tasks:
             sworkstyle
             waybar
             wayland
-            waystt
             wiremix
             wireplumber
             wl-gamma-relay-rs
@@ -126,6 +125,7 @@ tasks:
           packages: >-
             chrome
             waylogout
+            waystt
           # args: --adopt
 
   deploy:macos:
