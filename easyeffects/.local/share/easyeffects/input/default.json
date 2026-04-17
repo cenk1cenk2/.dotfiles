@@ -19,7 +19,7 @@
       "sc-level": 1.0,
       "side-balance": 0.0,
       "side-level": 0.0,
-      "softclip": true,
+      "softclip": false,
       "stereo-base": 0.0,
       "stereo-phase": 0.0,
       "wet": 0.0
