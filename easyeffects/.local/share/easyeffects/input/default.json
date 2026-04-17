@@ -3,7 +3,7 @@
     "blocklist": [],
     "stereo_tools#0": {
       "bypass": false,
-      "input-gain": 0.0,
+      "input-gain": 6.0,
       "output-gain": 0.0,
       "balance-in": 0.0,
       "balance-out": 0.0,
@@ -85,6 +85,23 @@
       "stereo-split": false,
       "threshold": -18.0,
       "wet": 0.0
+    },
+    "deesser#0": {
+      "bypass": false,
+      "detection": "RMS",
+      "f1-freq": 4500.0,
+      "f1-level": 0.0,
+      "f2-freq": 5800.0,
+      "f2-level": 12.0,
+      "f2-q": 1.4,
+      "input-gain": 0.0,
+      "laxity": 15,
+      "makeup": 0.0,
+      "mode": "Split",
+      "output-gain": 0.0,
+      "ratio": 4.0,
+      "sc-listen": false,
+      "threshold": -24.0
     },
     "equalizer#0": {
       "bypass": false,
@@ -203,6 +220,7 @@
       "rnnoise#0",
       "speex#0",
       "compressor#0",
+      "deesser#0",
       "equalizer#0"
     ]
   }
