@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
+  "use_hypr_bindings": true,
+  "language": "en",
+  "filter_filler_words": true,
+  "clipboard_clear_delay": 3,
+  "paste_mode": "ctrl_shift",
+  "transcription_backend": "rest-api",
+  "rest_endpoint_url": "https://ai.kilic.dev/api/v1/audio/transcriptions",
+  "rest_api_provider": "openai",
+  "audio_feedback": true,
+  "audio_ducking": true,
+  "audio_ducking_percent": 10,
+  "recording_mode": "toggle"
+}
