@@ -1,15 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/goodroot/hyprwhspr/main/share/config.schema.json",
-  "use_hypr_bindings": true,
+  "secondary_language": "tr",
   "language": "en",
   "filter_filler_words": true,
-  "clipboard_clear_delay": 3,
-  "paste_mode": "ctrl_shift",
+  "whisper_prompt": "Transcribe as technical documentation with proper capitalization, acronyms and technical terminology.",
   "transcription_backend": "rest-api",
   "rest_endpoint_url": "https://ai.kilic.dev/api/v1/audio/transcriptions",
   "rest_api_provider": "openai",
+  "rest_api_key": "${AI_KILIC_DEV_API_KEY}",
   "audio_feedback": true,
-  "audio_ducking": true,
-  "audio_ducking_percent": 10,
-  "recording_mode": "toggle"
+  "mute_detection": false,
+  "audio_ducking": true
 }
