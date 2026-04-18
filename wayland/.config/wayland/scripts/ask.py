@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import sys
 import threading
 from typing import Optional
@@ -60,7 +61,14 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, Pango  # noqa: E402
+from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
+    Gdk,
+    Gio,
+    GLib,
+    Gtk,
+    Gtk4LayerShell,
+    Pango,
+)
 
 log = logging.getLogger("ask")
 
@@ -81,6 +89,56 @@ def _signal_waybar_safe() -> None:
     except Exception as e:
         log.debug("waybar signal failed: %s", e)
 
+def _focused_monitor_width_logical() -> Optional[int]:
+    """Ask the running compositor for the focused output's logical width
+    (pixel width divided by applied scale). Tries Hyprland first, then
+    sway. Returns None if neither is available / answers cleanly."""
+    try:
+        out = subprocess.run(
+            ["hyprctl", "monitors", "-j"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout
+        for m in json.loads(out):
+            if m.get("focused"):
+                w = m.get("width")
+                scale = m.get("scale") or 1
+                if w:
+                    return int(w / scale)
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        pass
+    try:
+        out = subprocess.run(
+            ["swaymsg", "-t", "get_outputs"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout
+        for o in json.loads(out):
+            if o.get("focused"):
+                mode = o.get("current_mode") or {}
+                w = mode.get("width")
+                scale = o.get("scale") or 1
+                if w:
+                    return int(w / scale)
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        pass
+
+    return None
+
 BASE_CSS = b"""
 window {
     background: rgba(20, 22, 28, 0.96);
@@ -97,6 +155,12 @@ label.ask-provider {
     font-weight: bold;
     color: #d8dee9;
 }
+/* Phase colouring on the provider label. Idle: conversation is ready,
+ * adapter is resting. Pending: we sent a turn, no chunk yet (something
+ * might be wrong). Streaming: chunks arriving, everything is fine. */
+label.ask-provider.idle { color: #8fbf7a; }
+label.ask-provider.streaming { color: #e6c07b; }
+label.ask-provider.pending { color: #e06c75; }
 button.ask-close {
     background: transparent;
     border: none;
@@ -371,7 +435,7 @@ class ComposeView:
     def set_sensitive(self, sensitive: bool) -> None:
         self._textview.set_sensitive(sensitive)
 
-    def _on_key(self, controller, keyval, keycode, state) -> bool:
+    def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             return False
         if state & Gdk.ModifierType.SHIFT_MASK:
@@ -440,7 +504,7 @@ class QueueRow(Gtk.ListBoxRow):
 
         return compact
 
-    def _on_click(self, gesture, n_press, x, y) -> None:
+    def _on_click(self, _gesture, n_press, _x, _y) -> None:
         if n_press == 2 and not self._editing:
             self._enter_edit_mode()
 
@@ -487,6 +551,10 @@ class AskWindow(Gtk.ApplicationWindow):
         self._streaming = False
         self._alive = True
         self._queue: list[QueueRow] = []
+        # idle: ready for a turn; pending: user turn sent, no chunk received
+        # yet; streaming: first chunk arrived, adapter still yielding. Both
+        # the overlay header and the waybar module read this to pick colour.
+        self._phase: str = "idle"
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -502,16 +570,17 @@ class AskWindow(Gtk.ApplicationWindow):
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("ask-header")
-        provider_label = Gtk.Label(
+        self._provider_label = Gtk.Label(
             label=f"󱍊 {adapter.provider.value}",
             xalign=0.0,
             hexpand=True,
         )
-        provider_label.add_css_class("ask-provider")
+        self._provider_label.add_css_class("ask-provider")
+        self._provider_label.add_css_class("idle")
         close_button = Gtk.Button(label="✕")
         close_button.add_css_class("ask-close")
         close_button.connect("clicked", lambda _b: self.close())
-        header.append(provider_label)
+        header.append(self._provider_label)
         header.append(close_button)
         root.append(header)
 
@@ -556,19 +625,24 @@ class AskWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _overlay_width(fraction: float = 0.4) -> int:
-        """40% of the primary monitor's logical width (height is driven by the
-        top+bottom anchor). Falls back to a sane default if monitor info is
-        unavailable — e.g., no display connected or an empty monitor list."""
-        fallback = 520
-        display = Gdk.Display.get_default()
-        if display is None:
-            return fallback
-        monitors = display.get_monitors()
-        if monitors.get_n_items() == 0:
-            return fallback
-        geometry = monitors.get_item(0).get_geometry()
+        """Fraction of the *current* (focused) monitor's logical width.
+        Asks the compositor directly — Hyprland first, then sway — so the
+        overlay sizes to wherever the user is looking, not whatever GDK
+        happens to list as the default monitor. Falls back to a reasonable
+        default when nobody answers."""
+        width = _focused_monitor_width_logical()
+        if width is None:
+            # Last resort: GDK's first-monitor geometry. Better than hard-
+            # coding 520 if we have any display info at all.
+            display = Gdk.Display.get_default()
+            if display is not None:
+                monitors = display.get_monitors()
+                if monitors.get_n_items() > 0:
+                    width = monitors.get_item(0).get_geometry().width
+        if not width:
+            return 520
 
-        return max(320, int(geometry.width * fraction))
+        return max(320, int(width * fraction))
 
     def append(self, chunk: str) -> None:
         pin_to_bottom = self._at_bottom()
@@ -601,8 +675,24 @@ class AskWindow(Gtk.ApplicationWindow):
         self._append_user_turn(message)
         self._streaming = True
         self._compose.set_sensitive(False)
-        _signal_waybar_safe()
+        self._set_phase("pending")
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
+
+    def _set_phase(self, phase: str) -> bool:
+        """Central place to mutate phase state, swap the provider-label CSS
+        class, and poke waybar. Returns False so it composes with idle_add."""
+        self._phase = phase
+        for cls in ("idle", "pending", "streaming"):
+            if cls == phase:
+                self._provider_label.add_css_class(cls)
+            else:
+                self._provider_label.remove_css_class(cls)
+        _signal_waybar_safe()
+
+        return False
+
+    def phase(self) -> str:
+        return self._phase
 
     def _enqueue(self, message: str) -> None:
         row = QueueRow(
@@ -642,12 +732,15 @@ class AskWindow(Gtk.ApplicationWindow):
         if self._streaming:
             # Promote to head of the queue rather than stepping on the
             # in-flight stream. `_mark_idle` will drain it next.
-            self._queue.insert(0, QueueRow(
-                text=text,
-                on_send=self._on_queue_send,
-                on_remove=self._on_queue_remove,
-                on_edit_commit=self._on_queue_edit,
-            ))
+            self._queue.insert(
+                0,
+                QueueRow(
+                    text=text,
+                    on_send=self._on_queue_send,
+                    on_remove=self._on_queue_remove,
+                    on_edit_commit=self._on_queue_edit,
+                ),
+            )
             self._queue_listbox.prepend(self._queue[0])
             self._queue_box.set_visible(True)
             return
@@ -668,10 +761,18 @@ class AskWindow(Gtk.ApplicationWindow):
         self.append(block)
 
     def _run_turn(self, user_message: str) -> None:
+        first_chunk = True
         try:
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
+                if first_chunk:
+                    # First delta has arrived — leave the red `pending` state
+                    # and go yellow `streaming`. Scheduled before the append
+                    # so the colour flip and the first assistant text render
+                    # in the same UI tick.
+                    GLib.idle_add(self._set_phase, "streaming")
+                    first_chunk = False
                 GLib.idle_add(self.append, chunk)
         except Exception as e:
             if not self._alive:
@@ -689,7 +790,7 @@ class AskWindow(Gtk.ApplicationWindow):
         if self._alive:
             self._compose.set_sensitive(True)
             self._compose.focus()
-        _signal_waybar_safe()
+            self._set_phase("idle")
         # Drain the next queued turn, if any. Schedule via idle_add so the
         # UI rerenders the current assistant block before the next `You:`
         # block arrives — keeps the streaming transition visible.
@@ -720,7 +821,7 @@ class AskWindow(Gtk.ApplicationWindow):
         click.connect("released", self._on_click)
         self._textview.add_controller(click)
 
-    def _on_click(self, gesture, n_press, x, y) -> None:
+    def _on_click(self, _gesture, _n_press, x, y) -> None:
         tv = self._textview
         bx, by = tv.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
         found, iter_ = tv.get_iter_at_location(bx, by)
@@ -747,7 +848,7 @@ class AskWindow(Gtk.ApplicationWindow):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
-    def _on_key(self, controller, keyval, keycode, state) -> bool:
+    def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
         if ctrl and keyval == Gdk.KEY_q:
             self.close()
@@ -933,11 +1034,9 @@ class Session:
 
                 return {"ok": True}
             case "status":
-                phase = "streaming" if self._window.is_streaming() else "idle"
-
                 return {
                     "ok": True,
-                    "phase": phase,
+                    "phase": self._window.phase(),
                     "provider": self._provider.value,
                 }
             case "kill":
@@ -1037,8 +1136,8 @@ def _cmd_toggle(args) -> None:
 
 def _cmd_status() -> None:
     """Waybar custom-module payload. Emits a compact JSON describing whether
-    a session is live, which provider owns it, and whether it's idle or
-    streaming right now."""
+    a session is live, which provider owns it, and which phase it's in
+    (idle -> green, pending -> red, streaming -> yellow)."""
     resp = _send("status")
     if not resp or not resp.get("ok"):
         print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
@@ -1048,12 +1147,16 @@ def _cmd_status() -> None:
     provider = resp.get("provider", "")
     phase = resp.get("phase", "idle")
     icon = "󱍊"
-    if phase == "streaming":
-        text = f"{icon} {provider} …"
-        tooltip = f"Ask: streaming via {provider}"
-    else:
-        text = f"{icon} {provider}"
-        tooltip = f"Ask: {provider} idle"
+    match phase:
+        case "streaming":
+            text = f"{icon} {provider} …"
+            tooltip = f"Ask: streaming via {provider}"
+        case "pending":
+            text = f"{icon} {provider} ?"
+            tooltip = f"Ask: waiting on first chunk from {provider}"
+        case _:
+            text = f"{icon} {provider}"
+            tooltip = f"Ask: {provider} idle"
     print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
 
 def _cmd_is_running() -> None:
@@ -1074,37 +1177,45 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
-def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
+def main():
+    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    toggle_parser = subparsers.add_parser(
+        "toggle",
+        help="open the overlay (or forward a turn to a running session)",
+    )
+    toggle_parser.add_argument(
         "--input",
         type=InputMode,
         choices=[InputMode.STDIN, InputMode.CLIPBOARD],
         default=InputMode.STDIN,
         help="Source of the initial user turn",
     )
-    p.add_argument(
+    toggle_parser.add_argument(
         "--converse-provider",
         choices=["http", "claude", "codex"],
         default=DEFAULT_CONVERSE_ADAPTER,
     )
-    p.add_argument(
+    toggle_parser.add_argument(
         "--converse-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    p.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
-    p.add_argument("--converse-temperature", type=float)
-    p.add_argument("--converse-top-p", type=float)
-    p.add_argument(
+    toggle_parser.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
+    toggle_parser.add_argument("--converse-temperature", type=float)
+    toggle_parser.add_argument("--converse-top-p", type=float)
+    toggle_parser.add_argument(
         "--converse-thinking",
         nargs="?",
         const="high",
         default="none",
         choices=["high", "medium", "low", "none"],
     )
-    p.add_argument("--converse-num-ctx", type=int)
+    toggle_parser.add_argument("--converse-num-ctx", type=int)
     # OpenWebUI extensions for --converse-provider=http. Ignored by other
     # providers and by plain OpenAI endpoints.
-    p.add_argument(
+    toggle_parser.add_argument(
         "--tool-id",
         action="append",
         dest="tool_ids",
@@ -1115,7 +1226,7 @@ def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
             "an MCP server. OpenWebUI-only."
         ),
     )
-    p.add_argument(
+    toggle_parser.add_argument(
         "--feature",
         action="append",
         dest="features",
@@ -1130,17 +1241,6 @@ def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
         ],
         help="enable a built-in feature (repeatable). OpenWebUI-only.",
     )
-
-def main():
-    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    toggle_parser = subparsers.add_parser(
-        "toggle",
-        help="open the overlay (or forward a turn to a running session)",
-    )
-    _add_toggle_flags(toggle_parser)
 
     subparsers.add_parser("status", help="print waybar-shaped JSON status")
     subparsers.add_parser(
