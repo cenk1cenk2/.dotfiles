@@ -15,15 +15,15 @@ from typing import Optional, Protocol
 
 from lib import (
     DEFAULT_MODEL,
-    ClaudeEnrichAdapter,
-    ClipboardOutputAdapter,
-    CodexEnrichAdapter,
+    EnrichAdapterClaude,
+    OutputAdapterClipboard,
+    EnrichAdapterCodex,
     EnrichAdapter,
     EnrichProvider,
-    HttpEnrichAdapter,
+    EnrichAdapterHttp,
     OutputAdapter,
     OutputMode,
-    TypeOutputAdapter,
+    OutputAdapterType,
     load_prompt,
     notify,
     signal_waybar,
@@ -326,7 +326,7 @@ class Session:
                     spec = EnrichSpec.from_dict(spec_dict)
                     match spec.provider:
                         case EnrichProvider.HTTP:
-                            new_enricher = HttpEnrichAdapter(
+                            new_enricher = EnrichAdapterHttp(
                                 system_prompt=AI_SYSTEM_PROMPT,
                                 user_prompt_template=AI_USER_PROMPT,
                                 base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
@@ -339,12 +339,18 @@ class Session:
                                 user_agent="speech/1.0",
                             )
                         case EnrichProvider.CLAUDE:
-                            new_enricher = ClaudeEnrichAdapter(
-                                AI_SYSTEM_PROMPT, AI_USER_PROMPT,
+                            new_enricher = EnrichAdapterClaude(
+                                AI_SYSTEM_PROMPT,
+                                AI_USER_PROMPT,
                             )
                         case EnrichProvider.CODEX:
-                            new_enricher = CodexEnrichAdapter(
-                                AI_SYSTEM_PROMPT, AI_USER_PROMPT,
+                            new_enricher = EnrichAdapterCodex(
+                                AI_SYSTEM_PROMPT,
+                                AI_USER_PROMPT,
+                            )
+                        case _:
+                            raise ValueError(
+                                f"unknown enrich provider: {spec.provider!r}",
                             )
                 self.set_enricher(new_enricher)
             # Presence of an "output" key signals the press-2 toggle picking
@@ -352,14 +358,17 @@ class Session:
             # before the daemon transcribes, so press-1's output write goes
             # to the new destination.
             if obj.get("output"):
-                # speech.py only supports the two interactive sinks; anything
-                # else (e.g. stdout) would make no sense for a keybind and is
-                # silently ignored.
-                match OutputMode(obj["output"]):
+                # speech.py only supports the two interactive sinks.
+                mode = OutputMode(obj["output"])
+                match mode:
                     case OutputMode.CLIPBOARD:
-                        self.set_output(ClipboardOutputAdapter())
+                        self.set_output(OutputAdapterClipboard())
                     case OutputMode.TYPE:
-                        self.set_output(TypeOutputAdapter())
+                        self.set_output(OutputAdapterType())
+                    case _:
+                        raise ValueError(
+                            f"unsupported output mode for speech: {mode!r}",
+                        )
             self._adapter.stop()
             return Response(ok=True)
         if cmd is Command.KILL:
@@ -431,22 +440,27 @@ class Speech:
         # the payload — absent keys leave press-1's setup intact.
         enrich_payload = None
         if getattr(self.args, "enrich", False):
-            enrich_payload = asdict(EnrichSpec(
-                provider=EnrichProvider(self.args.enrich_provider),
-                base_url=self.args.enrich_base_url,
-                model=self.args.enrich_model,
-                api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                temperature=self.args.enrich_temperature,
-                top_p=self.args.enrich_top_p,
-                thinking=self.args.enrich_thinking,
-                num_ctx=self.args.enrich_num_ctx,
-            ))
+            enrich_payload = asdict(
+                EnrichSpec(
+                    provider=EnrichProvider(self.args.enrich_provider),
+                    base_url=self.args.enrich_base_url,
+                    model=self.args.enrich_model,
+                    api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                    temperature=self.args.enrich_temperature,
+                    top_p=self.args.enrich_top_p,
+                    thinking=self.args.enrich_thinking,
+                    num_ctx=self.args.enrich_num_ctx,
+                )
+            )
         output_payload = self.args.output.value
-        if _send(
-            Command.STOP,
-            enrich=enrich_payload,
-            output=output_payload,
-        ) is not None:
+        if (
+            _send(
+                Command.STOP,
+                enrich=enrich_payload,
+                output=output_payload,
+            )
+            is not None
+        ):
             log.info("signaled running session to stop")
 
             return
@@ -574,9 +588,10 @@ def main():
 
     toggle_parser = subparsers.add_parser("toggle")
     toggle_parser.add_argument(
-        "output",
+        "--output",
         type=OutputMode,
         choices=[OutputMode.CLIPBOARD, OutputMode.TYPE],
+        default=OutputMode.CLIPBOARD,
         help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
     )
     toggle_parser.add_argument(
@@ -625,9 +640,10 @@ def main():
 
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
-        match EnrichProvider(args.enrich_provider):
+        provider = EnrichProvider(args.enrich_provider)
+        match provider:
             case EnrichProvider.HTTP:
-                enricher = HttpEnrichAdapter(
+                enricher = EnrichAdapterHttp(
                     system_prompt=AI_SYSTEM_PROMPT,
                     user_prompt_template=AI_USER_PROMPT,
                     base_url=args.enrich_base_url,
@@ -640,17 +656,23 @@ def main():
                     user_agent="speech/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = ClaudeEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterClaude(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
             case EnrichProvider.CODEX:
-                enricher = CodexEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterCodex(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+            case _:
+                raise ValueError(f"unknown enrich provider: {provider!r}")
 
     output: Optional[OutputAdapter] = None
     if hasattr(args, "output"):
         match args.output:
             case OutputMode.CLIPBOARD:
-                output = ClipboardOutputAdapter()
+                output = OutputAdapterClipboard()
             case OutputMode.TYPE:
-                output = TypeOutputAdapter()
+                output = OutputAdapterType()
+            case _:
+                raise ValueError(
+                    f"unsupported output mode for speech: {args.output!r}",
+                )
 
     Speech(args, HyprwhsprAdapter(), enricher, output).run()
 

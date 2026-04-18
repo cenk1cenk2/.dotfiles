@@ -29,7 +29,7 @@ class EnrichAdapter(Protocol):
         """Return the cleaned text, or None on failure."""
         ...
 
-class HttpEnrichAdapter:
+class EnrichAdapterHttp:
     """OpenAI-compatible chat-completions endpoint."""
 
     provider = EnrichProvider.HTTP
@@ -105,7 +105,7 @@ class HttpEnrichAdapter:
 
         return result
 
-class ClaudeEnrichAdapter:
+class EnrichAdapterClaude:
     """Claude CLI (haiku model)."""
 
     provider = EnrichProvider.CLAUDE
@@ -135,7 +135,7 @@ class ClaudeEnrichAdapter:
 
         return proc.stdout.strip()
 
-class CodexEnrichAdapter:
+class EnrichAdapterCodex:
     """Codex CLI in ephemeral mode."""
 
     provider = EnrichProvider.CODEX

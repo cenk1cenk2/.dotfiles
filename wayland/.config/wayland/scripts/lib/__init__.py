@@ -6,45 +6,45 @@ scripts need so callers never reach for a submodule directly.
 
 from .enrich import (
     DEFAULT_MODEL,
-    ClaudeEnrichAdapter,
-    CodexEnrichAdapter,
+    EnrichAdapterClaude,
+    EnrichAdapterCodex,
     EnrichAdapter,
     EnrichProvider,
-    HttpEnrichAdapter,
+    EnrichAdapterHttp,
 )
 from .input import (
-    ClipboardInputAdapter,
+    InputAdapterClipboard,
     InputAdapter,
     InputMode,
-    StdinInputAdapter,
+    InputAdapterStdin,
 )
 from .notify import notify
 from .output import (
-    ClipboardOutputAdapter,
+    OutputAdapterClipboard,
     OutputAdapter,
     OutputMode,
-    StdoutOutputAdapter,
-    TypeOutputAdapter,
+    OutputAdapterStdout,
+    OutputAdapterType,
 )
 from .prompts import load_prompt
 from .waybar import signal_waybar
 
 __all__ = [
     "DEFAULT_MODEL",
-    "ClaudeEnrichAdapter",
-    "ClipboardInputAdapter",
-    "ClipboardOutputAdapter",
-    "CodexEnrichAdapter",
     "EnrichAdapter",
+    "EnrichAdapterClaude",
+    "EnrichAdapterCodex",
+    "EnrichAdapterHttp",
     "EnrichProvider",
-    "HttpEnrichAdapter",
     "InputAdapter",
+    "InputAdapterClipboard",
+    "InputAdapterStdin",
     "InputMode",
     "OutputAdapter",
+    "OutputAdapterClipboard",
+    "OutputAdapterStdout",
+    "OutputAdapterType",
     "OutputMode",
-    "StdinInputAdapter",
-    "StdoutOutputAdapter",
-    "TypeOutputAdapter",
     "load_prompt",
     "notify",
     "signal_waybar",

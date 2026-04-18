@@ -18,16 +18,16 @@ mode $mode_recording {
         bindsym q exec $recorder stop, mode "default"
 
         # Speech-to-text direct typing with AI enrichment
-        bindsym s exec $speech toggle type --enrich, mode "default"
+        bindsym s exec $speech toggle --output type --enrich, mode "default"
 
         # Speech-to-text direct typing (raw, no enrichment)
-        bindsym Shift+s exec $speech toggle type, mode "default"
+        bindsym Shift+s exec $speech toggle --output type, mode "default"
 
         # Speech-to-text to clipboard with AI enrichment
-        bindsym c exec $speech toggle clipboard --enrich, mode "default"
+        bindsym c exec $speech toggle --output clipboard --enrich, mode "default"
 
         # Speech-to-text to clipboard (raw, no enrichment)
-        bindsym Shift+c exec $speech toggle clipboard, mode "default"
+        bindsym Shift+c exec $speech toggle --output clipboard, mode "default"
 
         # Copywriter: refine clipboard through AI
         bindsym w exec $copywriter run clipboard, mode "default"

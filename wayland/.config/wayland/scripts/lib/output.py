@@ -19,7 +19,7 @@ class OutputAdapter(Protocol):
         """Emit the text. Blocking; raises on failure."""
         ...
 
-class ClipboardOutputAdapter:
+class OutputAdapterClipboard:
     """Copies text to the Wayland clipboard via `wl-copy`."""
 
     mode = OutputMode.CLIPBOARD
@@ -27,7 +27,7 @@ class ClipboardOutputAdapter:
     def write(self, text: str) -> None:
         subprocess.run(["wl-copy"], input=text, text=True, check=False)
 
-class TypeOutputAdapter:
+class OutputAdapterType:
     """Types text into the focused window via `ydotool`."""
 
     mode = OutputMode.TYPE
@@ -49,7 +49,7 @@ class TypeOutputAdapter:
             check=False,
         )
 
-class StdoutOutputAdapter:
+class OutputAdapterStdout:
     """Writes text to stdout."""
 
     mode = OutputMode.STDOUT

@@ -21,7 +21,7 @@ class InputAdapter(Protocol):
         """Return the text to process, or None on failure."""
         ...
 
-class ClipboardInputAdapter:
+class InputAdapterClipboard:
     """Reads text from the Wayland clipboard via `wl-paste`."""
 
     mode = InputMode.CLIPBOARD
@@ -40,7 +40,7 @@ class ClipboardInputAdapter:
             log.error("failed to read clipboard: %s", e)
             return None
 
-class StdinInputAdapter:
+class InputAdapterStdin:
     """Reads text from the process's standard input until EOF."""
 
     mode = InputMode.STDIN

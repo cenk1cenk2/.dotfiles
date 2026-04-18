@@ -12,20 +12,20 @@ import psutil
 
 from lib import (
     DEFAULT_MODEL,
-    ClaudeEnrichAdapter,
-    ClipboardInputAdapter,
-    ClipboardOutputAdapter,
-    CodexEnrichAdapter,
+    EnrichAdapterClaude,
+    InputAdapterClipboard,
+    OutputAdapterClipboard,
+    EnrichAdapterCodex,
     EnrichAdapter,
     EnrichProvider,
-    HttpEnrichAdapter,
+    EnrichAdapterHttp,
     InputAdapter,
     InputMode,
     OutputAdapter,
     OutputMode,
-    StdinInputAdapter,
-    StdoutOutputAdapter,
-    TypeOutputAdapter,
+    InputAdapterStdin,
+    OutputAdapterStdout,
+    OutputAdapterType,
     load_prompt,
     notify,
     signal_waybar,
@@ -240,13 +240,15 @@ def main():
     if args.command == "run":
         match args.input:
             case InputMode.CLIPBOARD:
-                input_adapter = ClipboardInputAdapter()
+                input_adapter = InputAdapterClipboard()
             case InputMode.STDIN:
-                input_adapter = StdinInputAdapter()
+                input_adapter = InputAdapterStdin()
+            case _:
+                raise ValueError(f"unknown input mode: {args.input!r}")
 
         match args.provider:
             case EnrichProvider.HTTP:
-                enricher = HttpEnrichAdapter(
+                enricher = EnrichAdapterHttp(
                     system_prompt=SYSTEM_PROMPT,
                     user_prompt_template=USER_PROMPT,
                     base_url=args.base_url,
@@ -259,17 +261,21 @@ def main():
                     user_agent="copywriter/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = ClaudeEnrichAdapter(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT)
             case EnrichProvider.CODEX:
-                enricher = CodexEnrichAdapter(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT)
+            case _:
+                raise ValueError(f"unknown enrich provider: {args.provider!r}")
 
         match args.output:
             case OutputMode.CLIPBOARD:
-                output = ClipboardOutputAdapter()
+                output = OutputAdapterClipboard()
             case OutputMode.TYPE:
-                output = TypeOutputAdapter()
+                output = OutputAdapterType()
             case OutputMode.STDOUT:
-                output = StdoutOutputAdapter()
+                output = OutputAdapterStdout()
+            case _:
+                raise ValueError(f"unknown output mode: {args.output!r}")
 
     Copywriter(args, input_adapter, enricher, output).run()
 
