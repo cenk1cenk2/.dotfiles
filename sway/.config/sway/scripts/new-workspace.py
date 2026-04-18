@@ -1,61 +1,50 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+"""Switch to or move the focused container to the first empty workspace."""
 
 from argparse import ArgumentParser
 
-import i3ipc
+from lib import Swayctl
 
-if __name__ == "__main__":
-    arguments_parser = ArgumentParser()
-    arguments_parser.add_argument(
-        "-s",
-        "--switch",
+class NewWorkspace:
+    def __init__(self, args, sway: Swayctl):
+        self.args = args
+        self._sway = sway
+
+    def run(self):
+        target = self._sway.first_empty_workspace_number()
+
+        if self.args.move and self.args.switch:
+            # Combine both into a single command so Sway doesn't flicker the
+            # wallpaper between the two steps.
+            self._sway.command(
+                f"move container to workspace number {target}, "
+                f"workspace number {target}"
+            )
+            return
+
+        if self.args.switch:
+            self._sway.command(f"workspace number {target}")
+        elif self.args.move:
+            self._sway.command(f"move container to workspace number {target}")
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument(
+        "-s", "--switch",
         action="store_true",
         help="switch to the first empty workspace",
     )
-    arguments_parser.add_argument(
-        "-m",
-        "--move",
+    parser.add_argument(
+        "-m", "--move",
         action="store_true",
         help="move the currently focused container to the first empty workspace",
     )
-    arguments = arguments_parser.parse_args()
-    assert (
-        arguments.switch or arguments.move
-    )  # at least one of the flags must be specificated
+    args = parser.parse_args()
+    assert args.switch or args.move, (
+        "at least one of --switch or --move must be specified"
+    )
 
-    ipc = i3ipc.Connection()
-    tree = ipc.get_tree()
-    current_workspace = tree.find_focused().workspace()
-    workspaces = tree.workspaces()  # includes current_workspace
-    workspace_numbers = [workspace.num for workspace in workspaces]
+    NewWorkspace(args, Swayctl()).run()
 
-    def command(command, should_assert=True):
-        print(f"send: {command}")
-        replies = ipc.command(command)
-
-        if should_assert:
-            for reply in replies:
-                if reply.error:
-                    print(f"fail: {command} -> {reply.error}")
-
-                assert reply.success
-
-    # Get the minor empty workspace's number (or set it as the current workspace's number if all are busy)
-    target = min(set(range(1, max(workspace_numbers) + 2)) - set(workspace_numbers))
-
-    # dont create a new workspace if current workspace is at the last number
-    # if arguments.switch and len(current_workspace.nodes) == 0 and target > current_workspace.num:
-    #     target = current_workspace.num
-
-    # Use the value of first_empty_workspace_number to make the requested actions
-    if arguments.move and arguments.switch:
-        # Avoid wallpaper flickering when moving and switching by specifying both actions in the same Sway's command
-        command(
-            f"move container to workspace number {target}, workspace number {target}"
-        )
-
-    elif arguments.switch:
-        command(f"workspace number {target}")
-
-    elif arguments.move:
-        command(f"move container to workspace number {target}")
+if __name__ == "__main__":
+    main()

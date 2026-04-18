@@ -1,119 +1,95 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+"""Swap workspace positions in Sway by renaming workspaces.
 
-"""
-Swap workspace positions in Sway by renaming workspaces.
-
-This script allows you to:
-- Move current workspace to a specific number (-t/--to): swaps with existing
-- Swap left (-s left): swaps with previous workspace on current monitor
-- Swap right (-s right): swaps with next workspace on current monitor
-
-For -s left/right, only considers workspaces on the current monitor.
+- `-t/--to N`: move current workspace to N (swaps with existing).
+- `-s/--swap left|right`: swap with the previous/next workspace on the
+  current monitor.
 """
 
 from argparse import ArgumentParser
 
-import i3ipc
+from lib import Swayctl
 
-def get_workspace_after_relative_move(ipc, direction):
-    """Get the workspace number after a relative move (prev/next on monitor)."""
-    tree = ipc.get_tree()
-    current_ws = tree.find_focused().workspace()
-    current_output = current_ws.ipc_data["output"]
-    current_num = current_ws.num
+class SwapWorkspace:
+    def __init__(self, args, sway: Swayctl):
+        self.args = args
+        self._sway = sway
 
-    # Get all workspaces on current monitor
-    workspaces_on_monitor = [
-        ws
-        for ws in tree.workspaces()
-        if ws.ipc_data["output"] == current_output and ws.num > 0
-    ]
-    workspace_nums = sorted([ws.num for ws in workspaces_on_monitor])
+    def run(self):
+        current = self._sway.active_workspace()
+        numbers = set(self._sway.workspace_numbers())
+        temp = max(numbers) + 1
 
-    if direction == "left":
-        # Find previous workspace on same monitor
-        candidates = [num for num in workspace_nums if num < current_num]
-        if candidates:
-            return max(candidates)
-        else:
-            # Wrap to highest workspace on monitor
-            return max(workspace_nums) if workspace_nums else current_num
-    else:  # right
-        # Find next workspace on same monitor
-        candidates = [num for num in workspace_nums if num > current_num]
-        if candidates:
-            return min(candidates)
-        else:
-            # Wrap to lowest workspace on monitor
-            return min(workspace_nums) if workspace_nums else current_num
+        target = self._resolve_target(current.num)
+        if target is None:
+            return
+
+        if target == current.num:
+            print("Already at boundary, no swap needed")
+            return
+
+        self._swap(current.num, target, numbers, temp)
+
+    def _resolve_target(self, current_num: int) -> int | None:
+        if self.args.to:
+            return self.args.to
+        if self.args.swap:
+            return self._neighbor(self.args.swap, current_num)
+
+        return None
+
+    def _neighbor(self, direction: str, current_num: int) -> int:
+        active = self._sway.active_workspace()
+        on_monitor = self._sway.workspaces_on_output(active.ipc_data["output"])
+        nums = sorted(ws.num for ws in on_monitor if ws.num > 0)
+
+        if direction == "left":
+            candidates = [n for n in nums if n < current_num]
+
+            return max(candidates) if candidates else (max(nums) if nums else current_num)
+        if direction == "right":
+            candidates = [n for n in nums if n > current_num]
+
+            return min(candidates) if candidates else (min(nums) if nums else current_num)
+
+        raise ValueError(f"Invalid swap direction: {direction}")
+
+    def _swap(
+        self,
+        current_num: int,
+        target: int,
+        numbers: set[int],
+        temp: int,
+    ) -> None:
+        # Use a temp number as staging so the rename of `current -> target`
+        # doesn't collide with an existing workspace of that number.
+        if target in numbers and target != current_num:
+            self._sway.command(f"rename workspace number {target} to {temp}")
+
+        self._sway.command(
+            f"rename workspace number {current_num} to {target}, "
+            f"workspace number {target}"
+        )
+
+        if target in numbers and target != current_num:
+            self._sway.command(f"rename workspace number {temp} to {current_num}")
+
+def main():
+    parser = ArgumentParser(description="Swap workspace positions in Sway")
+    parser.add_argument(
+        "-t", "--to",
+        type=int,
+        help="Move current workspace to the given position.",
+    )
+    parser.add_argument(
+        "-s", "--swap",
+        choices=["left", "right"],
+        help="Swap with the left/right workspace on the current monitor.",
+    )
+    args = parser.parse_args()
+    assert args.to or args.swap, "either -t/--to or -s/--swap is required"
+
+    SwapWorkspace(args, Swayctl()).run()
 
 if __name__ == "__main__":
-    arguments_parser = ArgumentParser()
-    arguments_parser.add_argument(
-        "-t",
-        "--to",
-        type=int,
-        action="store",
-        help="Move workspace to the given position.",
-    )
-    arguments_parser.add_argument(
-        "-s",
-        "--swap",
-        action="store",
-        help="Swap workspace positionally.",
-    )
-    arguments = arguments_parser.parse_args()
-    assert arguments.to or arguments.swap
-
-    ipc = i3ipc.Connection()
-    tree = ipc.get_tree()
-    workspace = tree.find_focused().workspace()
-    workspaces = tree.workspaces()
-    workspace_number = workspace.num
-    workspace_numbers = [workspace.num for workspace in workspaces]
-    temp_workspace = max(workspace_numbers) + 1
-
-    def command(command, should_assert=True):
-        print(f"send: {command}")
-        replies = ipc.command(command)
-
-        if should_assert:
-            for reply in replies:
-                if reply.error:
-                    print(f"fail: {command} -> {reply.error}")
-
-                assert reply.success
-
-    def target_to_temp(target):
-        if target in set(workspace_numbers) and target != workspace_number:
-            command(f"rename workspace number {target} to {temp_workspace}")
-
-    def temp_to_initial(target, initial):
-        if target in set(workspace_numbers) and target != workspace_number:
-            command(f"rename workspace number {temp_workspace} to {initial}")
-
-    if arguments.to:
-        target = arguments.to
-
-        target_to_temp(target)
-        command(
-            f"rename workspace number {workspace_number} to {target}, workspace number {target}"
-        )
-        temp_to_initial(target, workspace_number)
-
-    elif arguments.swap:
-        if arguments.swap == "left":
-            target = get_workspace_after_relative_move(ipc, "left")
-        elif arguments.swap == "right":
-            target = get_workspace_after_relative_move(ipc, "right")
-        else:
-            raise Exception("Invalid swap argument.")
-
-        if target == workspace_number:
-            print("Already at boundary, no swap needed")
-        else:
-            target_to_temp(target)
-            command(
-                f"rename workspace number {workspace_number} to {target}, workspace number {target}"
-            )
-            temp_to_initial(target, workspace_number)
+    main()
