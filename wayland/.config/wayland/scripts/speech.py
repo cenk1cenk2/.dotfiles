@@ -22,6 +22,7 @@ from lib import (
     EnrichProvider,
     EnrichAdapterHttp,
     OutputAdapter,
+    OutputAdapterStdout,
     OutputMode,
     OutputAdapterType,
     load_prompt,
@@ -358,13 +359,14 @@ class Session:
             # before the daemon transcribes, so press-1's output write goes
             # to the new destination.
             if obj.get("output"):
-                # speech.py only supports the two interactive sinks.
                 mode = OutputMode(obj["output"])
                 match mode:
                     case OutputMode.CLIPBOARD:
                         self.set_output(OutputAdapterClipboard())
                     case OutputMode.TYPE:
                         self.set_output(OutputAdapterType())
+                    case OutputMode.STDOUT:
+                        self.set_output(OutputAdapterStdout())
                     case _:
                         raise ValueError(
                             f"unsupported output mode for speech: {mode!r}",
@@ -590,9 +592,9 @@ def main():
     toggle_parser.add_argument(
         "--output",
         type=OutputMode,
-        choices=[OutputMode.CLIPBOARD, OutputMode.TYPE],
+        choices=[OutputMode.CLIPBOARD, OutputMode.TYPE, OutputMode.STDOUT],
         default=OutputMode.CLIPBOARD,
-        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
+        help="Output mode: 'clipboard' (wl-copy), 'type' (paste via hyprwhspr), or 'stdout'",
     )
     toggle_parser.add_argument(
         "--enrich",
@@ -669,6 +671,8 @@ def main():
                 output = OutputAdapterClipboard()
             case OutputMode.TYPE:
                 output = OutputAdapterType()
+            case OutputMode.STDOUT:
+                output = OutputAdapterStdout()
             case _:
                 raise ValueError(
                     f"unsupported output mode for speech: {args.output!r}",
