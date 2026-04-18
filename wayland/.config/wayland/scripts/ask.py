@@ -269,9 +269,7 @@ class AskWindow(Gtk.ApplicationWindow):
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, True)
-        Gtk4LayerShell.set_keyboard_mode(
-            self, Gtk4LayerShell.KeyboardMode.ON_DEMAND
-        )
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
         self.set_default_size(420, -1)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -340,15 +338,11 @@ class AskWindow(Gtk.ApplicationWindow):
         self._append_user_turn(message)
         self._streaming = True
         self._compose.set_sensitive(False)
-        threading.Thread(
-            target=self._run_turn, args=(message,), daemon=True
-        ).start()
+        threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
     def _append_user_turn(self, user_message: str) -> None:
         prefix = "\n\n---\n\n" if self._text else ""
-        block = (
-            f"{prefix}### You:\n\n{user_message}\n\n### Assistant:\n\n"
-        )
+        block = f"{prefix}### You:\n\n{user_message}\n\n### Assistant:\n\n"
         self.append(block)
 
     def _run_turn(self, user_message: str) -> None:
@@ -610,6 +604,10 @@ def _build_adapter(args) -> ConversationAdapter:
     provider = EnrichProvider(args.enrich_provider)
     match provider:
         case EnrichProvider.HTTP:
+            features = (
+                {k: True for k in args.features} if args.features else None
+            )
+
             return ConversationAdapterHttp(
                 system_prompt=AI_SYSTEM_PROMPT,
                 base_url=args.enrich_base_url,
@@ -619,6 +617,8 @@ def _build_adapter(args) -> ConversationAdapter:
                 top_p=args.enrich_top_p,
                 thinking=args.enrich_thinking,
                 num_ctx=args.enrich_num_ctx,
+                tool_ids=args.tool_ids or None,
+                features=features,
                 user_agent="ask/1.0",
             )
         case EnrichProvider.CLAUDE:
@@ -640,9 +640,7 @@ def _read_input(mode: InputMode) -> str:
     return (text or "").strip()
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Conversational AI sidebar overlay"
-    )
+    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument(
         "--input",
@@ -654,13 +652,13 @@ def main():
     parser.add_argument(
         "--enrich-provider",
         choices=["http", "claude", "codex"],
-        default="http",
+        default="claude",
     )
     parser.add_argument(
         "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
+    parser.add_argument("--enrich-model", default="")
     parser.add_argument("--enrich-temperature", type=float)
     parser.add_argument("--enrich-top-p", type=float)
     parser.add_argument(
@@ -671,6 +669,34 @@ def main():
         choices=["high", "medium", "low", "none"],
     )
     parser.add_argument("--enrich-num-ctx", type=int)
+    # OpenWebUI extensions for --enrich-provider=http. Ignored by other
+    # providers and by plain OpenAI endpoints.
+    parser.add_argument(
+        "--tool-id",
+        action="append",
+        dest="tool_ids",
+        default=[],
+        metavar="ID",
+        help=(
+            "server-side tool UUID (repeatable); use 'server:mcp:<id>' for "
+            "an MCP server. OpenWebUI-only."
+        ),
+    )
+    parser.add_argument(
+        "--feature",
+        action="append",
+        dest="features",
+        default=[],
+        metavar="KEY",
+        choices=[
+            "web_search",
+            "code_interpreter",
+            "image_generation",
+            "memory",
+            "voice",
+        ],
+        help="enable a built-in feature (repeatable). OpenWebUI-only.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(

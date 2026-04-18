@@ -82,6 +82,9 @@ class ConversationAdapterHttp:
         top_p: Optional[float] = None,
         thinking: str = "none",
         num_ctx: Optional[int] = None,
+        tool_ids: Optional[list[str]] = None,
+        features: Optional[dict[str, bool]] = None,
+        files: Optional[list[dict]] = None,
     ):
         self.system_prompt = system_prompt
         self.base_url = base_url
@@ -92,6 +95,13 @@ class ConversationAdapterHttp:
         self.top_p = top_p
         self.thinking = thinking
         self.num_ctx = num_ctx
+        # OpenWebUI extensions (silently ignored by generic OpenAI servers).
+        # tool_ids: server-side tool UUIDs (or "server:mcp:<id>").
+        # features: toggles for web_search / code_interpreter / image_generation / memory / voice.
+        # files: [{"type": "file"|"folder"|"collection", "id": "..."}] for RAG context.
+        self.tool_ids = tool_ids
+        self.features = features
+        self.files = files
         self.messages: list[dict] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -110,6 +120,12 @@ class ConversationAdapterHttp:
             body["top_p"] = self.top_p
         if self.num_ctx:
             body["options"] = {"num_ctx": self.num_ctx}
+        if self.tool_ids:
+            body["tool_ids"] = self.tool_ids
+        if self.features:
+            body["features"] = self.features
+        if self.files:
+            body["files"] = self.files
 
         try:
             resp = requests.post(
