@@ -10,5 +10,6 @@
   "rest_api_key": "${AI_KILIC_DEV_API_KEY}",
   "audio_feedback": true,
   "mute_detection": false,
-  "audio_ducking": true
+  "audio_ducking": true,
+  "audio_ducking_percent": 50
 }
