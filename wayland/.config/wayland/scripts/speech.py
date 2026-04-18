@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Optional, Protocol
 
-from common import (
+from lib import (
     ClaudeEnrichAdapter,
     ClipboardOutputAdapter,
     CodexEnrichAdapter,

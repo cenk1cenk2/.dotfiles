@@ -8,7 +8,7 @@ import time
 
 import psutil
 
-from common import notify, signal_waybar
+from lib import notify, signal_waybar
 
 try:
     import obsws_python as obs

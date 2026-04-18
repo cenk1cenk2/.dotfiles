@@ -10,7 +10,7 @@ from typing import Optional
 
 import psutil
 
-from common import (
+from lib import (
     ClaudeEnrichAdapter,
     ClipboardOutputAdapter,
     CodexEnrichAdapter,
