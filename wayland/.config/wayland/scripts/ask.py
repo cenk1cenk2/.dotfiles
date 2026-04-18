@@ -482,6 +482,12 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_q:
             self.close()
             return True
+        if ctrl and keyval == Gdk.KEY_p:
+            # Ctrl+P: explicit clipboard paste into the compose entry so
+            # the user can slurp the current selection without having to
+            # click the field first.
+            self._paste_clipboard_into_compose()
+            return True
         if keyval == Gdk.KEY_Escape:
             # Hide-not-close: session + socket stay alive so the next
             # forwarder invocation (or a new speech turn) re-shows the
@@ -491,6 +497,17 @@ class AskWindow(Gtk.ApplicationWindow):
             return True
 
         return False
+
+    def _paste_clipboard_into_compose(self) -> None:
+        text = InputAdapterClipboard().read() or ""
+        if not text:
+            return
+        entry = self._compose
+        entry.grab_focus()
+        existing = entry.get_text()
+        joiner = "" if (not existing or existing.endswith(" ")) else " "
+        entry.set_text(f"{existing}{joiner}{text}")
+        entry.set_position(-1)
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False
