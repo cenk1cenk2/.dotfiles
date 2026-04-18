@@ -4,6 +4,12 @@ Import via `from lib import …` — this __init__ re-exports everything the
 scripts need so callers never reach for a submodule directly.
 """
 
+from .converse import (
+    ConversationAdapter,
+    ConversationAdapterClaude,
+    ConversationAdapterCodex,
+    ConversationAdapterHttp,
+)
 from .enrich import (
     DEFAULT_MODEL,
     EnrichAdapterClaude,
@@ -30,6 +36,10 @@ from .prompts import load_prompt
 from .waybar import signal_waybar
 
 __all__ = [
+    "ConversationAdapter",
+    "ConversationAdapterClaude",
+    "ConversationAdapterCodex",
+    "ConversationAdapterHttp",
     "DEFAULT_MODEL",
     "EnrichAdapter",
     "EnrichAdapterClaude",

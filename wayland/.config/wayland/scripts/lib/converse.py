@@ -1,0 +1,314 @@
+"""Streaming conversational AI backends.
+
+Sibling of `EnrichAdapter`: where enrichment is a one-shot text rewrite,
+these adapters hold a multi-turn session and yield response chunks as they
+arrive. `ask.py` drives them from a socket/compose loop."""
+
+import json
+import logging
+import os
+import subprocess
+from typing import Any, Iterator, Optional, Protocol
+
+import requests
+
+from .enrich import EnrichProvider
+
+log = logging.getLogger(__name__)
+
+class ConversationAdapter(Protocol):
+    """Streaming, stateful AI backend. Each `turn()` extends the session."""
+
+    provider: EnrichProvider
+
+    def turn(self, user_message: str) -> Iterator[str]:
+        """Yield assistant response chunks. Appends this turn to internal
+        session state."""
+        ...
+
+    def close(self) -> None:
+        """Release any subprocess / session handles."""
+        ...
+
+class ConversationAdapterHttp:
+    """OpenAI-compatible `/chat/completions` with `stream=true`."""
+
+    provider = EnrichProvider.HTTP
+
+    def __init__(
+        self,
+        system_prompt: str,
+        base_url: str,
+        model: str,
+        api_key: str,
+        user_agent: str = "ask/1.0",
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        thinking: str = "none",
+        num_ctx: Optional[int] = None,
+    ):
+        self.system_prompt = system_prompt
+        self.base_url = base_url
+        self.model = model
+        self.api_key = api_key
+        self.user_agent = user_agent
+        self.temperature = temperature
+        self.top_p = top_p
+        self.thinking = thinking
+        self.num_ctx = num_ctx
+        self.messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+    def turn(self, user_message: str) -> Iterator[str]:
+        self.messages.append({"role": "user", "content": user_message})
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": self.messages,
+            "stream": True,
+            "reasoning_effort": self.thinking,
+        }
+        if self.temperature is not None:
+            body["temperature"] = self.temperature
+        if self.top_p is not None:
+            body["top_p"] = self.top_p
+        if self.num_ctx:
+            body["options"] = {"num_ctx": self.num_ctx}
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/chat/completions",
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "User-Agent": self.user_agent,
+                    "Accept": "text/event-stream",
+                },
+                stream=True,
+                timeout=(10, 300),
+            )
+        except requests.RequestException as e:
+            log.error("http stream request failed: %s", e)
+            raise RuntimeError(f"http request failed: {e}") from e
+
+        if resp.status_code >= 400:
+            detail = resp.text[:500]
+            log.error("http %d: %s", resp.status_code, detail)
+            raise RuntimeError(f"http {resp.status_code}: {detail}")
+
+        collected: list[str] = []
+        try:
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    log.warning("skipping malformed SSE payload: %r", payload[:120])
+                    continue
+                choices = event.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                chunk = delta.get("content")
+                if chunk:
+                    collected.append(chunk)
+                    yield chunk
+        finally:
+            resp.close()
+
+        self.messages.append(
+            {"role": "assistant", "content": "".join(collected)},
+        )
+
+    def close(self) -> None:
+        self.messages = [{"role": "system", "content": self.system_prompt}]
+
+class ConversationAdapterClaude:
+    """Claude CLI wrapper using `stream-json` with partial messages."""
+
+    provider = EnrichProvider.CLAUDE
+
+    def __init__(self, system_prompt: str):
+        self.system_prompt = system_prompt
+        self._session_id: Optional[str] = None
+        self._proc: Optional[subprocess.Popen] = None
+
+    def turn(self, user_message: str) -> Iterator[str]:
+        # --bare isolates the session (no hooks, no CLAUDE.md) but forces
+        # ANTHROPIC_API_KEY-only auth. Fall back to a non-bare spawn when the
+        # key isn't set so keychain auth keeps working.
+        bare = ["--bare"] if os.environ.get("ANTHROPIC_API_KEY") else []
+        common = [
+            "claude",
+            "-p",
+            "--output-format", "stream-json",
+            "--include-partial-messages",
+            *bare,
+        ]
+        if self._session_id is None:
+            argv = [*common, "--system-prompt", self.system_prompt, user_message]
+        else:
+            argv = [*common, "--resume", self._session_id, user_message]
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as e:
+            log.error("claude CLI not found: %s", e)
+            raise RuntimeError("claude CLI not found on PATH") from e
+
+        self._proc = proc
+        assert proc.stdout is not None
+
+        error_text: Optional[str] = None
+        try:
+            for raw in proc.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    log.warning("skipping malformed claude event: %r", line[:120])
+                    continue
+
+                match event.get("type"):
+                    case "system" if event.get("subtype") == "init":
+                        sid = event.get("session_id")
+                        if sid and self._session_id is None:
+                            self._session_id = sid
+                    case "stream_event":
+                        inner = event.get("event") or {}
+                        if inner.get("type") == "content_block_delta":
+                            delta = inner.get("delta") or {}
+                            if delta.get("type") == "text_delta":
+                                text = delta.get("text")
+                                if text:
+                                    yield text
+                    case "result":
+                        if event.get("is_error"):
+                            error_text = event.get("result") or "claude reported error"
+        finally:
+            rc = proc.wait()
+            stderr = proc.stderr.read() if proc.stderr else ""
+            self._proc = None
+
+        if error_text is not None:
+            log.error("claude error: %s", error_text)
+            raise RuntimeError(f"claude: {error_text}")
+        if rc != 0:
+            log.error("claude exited %d: %s", rc, stderr[:500])
+            raise RuntimeError(f"claude exited {rc}: {stderr[:200]}")
+
+    def close(self) -> None:
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                try:
+                    self._proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
+            self._proc = None
+        self._session_id = None
+
+class ConversationAdapterCodex:
+    """Codex CLI wrapper using `codex exec --json`."""
+
+    provider = EnrichProvider.CODEX
+
+    def __init__(self, system_prompt: str):
+        self.system_prompt = system_prompt
+        self._session_id: Optional[str] = None
+        self._proc: Optional[subprocess.Popen] = None
+
+    def turn(self, user_message: str) -> Iterator[str]:
+        if self._session_id is None:
+            prompt = f"{self.system_prompt}\n\n{user_message}"
+            argv = [
+                "codex",
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                prompt,
+            ]
+        else:
+            argv = [
+                "codex",
+                "exec",
+                "resume",
+                self._session_id,
+                "--json",
+                "--skip-git-repo-check",
+                user_message,
+            ]
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as e:
+            log.error("codex CLI not found: %s", e)
+            raise RuntimeError("codex CLI not found on PATH") from e
+
+        self._proc = proc
+        assert proc.stdout is not None
+
+        try:
+            for raw in proc.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    log.warning("skipping malformed codex event: %r", line[:120])
+                    continue
+
+                match event.get("type"):
+                    case "thread.started":
+                        tid = event.get("thread_id")
+                        if tid and self._session_id is None:
+                            self._session_id = tid
+                    case "item.completed":
+                        item = event.get("item") or {}
+                        if item.get("type") == "agent_message":
+                            text = item.get("text")
+                            if text:
+                                yield text
+        finally:
+            rc = proc.wait()
+            stderr = proc.stderr.read() if proc.stderr else ""
+            self._proc = None
+
+        if rc != 0:
+            log.error("codex exited %d: %s", rc, stderr[:500])
+            raise RuntimeError(f"codex exited {rc}: {stderr[:200]}")
+
+    def close(self) -> None:
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=2)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                try:
+                    self._proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
+            self._proc = None
+        self._session_id = None
