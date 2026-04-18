@@ -1,59 +1,45 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
+"""Switch to or move a window to the first empty workspace."""
 
 from argparse import ArgumentParser
-import json
-import subprocess
 
-def run_hyprctl(command):
-    """Run a hyprctl command and return the output"""
-    result = subprocess.run(
-        ["hyprctl", "-j"] + command.split(),
-        capture_output=True,
-        text=True,
-    )
-    return json.loads(result.stdout)
+from lib import Hyprctl
 
-def run_hyprctl_dispatch(command):
-    """Run a hyprctl dispatch command"""
-    result = subprocess.run(
-        ["hyprctl", "dispatch"] + command.split(),
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+class NewWorkspace:
+    def __init__(self, args, hypr: Hyprctl):
+        self.args = args
+        self._hypr = hypr
 
-if __name__ == "__main__":
-    arguments_parser = ArgumentParser()
-    arguments_parser.add_argument(
-        "-s",
-        "--switch",
+    def run(self):
+        target = self._first_empty_workspace()
+        if self.args.move:
+            self._hypr.dispatch("movetoworkspace", target)
+        if self.args.switch:
+            self._hypr.dispatch("workspace", target)
+
+    def _first_empty_workspace(self) -> str:
+        used = {ws["id"] for ws in self._hypr.workspaces()}
+
+        return str(min(set(range(1, max(used, default=0) + 2)) - used))
+
+def main():
+    parser = ArgumentParser()
+    parser.add_argument(
+        "-s", "--switch",
         action="store_true",
         help="switch to the first empty workspace",
     )
-    arguments_parser.add_argument(
-        "-m",
-        "--move",
+    parser.add_argument(
+        "-m", "--move",
         action="store_true",
         help="move the currently focused container to the first empty workspace",
     )
-    arguments = arguments_parser.parse_args()
-    assert arguments.switch or arguments.move, (
+    args = parser.parse_args()
+    assert args.switch or args.move, (
         "at least one of --switch or --move must be specified"
     )
 
-    # Get all workspaces (across all monitors, same as Sway script)
-    workspaces = run_hyprctl("workspaces")
-    workspace_numbers = [workspace["id"] for workspace in workspaces]
+    NewWorkspace(args, Hyprctl()).run()
 
-    # Get the lowest empty workspace number (same logic as Sway script)
-    target = min(set(range(1, max(workspace_numbers) + 2)) - set(workspace_numbers))
-
-    # Execute the requested action
-    if arguments.move and arguments.switch:
-        # Move container and switch in one command
-        run_hyprctl_dispatch(f"movetoworkspace {target}")
-        run_hyprctl_dispatch(f"workspace {target}")
-    elif arguments.switch:
-        run_hyprctl_dispatch(f"workspace {target}")
-    elif arguments.move:
-        run_hyprctl_dispatch(f"movetoworkspace {target}")
+if __name__ == "__main__":
+    main()

@@ -1,140 +1,110 @@
 #!/usr/bin/env python3
+"""Swap workspace positions in Hyprland by moving all windows between them.
 
-"""
-Swap workspace positions in Hyprland by moving all windows between workspaces.
-
-This script allows you to:
-- Move current workspace to a specific number (-t/--to): swaps with existing
-- Swap left (-s left): swaps with previous workspace on current monitor
-- Swap right (-s right): swaps with next workspace on current monitor
+- `-t/--to N`: move current workspace to N (swaps with existing windows).
+- `-s/--swap left|right`: swap with the previous/next workspace on the
+  current monitor.
 """
 
-import json
-import subprocess
 import sys
 from argparse import ArgumentParser
-from typing import List, Any
 
-def hyprctl_json(command: str) -> Any:
-    result = subprocess.run(
-        ["hyprctl", "-j"] + command.split(),
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"hyprctl {command} failed: {result.stderr}", file=sys.stderr)
-        sys.exit(1)
+from lib import Hyprctl
 
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print(f"Failed to parse hyprctl {command} output", file=sys.stderr)
-        sys.exit(1)
+class SwapWorkspace:
+    def __init__(self, args, hypr: Hyprctl):
+        self.args = args
+        self._hypr = hypr
 
-def hyprctl_dispatch(command: str, args: str) -> None:
-    result = subprocess.run(
-        ["hyprctl", "dispatch", command, args],
-        capture_output=True,
-        text=True,
-    )
+    def run(self):
+        current = self._active_workspace_id()
+        target = self.args.to if self.args.to else self._neighbor(self.args.swap)
+        self._swap(current, target)
 
-    if result.returncode != 0:
-        print(f"dispatch {command} {args} failed: {result.stderr}", file=sys.stderr)
+    def _active_workspace_id(self) -> int:
+        ws = self._hypr.active_workspace()
+        if not ws:
+            print("no active workspace", file=sys.stderr)
+            sys.exit(1)
 
-def get_active_workspace_id() -> int:
-    ws = hyprctl_json("activeworkspace")
+        return ws["id"]
 
-    return ws["id"]
+    def _active_monitor_id(self) -> int:
+        focused = self._hypr.focused_monitor()
+        if focused:
+            return focused["id"]
+        monitors = self._hypr.monitors()
+        if not monitors:
+            print("no monitors found", file=sys.stderr)
+            sys.exit(1)
 
-def get_active_monitor_id() -> int:
-    monitors = hyprctl_json("monitors")
-    for mon in monitors:
-        if mon["focused"]:
-            return mon["id"]
+        return monitors[0]["id"]
 
-    return monitors[0]["id"]
+    def _monitor_workspace_ids(self, monitor_id: int) -> list[int]:
+        return sorted(
+            ws["id"]
+            for ws in self._hypr.workspaces()
+            if ws["monitorID"] == monitor_id and ws["id"] > 0
+        )
 
-def get_monitor_workspace_ids(monitor_id: int) -> List[int]:
-    workspaces = hyprctl_json("workspaces")
-    ids = sorted(
-        ws["id"] for ws in workspaces if ws["monitorID"] == monitor_id and ws["id"] > 0
-    )
+    def _windows_on(self, workspace_id: int) -> list[str]:
+        return [
+            c["address"]
+            for c in self._hypr.clients()
+            if c["workspace"]["id"] == workspace_id
+        ]
 
-    return ids
+    def _neighbor(self, direction: str) -> int:
+        current = self._active_workspace_id()
+        ws_ids = self._monitor_workspace_ids(self._active_monitor_id())
+        if not ws_ids or current not in ws_ids:
+            return current
 
-def get_windows_on_workspace(workspace_id: int) -> List[str]:
-    clients = hyprctl_json("clients")
+        idx = ws_ids.index(current)
+        if direction == "left":
+            return ws_ids[idx - 1] if idx > 0 else ws_ids[-1]
 
-    return [
-        client["address"]
-        for client in clients
-        if client["workspace"]["id"] == workspace_id
-    ]
-
-def get_neighbor_workspace(direction: str) -> int:
-    monitor_id = get_active_monitor_id()
-    current_id = get_active_workspace_id()
-    ws_ids = get_monitor_workspace_ids(monitor_id)
-
-    if not ws_ids or current_id not in ws_ids:
-        return current_id
-
-    idx = ws_ids.index(current_id)
-
-    if direction == "left":
-        return ws_ids[idx - 1] if idx > 0 else ws_ids[-1]
-    else:
         return ws_ids[idx + 1] if idx < len(ws_ids) - 1 else ws_ids[0]
 
-def swap_workspaces(current: int, target: int) -> None:
-    if current == target:
-        return
+    def _swap(self, current: int, target: int) -> None:
+        if current == target:
+            return
 
-    current_windows = get_windows_on_workspace(current)
-    target_windows = get_windows_on_workspace(target)
+        current_windows = self._windows_on(current)
+        target_windows = self._windows_on(target)
 
-    if not current_windows and not target_windows:
-        hyprctl_dispatch("workspace", str(target))
+        if not current_windows and not target_windows:
+            self._hypr.dispatch("workspace", str(target))
+            return
 
-        return
+        # Track by address, so moving current→target first and then target→current
+        # is safe — the original target windows carry their address through the
+        # swap.
+        for addr in current_windows:
+            self._hypr.dispatch("movetoworkspacesilent", f"{target},address:{addr}")
+        for addr in target_windows:
+            self._hypr.dispatch("movetoworkspacesilent", f"{current},address:{addr}")
 
-    # No temp workspace needed — we track windows by address, so we can
-    # move current→target first, then move original target windows back
-    for addr in current_windows:
-        hyprctl_dispatch("movetoworkspacesilent", f"{target},address:{addr}")
-
-    for addr in target_windows:
-        hyprctl_dispatch("movetoworkspacesilent", f"{current},address:{addr}")
-
-    hyprctl_dispatch("workspace", str(target))
+        self._hypr.dispatch("workspace", str(target))
 
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Hyprland")
     parser.add_argument(
-        "-t",
-        "--to",
+        "-t", "--to",
         type=int,
         help="Move current workspace to the given position",
     )
     parser.add_argument(
-        "-s",
-        "--swap",
+        "-s", "--swap",
         choices=["left", "right"],
-        help="Swap workspace with the one to the left or right on current monitor",
+        help="Swap with the left/right workspace on the current monitor",
     )
-
     args = parser.parse_args()
 
     if not args.to and not args.swap:
         parser.error("Either -t/--to or -s/--swap must be specified")
 
-    current_workspace = get_active_workspace_id()
-
-    if args.to:
-        swap_workspaces(current_workspace, args.to)
-    elif args.swap:
-        target = get_neighbor_workspace(args.swap)
-        swap_workspaces(current_workspace, target)
+    SwapWorkspace(args, Hyprctl()).run()
 
 if __name__ == "__main__":
     main()

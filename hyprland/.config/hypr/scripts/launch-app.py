@@ -1,73 +1,71 @@
 #!/usr/bin/env python3
-"""
-Hyprland application launcher that reads variable definitions from definitions.conf
-and launches applications with proper configuration.
-"""
+"""Hyprland application launcher driven by variables in definitions.conf."""
 
-import sys
+import argparse
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-def parse_definitions(config_path: Path) -> dict[str, str]:
-    """Parse Hyprland definitions.conf and extract variable definitions."""
-    definitions = {}
+DEFINITIONS_PATH = Path.home() / ".config" / "hypr" / "definitions.conf"
 
-    if not config_path.exists():
+class LaunchApp:
+    def __init__(self, args):
+        self.args = args
+
+    def run(self):
+        definitions = self._parse_definitions(DEFINITIONS_PATH)
+        raw = definitions.get(self.args.variable)
+        if not raw:
+            print(
+                f"Variable ${self.args.variable} not found in definitions.conf",
+                file=sys.stderr,
+            )
+            print(
+                f"Available variables: {', '.join(sorted(definitions))}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        command = self._expand(raw, definitions)
+        subprocess.run(command, shell=True, check=False)
+
+    @staticmethod
+    def _parse_definitions(path: Path) -> dict[str, str]:
+        definitions: dict[str, str] = {}
+        if not path.exists():
+            return definitions
+
+        with open(path) as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                match = re.match(r"\$(\w+)\s*=\s*(.+)", line)
+                if match:
+                    name, value = match.groups()
+                    definitions[name] = value.strip()
+
         return definitions
 
-    with open(config_path) as f:
-        for line in f:
-            line = line.strip()
-            # Skip comments and empty lines
-            if not line or line.startswith("#"):
-                continue
+    @staticmethod
+    def _expand(value: str, definitions: dict[str, str]) -> str:
+        def replace(match: re.Match) -> str:
+            return definitions.get(match.group(1), match.group(0))
 
-            # Match variable definitions: $var = value
-            match = re.match(r"\$(\w+)\s*=\s*(.+)", line)
-            if match:
-                var_name, value = match.groups()
-                definitions[var_name] = value.strip()
-
-    return definitions
-
-def expand_variables(value: str, definitions: dict[str, str]) -> str:
-    """Expand variable references in a value."""
-
-    # Replace $var references with their values
-    def replace_var(match):
-        var_name = match.group(1)
-        return definitions.get(var_name, match.group(0))
-
-    return re.sub(r"\$(\w+)", replace_var, value)
+        return re.sub(r"\$(\w+)", replace, value)
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: launch-app.py <variable-name>")
-        print("Example: launch-app.py process_manager")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Launch an application defined by a hyprland variable",
+    )
+    parser.add_argument(
+        "variable",
+        help="Variable name from definitions.conf (e.g. process_manager)",
+    )
+    args = parser.parse_args()
 
-    var_name = sys.argv[1]
-
-    # Parse definitions from hyprland config
-    config_dir = Path.home() / ".config" / "hypr"
-    definitions_file = config_dir / "definitions.conf"
-
-    definitions = parse_definitions(definitions_file)
-
-    # Get the command from definitions
-    command = definitions.get(var_name)
-
-    if not command:
-        print(f"Variable ${var_name} not found in definitions.conf")
-        print(f"Available variables: {', '.join(sorted(definitions.keys()))}")
-        sys.exit(1)
-
-    # Expand any nested variables
-    command = expand_variables(command, definitions)
-
-    # Execute the command
-    subprocess.run(command, shell=True)
+    LaunchApp(args).run()
 
 if __name__ == "__main__":
     main()

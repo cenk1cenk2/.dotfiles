@@ -1,16 +1,6 @@
-#!/usr/bin/env python3
-
-"""
-Utility module for dynamically looking up application icons.
-
-This module searches desktop files to find the correct icon for a given
-window class, providing better icon coverage than static mappings.
-"""
-
-import os
 import re
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Dict
 from functools import lru_cache
 
 # Cache for desktop file lookups

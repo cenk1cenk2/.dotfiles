@@ -1,141 +1,103 @@
 #!/usr/bin/env python3
-
-"""
-Display profile manager for Hyprland using kanshi
-Manages monitor configurations via kanshictl
-"""
+"""Display profile manager for Hyprland using kanshi via kanshictl."""
 
 import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-class DisplayProfileError(Exception):
-    """Custom exception for display profile errors"""
+from lib import notify
 
-    pass
+KANSHI_CONFIG = Path.home() / ".config" / "kanshi" / "config"
+UDEV_SCRIPT = Path("/etc/udev/scripts/wayland-user.sh")
+ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
 
 class DisplayProfile:
-    def __init__(self):
-        self.kanshi_config = Path.home() / ".config" / "kanshi" / "config"
-        self.udev_script = Path("/etc/udev/scripts/wayland-user.sh")
+    def __init__(self, args):
+        self.args = args
 
-    def notify(self, title: str, message: str, icon: str = None):
-        """Send a notification"""
-        cmd = ["notify-send", title, message]
-        if icon:
-            cmd.extend(["-i", icon])
+    def run(self):
+        action = self.args.action
+        if action == "help":
+            self.args.parser.print_help()
+        elif action == "ls":
+            self._list_profiles()
+        elif action == "reload":
+            self._reload()
+        else:
+            self._switch_profile(action)
 
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.SubprocessError:
-            pass
-
-    def run_command(
-        self, cmd: list, capture_output: bool = True
-    ) -> subprocess.CompletedProcess:
-        """Run a command and return the result"""
-        try:
-            return subprocess.run(
-                cmd,
-                capture_output=capture_output,
-                text=True,
-                check=True,
-            )
-        except subprocess.SubprocessError as e:
-            raise DisplayProfileError(f"Command failed: {' '.join(cmd)}") from e
-
-    def list_profiles(self):
-        """List available kanshi profiles"""
-        if not self.kanshi_config.exists():
+    def _list_profiles(self):
+        if not KANSHI_CONFIG.exists():
             print("No kanshi config found", file=sys.stderr)
             sys.exit(1)
 
         try:
-            with open(self.kanshi_config, "r") as f:
-                profiles = []
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("profile "):
-                        # Extract profile name (second word)
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            profile_name = parts[1]
-                            if profile_name not in profiles:
-                                profiles.append(profile_name)
-
-                for profile in profiles:
-                    print(profile)
+            with open(KANSHI_CONFIG) as f:
+                profiles: list[str] = []
+                for raw in f:
+                    line = raw.strip()
+                    if not line.startswith("profile "):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1] not in profiles:
+                        profiles.append(parts[1])
+            for profile in profiles:
+                print(profile)
         except IOError as e:
             print(f"Error reading kanshi config: {e}", file=sys.stderr)
             sys.exit(1)
 
-    def reload(self):
-        """Reload kanshi configuration"""
+    def _reload(self):
         try:
-            self.run_command(["kanshictl", "reload"], capture_output=False)
-        except DisplayProfileError:
+            self._run(["kanshictl", "reload"], capture_output=False)
+        except subprocess.SubprocessError:
             print("Error reloading kanshi", file=sys.stderr)
             sys.exit(1)
 
-    def switch_profile(self, profile: str):
-        """Switch to a specific kanshi profile"""
+    def _switch_profile(self, profile: str):
+        # Prefer the udev shim when present so the switch runs in a predictable
+        # environment; fall back to kanshictl directly.
+        cmd = (
+            [str(UDEV_SCRIPT), "kanshictl", "switch", profile]
+            if UDEV_SCRIPT.exists()
+            else ["kanshictl", "switch", profile]
+        )
         try:
-            # Use the udev script if it exists, otherwise use kanshictl directly
-            if self.udev_script.exists():
-                self.run_command(
-                    [str(self.udev_script), "kanshictl", "switch", profile]
-                )
-            else:
-                self.run_command(["kanshictl", "switch", profile])
-
-            # Send notification on success
-            self.notify(
-                "Display",
-                f"Trigger profile {profile}.",
-                "/usr/share/icons/Adwaita/scalable/devices/video-display.svg",
-            )
-        except DisplayProfileError as e:
+            self._run(cmd)
+            notify("Display", f"Trigger profile {profile}.", icon=ICON)
+        except subprocess.SubprocessError as e:
             print(f"Error switching to profile {profile}: {e}", file=sys.stderr)
-            self.notify(
-                "Display",
-                f"Failed to switch to profile {profile}.",
-                "/usr/share/icons/Adwaita/scalable/devices/video-display.svg",
-            )
+            notify("Display", f"Failed to switch to profile {profile}.", icon=ICON)
             sys.exit(1)
 
-    def main(self):
-        """Main function"""
-        parser = argparse.ArgumentParser(
-            description="Display profile manager using kanshi",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="""
-Commands:
-  ls: List available profiles
-  reload: Reload kanshi configuration
-  [profile]: Switch to the specified profile
-            """,
+    @staticmethod
+    def _run(cmd: list[str], capture_output: bool = True):
+        return subprocess.run(
+            cmd, capture_output=capture_output, text=True, check=True,
         )
 
-        parser.add_argument(
-            "action",
-            nargs="?",
-            default="help",
-            help="Action to perform: ls, reload, or profile name",
-        )
+def main():
+    parser = argparse.ArgumentParser(
+        description="Display profile manager using kanshi",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Commands:\n"
+            "  ls:        List available profiles\n"
+            "  reload:    Reload kanshi configuration\n"
+            "  [profile]: Switch to the specified profile\n"
+        ),
+    )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        default="help",
+        help="Action to perform: ls, reload, or profile name",
+    )
+    args = parser.parse_args()
+    args.parser = parser
 
-        args = parser.parse_args()
-
-        if args.action == "help":
-            parser.print_help()
-        elif args.action == "ls":
-            self.list_profiles()
-        elif args.action == "reload":
-            self.reload()
-        else:
-            # Treat as profile name
-            self.switch_profile(args.action)
+    DisplayProfile(args).run()
 
 if __name__ == "__main__":
-    profile_manager = DisplayProfile()
-    profile_manager.main()
+    main()

@@ -1,39 +1,28 @@
 #!/usr/bin/env python3
 """Toggle focus between floating and tiled windows."""
 
-import json
-import subprocess
 import sys
 
-def run_hyprctl(args):
-    """Run hyprctl command and return JSON output."""
-    result = subprocess.run(
-        ["hyprctl", *args, "-j"], capture_output=True, text=True, check=True
-    )
-    return json.loads(result.stdout)
+from lib import Hyprctl
+
+class FloatFocusToggler:
+    def __init__(self, args, hypr: Hyprctl):
+        self.args = args
+        self._hypr = hypr
+
+    def run(self):
+        active = self._hypr.active_window()
+        if not active:
+            self._hypr.dispatch("cyclenext")
+            return
+
+        target = "tiled" if active.get("floating", False) else "floating"
+        if not self._hypr.dispatch("cyclenext", target):
+            print(f"Error: failed to cycle to {target} window", file=sys.stderr)
+            sys.exit(1)
 
 def main():
-    try:
-        # Get active window
-        active_window = run_hyprctl(["activewindow"])
-
-        if not active_window or active_window.get("address") == "":
-            # No active window, try to focus any window
-            subprocess.run(["hyprctl", "dispatch", "cyclenext"], check=True)
-            sys.exit(0)
-
-        is_floating = active_window.get("floating", False)
-
-        if is_floating:
-            # Currently on floating, focus a tiled window
-            subprocess.run(["hyprctl", "dispatch", "cyclenext", "tiled"], check=True)
-        else:
-            # Currently on tiled, focus a floating window
-            subprocess.run(["hyprctl", "dispatch", "cyclenext", "floating"], check=True)
-
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    FloatFocusToggler(args=None, hypr=Hyprctl()).run()
 
 if __name__ == "__main__":
     main()

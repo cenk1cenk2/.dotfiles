@@ -1,70 +1,49 @@
 #!/usr/bin/env python3
-"""Toggle active window to/from scratchpad."""
+"""Toggle the active window to/from the scratchpad."""
 
-import json
-import subprocess
 import sys
 
-def run_hyprctl(args):
-    """Run hyprctl command and return JSON output."""
-    result = subprocess.run(
-        ["hyprctl", *args, "-j"], capture_output=True, text=True, check=True
-    )
-    return json.loads(result.stdout)
+from lib import Hyprctl
 
-def get_current_workspace():
-    """Get the current visible workspace ID."""
-    monitors = run_hyprctl(["monitors"])
-    for monitor in monitors:
-        if monitor.get("focused"):
-            return monitor.get("activeWorkspace", {}).get("id")
-    return 1  # fallback
+SCRATCHPAD = "special:scratch"
 
-def get_scratchpad_windows():
-    """Get list of window addresses in scratchpad."""
-    clients = run_hyprctl(["clients"])
-    return {
-        client["address"]
-        for client in clients
-        if client.get("workspace", {}).get("name", "") == "special:scratch"
-    }
+class ScratchpadToggler:
+    def __init__(self, args, hypr: Hyprctl):
+        self.args = args
+        self._hypr = hypr
 
-def main():
-    try:
-        # Get active window info
-        active_window = run_hyprctl(["activewindow"])
-
-        if not active_window or active_window.get("address") == "":
-            print("No active window")
+    def run(self):
+        active = self._hypr.active_window()
+        if not active:
+            print("No active window", file=sys.stderr)
             sys.exit(1)
 
-        window_address = active_window.get("address")
-        current_workspace = active_window.get("workspace", {}).get("name", "")
-        scratchpad_windows = get_scratchpad_windows()
+        current_workspace = active.get("workspace", {}).get("name", "")
+        address = active.get("address")
 
-        if current_workspace == "special:scratch":
-            # Window is currently in scratchpad, move it to current workspace
-            visible_workspace_id = get_current_workspace()
-            subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspace", str(visible_workspace_id)],
-                check=True,
-            )
-        elif window_address in scratchpad_windows:
-            # Window was in scratchpad but is now visible, move it back
-            subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"],
-                check=True,
-            )
-        else:
-            # Window is on a regular workspace, move it to scratchpad
-            subprocess.run(
-                ["hyprctl", "dispatch", "movetoworkspace", "special:scratch"],
-                check=True,
-            )
+        if current_workspace == SCRATCHPAD:
+            # Pulled up from scratchpad → send to currently focused workspace.
+            target = self._hypr.focused_workspace_id() or 1
+            self._hypr.dispatch("movetoworkspace", str(target))
+            return
 
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        if address in self._scratchpad_addresses():
+            # Previously-scratched window that drifted away → push back.
+            self._hypr.dispatch("movetoworkspace", SCRATCHPAD)
+            return
+
+        # Regular window → send to scratchpad.
+        self._hypr.dispatch("movetoworkspace", SCRATCHPAD)
+
+    def _scratchpad_addresses(self) -> set[str]:
+        return {
+            c["address"]
+            for c in self._hypr.clients()
+            if c.get("workspace", {}).get("name", "") == SCRATCHPAD
+        }
+
+def main():
+    ScratchpadToggler(args=None, hypr=Hyprctl()).run()
 
 if __name__ == "__main__":
     main()
