@@ -8,6 +8,8 @@ import urllib.request
 from enum import StrEnum
 from typing import Any, Optional, Protocol
 
+DEFAULT_MODEL = "gemma4:31b-cloud"
+
 log = logging.getLogger(__name__)
 
 class OutputMode(StrEnum):

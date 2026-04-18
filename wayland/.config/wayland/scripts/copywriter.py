@@ -11,6 +11,7 @@ from typing import Optional
 import psutil
 
 from lib import (
+    DEFAULT_MODEL,
     ClaudeEnrichAdapter,
     ClipboardOutputAdapter,
     CodexEnrichAdapter,
@@ -25,8 +26,6 @@ from lib import (
     notify,
     signal_waybar,
 )
-
-DEFAULT_MODEL = "gemma4:31b-cloud"
 
 WAYBAR_MODULE = "copywriter"
 ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"

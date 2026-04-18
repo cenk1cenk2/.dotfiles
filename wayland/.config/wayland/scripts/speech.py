@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Optional, Protocol
 
 from lib import (
+    DEFAULT_MODEL,
     ClaudeEnrichAdapter,
     ClipboardOutputAdapter,
     CodexEnrichAdapter,
@@ -26,8 +27,6 @@ from lib import (
     notify,
     signal_waybar,
 )
-
-DEFAULT_MODEL = "gemma4:31b-cloud"
 
 class STTAdapter(Protocol):
     """Contract for a speech-to-text daemon driven by speech.py.
