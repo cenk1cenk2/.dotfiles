@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# List or remove broken symlinks under one or more directories.
+#
+# Usage:
+#   broken-links ls [<dir>...]
+#   broken-links rm [-f | --force] [<dir>...]
+#
+# Requires: fd
+
+set -euo pipefail
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  broken-links ls [<dir>...]
+  broken-links rm [--force] [<dir>...]
+
+Commands:
+  ls [<dir>...]                 List broken symlinks under each <dir>.
+  rm [--force] [<dir>...]       Delete broken symlinks. Prompts for each
+                                unless --force is given.
+
+Directories default to "." when none are given.
+
+Examples:
+  broken-links ls ~/.config ~/.local
+  broken-links rm --force ~/.cache
+EOF
+    exit 1
+}
+
+require() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "broken-links: '$1' is required but not installed" >&2
+        exit 1
+    }
+}
+
+# Emit the absolute path of every broken symlink under the given roots,
+# NUL-separated so filenames with newlines survive.
+find_broken() {
+    require fd
+    fd --type symlink --hidden --no-ignore --print0 . "$@" \
+        | while IFS= read -r -d '' link; do
+            [ ! -e "$link" ] && printf '%s\0' "$link"
+        done
+}
+
+cmd_ls() {
+    [ $# -gt 0 ] || set -- .
+    find_broken "$@" | tr '\0' '\n'
+}
+
+cmd_rm() {
+    local force=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f | --force) force=1; shift ;;
+            -h | --help) usage ;;
+            -*) echo "broken-links rm: unknown option: $1" >&2; exit 1 ;;
+            *) break ;;
+        esac
+    done
+    [ $# -gt 0 ] || set -- .
+
+    while IFS= read -r -d '' link; do
+        if [ "$force" -eq 1 ]; then
+            rm -- "$link"
+            echo "removed: $link"
+        else
+            # Prompt per link, reading from the terminal so the while-loop's
+            # piped stdin doesn't eat our input.
+            read -r -p "Remove $link? [y/N] " answer < /dev/tty
+            case "$answer" in
+                y | Y | yes | YES)
+                    rm -- "$link"
+                    echo "removed: $link"
+                    ;;
+                *)
+                    echo "skipped: $link"
+                    ;;
+            esac
+        fi
+    done < <(find_broken "$@")
+}
+
+case "${1:-}" in
+    ls) shift; cmd_ls "$@" ;;
+    rm) shift; cmd_rm "$@" ;;
+    "" | -h | --help) usage ;;
+    *) echo "broken-links: unknown command: $1" >&2; usage ;;
+esac
