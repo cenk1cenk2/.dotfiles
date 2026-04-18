@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import signal
-import subprocess
 import sys
 from typing import Optional
 
@@ -14,13 +13,17 @@ import psutil
 from lib import (
     DEFAULT_MODEL,
     ClaudeEnrichAdapter,
+    ClipboardInputAdapter,
     ClipboardOutputAdapter,
     CodexEnrichAdapter,
     EnrichAdapter,
     EnrichProvider,
     HttpEnrichAdapter,
+    InputAdapter,
+    InputMode,
     OutputAdapter,
     OutputMode,
+    StdinInputAdapter,
     StdoutOutputAdapter,
     TypeOutputAdapter,
     load_prompt,
@@ -40,10 +43,12 @@ class Copywriter:
     def __init__(
         self,
         args,
+        input: Optional[InputAdapter] = None,
         enricher: Optional[EnrichAdapter] = None,
         output: Optional[OutputAdapter] = None,
     ):
         self.args = args
+        self._input = input
         self._enricher = enricher
         self._output = output
 
@@ -77,20 +82,8 @@ class Copywriter:
     def _is_running(self):
         return bool(self._find_workers())
 
-    def _read_clipboard(self) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["wl-paste", "--no-newline"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return result.stdout
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            log.error("failed to read clipboard: %s", e)
-            return None
-
     def _run(self):
+        assert self._input is not None, "run requires an input adapter"
         assert self._enricher is not None, "run requires an enrich adapter"
         assert self._output is not None, "run requires an output adapter"
 
@@ -111,7 +104,7 @@ class Copywriter:
         pid = os.fork()
         if pid > 0:
             self._notify(
-                f"Refining clipboard → {self._output.mode.value}...",
+                f"Refining {self._input.mode.value} → {self._output.mode.value}...",
                 timeout=2000,
             )
             signal_waybar(WAYBAR_MODULE)
@@ -126,24 +119,30 @@ class Copywriter:
             os._exit(0)
 
     def _execute(self):
-        assert self._enricher is not None and self._output is not None
-        text = self._read_clipboard()
+        assert (
+            self._input is not None
+            and self._enricher is not None
+            and self._output is not None
+        )
+        text = self._input.read()
         if not text or not text.strip():
-            self._notify("Clipboard is empty")
+            self._notify(f"{self._input.mode.value.capitalize()} is empty")
 
             return
 
-        log.info("clipboard text: %d chars", len(text))
+        log.info("%s text: %d chars", self._input.mode.value, len(text))
         result = self._enricher.enrich(text)
 
         if not result or not result.strip():
-            self._notify("Refinement failed, clipboard unchanged")
+            self._notify(
+                f"Refinement failed, {self._output.mode.value} unchanged",
+            )
 
             return
 
         self._output.write(result.strip())
         self._notify(
-            f"Clipboard refined → {self._output.mode.value}",
+            f"Refined {self._input.mode.value} → {self._output.mode.value}",
             timeout=3000,
         )
         log.info("done")
@@ -198,6 +197,14 @@ def main():
         help="Output sink for the refined text",
     )
     run_parser.add_argument(
+        "--input",
+        dest="input",
+        type=InputMode,
+        choices=list(InputMode),
+        default=InputMode.CLIPBOARD,
+        help="Where to read the text from (default: clipboard)",
+    )
+    run_parser.add_argument(
         "--provider",
         type=EnrichProvider,
         choices=list(EnrichProvider),
@@ -227,9 +234,16 @@ def main():
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
 
+    input_adapter: Optional[InputAdapter] = None
     enricher: Optional[EnrichAdapter] = None
     output: Optional[OutputAdapter] = None
     if args.command == "run":
+        match args.input:
+            case InputMode.CLIPBOARD:
+                input_adapter = ClipboardInputAdapter()
+            case InputMode.STDIN:
+                input_adapter = StdinInputAdapter()
+
         match args.provider:
             case EnrichProvider.HTTP:
                 enricher = HttpEnrichAdapter(
@@ -257,7 +271,7 @@ def main():
             case OutputMode.STDOUT:
                 output = StdoutOutputAdapter()
 
-    Copywriter(args, enricher, output).run()
+    Copywriter(args, input_adapter, enricher, output).run()
 
 if __name__ == "__main__":
     main()

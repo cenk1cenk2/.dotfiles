@@ -12,6 +12,12 @@ from .enrich import (
     EnrichProvider,
     HttpEnrichAdapter,
 )
+from .input import (
+    ClipboardInputAdapter,
+    InputAdapter,
+    InputMode,
+    StdinInputAdapter,
+)
 from .notify import notify
 from .output import (
     ClipboardOutputAdapter,
@@ -26,13 +32,17 @@ from .waybar import signal_waybar
 __all__ = [
     "DEFAULT_MODEL",
     "ClaudeEnrichAdapter",
+    "ClipboardInputAdapter",
     "ClipboardOutputAdapter",
     "CodexEnrichAdapter",
     "EnrichAdapter",
     "EnrichProvider",
     "HttpEnrichAdapter",
+    "InputAdapter",
+    "InputMode",
     "OutputAdapter",
     "OutputMode",
+    "StdinInputAdapter",
     "StdoutOutputAdapter",
     "TypeOutputAdapter",
     "load_prompt",
