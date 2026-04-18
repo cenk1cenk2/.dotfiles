@@ -19,15 +19,9 @@ from typing import Optional
 
 from markdown_it import MarkdownIt
 
-import gi
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Gdk", "4.0")
-gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, Pango  # noqa: E402
-
 from lib import (
-    DEFAULT_MODEL,
+    DEFAULT_CONVERSE_ADAPTER,
+    DEFAULT_CONVERSE_MODEL,
     ConversationAdapter,
     ConversationAdapterClaude,
     ConversationAdapterCodex,
@@ -38,6 +32,13 @@ from lib import (
     InputMode,
     load_prompt,
 )
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, Pango  # noqa: E402
 
 log = logging.getLogger("ask")
 
@@ -601,22 +602,20 @@ class Session:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
 def _build_adapter(args) -> ConversationAdapter:
-    provider = EnrichProvider(args.enrich_provider)
+    provider = EnrichProvider(args.converse_provider)
     match provider:
         case EnrichProvider.HTTP:
-            features = (
-                {k: True for k in args.features} if args.features else None
-            )
+            features = {k: True for k in args.features} if args.features else None
 
             return ConversationAdapterHttp(
                 system_prompt=AI_SYSTEM_PROMPT,
-                base_url=args.enrich_base_url,
-                model=args.enrich_model,
+                base_url=args.converse_base_url,
+                model=args.converse_model,
                 api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                temperature=args.enrich_temperature,
-                top_p=args.enrich_top_p,
-                thinking=args.enrich_thinking,
-                num_ctx=args.enrich_num_ctx,
+                temperature=args.converse_temperature,
+                top_p=args.converse_top_p,
+                thinking=args.converse_thinking,
+                num_ctx=args.converse_num_ctx,
                 tool_ids=args.tool_ids or None,
                 features=features,
                 user_agent="ask/1.0",
@@ -626,7 +625,7 @@ def _build_adapter(args) -> ConversationAdapter:
         case EnrichProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT)
         case _:
-            raise ValueError(f"unknown enrich provider: {provider!r}")
+            raise ValueError(f"unknown converse provider: {provider!r}")
 
 def _read_input(mode: InputMode) -> str:
     match mode:
@@ -650,26 +649,26 @@ def main():
         help="Source of the initial user turn",
     )
     parser.add_argument(
-        "--enrich-provider",
+        "--converse-provider",
         choices=["http", "claude", "codex"],
-        default="claude",
+        default=DEFAULT_CONVERSE_ADAPTER,
     )
     parser.add_argument(
-        "--enrich-base-url",
+        "--converse-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    parser.add_argument("--enrich-model", default="")
-    parser.add_argument("--enrich-temperature", type=float)
-    parser.add_argument("--enrich-top-p", type=float)
+    parser.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
+    parser.add_argument("--converse-temperature", type=float)
+    parser.add_argument("--converse-top-p", type=float)
     parser.add_argument(
-        "--enrich-thinking",
+        "--converse-thinking",
         nargs="?",
         const="high",
         default="none",
         choices=["high", "medium", "low", "none"],
     )
-    parser.add_argument("--enrich-num-ctx", type=int)
-    # OpenWebUI extensions for --enrich-provider=http. Ignored by other
+    parser.add_argument("--converse-num-ctx", type=int)
+    # OpenWebUI extensions for --converse-provider=http. Ignored by other
     # providers and by plain OpenAI endpoints.
     parser.add_argument(
         "--tool-id",
