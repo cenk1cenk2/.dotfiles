@@ -31,12 +31,15 @@ from lib import (
     InputAdapterStdin,
     InputMode,
     load_prompt,
+    signal_waybar,
 )
 
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
 # and every layer-shell call becomes a no-op — the window falls through to
-# a normal xdg_toplevel. Re-exec ourselves with the preload if needed.
+# a normal xdg_toplevel. Re-exec ourselves with the preload if needed —
+# only for `toggle`; waybar-poll commands (status / is-running / kill)
+# don't open a window and don't need the preload or GTK display.
 _LAYER_SHELL_SONAME = "libgtk4-layer-shell.so.0"
 
 def _ensure_layer_shell_preload() -> None:
@@ -49,7 +52,8 @@ def _ensure_layer_shell_preload() -> None:
     )
     os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], env)
 
-_ensure_layer_shell_preload()
+if len(sys.argv) > 1 and sys.argv[1] == "toggle":
+    _ensure_layer_shell_preload()
 
 import gi  # noqa: E402
 
@@ -67,6 +71,15 @@ SOCKET_PATH = os.path.join(
 )
 
 AI_SYSTEM_PROMPT = load_prompt("ask.md", relative_to=__file__)
+
+def _signal_waybar_safe() -> None:
+    """Nudge waybar's `custom/ask` module to re-read status. Non-fatal —
+    waybar-signal.sh silently ignores unknown modules, and we shouldn't
+    let waybar being unavailable take down the overlay."""
+    try:
+        signal_waybar("ask")
+    except Exception as e:
+        log.debug("waybar signal failed: %s", e)
 
 BASE_CSS = b"""
 window {
@@ -371,11 +384,14 @@ class AskWindow(Gtk.ApplicationWindow):
 
             return
         if not self.get_visible():
-            # Escape hid the overlay; a new turn brings it back.
+            # Escape hid the overlay; a new turn brings it back. present()
+            # (after set_visible) re-grabs focus and raises.
             self.set_visible(True)
+            self.present()
         self._append_user_turn(message)
         self._streaming = True
         self._compose.set_sensitive(False)
+        _signal_waybar_safe()
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
     def _append_user_turn(self, user_message: str) -> None:
@@ -405,6 +421,7 @@ class AskWindow(Gtk.ApplicationWindow):
         if self._alive:
             self._compose.set_sensitive(True)
             self._compose.grab_focus()
+        _signal_waybar_safe()
 
         return False
 
@@ -481,6 +498,7 @@ class AskWindow(Gtk.ApplicationWindow):
             self._adapter.close()
         except Exception as e:
             log.warning("adapter close failed: %s", e)
+        _signal_waybar_safe()
 
         return False
 
@@ -502,7 +520,7 @@ def _socket_is_live() -> bool:
     finally:
         probe.close()
 
-def _send(cmd: str, **extra) -> Optional[dict]:
+def _send(cmd: str, **kwargs) -> Optional[dict]:
     """Send a one-shot JSON command to the running session.
 
     Returns the parsed response dict, or None when no session answers.
@@ -523,7 +541,7 @@ def _send(cmd: str, **extra) -> Optional[dict]:
         return None
 
     try:
-        payload = json.dumps({"cmd": cmd, **extra}) + "\n"
+        payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
         sock.sendall(payload.encode())
         chunks = []
         while True:
@@ -639,6 +657,13 @@ class Session:
                     "phase": phase,
                     "provider": self._provider.value,
                 }
+            case "kill":
+                # Tear down from the GTK main thread so close-request handlers
+                # fire in the right order. The server socket will be closed by
+                # the window's on_close hook.
+                GLib.idle_add(self._window.close)
+
+                return {"ok": True}
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
@@ -679,71 +704,9 @@ def _read_input(mode: InputMode) -> str:
 
     return (text or "").strip()
 
-def main():
-    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument(
-        "--input",
-        type=InputMode,
-        choices=[InputMode.STDIN, InputMode.CLIPBOARD],
-        default=InputMode.STDIN,
-        help="Source of the initial user turn",
-    )
-    parser.add_argument(
-        "--converse-provider",
-        choices=["http", "claude", "codex"],
-        default=DEFAULT_CONVERSE_ADAPTER,
-    )
-    parser.add_argument(
-        "--converse-base-url",
-        default="https://ai.kilic.dev/api/v1",
-    )
-    parser.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
-    parser.add_argument("--converse-temperature", type=float)
-    parser.add_argument("--converse-top-p", type=float)
-    parser.add_argument(
-        "--converse-thinking",
-        nargs="?",
-        const="high",
-        default="none",
-        choices=["high", "medium", "low", "none"],
-    )
-    parser.add_argument("--converse-num-ctx", type=int)
-    # OpenWebUI extensions for --converse-provider=http. Ignored by other
-    # providers and by plain OpenAI endpoints.
-    parser.add_argument(
-        "--tool-id",
-        action="append",
-        dest="tool_ids",
-        default=[],
-        metavar="ID",
-        help=(
-            "server-side tool UUID (repeatable); use 'server:mcp:<id>' for "
-            "an MCP server. OpenWebUI-only."
-        ),
-    )
-    parser.add_argument(
-        "--feature",
-        action="append",
-        dest="features",
-        default=[],
-        metavar="KEY",
-        choices=[
-            "web_search",
-            "code_interpreter",
-            "image_generation",
-            "memory",
-            "voice",
-        ],
-        help="enable a built-in feature (repeatable). OpenWebUI-only.",
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        format="%(name)s: %(message)s",
-        level=logging.DEBUG if args.verbose else logging.WARNING,
-    )
-
+def _cmd_toggle(args) -> None:
+    """Read input (stdin/clipboard) and either forward it to a live session
+    or become the session owner and open the overlay."""
     initial = _read_input(args.input)
 
     # Forwarder path: if a session already owns the socket, ship the
@@ -769,12 +732,14 @@ def main():
 
         def on_close(_w):
             server.stop()
+            _signal_waybar_safe()
 
             return False
 
         window.connect("close-request", on_close)
         window.present()
         window.focus_compose()
+        _signal_waybar_safe()
         if initial:
             window.dispatch_turn(initial)
 
@@ -785,6 +750,138 @@ def main():
         server = session.get("server")
         if server:
             server.stop()
+        _signal_waybar_safe()
+
+def _cmd_status() -> None:
+    """Waybar custom-module payload. Emits a compact JSON describing whether
+    a session is live, which provider owns it, and whether it's idle or
+    streaming right now."""
+    resp = _send("status")
+    if not resp or not resp.get("ok"):
+        print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
+
+        return
+
+    provider = resp.get("provider", "")
+    phase = resp.get("phase", "idle")
+    icon = "󰧑"
+    if phase == "streaming":
+        text = f"{icon} {provider} …"
+        tooltip = f"Ask: streaming via {provider}"
+    else:
+        text = f"{icon} {provider}"
+        tooltip = f"Ask: {provider} idle"
+    print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
+
+def _cmd_is_running() -> None:
+    """Waybar `exec-if` gate. Exit 0 when a session socket is live so the
+    custom module shows, otherwise exit 1 and stay hidden."""
+    sys.exit(0 if _socket_is_live() else 1)
+
+def _cmd_kill() -> None:
+    """End the running ask session (if any) and return immediately. Matches
+    `speech.py kill` so recording-mode bindings can terminate either."""
+    resp = _send("kill")
+    if not resp:
+        # No live session answered — clear a stale socket file so the next
+        # toggle starts clean.
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+    _signal_waybar_safe()
+
+def _add_toggle_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--input",
+        type=InputMode,
+        choices=[InputMode.STDIN, InputMode.CLIPBOARD],
+        default=InputMode.STDIN,
+        help="Source of the initial user turn",
+    )
+    p.add_argument(
+        "--converse-provider",
+        choices=["http", "claude", "codex"],
+        default=DEFAULT_CONVERSE_ADAPTER,
+    )
+    p.add_argument(
+        "--converse-base-url",
+        default="https://ai.kilic.dev/api/v1",
+    )
+    p.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
+    p.add_argument("--converse-temperature", type=float)
+    p.add_argument("--converse-top-p", type=float)
+    p.add_argument(
+        "--converse-thinking",
+        nargs="?",
+        const="high",
+        default="none",
+        choices=["high", "medium", "low", "none"],
+    )
+    p.add_argument("--converse-num-ctx", type=int)
+    # OpenWebUI extensions for --converse-provider=http. Ignored by other
+    # providers and by plain OpenAI endpoints.
+    p.add_argument(
+        "--tool-id",
+        action="append",
+        dest="tool_ids",
+        default=[],
+        metavar="ID",
+        help=(
+            "server-side tool UUID (repeatable); use 'server:mcp:<id>' for "
+            "an MCP server. OpenWebUI-only."
+        ),
+    )
+    p.add_argument(
+        "--feature",
+        action="append",
+        dest="features",
+        default=[],
+        metavar="KEY",
+        choices=[
+            "web_search",
+            "code_interpreter",
+            "image_generation",
+            "memory",
+            "voice",
+        ],
+        help="enable a built-in feature (repeatable). OpenWebUI-only.",
+    )
+
+def main():
+    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    toggle_parser = subparsers.add_parser(
+        "toggle",
+        help="open the overlay (or forward a turn to a running session)",
+    )
+    _add_toggle_flags(toggle_parser)
+
+    subparsers.add_parser("status", help="print waybar-shaped JSON status")
+    subparsers.add_parser(
+        "is-running",
+        help="exit 0 if a session is live, non-zero otherwise",
+    )
+    subparsers.add_parser("kill", help="terminate the running session (if any)")
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        format="%(name)s: %(message)s",
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+    )
+
+    match args.command:
+        case "toggle":
+            _cmd_toggle(args)
+        case "status":
+            _cmd_status()
+        case "is-running":
+            _cmd_is_running()
+        case "kill":
+            _cmd_kill()
 
 if __name__ == "__main__":
     main()
