@@ -8,6 +8,8 @@ import time
 
 import psutil
 
+from lib import notify, signal_waybar
+
 try:
     import obsws_python as obs
 
@@ -16,7 +18,7 @@ except ImportError:
     OBS_AVAILABLE = False
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/camera-web.svg"
-
+WAYBAR_MODULE = "recorder"
 
 class Recorder:
     def __init__(self, args):
@@ -42,13 +44,10 @@ class Recorder:
             )
 
     def _notify(self, message, timeout=None):
-        cmd = ["notify-send", "Recording...", message, "-i", ICON]
-        if timeout:
-            cmd.extend(["-t", str(timeout)])
-        subprocess.run(cmd)
+        notify("Recording...", message, ICON, timeout)
 
     def _signal_waybar(self):
-        subprocess.run(["waybar-signal.sh", "recorder"], check=False)
+        signal_waybar(WAYBAR_MODULE)
 
     def _get_obs_connection(self, retry=3, wait=1, silent=False):
         if not OBS_AVAILABLE:
@@ -216,10 +215,7 @@ class Recorder:
                 }
             )
 
-        return json.dumps(
-            {"class": "idle", "text": "", "tooltip": "Not recording"}
-        )
-
+        return json.dumps({"class": "idle", "text": "", "tooltip": "Not recording"})
 
 def main():
     parser = argparse.ArgumentParser(
@@ -247,7 +243,6 @@ def main():
     args = parser.parse_args()
 
     Recorder(args).run()
-
 
 if __name__ == "__main__":
     main()

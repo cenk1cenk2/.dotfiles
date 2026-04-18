@@ -4,635 +4,482 @@ import argparse
 import json
 import logging
 import os
-import signal
+import socket
 import subprocess
 import sys
-import time
-import urllib.request
+import threading
+from dataclasses import asdict, dataclass
+from enum import StrEnum
+from typing import Optional, Protocol
 
-import psutil
+from lib import (
+    ClaudeEnrichAdapter,
+    ClipboardOutputAdapter,
+    CodexEnrichAdapter,
+    EnrichAdapter,
+    EnrichProvider,
+    HttpEnrichAdapter,
+    OutputAdapter,
+    OutputMode,
+    TypeOutputAdapter,
+    load_prompt,
+    notify,
+    signal_waybar,
+)
 
 DEFAULT_MODEL = "gemma4:31b-cloud"
+
+class STTAdapter(Protocol):
+    """Contract for a speech-to-text daemon driven by speech.py.
+
+    Swap implementations here to target a different backend; the rest of
+    speech.py talks only through this interface."""
+
+    def is_recording(self) -> bool:
+        """True while the backend is capturing audio."""
+        ...
+
+    def stop(self) -> None:
+        """Finalise the current recording. Any transcription will be
+        delivered through the subprocess returned by `capture()`."""
+        ...
+
+    def cancel(self) -> None:
+        """Abort the current recording and discard the audio."""
+        ...
+
+    def capture(self) -> "subprocess.Popen[bytes]":
+        """Subscribe to the backend's transcription stream.
+
+        Subscribing must trigger recording if the backend is idle, or
+        attach to an in-flight recording otherwise. The returned process
+        must close stdout after delivering the final transcription so the
+        caller can drive it with `communicate()`."""
+        ...
+
+class HyprwhsprAdapter:
+    """Talks to the hyprwhspr daemon through its `record` CLI subcommands."""
+
+    def is_recording(self) -> bool:
+        result = subprocess.run(
+            ["hyprwhspr", "record", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return "Recording in progress" in (result.stdout + result.stderr)
+
+    def stop(self) -> None:
+        subprocess.run(
+            ["hyprwhspr", "record", "stop"],
+            capture_output=True,
+            check=False,
+        )
+
+    def cancel(self) -> None:
+        subprocess.run(
+            ["hyprwhspr", "record", "cancel"],
+            capture_output=True,
+            check=False,
+        )
+
+    def capture(self) -> "subprocess.Popen[bytes]":
+        return subprocess.Popen(
+            ["hyprwhspr", "record", "capture"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+class Command(StrEnum):
+    STATUS = "status"
+    STOP = "stop"
+    CANCEL = "cancel"
+
+class Phase(StrEnum):
+    RECORDING = "recording"
+    WORKING = "working"
+    OUTPUT = "output"
+
+@dataclass
+class Request:
+    cmd: Command
+
+@dataclass
+class SessionState:
+    phase: Phase
+    output: OutputMode
+    enrich: Optional[EnrichProvider] = None
+
+@dataclass
+class Response:
+    ok: bool
+    state: Optional[SessionState] = None
+    error: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, raw: str) -> "Response":
+        obj = json.loads(raw)
+        state = None
+        sd = obj.get("state")
+        if sd:
+            enrich_val = sd.get("enrich")
+            state = SessionState(
+                phase=Phase(sd["phase"]),
+                output=OutputMode(sd["output"]),
+                enrich=EnrichProvider(enrich_val) if enrich_val else None,
+            )
+
+        return cls(
+            ok=bool(obj.get("ok", False)),
+            state=state,
+            error=obj.get("error"),
+        )
 
 log = logging.getLogger("speech")
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
+SOCKET_PATH = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
+    "wayland-speech.sock",
+)
 
-def _load_system_prompt():
-    with open(
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "speech.md")
-    ) as f:
-        return f.read().strip()
-
-AI_SYSTEM_PROMPT = _load_system_prompt()
-
+AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
+def _send(cmd: Command) -> Optional[Response]:
+    """Deliver a command to the running session over the Unix socket.
+    Returns the parsed Response, or None when no session answers."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    try:
+        sock.connect(SOCKET_PATH)
+    except (FileNotFoundError, ConnectionRefusedError):
+        # Stale socket file from a crashed session — remove so the next
+        # press 1 can bind fresh.
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        return None
+    except OSError as e:
+        log.warning("socket connect failed: %s", e)
+        return None
+
+    try:
+        payload = json.dumps(asdict(Request(cmd=cmd))) + "\n"
+        sock.sendall(payload.encode())
+        chunks = []
+        while True:
+            data = sock.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+        raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+        if not raw:
+            return None
+        try:
+            return Response.from_json(raw)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            log.warning("bad response from session: %s (raw=%r)", e, raw)
+            return None
+    finally:
+        sock.close()
+
+class Session:
+    """Owns the Unix socket for a live session. The main thread updates
+    `self.state` as it moves through phases; a background thread answers
+    status/stop/cancel queries from other speech.py invocations."""
+
+    def __init__(
+        self,
+        output: OutputMode,
+        enrich: Optional[EnrichProvider],
+        adapter: STTAdapter,
+    ):
+        self.state = SessionState(phase=Phase.RECORDING, output=output, enrich=enrich)
+        self._adapter = adapter
+        self._lock = threading.Lock()
+        self._sock: Optional[socket.socket] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(SOCKET_PATH)
+        os.chmod(SOCKET_PATH, 0o600)
+        self._sock.listen(4)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+        self._signal_waybar()
+
+    @staticmethod
+    def _signal_waybar():
+        signal_waybar("speech")
+
+    def _serve(self):
+        assert self._sock is not None, "_serve requires start() to have run"
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket):
+        try:
+            raw = conn.recv(1024).decode("utf-8", errors="replace").strip()
+            response = self._dispatch(raw)
+            conn.sendall(json.dumps(asdict(response)).encode())
+        except Exception as e:
+            log.warning("socket handler error: %s", e)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _dispatch(self, raw: str) -> Response:
+        try:
+            obj = json.loads(raw) if raw else {}
+            cmd = Command(obj.get("cmd", ""))
+        except (json.JSONDecodeError, ValueError):
+            return Response(ok=False, error=f"bad request: {raw!r}")
+
+        log.info("socket cmd: %s", cmd.value)
+        if cmd is Command.STATUS:
+            with self._lock:
+                return Response(ok=True, state=SessionState(**asdict(self.state)))
+        if cmd is Command.STOP:
+            self._adapter.stop()
+            return Response(ok=True)
+        if cmd is Command.CANCEL:
+            self._adapter.cancel()
+            return Response(ok=True)
+
+        return Response(ok=False, error=f"unhandled command: {cmd.value}")
+
+    def set_phase(self, phase: Phase):
+        with self._lock:
+            self.state.phase = phase
+        self._signal_waybar()
+
+    def stop(self):
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        self._signal_waybar()
+
 class Speech:
-    def __init__(self, args):
+    def __init__(
+        self,
+        args,
+        adapter: STTAdapter,
+        enricher: Optional[EnrichAdapter] = None,
+        output: Optional[OutputAdapter] = None,
+    ):
         self.args = args
+        self._adapter = adapter
+        self._enricher = enricher
+        self._output = output
 
     def run(self):
         cmd = self.args.command
         if cmd == "toggle":
             self._toggle()
-        elif cmd == "start":
-            self._start()
-        elif cmd in ("stop", "kill"):
+        elif cmd == "stop":
             self._stop()
+        elif cmd == "kill":
+            self._kill()
         elif cmd == "status":
             print(self._get_status_json())
         elif cmd == "is-recording":
-            sys.exit(0 if self._is_running() else 1)
-        elif cmd == "_pipe-process":
-            self._pipe_process()
-        elif cmd == "_wait-and-signal":
-            self._wait_and_signal()
+            sys.exit(0 if self._is_recording() else 1)
 
     def _notify(self, message, timeout=None):
-        cmd = ["notify-send", "Speech-to-Text", message, "-i", ICON]
-        if timeout:
-            cmd.extend(["-t", str(timeout)])
-        subprocess.run(cmd)
+        notify("Speech-to-Text", message, ICON, timeout)
 
-    def _signal_waybar(self):
-        subprocess.run(["waybar-signal.sh", "speech"], check=False)
+    def _is_recording(self):
+        if _send(Command.STATUS) is not None:
+            return True
 
-    def _find_processes(self):
-        return [p for p in psutil.process_iter(["name"]) if p.info["name"] == "waystt"]
-
-    def _is_running(self):
-        return len(self._find_processes()) > 0
-
-    def _get_output_mode(self):
-        for proc in self._find_processes():
-            try:
-                cmdline = proc.cmdline()
-                if any("ydotool" in arg for arg in cmdline):
-                    return "type"
-                if "_pipe-process" in cmdline:
-                    idx = cmdline.index("_pipe-process")
-                    if idx + 2 < len(cmdline) and cmdline[idx + 2] in (
-                        "stdout",
-                        "clipboard",
-                        "type",
-                    ):
-                        return cmdline[idx + 2]
-                if "stdout" in cmdline:
-                    return "stdout"
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        return "clipboard"
-
-    def _get_enrich_provider(self):
-        for proc in self._find_processes():
-            try:
-                cmdline = proc.cmdline()
-                cmdline_str = " ".join(cmdline)
-                if "_pipe-process" in cmdline_str:
-                    for i, arg in enumerate(cmdline):
-                        if arg == "_pipe-process" and i + 1 < len(cmdline):
-                            return cmdline[i + 1]
-                if "claude" in cmdline_str:
-                    return "claude"
-                if "codex" in cmdline_str:
-                    return "codex"
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        return None
-
-    def _get_children(self):
-        children = []
-        for proc in self._find_processes():
-            for child in proc.children(recursive=True):
-                try:
-                    children.append(child.name())
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-
-        return children
-
-    def _get_output_command(self):
-        mode = self.args.output
-        if mode == "stdout":
-            return ["cat"]
-        if mode == "clipboard":
-            return ["wl-copy"]
-        if mode == "type":
-            return [
-                "ydotool",
-                "type",
-                "--key-delay",
-                "10",
-                "--key-hold",
-                "10",
-                "--file",
-                "-",
-            ]
-
-        raise ValueError(
-            f"Invalid output mode: {mode}. Use 'stdout', 'clipboard' or 'type'"
-        )
-
-    def _enrich(self):
-        if hasattr(self.args, "enrich") and self.args.enrich:
-            return self.args.enrich_provider
-
-        return None
-
-    def _run_http_completion(self, transcription):
-        prompt = AI_USER_PROMPT.format(text=transcription)
-
-        body = {
-            "model": self.args.enrich_model,
-            "messages": [
-                {"role": "system", "content": AI_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-        }
-        if self.args.enrich_temperature is not None:
-            body["temperature"] = self.args.enrich_temperature
-        if self.args.enrich_top_p is not None:
-            body["top_p"] = self.args.enrich_top_p
-        body["reasoning_effort"] = self.args.enrich_thinking
-        if self.args.enrich_num_ctx:
-            body["options"] = {"num_ctx": self.args.enrich_num_ctx}
-
-        log.debug(
-            "HTTP completion request: %s",
-            json.dumps({**body, "messages": ["..."]}, indent=2),
-        )
-        payload = json.dumps(body).encode()
-
-        req = urllib.request.Request(
-            f"{self.args.enrich_base_url}/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.args.api_key}",
-                "User-Agent": "speech/1.0",
-            },
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                raw_body = resp.read()
-                log.debug(
-                    "HTTP %d, headers: %s", resp.status, dict(resp.headers.items())
-                )
-                log.debug(
-                    "HTTP raw body (%d bytes): %s", len(raw_body), raw_body[:2000]
-                )
-                data = json.loads(raw_body) if raw_body else None
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode(errors="replace")
-            log.error("HTTP %d: %s", e.code, error_body)
-            log.debug("HTTP error response body: %s", error_body)
-            raise
-
-        log.debug("HTTP completion response: %s", json.dumps(data, indent=2)[:2000])
-        if not data or "choices" not in data or not data["choices"]:
-            raise ValueError(f"unexpected API response: {data}")
-
-        return data["choices"][0]["message"]["content"]
-
-    def _run_ai_provider(self, transcription):
-        provider = self.args.provider
-        result = None
-
-        if provider == "http":
-            log.info(
-                "sending to %s/chat/completions (model: %s)",
-                self.args.enrich_base_url,
-                self.args.enrich_model,
-            )
-            try:
-                result = self._run_http_completion(transcription)
-                log.info("enrichment complete (%d chars)", len(result))
-            except Exception as e:
-                log.error("http completion failed: %s", e)
-                self._notify(f"HTTP enrichment failed: {e}")
-        elif provider == "claude":
-            log.info("sending to claude (model: haiku)")
-            prompt = AI_USER_PROMPT.format(text=transcription)
-            ai_proc = subprocess.run(
-                [
-                    "claude",
-                    "-p",
-                    "--model",
-                    "haiku",
-                    "--system-prompt",
-                    AI_SYSTEM_PROMPT,
-                    prompt,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if ai_proc.returncode == 0 and ai_proc.stdout.strip():
-                result = ai_proc.stdout.strip()
-                log.info("claude refinement complete (%d chars)", len(result))
-            else:
-                log.error("claude failed (exit %d)", ai_proc.returncode)
-        elif provider == "codex":
-            log.info("sending to codex")
-            prompt = AI_USER_PROMPT.format(text=transcription)
-            codex_prompt = f"{AI_SYSTEM_PROMPT}\n\n{prompt}"
-            ai_proc = subprocess.run(
-                ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
-                input=codex_prompt,
-                capture_output=True,
-                text=True,
-            )
-            if ai_proc.returncode == 0 and ai_proc.stdout.strip():
-                result = ai_proc.stdout.strip()
-                log.info("codex refinement complete (%d chars)", len(result))
-            else:
-                log.error("codex failed (exit %d)", ai_proc.returncode)
-
-        return result
-
-    def _get_pipe_command(self):
-        enrich = self._enrich()
-        if not enrich:
-            return self._get_output_command()
-
-        cmd = [sys.executable, __file__]
-        if self.args.verbose:
-            cmd.append("-v")
-        cmd += ["_pipe-process", enrich, self.args.output]
-        if self.args.enrich_base_url:
-            cmd.extend(["--enrich-base-url", self.args.enrich_base_url])
-        if self.args.enrich_model:
-            cmd.extend(["--enrich-model", self.args.enrich_model])
-        if self.args.enrich_temperature is not None:
-            cmd.extend(["--enrich-temperature", str(self.args.enrich_temperature)])
-        if self.args.enrich_top_p is not None:
-            cmd.extend(["--enrich-top-p", str(self.args.enrich_top_p)])
-        cmd.extend(["--enrich-thinking", self.args.enrich_thinking])
-        if self.args.enrich_num_ctx:
-            cmd.extend(["--enrich-num-ctx", str(self.args.enrich_num_ctx)])
-        if self.args.save:
-            cmd.append("--save")
-        if enrich == "http":
-            cmd.extend(["--api-key", os.environ.get("AI_KILIC_DEV_API_KEY", "")])
-
-        return cmd
-
-    def _build_stt_env(self):
-        if self.args.stt_provider != "http":
-            return None
-
-        env = os.environ.copy()
-        env["TRANSCRIPTION_PROVIDER"] = "openai"
-        env["OPENAI_BASE_URL"] = self.args.stt_base_url or "https://ai.kilic.dev/api/v1"
-        env["OPENAI_API_KEY"] = os.environ.get("AI_KILIC_DEV_API_KEY", "")
-        if self.args.stt_model:
-            env["WHISPER_MODEL"] = self.args.stt_model
-        log.info(
-            "remote stt: OPENAI_BASE_URL=%s WHISPER_MODEL=%s",
-            env["OPENAI_BASE_URL"],
-            self.args.stt_model or "(default)",
-        )
-
-        return env
-
-    def _wait_for_state(self, running, timeout=5):
-        for _ in range(int(timeout / 0.25)):
-            if self._is_running() == running:
-                self._signal_waybar()
-
-                return True
-            time.sleep(0.25)
-
-        return False
+        return self._adapter.is_recording()
 
     def _toggle(self):
-        if self._is_running():
-            log.info("waystt running, toggling recording")
-            self._toggle_recording()
-        else:
-            enrich = self._enrich()
-            log.info(
-                "waystt not running, starting (output=%s, enrich=%s)",
-                self.args.output,
-                enrich,
-            )
-            self._start()
+        if _send(Command.STOP) is not None:
+            # Press 2: a session is live. It handles the rest (enrich,
+            # output, exit). Session signals waybar itself at each phase
+            # transition, so press-2 has nothing to signal.
+            log.info("signaled running session to stop")
 
-    def _start(self):
-        if self._is_running():
-            self._notify("Speech-to-text is already running")
+            return
 
-            return False
+        # Press 1: no session. Own it.
+        assert self._output is not None, "toggle requires an output adapter"
+        output_mode = self._output.mode
+        enrich_provider = self._enricher.provider if self._enricher else None
+        log.info(
+            "starting session (output=%s, enrich=%s)",
+            output_mode.value,
+            enrich_provider.value if enrich_provider else None,
+        )
 
+        server = Session(output_mode, enrich_provider, self._adapter)
+        server.start()
         try:
-            pipe_cmd = self._get_pipe_command()
-            log.info("pipe command: %s", " ".join(pipe_cmd))
+            # The STT adapter subscribes to the backend's transcription
+            # stream: subscribing triggers recording if the backend is idle,
+            # or attaches to an in-flight one. The returned process blocks
+            # until the backend delivers the final transcription and closes
+            # stdout (on stop/cancel).
+            capture = self._adapter.capture()
+            stdout, _ = capture.communicate()
 
-            env = self._build_stt_env()
+            text = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+            if not text:
+                log.warning("empty transcription from capture socket")
+                self._notify("No transcription captured")
 
-            waystt_cmd = ["waystt", "--pipe-to"] + pipe_cmd
-            log.info("waystt command: %s", " ".join(waystt_cmd))
+                return
 
-            if self.args.output == "stdout":
-                log.info("running in synchronous/stdout mode")
-                enrich = self._enrich()
-                self._notify(
-                    "Speech-to-text started (output: stdout"
-                    + (f", enrich: {enrich}" if enrich else "")
-                    + ")"
-                )
-                subprocess.run(waystt_cmd, env=env)
-                self._signal_waybar()
-                log.info("stdout mode finished")
+            log.info("captured %d chars from socket", len(text))
 
-                return True
+            if self._enricher is not None:
+                server.set_phase(Phase.WORKING)
+                if self.args.save:
+                    log.info("saving raw transcription to clipboard before enrichment")
+                    subprocess.run(["wl-copy"], input=text, text=True)
+                self._notify("Enriching transcription...", timeout=3000)
+                enriched = self._enricher.enrich(text)
+                if enriched and enriched.strip():
+                    text = enriched.strip()
+                else:
+                    self._notify("Enrichment failed, using raw transcription")
 
-            log.info("starting waystt in background")
-            subprocess.Popen(
-                waystt_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-            )
-
-            if not self._wait_for_state(running=True):
-                log.error("waystt did not start within timeout")
-                self._notify("Failed to start speech-to-text: process did not start")
-
-                return False
-
-            log.info("waystt started, launching wait-and-signal watcher")
-            subprocess.Popen(
-                [sys.executable, __file__, "_wait-and-signal"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-
-            output_desc = {"clipboard": "clipboard", "type": "typing"}[self.args.output]
-            enrich = self._enrich()
-            enrich_desc = f", enrich: {enrich}" if enrich else ""
-            self._notify(f"Speech-to-text started (output: {output_desc}{enrich_desc})")
-
-            return True
-        except Exception as e:
-            self._notify(f"Failed to start speech-to-text: {e}")
-
-            return False
+            server.set_phase(Phase.OUTPUT)
+            self._output.write(text)
+            if self._enricher is not None:
+                self._notify("Done")
+        finally:
+            server.stop()
 
     def _stop(self):
-        if not self._is_running():
-            self._notify("Speech-to-text is not running")
+        if _send(Command.STOP) is None:
+            # No live session; forward to the backend for any orphan recording
+            # started outside speech.py. No session server means nobody else
+            # is going to signal waybar, so we do it here.
+            self._adapter.stop()
+            Session._signal_waybar()
 
-            return False
-
-        try:
-            procs = self._find_processes()
-            log.info("terminating %d waystt process(es)", len(procs))
-            for proc in procs:
-                proc.terminate()
-            for proc in procs:
-                try:
-                    proc.wait(timeout=5)
-                except psutil.TimeoutExpired:
-                    log.warning("process %d did not terminate, killing", proc.pid)
-                    proc.kill()
-            self._signal_waybar()
-            log.info("stopped")
-            self._notify("Speech-to-text stopped")
-
-            return True
-        except Exception as e:
-            self._notify(f"Failed to stop speech-to-text: {e}")
-
-            return False
-
-    def _toggle_recording(self):
-        if not self._is_running():
-            return False
-
-        try:
-            for proc in self._find_processes():
-                proc.send_signal(signal.SIGUSR1)
-            self._signal_waybar()
-
-            return True
-        except Exception as e:
-            self._notify(f"Failed to toggle recording: {e}")
-
-            return False
-
-    def _pipe_process(self):
-        log.info("reading transcription from stdin")
-        transcription = sys.stdin.read()
-        log.info("received %d chars from stdin", len(transcription))
-
-        if self.args.save:
-            log.info("saving raw transcription to clipboard before enrichment")
-            subprocess.run(["wl-copy"], input=transcription.strip(), text=True)
-
-        result = self._run_ai_provider(transcription)
-
-        if not result or not result.strip():
-            log.warning("enrichment failed, falling back to raw transcription")
-            self._notify("Enrichment failed, outputting raw transcription")
-            result = transcription
-
-        output_cmd = self._get_output_command()
-        log.info("outputting to %s (%s)", self.args.output, " ".join(output_cmd))
-        subprocess.run(output_cmd, input=result.strip(), text=True)
-
-        log.info("done")
-
-    def _wait_and_signal(self):
-        state_notifications = {
-            "working": "Processing transcription...",
-            "output": "Outputting transcription...",
-        }
-        last_state = None
-        while self._is_running():
-            state = self._get_speech_state()
-            if state != last_state:
-                self._signal_waybar()
-                msg = state_notifications.get(state)
-                if msg:
-                    self._notify(msg, timeout=3000)
-                last_state = state
-            time.sleep(0.1)
-        if last_state != "idle":
-            self._signal_waybar()
-            self._notify("Speech-to-text finished")
-
-    def _get_speech_state(self):
-        if not self._is_running():
-            return "idle"
-
-        children = self._get_children()
-        if any(c in ("cat", "wl-copy", "ydotool") for c in children):
-            return "output"
-        if any(c in ("claude", "node", "codex", "python3", "python") for c in children):
-            return "working"
-
-        return "recording"
+    def _kill(self):
+        if _send(Command.CANCEL) is None:
+            self._adapter.cancel()
+            Session._signal_waybar()
 
     def _get_status_json(self):
-        state = self._get_speech_state()
+        resp = _send(Command.STATUS)
+        state = resp.state if resp and resp.ok else None
 
-        if state == "idle":
+        if state is None:
+            if self._adapter.is_recording():
+                return json.dumps(
+                    {
+                        "class": Phase.RECORDING.value,
+                        "text": "󰍬",
+                        "tooltip": "Recording speech (no session)",
+                    }
+                )
             return json.dumps(
                 {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
             )
 
-        mode = self._get_output_mode()
-        icons = {"stdout": "󰞷", "clipboard": "󰅇", "type": "󰌌"}
-        labels = {"stdout": "stdout", "clipboard": "clipboard", "type": "typing"}
-        icon = icons.get(mode, "󰅇")
-        label = labels.get(mode, mode)
+        icons = {OutputMode.CLIPBOARD: "󰅇", OutputMode.TYPE: "󰌌"}
+        labels = {OutputMode.CLIPBOARD: "clipboard", OutputMode.TYPE: "typing"}
+        icon = icons[state.output]
+        label = labels[state.output]
 
-        enrich = self._get_enrich_provider()
-        enrich_icon = " 󰧑" if enrich else ""
-        enrich_label = f" ({enrich})" if enrich else ""
+        enrich_icon = " 󰧑" if state.enrich else ""
+        enrich_label = f" ({state.enrich.value})" if state.enrich else ""
 
         status_map = {
-            "recording": (
+            Phase.RECORDING: (
                 f"󰍬{enrich_icon} {icon}",
                 f"Recording speech{enrich_label} → {label}",
             ),
-            "working": (
+            Phase.WORKING: (
                 f"󰍬{enrich_icon} {icon}",
                 f"Processing transcription{enrich_label} → {label}",
             ),
-            "output": (
+            Phase.OUTPUT: (
                 icon,
                 f"Outputting transcription{enrich_label} → {label}",
             ),
         }
-        text, tooltip = status_map[state]
+        text, tooltip = status_map[state.phase]
 
-        return json.dumps({"class": state, "text": text, "tooltip": tooltip})
+        return json.dumps(
+            {"class": state.phase.value, "text": text, "tooltip": tooltip}
+        )
 
-def _add_common_args(parser):
-    parser.add_argument(
+def main():
+    parser = argparse.ArgumentParser(
+        description="Control speech-to-text via an STT adapter"
+    )
+    parser.add_argument("-v", "--verbose", action="store_true")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    toggle_parser = subparsers.add_parser("toggle")
+    toggle_parser.add_argument(
         "output",
-        choices=["stdout", "clipboard", "type"],
-        help="Output mode: 'clipboard' (wl-copy) or 'type' (ydotool)",
+        choices=["clipboard", "type"],
+        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
     )
-    parser.add_argument(
-        "--stt-provider",
-        choices=["http", "local"],
-        default="http",
-        help="STT provider (http: remote OpenAI-compatible, local: local whisper)",
-    )
-    parser.add_argument(
-        "--stt-base-url",
-        default="https://ai.kilic.dev/api/v1",
-        help="Base URL for remote STT provider",
-    )
-    parser.add_argument(
-        "--stt-model",
-        default="",
-        help="Whisper model for STT",
-    )
-    parser.add_argument(
+    toggle_parser.add_argument(
         "--enrich",
         action="store_true",
-        help="Enrich transcription through AI to fix typos and improve readability",
+        help="Enrich transcription through AI",
     )
-    parser.add_argument(
+    toggle_parser.add_argument(
         "--enrich-provider",
         choices=["http", "claude", "codex"],
         default="http",
-        help="AI provider for enrichment",
     )
-    parser.add_argument(
+    toggle_parser.add_argument(
         "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
-        help="Base URL for enrichment API",
     )
-    parser.add_argument(
-        "--enrich-model",
-        default=DEFAULT_MODEL,
-        help="Model to use for enrichment",
-    )
-    parser.add_argument(
-        "--enrich-temperature",
-        type=float,
-        help="Temperature for enrichment (omit to use server default)",
-    )
-    parser.add_argument(
-        "--enrich-top-p",
-        type=float,
-        help="Top-p for enrichment (omit to use server default)",
-    )
-    parser.add_argument(
+    toggle_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
+    toggle_parser.add_argument("--enrich-temperature", type=float)
+    toggle_parser.add_argument("--enrich-top-p", type=float)
+    toggle_parser.add_argument(
         "--enrich-thinking",
         nargs="?",
         const="high",
         default="none",
         choices=["high", "medium", "low", "none"],
-        help="Reasoning effort level (default: none, --enrich-thinking without value: high)",
     )
-    parser.add_argument(
-        "--enrich-num-ctx",
-        type=int,
-        help="Context window size for ollama",
-    )
-    parser.add_argument(
+    toggle_parser.add_argument("--enrich-num-ctx", type=int)
+    toggle_parser.add_argument(
         "--save",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Save transcription to clipboard before AI enrichment (default: True)",
+        help="Before AI enrichment, copy the raw transcription to the clipboard as a backup (default: True)",
     )
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Control waystt speech-to-text",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("-v", "--verbose", action="store_true", help="verbose logging")
-
-    subparsers = parser.add_subparsers(
-        dest="command", help="Command to execute", required=True
-    )
-
-    toggle_parser = subparsers.add_parser(
-        "toggle",
-        help="Toggle recording (start if not running, or send SIGUSR1 if running)",
-    )
-    _add_common_args(toggle_parser)
-
-    start_parser = subparsers.add_parser("start", help="Start speech-to-text")
-    _add_common_args(start_parser)
-    start_parser.set_defaults(stt_model="distil-large-v3")
-
-    enrich_process_parser = subparsers.add_parser(
-        "_pipe-process", help=argparse.SUPPRESS
-    )
-    enrich_process_parser.add_argument("provider", choices=["http", "claude", "codex"])
-    enrich_process_parser.add_argument(
-        "output", choices=["stdout", "clipboard", "type"]
-    )
-    enrich_process_parser.add_argument(
-        "--enrich-base-url", default="https://ai.kilic.dev/api/v1"
-    )
-    enrich_process_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
-    enrich_process_parser.add_argument("--enrich-temperature", type=float)
-    enrich_process_parser.add_argument("--enrich-top-p", type=float)
-    enrich_process_parser.add_argument("--enrich-thinking", default="none")
-    enrich_process_parser.add_argument("--enrich-num-ctx", type=int)
-    enrich_process_parser.add_argument("--api-key", default="")
-    enrich_process_parser.add_argument("--save", action="store_true")
-
-    subparsers.add_parser("_wait-and-signal", help=argparse.SUPPRESS)
-    subparsers.add_parser("stop", help="Stop waystt process")
-    subparsers.add_parser("kill", help="Stop waystt process (alias for 'stop')")
-    subparsers.add_parser("status", help="Get speech-to-text status (JSON for waybar)")
-    subparsers.add_parser(
-        "is-recording", help="Check if waystt is running (exit code 0 if yes)"
-    )
+    subparsers.add_parser("stop")
+    subparsers.add_parser("kill")
+    subparsers.add_parser("status")
+    subparsers.add_parser("is-recording")
 
     args = parser.parse_args()
 
@@ -641,7 +488,36 @@ def main():
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
 
-    Speech(args).run()
+    enricher: Optional[EnrichAdapter] = None
+    if getattr(args, "enrich", False):
+        match EnrichProvider(args.enrich_provider):
+            case EnrichProvider.HTTP:
+                enricher = HttpEnrichAdapter(
+                    system_prompt=AI_SYSTEM_PROMPT,
+                    user_prompt_template=AI_USER_PROMPT,
+                    base_url=args.enrich_base_url,
+                    model=args.enrich_model,
+                    api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                    temperature=args.enrich_temperature,
+                    top_p=args.enrich_top_p,
+                    thinking=args.enrich_thinking,
+                    num_ctx=args.enrich_num_ctx,
+                    user_agent="speech/1.0",
+                )
+            case EnrichProvider.CLAUDE:
+                enricher = ClaudeEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+            case EnrichProvider.CODEX:
+                enricher = CodexEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+
+    output: Optional[OutputAdapter] = None
+    if hasattr(args, "output"):
+        match OutputMode(args.output):
+            case OutputMode.CLIPBOARD:
+                output = ClipboardOutputAdapter()
+            case OutputMode.TYPE:
+                output = TypeOutputAdapter()
+
+    Speech(args, HyprwhsprAdapter(), enricher, output).run()
 
 if __name__ == "__main__":
     main()

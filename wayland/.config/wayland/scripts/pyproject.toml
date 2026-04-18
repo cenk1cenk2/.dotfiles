@@ -1,0 +1,5 @@
+[tool.ty.environment]
+extra-paths = ["."]
+
+[tool.pyright]
+extraPaths = ["."]
