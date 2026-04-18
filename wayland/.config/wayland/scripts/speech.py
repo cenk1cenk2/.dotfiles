@@ -14,7 +14,8 @@ from enum import StrEnum
 from typing import Optional, Protocol
 
 from lib import (
-    DEFAULT_MODEL,
+    DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_ENRICH_MODEL,
     EnrichAdapterClaude,
     OutputAdapterClipboard,
     EnrichAdapterCodex,
@@ -22,12 +23,12 @@ from lib import (
     EnrichProvider,
     EnrichAdapterHttp,
     OutputAdapter,
-    OutputAdapterStdout,
     OutputMode,
     OutputAdapterType,
     load_prompt,
     notify,
     signal_waybar,
+    OutputAdapterStdout,
 )
 
 class STTAdapter(Protocol):
@@ -173,7 +174,7 @@ SOCKET_PATH = os.path.join(
 AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
-def _send(cmd: Command, **extra) -> Optional[Response]:
+def _send(cmd: Command, **kwargs) -> Optional[Response]:
     """Deliver a command to the running session over the Unix socket.
 
     Extra kwargs become top-level fields in the JSON payload. The server
@@ -198,7 +199,7 @@ def _send(cmd: Command, **extra) -> Optional[Response]:
         return None
 
     try:
-        payload = json.dumps({"cmd": cmd.value, **extra}) + "\n"
+        payload = json.dumps({"cmd": cmd.value, **kwargs}) + "\n"
         sock.sendall(payload.encode())
         chunks = []
         while True:
@@ -331,7 +332,7 @@ class Session:
                                 system_prompt=AI_SYSTEM_PROMPT,
                                 user_prompt_template=AI_USER_PROMPT,
                                 base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
-                                model=spec.model or DEFAULT_MODEL,
+                                model=spec.model or DEFAULT_ENRICH_MODEL,
                                 api_key=spec.api_key or "",
                                 temperature=spec.temperature,
                                 top_p=spec.top_p,
@@ -550,8 +551,16 @@ class Speech:
                 {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
             )
 
-        icons = {OutputMode.CLIPBOARD: "󰅇", OutputMode.TYPE: "󰌌"}
-        labels = {OutputMode.CLIPBOARD: "clipboard", OutputMode.TYPE: "typing"}
+        icons = {
+            OutputMode.CLIPBOARD: "󰅇",
+            OutputMode.TYPE: "󰌌",
+            OutputMode.STDOUT: "󰸾",
+        }
+        labels = {
+            OutputMode.CLIPBOARD: "clipboard",
+            OutputMode.TYPE: "typing",
+            OutputMode.STDOUT: "stdout",
+        }
         icon = icons[state.output]
         label = labels[state.output]
 
@@ -592,9 +601,9 @@ def main():
     toggle_parser.add_argument(
         "--output",
         type=OutputMode,
-        choices=[OutputMode.CLIPBOARD, OutputMode.TYPE, OutputMode.STDOUT],
+        choices=list(OutputMode),
         default=OutputMode.CLIPBOARD,
-        help="Output mode: 'clipboard' (wl-copy), 'type' (paste via hyprwhspr), or 'stdout'",
+        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
     )
     toggle_parser.add_argument(
         "--enrich",
@@ -604,13 +613,13 @@ def main():
     toggle_parser.add_argument(
         "--enrich-provider",
         choices=["http", "claude", "codex"],
-        default="http",
+        default=DEFAULT_ENRICH_ADAPTER,
     )
     toggle_parser.add_argument(
         "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    toggle_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
+    toggle_parser.add_argument("--enrich-model", default=DEFAULT_ENRICH_MODEL)
     toggle_parser.add_argument("--enrich-temperature", type=float)
     toggle_parser.add_argument("--enrich-top-p", type=float)
     toggle_parser.add_argument(
