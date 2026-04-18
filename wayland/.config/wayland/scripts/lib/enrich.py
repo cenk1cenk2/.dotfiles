@@ -1,35 +1,24 @@
+"""AI enrichment backends.
+
+Each adapter carries its own system + user prompt templates plus any
+transport config; callers pick one based on args."""
+
 import json
 import logging
-import os
 import subprocess
-import sys
 import urllib.error
 import urllib.request
-from enum import StrEnum
 from typing import Any, Optional, Protocol
+from enum import StrEnum
 
 DEFAULT_MODEL = "gemma4:31b-cloud"
-
-log = logging.getLogger(__name__)
-
-class OutputMode(StrEnum):
-    CLIPBOARD = "clipboard"
-    TYPE = "type"
-    STDOUT = "stdout"
 
 class EnrichProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
     CODEX = "codex"
 
-class OutputAdapter(Protocol):
-    """Sink that writes final text somewhere visible to the user."""
-
-    mode: OutputMode
-
-    def write(self, text: str) -> None:
-        """Emit the text. Blocking; raises on failure."""
-        ...
+log = logging.getLogger(__name__)
 
 class EnrichAdapter(Protocol):
     """AI backend that rewrites a raw text through a system+user prompt."""
@@ -39,45 +28,6 @@ class EnrichAdapter(Protocol):
     def enrich(self, text: str) -> Optional[str]:
         """Return the cleaned text, or None on failure."""
         ...
-
-class ClipboardOutputAdapter:
-    """Copies text to the Wayland clipboard via `wl-copy`."""
-
-    mode = OutputMode.CLIPBOARD
-
-    def write(self, text: str) -> None:
-        subprocess.run(["wl-copy"], input=text, text=True, check=False)
-
-class TypeOutputAdapter:
-    """Types text into the focused window via `ydotool`."""
-
-    mode = OutputMode.TYPE
-
-    def write(self, text: str) -> None:
-        subprocess.run(
-            [
-                "ydotool",
-                "type",
-                "--key-delay",
-                "10",
-                "--key-hold",
-                "10",
-                "--file",
-                "-",
-            ],
-            input=text,
-            text=True,
-            check=False,
-        )
-
-class StdoutOutputAdapter:
-    """Writes text to stdout."""
-
-    mode = OutputMode.STDOUT
-
-    def write(self, text: str) -> None:
-        sys.stdout.write(text)
-        sys.stdout.flush()
 
 class HttpEnrichAdapter:
     """OpenAI-compatible chat-completions endpoint."""
@@ -210,22 +160,3 @@ class CodexEnrichAdapter:
             return None
 
         return proc.stdout.strip()
-
-def notify(title: str, message: str, icon: str, timeout: Optional[int] = None) -> None:
-    """Send a desktop notification via notify-send."""
-    cmd = ["notify-send", title, message, "-i", icon]
-    if timeout:
-        cmd.extend(["-t", str(timeout)])
-    subprocess.run(cmd, check=False)
-
-def signal_waybar(module: str) -> None:
-    """Poke waybar to re-render the named custom module."""
-    subprocess.run(["waybar-signal.sh", module], check=False)
-
-def load_prompt(filename: str, relative_to: str) -> str:
-    """Read a text file living next to the caller.
-
-    Pass `relative_to=__file__` from the calling module."""
-    path = os.path.join(os.path.dirname(os.path.abspath(relative_to)), filename)
-    with open(path) as f:
-        return f.read().strip()
