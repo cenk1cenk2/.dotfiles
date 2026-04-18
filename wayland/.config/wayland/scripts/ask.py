@@ -289,7 +289,23 @@ class AskWindow(Gtk.ApplicationWindow):
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, True)
         Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
-        self.set_default_size(420, -1)
+        self.set_default_size(self._overlay_width(), -1)
+
+    @staticmethod
+    def _overlay_width(fraction: float = 0.4) -> int:
+        """40% of the primary monitor's logical width (height is driven by the
+        top+bottom anchor). Falls back to a sane default if monitor info is
+        unavailable — e.g., no display connected or an empty monitor list."""
+        fallback = 520
+        display = Gdk.Display.get_default()
+        if display is None:
+            return fallback
+        monitors = display.get_monitors()
+        if monitors.get_n_items() == 0:
+            return fallback
+        geometry = monitors.get_item(0).get_geometry()
+
+        return max(320, int(geometry.width * fraction))
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.add_css_class("ask-root")
