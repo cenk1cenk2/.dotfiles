@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -92,7 +93,7 @@ class HyprwhsprAdapter:
 class Command(StrEnum):
     STATUS = "status"
     STOP = "stop"
-    CANCEL = "cancel"
+    KILL = "kill"
 
 class Phase(StrEnum):
     RECORDING = "recording"
@@ -202,6 +203,14 @@ class Session:
         self._thread: Optional[threading.Thread] = None
 
     def start(self):
+        # Become our own process group leader so a KILL command can take out
+        # every subprocess we've spawned (capture client, enrichment CLIs,
+        # output commands) in one signal.
+        try:
+            os.setpgrp()
+        except OSError as e:
+            log.warning("setpgrp failed: %s; KILL may leak subprocesses", e)
+
         try:
             os.unlink(SOCKET_PATH)
         except FileNotFoundError:
@@ -254,9 +263,12 @@ class Session:
         if cmd is Command.STOP:
             self._adapter.stop()
             return Response(ok=True)
-        if cmd is Command.CANCEL:
+        if cmd is Command.KILL:
+            # Cancel the daemon so it isn't left transcribing into a dead
+            # socket, then SIGKILL our process group. This does not return
+            # — the client sees EOF on its socket instead of a response.
             self._adapter.cancel()
-            return Response(ok=True)
+            os.killpg(0, signal.SIGKILL)
 
         return Response(ok=False, error=f"unhandled command: {cmd.value}")
 
@@ -380,7 +392,9 @@ class Speech:
             Session._signal_waybar()
 
     def _kill(self):
-        if _send(Command.CANCEL) is None:
+        if _send(Command.KILL) is None:
+            # No live session — nothing to tear down, but the daemon may
+            # still be recording via some other entry point, so cancel it.
             self._adapter.cancel()
             Session._signal_waybar()
 

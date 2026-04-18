@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 from typing import Optional
@@ -154,11 +155,15 @@ class Copywriter:
 
             return
 
+        # Each worker is its own session/group leader (see `os.setsid()` in
+        # `_run`), so its PID doubles as a PGID. SIGKILL on the group takes
+        # the worker AND any enrichment subprocess (claude/codex/wl-copy)
+        # down together.
         for p in workers:
-            log.info("killing copywriter worker pid=%d", p.pid)
+            log.info("killing copywriter worker group pgid=%d", p.pid)
             try:
-                p.kill()
-            except psutil.NoSuchProcess:
+                os.killpg(p.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
                 pass
         self._notify("Copywriter killed")
         signal_waybar(WAYBAR_MODULE)
