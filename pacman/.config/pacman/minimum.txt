@@ -13,7 +13,9 @@ clamav
 clipboard
 clipboard-sync
 cliphist
+clipse
 cmake
+cpio
 cronie
 cups
 dconf-editor
@@ -86,7 +88,6 @@ pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
-wiremix
 python-obsws
 qt5-styleplugins
 qt5-wayland
@@ -99,6 +100,7 @@ seahorse
 sed
 slurp
 smartmontools
+snapshot
 spotify
 stow
 strace
@@ -131,6 +133,7 @@ wdisplays
 wev
 wget
 which
+wiremix
 wireplumber
 wl-clipboard
 wl-gammarelay-rs

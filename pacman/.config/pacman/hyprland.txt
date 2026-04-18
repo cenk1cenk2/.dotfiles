@@ -1,6 +1,4 @@
 # hyprqt6engine
-clipse
-cpio
 hypr-zoom
 hyprcursor
 hypridle
