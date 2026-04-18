@@ -8,10 +8,24 @@ import socket
 import subprocess
 import sys
 import threading
-import urllib.request
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Optional, Protocol
+
+from common import (
+    ClaudeEnrichAdapter,
+    ClipboardOutputAdapter,
+    CodexEnrichAdapter,
+    EnrichAdapter,
+    EnrichProvider,
+    HttpEnrichAdapter,
+    OutputAdapter,
+    OutputMode,
+    TypeOutputAdapter,
+    load_prompt,
+    notify,
+    signal_waybar,
+)
 
 DEFAULT_MODEL = "gemma4:31b-cloud"
 
@@ -41,28 +55,6 @@ class STTAdapter(Protocol):
         attach to an in-flight recording otherwise. The returned process
         must close stdout after delivering the final transcription so the
         caller can drive it with `communicate()`."""
-        ...
-
-class OutputAdapter(Protocol):
-    """Contract for a sink that writes final transcription text somewhere
-    visible to the user."""
-
-    mode: "OutputMode"
-
-    def write(self, text: str) -> None:
-        """Emit the text. Blocking; raise on failure."""
-        ...
-
-class EnrichAdapter(Protocol):
-    """Contract for an AI provider that rewrites raw speech transcriptions.
-
-    Each implementation carries its own connection/config; the caller picks
-    one via `make_enrich_adapter(args)`."""
-
-    provider: "EnrichProvider"
-
-    def enrich(self, transcription: str) -> Optional[str]:
-        """Return the cleaned transcription, or None on failure."""
         ...
 
 class HyprwhsprAdapter:
@@ -108,45 +100,6 @@ class Phase(StrEnum):
     WORKING = "working"
     OUTPUT = "output"
 
-class OutputMode(StrEnum):
-    CLIPBOARD = "clipboard"
-    TYPE = "type"
-
-class EnrichProvider(StrEnum):
-    HTTP = "http"
-    CLAUDE = "claude"
-    CODEX = "codex"
-
-class ClipboardOutputAdapter:
-    """Copies text to the Wayland clipboard via `wl-copy`."""
-
-    mode = OutputMode.CLIPBOARD
-
-    def write(self, text: str) -> None:
-        subprocess.run(["wl-copy"], input=text, text=True, check=False)
-
-class TypeOutputAdapter:
-    """Types text into the focused window via `ydotool`."""
-
-    mode = OutputMode.TYPE
-
-    def write(self, text: str) -> None:
-        subprocess.run(
-            [
-                "ydotool",
-                "type",
-                "--key-delay",
-                "10",
-                "--key-hold",
-                "10",
-                "--file",
-                "-",
-            ],
-            input=text,
-            text=True,
-            check=False,
-        )
-
 @dataclass
 class Request:
     cmd: Command
@@ -190,128 +143,8 @@ SOCKET_PATH = os.path.join(
     "wayland-speech.sock",
 )
 
-def _load_system_prompt():
-    with open(
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "speech.md")
-    ) as f:
-        return f.read().strip()
-
-AI_SYSTEM_PROMPT = _load_system_prompt()
-
+AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
-
-class HttpEnrichAdapter:
-    """OpenAI-compatible chat-completions endpoint (e.g. ai.kilic.dev)."""
-
-    provider = EnrichProvider.HTTP
-
-    def __init__(
-        self,
-        base_url: str,
-        model: str,
-        api_key: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        thinking: str = "none",
-        num_ctx: Optional[int] = None,
-    ):
-        self.base_url = base_url
-        self.model = model
-        self.api_key = api_key
-        self.temperature = temperature
-        self.top_p = top_p
-        self.thinking = thinking
-        self.num_ctx = num_ctx
-
-    def enrich(self, transcription: str) -> Optional[str]:
-        body = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": AI_SYSTEM_PROMPT},
-                {"role": "user", "content": AI_USER_PROMPT.format(text=transcription)},
-            ],
-            "reasoning_effort": self.thinking,
-        }
-        if self.temperature is not None:
-            body["temperature"] = self.temperature
-        if self.top_p is not None:
-            body["top_p"] = self.top_p
-        if self.num_ctx:
-            body["options"] = {"num_ctx": self.num_ctx}
-
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(body).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-                "User-Agent": "speech/1.0",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            log.error("HTTP %d: %s", e.code, e.read().decode(errors="replace"))
-            return None
-        except Exception as e:
-            log.error("http completion failed: %s", e)
-            return None
-
-        if not data or "choices" not in data or not data["choices"]:
-            log.error("unexpected API response: %s", data)
-            return None
-
-        result = data["choices"][0]["message"]["content"]
-        log.info("enrichment complete (%d chars)", len(result))
-
-        return result
-
-class ClaudeEnrichAdapter:
-    """Claude CLI (haiku model)."""
-
-    provider = EnrichProvider.CLAUDE
-
-    def enrich(self, transcription: str) -> Optional[str]:
-        proc = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--model",
-                "haiku",
-                "--system-prompt",
-                AI_SYSTEM_PROMPT,
-                AI_USER_PROMPT.format(text=transcription),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("claude enrichment failed (exit=%d)", proc.returncode)
-            return None
-
-        return proc.stdout.strip()
-
-class CodexEnrichAdapter:
-    """Codex CLI in ephemeral mode."""
-
-    provider = EnrichProvider.CODEX
-
-    def enrich(self, transcription: str) -> Optional[str]:
-        prompt = f"{AI_SYSTEM_PROMPT}\n\n{AI_USER_PROMPT.format(text=transcription)}"
-        proc = subprocess.run(
-            ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("codex enrichment failed (exit=%d)", proc.returncode)
-            return None
-
-        return proc.stdout.strip()
 
 def _send(cmd: Command) -> Optional[Response]:
     """Deliver a command to the running session over the Unix socket.
@@ -384,9 +217,10 @@ class Session:
 
     @staticmethod
     def _signal_waybar():
-        subprocess.run(["waybar-signal.sh", "speech"], check=False)
+        signal_waybar("speech")
 
     def _serve(self):
+        assert self._sock is not None, "_serve requires start() to have run"
         while True:
             try:
                 conn, _ = self._sock.accept()
@@ -472,10 +306,7 @@ class Speech:
             sys.exit(0 if self._is_recording() else 1)
 
     def _notify(self, message, timeout=None):
-        cmd = ["notify-send", "Speech-to-Text", message, "-i", ICON]
-        if timeout:
-            cmd.extend(["-t", str(timeout)])
-        subprocess.run(cmd)
+        notify("Speech-to-Text", message, ICON, timeout)
 
     def _is_recording(self):
         if _send(Command.STATUS) is not None:
@@ -662,6 +493,8 @@ def main():
         match EnrichProvider(args.enrich_provider):
             case EnrichProvider.HTTP:
                 enricher = HttpEnrichAdapter(
+                    system_prompt=AI_SYSTEM_PROMPT,
+                    user_prompt_template=AI_USER_PROMPT,
                     base_url=args.enrich_base_url,
                     model=args.enrich_model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
@@ -669,11 +502,12 @@ def main():
                     top_p=args.enrich_top_p,
                     thinking=args.enrich_thinking,
                     num_ctx=args.enrich_num_ctx,
+                    user_agent="speech/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = ClaudeEnrichAdapter()
+                enricher = ClaudeEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
             case EnrichProvider.CODEX:
-                enricher = CodexEnrichAdapter()
+                enricher = CodexEnrichAdapter(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
 
     output: Optional[OutputAdapter] = None
     if hasattr(args, "output"):
