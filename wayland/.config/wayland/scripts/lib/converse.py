@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 from typing import Any, Iterator, Optional, Protocol
 
 import requests
@@ -15,6 +16,41 @@ import requests
 from .enrich import EnrichProvider
 
 log = logging.getLogger(__name__)
+
+_STDERR_DRAIN_CAP = 16384
+
+def _spawn_stderr_drain(proc: subprocess.Popen) -> tuple[threading.Thread, list[str]]:
+    """Consume stderr in a background thread so the child never blocks on a
+    full pipe while we iterate stdout. Keeps at most `_STDERR_DRAIN_CAP` bytes
+    for later inclusion in error messages."""
+    buf: list[str] = []
+    stream = proc.stderr
+    if stream is None:
+        dummy = threading.Thread(target=lambda: None, daemon=True)
+        dummy.start()
+
+        return dummy, buf
+
+    def drain():
+        try:
+            for line in stream:
+                if sum(len(x) for x in buf) < _STDERR_DRAIN_CAP:
+                    buf.append(line)
+        except Exception:
+            pass
+
+    t = threading.Thread(target=drain, daemon=True)
+    t.start()
+
+    return t, buf
+
+def _close_pipes(proc: subprocess.Popen) -> None:
+    for pipe in (proc.stdout, proc.stderr, proc.stdin):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
 
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
@@ -97,6 +133,7 @@ class ConversationAdapterHttp:
             raise RuntimeError(f"http {resp.status_code}: {detail}")
 
         collected: list[str] = []
+        stream_ok = False
         try:
             for line in resp.iter_lines(decode_unicode=True):
                 if not line or not line.startswith("data:"):
@@ -117,12 +154,19 @@ class ConversationAdapterHttp:
                 if chunk:
                     collected.append(chunk)
                     yield chunk
+            stream_ok = True
         finally:
             resp.close()
-
-        self.messages.append(
-            {"role": "assistant", "content": "".join(collected)},
-        )
+            if stream_ok:
+                self.messages.append(
+                    {"role": "assistant", "content": "".join(collected)},
+                )
+            else:
+                # Roll back the user turn so history stays consistent: a
+                # failed stream leaves no user/assistant pair behind, and
+                # the next turn won't send two consecutive user messages.
+                if self.messages and self.messages[-1].get("role") == "user":
+                    self.messages.pop()
 
     def close(self) -> None:
         self.messages = [{"role": "system", "content": self.system_prompt}]
@@ -169,7 +213,9 @@ class ConversationAdapterClaude:
         self._proc = proc
         assert proc.stdout is not None
 
+        drain_thread, stderr_buf = _spawn_stderr_drain(proc)
         error_text: Optional[str] = None
+        rc: Optional[int] = None
         try:
             for raw in proc.stdout:
                 line = raw.strip()
@@ -198,27 +244,34 @@ class ConversationAdapterClaude:
                         if event.get("is_error"):
                             error_text = event.get("result") or "claude reported error"
         finally:
-            rc = proc.wait()
-            stderr = proc.stderr.read() if proc.stderr else ""
+            try:
+                rc = proc.wait()
+            except Exception:
+                rc = -1
+            drain_thread.join(timeout=1)
+            _close_pipes(proc)
             self._proc = None
 
+        stderr = "".join(stderr_buf)
         if error_text is not None:
             log.error("claude error: %s", error_text)
             raise RuntimeError(f"claude: {error_text}")
         if rc != 0:
-            log.error("claude exited %d: %s", rc, stderr[:500])
+            log.error("claude exited %s: %s", rc, stderr[:500])
             raise RuntimeError(f"claude exited {rc}: {stderr[:200]}")
 
     def close(self) -> None:
-        if self._proc is not None:
+        proc = self._proc
+        if proc is not None:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
+                proc.terminate()
+                proc.wait(timeout=2)
             except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
                 try:
-                    self._proc.kill()
+                    proc.kill()
                 except (ProcessLookupError, OSError):
                     pass
+            _close_pipes(proc)
             self._proc = None
         self._session_id = None
 
@@ -269,6 +322,8 @@ class ConversationAdapterCodex:
         self._proc = proc
         assert proc.stdout is not None
 
+        drain_thread, stderr_buf = _spawn_stderr_drain(proc)
+        rc: Optional[int] = None
         try:
             for raw in proc.stdout:
                 line = raw.strip()
@@ -292,23 +347,30 @@ class ConversationAdapterCodex:
                             if text:
                                 yield text
         finally:
-            rc = proc.wait()
-            stderr = proc.stderr.read() if proc.stderr else ""
+            try:
+                rc = proc.wait()
+            except Exception:
+                rc = -1
+            drain_thread.join(timeout=1)
+            _close_pipes(proc)
             self._proc = None
 
+        stderr = "".join(stderr_buf)
         if rc != 0:
-            log.error("codex exited %d: %s", rc, stderr[:500])
+            log.error("codex exited %s: %s", rc, stderr[:500])
             raise RuntimeError(f"codex exited {rc}: {stderr[:200]}")
 
     def close(self) -> None:
-        if self._proc is not None:
+        proc = self._proc
+        if proc is not None:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2)
+                proc.terminate()
+                proc.wait(timeout=2)
             except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
                 try:
-                    self._proc.kill()
+                    proc.kill()
                 except (ProcessLookupError, OSError):
                     pass
+            _close_pipes(proc)
             self._proc = None
         self._session_id = None

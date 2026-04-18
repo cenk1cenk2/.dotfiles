@@ -8,6 +8,7 @@ Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -260,6 +261,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._adapter = adapter
         self._text = ""
         self._streaming = False
+        self._alive = True
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -331,8 +333,13 @@ class AskWindow(Gtk.ApplicationWindow):
         message = user_message.strip()
         if not message:
             return
+        if self._streaming:
+            log.info("ignoring turn while streaming")
+
+            return
         self._append_user_turn(message)
         self._streaming = True
+        self._compose.set_sensitive(False)
         threading.Thread(
             target=self._run_turn, args=(message,), daemon=True
         ).start()
@@ -347,15 +354,25 @@ class AskWindow(Gtk.ApplicationWindow):
     def _run_turn(self, user_message: str) -> None:
         try:
             for chunk in self._adapter.turn(user_message):
+                if not self._alive:
+                    return
                 GLib.idle_add(self.append, chunk)
         except Exception as e:
+            if not self._alive:
+                # Window was closed mid-stream; adapter.close() terminated
+                # the backend and the resulting error is expected. Swallow.
+                return
             log.error("turn failed: %s", e)
             GLib.idle_add(self.append, f"\n\n*error: {e}*\n")
         finally:
-            GLib.idle_add(self._mark_idle)
+            if self._alive:
+                GLib.idle_add(self._mark_idle)
 
     def _mark_idle(self) -> bool:
         self._streaming = False
+        if self._alive:
+            self._compose.set_sensitive(True)
+            self._compose.grab_focus()
 
         return False
 
@@ -423,12 +440,31 @@ class AskWindow(Gtk.ApplicationWindow):
         return False
 
     def _on_close_request(self, _window) -> bool:
+        self._alive = False
         try:
             self._adapter.close()
         except Exception as e:
             log.warning("adapter close failed: %s", e)
 
         return False
+
+def _socket_is_live() -> bool:
+    """Probe the session socket without sending a command. Returns True if
+    a server accepted our connect, False if the file is stale / absent."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(1)
+    try:
+        probe.connect(SOCKET_PATH)
+
+        return True
+    except (ConnectionRefusedError, FileNotFoundError):
+        return False
+    except OSError as e:
+        log.warning("socket probe failed: %s", e)
+
+        return False
+    finally:
+        probe.close()
 
 def _send(cmd: str, **extra) -> Optional[dict]:
     """Send a one-shot JSON command to the running session.
@@ -482,14 +518,31 @@ class Session:
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            os.unlink(SOCKET_PATH)
-        except FileNotFoundError:
-            pass
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(SOCKET_PATH)
+            sock.bind(SOCKET_PATH)
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                sock.close()
+                raise
+            # Socket file exists. Probe to tell live owner from stale file:
+            # a live owner answers connect; a stale file gives ECONNREFUSED.
+            # Only unlink after confirming stale, so we don't race another
+            # starting owner into a two-windows-one-path state.
+            if _socket_is_live():
+                sock.close()
+                raise RuntimeError(
+                    f"another ask session is already running at {SOCKET_PATH}"
+                )
+            try:
+                os.unlink(SOCKET_PATH)
+            except FileNotFoundError:
+                pass
+            sock.bind(SOCKET_PATH)
+
         os.chmod(SOCKET_PATH, 0o600)
-        self._sock.listen(4)
+        sock.listen(4)
+        self._sock = sock
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
