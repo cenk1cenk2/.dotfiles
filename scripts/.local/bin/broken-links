@@ -13,18 +13,18 @@ usage() {
     cat >&2 <<'EOF'
 Usage:
   broken-links ls [<dir>...]
-  broken-links rm [--force] [<dir>...]
+  broken-links rm [-f | --force] [<dir>...]
 
 Commands:
   ls [<dir>...]                 List broken symlinks under each <dir>.
-  rm [--force] [<dir>...]       Delete broken symlinks. Prompts for each
-                                unless --force is given.
+  rm [-f|--force] [<dir>...]    Delete broken symlinks. Prompts for each
+                                unless -f / --force is given.
 
 Directories default to "." when none are given.
 
 Examples:
   broken-links ls ~/.config ~/.local
-  broken-links rm --force ~/.cache
+  broken-links rm -f ~/.cache
 EOF
     exit 1
 }
