@@ -9,6 +9,29 @@ into the live window instead of opening a new one."""
 
 import os
 import sys
+import argparse
+import errno
+import json
+import logging
+import socket
+import threading
+from typing import Optional
+
+from markdown_it import MarkdownIt
+
+from lib import (
+    DEFAULT_CONVERSE_ADAPTER,
+    DEFAULT_CONVERSE_MODEL,
+    ConversationAdapter,
+    ConversationAdapterClaude,
+    ConversationAdapterCodex,
+    ConversationAdapterHttp,
+    ConversationProvider,
+    InputAdapterClipboard,
+    InputAdapterStdin,
+    InputMode,
+    load_prompt,
+)
 
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
@@ -28,31 +51,7 @@ def _ensure_layer_shell_preload() -> None:
 
 _ensure_layer_shell_preload()
 
-import argparse
-import errno
-import json
-import logging
-import socket
-import threading
-from typing import Optional
-
-from markdown_it import MarkdownIt
-
-from lib import (
-    DEFAULT_CONVERSE_ADAPTER,
-    DEFAULT_CONVERSE_MODEL,
-    ConversationAdapter,
-    ConversationAdapterClaude,
-    ConversationAdapterCodex,
-    ConversationAdapterHttp,
-    EnrichProvider,
-    InputAdapterClipboard,
-    InputAdapterStdin,
-    InputMode,
-    load_prompt,
-)
-
-import gi
+import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -355,6 +354,9 @@ class AskWindow(Gtk.ApplicationWindow):
             log.info("ignoring turn while streaming")
 
             return
+        if not self.get_visible():
+            # Escape hid the overlay; a new turn brings it back.
+            self.set_visible(True)
         self._append_user_turn(message)
         self._streaming = True
         self._compose.set_sensitive(False)
@@ -448,7 +450,11 @@ class AskWindow(Gtk.ApplicationWindow):
             self.close()
             return True
         if keyval == Gdk.KEY_Escape:
-            self.close()
+            # Hide-not-close: session + socket stay alive so the next
+            # forwarder invocation (or a new speech turn) re-shows the
+            # overlay and continues the conversation. Ctrl+Q / header ✕
+            # remain the hard-close path.
+            self.set_visible(False)
             return True
 
         return False
@@ -525,7 +531,7 @@ class Session:
     accepts connections from forwarder invocations and dispatches their
     `turn` / `status` commands back onto the GTK main thread."""
 
-    def __init__(self, window: AskWindow, provider: EnrichProvider):
+    def __init__(self, window: AskWindow, provider: ConversationProvider):
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
@@ -621,9 +627,9 @@ class Session:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
 def _build_adapter(args) -> ConversationAdapter:
-    provider = EnrichProvider(args.converse_provider)
+    provider = ConversationProvider(args.converse_provider)
     match provider:
-        case EnrichProvider.HTTP:
+        case ConversationProvider.HTTP:
             features = {k: True for k in args.features} if args.features else None
 
             return ConversationAdapterHttp(
@@ -639,9 +645,9 @@ def _build_adapter(args) -> ConversationAdapter:
                 features=features,
                 user_agent="ask/1.0",
             )
-        case EnrichProvider.CLAUDE:
+        case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(AI_SYSTEM_PROMPT)
-        case EnrichProvider.CODEX:
+        case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT)
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
