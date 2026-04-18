@@ -1,6 +1,9 @@
 alsa-scarlett-gui
+calf
 coppwr
+easyeffects
 lib32-pipewire-jack
+lsp-plugins-lv2
 pipewire-jack
 reaper
 yabridge
