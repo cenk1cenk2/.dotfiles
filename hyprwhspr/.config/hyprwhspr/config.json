@@ -11,5 +11,6 @@
   "audio_feedback": true,
   "mute_detection": false,
   "audio_ducking": true,
-  "audio_ducking_percent": 50
+  "audio_ducking_percent": 50,
+  "use_hypr_bindings": false
 }
