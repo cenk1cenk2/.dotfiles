@@ -4,20 +4,17 @@ import argparse
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
-import threading
-import time
 import urllib.request
+
+import psutil
 
 DEFAULT_MODEL = "gemma4:31b-cloud"
 
 log = logging.getLogger("speech")
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
-RECORDING_STATUS_FILE = os.path.expanduser("~/.config/hyprwhspr/recording_status")
-RECORDING_CONTROL_FILE = os.path.expanduser("~/.config/hyprwhspr/recording_control")
 
 def _load_system_prompt():
     with open(
@@ -29,49 +26,6 @@ AI_SYSTEM_PROMPT = _load_system_prompt()
 
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
-class ClipboardWatcher:
-    """Watches clipboard via wl-paste --watch and captures the latest value."""
-
-    def __init__(self):
-        self.captured = None
-        self._proc = None
-        self._thread = None
-
-    def start(self):
-        self._proc = subprocess.Popen(
-            ["wl-paste", "--watch", "cat"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._thread.start()
-
-    def _read_loop(self):
-        buf = b""
-        while self._proc and self._proc.poll() is None:
-            chunk = self._proc.stdout.read(4096)
-            if not chunk:
-                break
-            buf += chunk
-            if b"\n" in chunk or len(chunk) < 4096:
-                try:
-                    self.captured = buf.decode("utf-8", errors="replace").strip()
-                except Exception:
-                    pass
-                buf = b""
-
-    def stop(self):
-        if self._proc:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            self._proc = None
-
-    def get(self):
-        return self.captured
-
 class Speech:
     def __init__(self, args):
         self.args = args
@@ -80,10 +34,10 @@ class Speech:
         cmd = self.args.command
         if cmd == "toggle":
             self._toggle()
-        elif cmd in ("stop", "kill"):
+        elif cmd == "stop":
             self._stop()
-        elif cmd == "cancel":
-            self._cancel()
+        elif cmd == "kill":
+            self._kill()
         elif cmd == "status":
             print(self._get_status_json())
         elif cmd == "is-recording":
@@ -98,33 +52,87 @@ class Speech:
     def _signal_waybar(self):
         subprocess.run(["waybar-signal.sh", "speech"], check=False)
 
+    def _is_daemon_recording(self):
+        result = subprocess.run(
+            ["hyprwhspr", "record", "status"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return "Recording in progress" in (result.stdout + result.stderr)
+
     def _is_recording(self):
-        try:
-            with open(RECORDING_STATUS_FILE) as f:
-                return f.read().strip().lower() == "true"
-        except FileNotFoundError:
-            return False
+        return self._get_speech_state() != "idle"
+
+    def _find_toggle_processes(self):
+        """Return live `speech.py toggle ...` processes (excluding self)."""
+        procs = []
+        my_pid = os.getpid()
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            if p.info["pid"] == my_pid:
+                continue
+            try:
+                cmdline = p.info["cmdline"] or []
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            if __file__ in cmdline and "toggle" in cmdline:
+                procs.append(p)
+
+        return procs
+
+    def _get_output_mode(self):
+        for proc in self._find_toggle_processes():
+            try:
+                cmdline = proc.cmdline()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            if "toggle" not in cmdline:
+                continue
+            idx = cmdline.index("toggle")
+            if idx + 1 < len(cmdline) and cmdline[idx + 1] in ("clipboard", "type"):
+                return cmdline[idx + 1]
+
+        return "clipboard"
+
+    def _get_enrich_provider(self):
+        for proc in self._find_toggle_processes():
+            try:
+                cmdline = proc.cmdline()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            if "--enrich" not in cmdline:
+                continue
+            if "--enrich-provider" in cmdline:
+                idx = cmdline.index("--enrich-provider")
+                if idx + 1 < len(cmdline):
+                    return cmdline[idx + 1]
+            return "http"
+
+        return None
+
+    def _get_children_names(self):
+        names = []
+        for proc in self._find_toggle_processes():
+            try:
+                children = proc.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            for child in children:
+                try:
+                    names.append(child.name())
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+        return names
 
     def _hyprwhspr_control(self, action):
-        try:
-            with open(RECORDING_CONTROL_FILE, "w") as f:
-                f.write(action)
-            log.info("hyprwhspr control: %s", action)
-        except Exception as e:
-            log.error("failed to write control file: %s", e)
-            subprocess.run(
-                ["hyprwhspr", "record", action],
-                capture_output=True,
-                text=True,
-            )
-
-    def _wait_for_idle(self, timeout=60):
-        for _ in range(int(timeout / 0.1)):
-            if not self._is_recording():
-                return True
-            time.sleep(0.1)
-
-        return False
+        log.info("hyprwhspr control: %s", action)
+        subprocess.run(
+            ["hyprwhspr", "record", action],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     def _enrich(self):
         if hasattr(self.args, "enrich") and self.args.enrich:
@@ -237,106 +245,121 @@ class Speech:
             )
 
     def _toggle(self):
-        output = self.args.output
-        enrich = self._enrich()
-        is_clipboard = output == "clipboard"
-        needs_capture = is_clipboard or enrich
-
-        if self._is_recording():
-            log.info("stopping recording (output=%s, enrich=%s)", output, enrich)
-
-            if needs_capture:
-                watcher = ClipboardWatcher()
-                watcher.start()
-                time.sleep(0.05)
-
+        if self._is_daemon_recording():
+            # Press 2: daemon is already recording, so a capture subscriber
+            # from press 1 is attached. Telling the daemon to stop finalises
+            # the recording; it then routes the transcription to the
+            # subscriber (main.py:1548), which wakes press 1 to do
+            # enrich + output.
+            log.info("daemon recording; requesting stop")
             self._hyprwhspr_control("stop")
-            self._wait_for_idle(timeout=60)
             self._signal_waybar()
-
-            if needs_capture:
-                time.sleep(0.3)
-                text = watcher.get()
-                watcher.stop()
-
-                if not text or not text.strip():
-                    log.warning("no transcription captured from clipboard")
-                    self._notify("No transcription captured")
-
-                    return
-
-                text = text.strip()
-                log.info("captured %d chars from clipboard", len(text))
-
-                if enrich:
-                    self._notify("Enriching transcription...", timeout=3000)
-                    enriched = self._run_ai_provider(text, enrich)
-                    if enriched and enriched.strip():
-                        text = enriched.strip()
-                    else:
-                        self._notify("Enrichment failed, using raw transcription")
-
-                self._output_text(text, output)
-                if enrich:
-                    self._notify("Done")
 
             return
 
-        log.info("starting recording (output=%s, enrich=%s)", output, enrich)
-        self._hyprwhspr_control("start")
+        output = self.args.output
+        enrich = self._enrich()
+        log.info("starting session (output=%s, enrich=%s)", output, enrich)
+
+        # Press 1: we are the session. `hyprwhspr record capture` connects to
+        # the daemon's socket, triggers recording (or attaches to an in-flight
+        # one), and blocks until the daemon closes the connection after
+        # transcribing — which happens when press 2 sends stop. The daemon
+        # writes the full transcription in one shot right before closing, so
+        # communicate() gives us the text and the exit synchronously.
+        capture = subprocess.Popen(
+            ["hyprwhspr", "record", "capture"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
         self._signal_waybar()
+        stdout, _ = capture.communicate()
+        self._signal_waybar()
+
+        text = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+        if not text:
+            log.warning("empty transcription from capture socket")
+            self._notify("No transcription captured")
+
+            return
+
+        log.info("captured %d chars from socket", len(text))
+
+        if enrich:
+            if self.args.save:
+                log.info("saving raw transcription to clipboard before enrichment")
+                subprocess.run(["wl-copy"], input=text, text=True)
+            self._notify("Enriching transcription...", timeout=3000)
+            enriched = self._run_ai_provider(text, enrich)
+            if enriched and enriched.strip():
+                text = enriched.strip()
+            else:
+                self._notify("Enrichment failed, using raw transcription")
+
+        self._signal_waybar()
+        self._output_text(text, output)
+        self._signal_waybar()
+        if enrich:
+            self._notify("Done")
 
     def _stop(self):
         self._hyprwhspr_control("stop")
         self._signal_waybar()
 
-    def _cancel(self):
+    def _kill(self):
         self._hyprwhspr_control("cancel")
         self._signal_waybar()
 
-    def _get_status_json(self):
-        recording = self._is_recording()
+    def _get_speech_state(self):
+        toggle_alive = bool(self._find_toggle_processes())
+        daemon_rec = self._is_daemon_recording()
 
-        if not recording:
+        if not toggle_alive and not daemon_rec:
+            return "idle"
+        if daemon_rec:
+            return "recording"
+
+        children = self._get_children_names()
+        if any(c in ("wl-copy", "ydotool", "cat") for c in children):
+            return "output"
+
+        return "working"
+
+    def _get_status_json(self):
+        phase = self._get_speech_state()
+
+        if phase == "idle":
             return json.dumps(
                 {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
             )
 
-        return json.dumps(
-            {"class": "recording", "text": "󰍬", "tooltip": "Recording speech"}
-        )
+        mode = self._get_output_mode()
+        icons = {"clipboard": "󰅇", "type": "󰌌"}
+        labels = {"clipboard": "clipboard", "type": "typing"}
+        icon = icons.get(mode, "󰅇")
+        label = labels.get(mode, mode)
 
-def _add_common_args(parser):
-    parser.add_argument(
-        "output",
-        choices=["clipboard", "type"],
-        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
-    )
-    parser.add_argument(
-        "--enrich",
-        action="store_true",
-        help="Enrich transcription through AI",
-    )
-    parser.add_argument(
-        "--enrich-provider",
-        choices=["http", "claude", "codex"],
-        default="http",
-    )
-    parser.add_argument(
-        "--enrich-base-url",
-        default="https://ai.kilic.dev/api/v1",
-    )
-    parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
-    parser.add_argument("--enrich-temperature", type=float)
-    parser.add_argument("--enrich-top-p", type=float)
-    parser.add_argument(
-        "--enrich-thinking",
-        nargs="?",
-        const="high",
-        default="none",
-        choices=["high", "medium", "low", "none"],
-    )
-    parser.add_argument("--enrich-num-ctx", type=int)
+        enrich = self._get_enrich_provider()
+        enrich_icon = " 󰧑" if enrich else ""
+        enrich_label = f" ({enrich})" if enrich else ""
+
+        status_map = {
+            "recording": (
+                f"󰍬{enrich_icon} {icon}",
+                f"Recording speech{enrich_label} → {label}",
+            ),
+            "working": (
+                f"󰍬{enrich_icon} {icon}",
+                f"Processing transcription{enrich_label} → {label}",
+            ),
+            "output": (
+                icon,
+                f"Outputting transcription{enrich_label} → {label}",
+            ),
+        }
+        text, tooltip = status_map.get(phase, status_map["recording"])
+
+        return json.dumps({"class": phase, "text": text, "tooltip": tooltip})
 
 def main():
     parser = argparse.ArgumentParser(description="Control hyprwhspr speech-to-text")
@@ -345,11 +368,45 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     toggle_parser = subparsers.add_parser("toggle")
-    _add_common_args(toggle_parser)
+    toggle_parser.add_argument(
+        "output",
+        choices=["clipboard", "type"],
+        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
+    )
+    toggle_parser.add_argument(
+        "--enrich",
+        action="store_true",
+        help="Enrich transcription through AI",
+    )
+    toggle_parser.add_argument(
+        "--enrich-provider",
+        choices=["http", "claude", "codex"],
+        default="http",
+    )
+    toggle_parser.add_argument(
+        "--enrich-base-url",
+        default="https://ai.kilic.dev/api/v1",
+    )
+    toggle_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
+    toggle_parser.add_argument("--enrich-temperature", type=float)
+    toggle_parser.add_argument("--enrich-top-p", type=float)
+    toggle_parser.add_argument(
+        "--enrich-thinking",
+        nargs="?",
+        const="high",
+        default="none",
+        choices=["high", "medium", "low", "none"],
+    )
+    toggle_parser.add_argument("--enrich-num-ctx", type=int)
+    toggle_parser.add_argument(
+        "--save",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Before AI enrichment, copy the raw transcription to the clipboard as a backup (default: True)",
+    )
 
     subparsers.add_parser("stop")
     subparsers.add_parser("kill")
-    subparsers.add_parser("cancel")
     subparsers.add_parser("status")
     subparsers.add_parser("is-recording")
 
