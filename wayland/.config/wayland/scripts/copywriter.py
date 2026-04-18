@@ -11,7 +11,8 @@ from typing import Optional
 import psutil
 
 from lib import (
-    DEFAULT_MODEL,
+    DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_ENRICH_MODEL,
     EnrichAdapterClaude,
     InputAdapterClipboard,
     OutputAdapterClipboard,
@@ -208,10 +209,10 @@ def main():
         "--provider",
         type=EnrichProvider,
         choices=list(EnrichProvider),
-        default=EnrichProvider.HTTP,
+        default=DEFAULT_ENRICH_ADAPTER,
     )
     run_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
-    run_parser.add_argument("--model", default=DEFAULT_MODEL)
+    run_parser.add_argument("--model", default=DEFAULT_ENRICH_MODEL)
     run_parser.add_argument("--temperature", type=float)
     run_parser.add_argument("--top-p", type=float)
     run_parser.add_argument(

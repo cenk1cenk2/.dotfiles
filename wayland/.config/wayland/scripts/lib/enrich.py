@@ -11,12 +11,13 @@ import urllib.request
 from typing import Any, Optional, Protocol
 from enum import StrEnum
 
-DEFAULT_MODEL = "gemma4:e2b"
-
 class EnrichProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
     CODEX = "codex"
+
+DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
+DEFAULT_ENRICH_MODEL = "gemma4:e2b"
 
 log = logging.getLogger(__name__)
 

@@ -318,9 +318,7 @@ class ConversationAdapterClaude:
         if session_id:
             # `claude -p` writes the transcript to ~/.claude/projects/<cwd-hash>/
             # <session_id>.jsonl. We created it, we clean it up.
-            _cleanup_session_files(
-                "~/.claude/projects", [f"{session_id}.jsonl"]
-            )
+            _cleanup_session_files("~/.claude/projects", [f"{session_id}.jsonl"])
 
 class ConversationAdapterCodex:
     """Codex CLI wrapper using `codex exec --json`."""
@@ -425,6 +423,4 @@ class ConversationAdapterCodex:
             # `codex exec --json` writes a rollout file under
             # ~/.codex/sessions/YYYY/MM/DD/ containing the thread_id in its
             # name. Glob-match and drop anything that mentions our thread.
-            _cleanup_session_files(
-                "~/.codex/sessions", [f"*{thread_id}*"]
-            )
+            _cleanup_session_files("~/.codex/sessions", [f"*{thread_id}*"])
