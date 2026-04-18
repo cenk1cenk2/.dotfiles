@@ -124,8 +124,6 @@ tasks:
           to: "~"
           packages: >-
             chrome
-            waylogout
-            waystt
           # args: --adopt
 
   deploy:macos:
