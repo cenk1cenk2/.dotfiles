@@ -7,13 +7,32 @@ first user turn, and streams chunks back via a `ConversationAdapter`. A
 Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
+import os
+import sys
+
+# gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
+# shim hooks in at load time, so without it `is_supported()` returns false
+# and every layer-shell call becomes a no-op — the window falls through to
+# a normal xdg_toplevel. Re-exec ourselves with the preload if needed.
+_LAYER_SHELL_SONAME = "libgtk4-layer-shell.so.0"
+
+def _ensure_layer_shell_preload() -> None:
+    current = os.environ.get("LD_PRELOAD", "")
+    if _LAYER_SHELL_SONAME in current.split(":"):
+        return
+    env = os.environ.copy()
+    env["LD_PRELOAD"] = (
+        f"{current}:{_LAYER_SHELL_SONAME}" if current else _LAYER_SHELL_SONAME
+    )
+    os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], env)
+
+_ensure_layer_shell_preload()
+
 import argparse
 import errno
 import json
 import logging
-import os
 import socket
-import sys
 import threading
 from typing import Optional
 
