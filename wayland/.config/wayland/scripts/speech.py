@@ -223,15 +223,16 @@ class Session:
 
     def __init__(
         self,
-        output: OutputMode,
+        output: OutputAdapter,
         enricher: Optional[EnrichAdapter],
         adapter: STTAdapter,
     ):
         self.state = SessionState(
             phase=Phase.RECORDING,
-            output=output,
+            output=output.mode,
             enrich=enricher.provider if enricher else None,
         )
+        self.output = output
         self.enricher = enricher
         self._adapter = adapter
         self._lock = threading.Lock()
@@ -244,6 +245,14 @@ class Session:
         with self._lock:
             self.enricher = enricher
             self.state.enrich = enricher.provider if enricher else None
+        self._signal_waybar()
+
+    def set_output(self, output: OutputAdapter) -> None:
+        """Swap the active output sink mid-session. Updates the state's
+        mode so waybar reflects the new destination."""
+        with self._lock:
+            self.output = output
+            self.state.output = output.mode
         self._signal_waybar()
 
     def start(self):
@@ -338,6 +347,19 @@ class Session:
                                 AI_SYSTEM_PROMPT, AI_USER_PROMPT,
                             )
                 self.set_enricher(new_enricher)
+            # Presence of an "output" key signals the press-2 toggle picking
+            # a different sink. Same window as the enrich override: lands
+            # before the daemon transcribes, so press-1's output write goes
+            # to the new destination.
+            if obj.get("output"):
+                # speech.py only supports the two interactive sinks; anything
+                # else (e.g. stdout) would make no sense for a keybind and is
+                # silently ignored.
+                match OutputMode(obj["output"]):
+                    case OutputMode.CLIPBOARD:
+                        self.set_output(ClipboardOutputAdapter())
+                    case OutputMode.TYPE:
+                        self.set_output(TypeOutputAdapter())
             self._adapter.stop()
             return Response(ok=True)
         if cmd is Command.KILL:
@@ -403,9 +425,10 @@ class Speech:
         return self._adapter.is_recording()
 
     def _toggle(self):
-        # Press 2 path: ship this invocation's enrich choice alongside STOP
-        # so the running session can swap its enricher before the daemon
-        # starts transcribing. Sending explicit null = "skip enrichment".
+        # Press 2 path: ship this invocation's enrich + output choices
+        # alongside STOP so the running session can swap them before the
+        # daemon starts transcribing. Both are read only when present in
+        # the payload — absent keys leave press-1's setup intact.
         enrich_payload = None
         if getattr(self.args, "enrich", False):
             enrich_payload = asdict(EnrichSpec(
@@ -418,22 +441,25 @@ class Speech:
                 thinking=self.args.enrich_thinking,
                 num_ctx=self.args.enrich_num_ctx,
             ))
-        if _send(Command.STOP, enrich=enrich_payload) is not None:
+        output_payload = self.args.output.value
+        if _send(
+            Command.STOP,
+            enrich=enrich_payload,
+            output=output_payload,
+        ) is not None:
             log.info("signaled running session to stop")
 
             return
 
         # Press 1: no session. Own it.
         assert self._output is not None, "toggle requires an output adapter"
-        output_mode = self._output.mode
-        enrich_provider = self._enricher.provider if self._enricher else None
         log.info(
             "starting session (output=%s, enrich=%s)",
-            output_mode.value,
-            enrich_provider.value if enrich_provider else None,
+            self._output.mode.value,
+            self._enricher.provider.value if self._enricher else None,
         )
 
-        server = Session(output_mode, self._enricher, self._adapter)
+        server = Session(self._output, self._enricher, self._adapter)
         server.start()
         try:
             # The STT adapter subscribes to the backend's transcription
@@ -453,9 +479,10 @@ class Speech:
 
             log.info("captured %d chars from socket", len(text))
 
-            # Read enricher from the session, not self — the dispatch thread
-            # may have swapped it out on STOP with press-2's choice.
+            # Read enricher + output from the session — the dispatch thread
+            # may have swapped either on STOP with press-2's choices.
             enricher = server.enricher
+            output = server.output
             if enricher is not None:
                 server.set_phase(Phase.WORKING)
                 if self.args.save:
@@ -469,7 +496,7 @@ class Speech:
                     self._notify("Enrichment failed, using raw transcription")
 
             server.set_phase(Phase.OUTPUT)
-            self._output.write(text)
+            output.write(text)
             if enricher is not None:
                 self._notify("Done")
         finally:
@@ -548,7 +575,8 @@ def main():
     toggle_parser = subparsers.add_parser("toggle")
     toggle_parser.add_argument(
         "output",
-        choices=["clipboard", "type"],
+        type=OutputMode,
+        choices=[OutputMode.CLIPBOARD, OutputMode.TYPE],
         help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
     )
     toggle_parser.add_argument(
@@ -618,7 +646,7 @@ def main():
 
     output: Optional[OutputAdapter] = None
     if hasattr(args, "output"):
-        match OutputMode(args.output):
+        match args.output:
             case OutputMode.CLIPBOARD:
                 output = ClipboardOutputAdapter()
             case OutputMode.TYPE:
