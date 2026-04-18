@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Optional, Protocol
 
 log = logging.getLogger("remsi")
 
@@ -55,6 +56,12 @@ class Segment:
     end: float
     left: Region | None = field(default=None, repr=False)
     right: Region | None = field(default=None, repr=False)
+
+@dataclass
+class TimedWord:
+    text: str
+    start: float
+    end: float
 
 @dataclass
 class VideoInfo:
@@ -181,12 +188,168 @@ FILLER_PATTERN = re.compile(
     r")$"
 )
 
+def _extract_wav(input_file, output_path):
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            str(input_file),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-f",
+            "wav",
+            "-y",
+            output_path,
+        ],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("failed to extract audio for transcription")
+
+class TranscriptionAdapter(Protocol):
+    """Backend that turns an audio/video file into a list of word-level
+    timestamps. Swap implementations here to target a different STT
+    engine; the rest of the analyzer talks only through this interface."""
+
+    name: str
+
+    def transcribe(self, input_file) -> list[TimedWord]:
+        """Return words with start/end timestamps in seconds. An empty
+        list means no speech was detected."""
+        ...
+
+class TranscriptionAdapterWhisperCpp:
+    """Local whisper.cpp via the `whisper-cli` binary."""
+
+    name = "whisper-cpp"
+
+    def __init__(self, model_path):
+        self.model_path = model_path
+
+    def transcribe(self, input_file) -> list[TimedWord]:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            _extract_wav(input_file, tmp.name)
+            log.info("transcribing %s with whisper-cli", input_file)
+            result = subprocess.run(
+                [
+                    "whisper-cli",
+                    "-m",
+                    str(self.model_path),
+                    "-pp",
+                    "--max-len",
+                    "1",
+                    "--split-on-word",
+                    "-oj",
+                    "-of",
+                    tmp.name,
+                    tmp.name,
+                ],
+                stdout=subprocess.DEVNULL,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
+
+            json_path = f"{tmp.name}.json"
+            try:
+                with open(json_path) as f:
+                    data = json.load(f)
+            finally:
+                Path(json_path).unlink(missing_ok=True)
+
+        return [
+            TimedWord(
+                text=seg["text"],
+                start=seg["offsets"]["from"] / 1000,
+                end=seg["offsets"]["to"] / 1000,
+            )
+            for seg in data.get("transcription", [])
+        ]
+
+class TranscriptionAdapterHttp:
+    """OpenAI-compatible `/audio/transcriptions` endpoint returning
+    `verbose_json` with word-level timestamps."""
+
+    name = "http"
+
+    def __init__(self, base_url, model, api_key, user_agent="remsi/1.0"):
+        self.base_url = base_url
+        self.model = model
+        self.api_key = api_key
+        self.user_agent = user_agent
+
+    def transcribe(self, input_file) -> list[TimedWord]:
+        import requests
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            _extract_wav(input_file, tmp.name)
+            log.info("transcribing %s via %s", input_file, self.base_url)
+            url = f"{self.base_url}/audio/transcriptions"
+            try:
+                with open(tmp.name, "rb") as f:
+                    response = requests.post(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "User-Agent": self.user_agent,
+                        },
+                        files={"file": ("audio.wav", f, "audio/wav")},
+                        data={
+                            "model": self.model,
+                            "response_format": "verbose_json",
+                            "timestamp_granularities[]": ["segment", "word"],
+                        },
+                    )
+            except requests.RequestException as e:
+                raise RuntimeError(f"HTTP STT request failed: {e}") from e
+
+        if not response.ok:
+            raise RuntimeError(
+                f"HTTP STT failed: {response.status_code} {response.text}"
+            )
+        data = response.json()
+        log.debug("HTTP STT response keys: %s", list(data.keys()))
+        log.debug("HTTP STT response: %s", json.dumps(data, indent=2)[:4000])
+
+        words = data.get("words", [])
+        if words:
+            return [
+                TimedWord(text=w["word"], start=w["start"], end=w["end"])
+                for w in words
+            ]
+
+        segments = data.get("segments", [])
+        if segments:
+            log.debug("no word-level timestamps, falling back to segments")
+            result = []
+            for seg in segments:
+                seg_words = seg.get("words", [])
+                if seg_words:
+                    for w in seg_words:
+                        result.append(
+                            TimedWord(text=w["word"], start=w["start"], end=w["end"])
+                        )
+                else:
+                    result.append(
+                        TimedWord(
+                            text=seg.get("text", ""),
+                            start=seg["start"],
+                            end=seg["end"],
+                        )
+                    )
+
+            return result
+
+        log.warning("HTTP STT returned no words or segments")
+
+        return []
+
 class Analyzer:
-    def __init__(self, noise, duration, stt_provider=None, stt_config=None):
+    def __init__(self, noise, duration, stt_adapter: Optional[TranscriptionAdapter] = None):
         self.noise = noise
         self.duration = duration
-        self.stt_provider = stt_provider
-        self.stt_config = stt_config or {}
+        self.stt_adapter = stt_adapter
 
     def get_duration(self, input_file):
         result = subprocess.run(
@@ -253,166 +416,37 @@ class Analyzer:
 
         return silences
 
-    def _extract_wav(self, input_file, output_path):
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                str(input_file),
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-f",
-                "wav",
-                "-y",
-                output_path,
-            ],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError("failed to extract audio for transcription")
-
-    def _transcribe(self, input_file):
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            self._extract_wav(input_file, tmp.name)
-            log.info("transcribing %s", input_file)
-            if self.stt_provider == "whisper-cpp":
-                return self._transcribe_whisper_cpp(tmp.name)
-            elif self.stt_provider == "http":
-                return self._transcribe_http(tmp.name)
-
-    def _transcribe_whisper_cpp(self, wav_path):
-        model_path = self.stt_config["model_path"]
-        result = subprocess.run(
-            [
-                "whisper-cli",
-                "-m",
-                str(model_path),
-                "-pp",
-                "--max-len",
-                "1",
-                "--split-on-word",
-                "-oj",
-                "-of",
-                wav_path,
-                wav_path,
-            ],
-            stdout=subprocess.DEVNULL,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
-
-        json_path = f"{wav_path}.json"
-        try:
-            with open(json_path) as f:
-                return json.load(f)
-        finally:
-            Path(json_path).unlink(missing_ok=True)
-
-    def _transcribe_http(self, wav_path):
-        import requests
-
-        url = f"{self.stt_config['base_url']}/audio/transcriptions"
-        api_key = os.environ.get("AI_KILIC_DEV_API_KEY", "")
-        try:
-            with open(wav_path, "rb") as f:
-                response = requests.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "User-Agent": "remsi/1.0",
-                    },
-                    files={"file": ("audio.wav", f, "audio/wav")},
-                    data={
-                        "model": self.stt_config["model"],
-                        "response_format": "verbose_json",
-                        "timestamp_granularities[]": ["segment", "word"],
-                    },
-                )
-        except requests.RequestException as e:
-            raise RuntimeError(f"HTTP STT request failed: {e}") from e
-        if not response.ok:
-            raise RuntimeError(
-                f"HTTP STT failed: {response.status_code} {response.text}"
-            )
-        data = response.json()
-        log.debug("HTTP STT response keys: %s", list(data.keys()))
-        log.debug("HTTP STT response: %s", json.dumps(data, indent=2)[:4000])
-        words = data.get("words", [])
-        if words:
-            return {
-                "transcription": [
-                    {
-                        "text": w["word"],
-                        "offsets": {
-                            "from": int(w["start"] * 1000),
-                            "to": int(w["end"] * 1000),
-                        },
-                    }
-                    for w in words
-                ]
-            }
-        segments = data.get("segments", [])
-        if segments:
-            log.debug("no word-level timestamps, falling back to segments")
-            result = []
-            for seg in segments:
-                seg_words = seg.get("words", [])
-                if seg_words:
-                    for w in seg_words:
-                        result.append({
-                            "text": w["word"],
-                            "offsets": {
-                                "from": int(w["start"] * 1000),
-                                "to": int(w["end"] * 1000),
-                            },
-                        })
-                else:
-                    result.append({
-                        "text": seg.get("text", ""),
-                        "offsets": {
-                            "from": int(seg["start"] * 1000),
-                            "to": int(seg["end"] * 1000),
-                        },
-                    })
-            return {"transcription": result}
-        log.warning("HTTP STT returned no words or segments")
-        return {"transcription": []}
-
     @staticmethod
-    def _classify_words(transcription):
+    def _classify_words(words):
         speech = []
         fillers = []
         stutters = []
         prev_letters = None
-        for seg in transcription.get("transcription", []):
-            text = seg["text"].strip()
+        for w in words:
+            text = w.text.strip()
             letters = re.sub(r"[^a-z]", "", text.lower())
-            start = seg["offsets"]["from"] / 1000
-            end = seg["offsets"]["to"] / 1000
-            if start >= end:
+            if w.start >= w.end:
                 continue
             is_filler = (not text) or (letters and FILLER_PATTERN.match(letters))
             if is_filler:
-                fillers.append(Region(start, end, RegionKind.FILLER))
+                fillers.append(Region(w.start, w.end, RegionKind.FILLER))
                 log.debug(
                     "  transcribed filler: '%s' at %s -> %s",
                     text,
-                    format_timestamp(start),
-                    format_timestamp(end),
+                    format_timestamp(w.start),
+                    format_timestamp(w.end),
                 )
                 prev_letters = None
             elif letters and letters == prev_letters:
-                stutters.append(Region(start, end, RegionKind.STUTTER))
+                stutters.append(Region(w.start, w.end, RegionKind.STUTTER))
                 log.debug(
                     "  stutter: '%s' at %s -> %s",
                     text,
-                    format_timestamp(start),
-                    format_timestamp(end),
+                    format_timestamp(w.start),
+                    format_timestamp(w.end),
                 )
             else:
-                speech.append(Region(start, end, RegionKind.SPEECH))
+                speech.append(Region(w.start, w.end, RegionKind.SPEECH))
                 prev_letters = letters if letters else None
 
         return speech, fillers, stutters
@@ -439,11 +473,11 @@ class Analyzer:
         return gaps
 
     def detect_filler_words(self, input_file, silences):
-        data = self._transcribe(input_file)
-        if data is None:
+        if self.stt_adapter is None:
             return []
 
-        speech, fillers, stutters = self._classify_words(data)
+        words = self.stt_adapter.transcribe(input_file)
+        speech, fillers, stutters = self._classify_words(words)
         gaps = self._find_uncovered_gaps(silences + speech + fillers + stutters)
         regions = fillers + gaps + stutters
 
@@ -632,46 +666,47 @@ class Encoder:
 
         family = None
         if info.codec:
-            name = info.codec.lower()
-            if name in ("h264", "libx264"):
-                family = "h264"
-            elif name in ("hevc", "h265", "libx265"):
-                family = "hevc"
-            elif name in ("av1", "libsvtav1", "libaom-av1"):
-                family = "av1"
+            match info.codec.lower():
+                case "h264" | "libx264":
+                    family = "h264"
+                case "hevc" | "h265" | "libx265":
+                    family = "hevc"
+                case "av1" | "libsvtav1" | "libaom-av1":
+                    family = "av1"
 
         args = []
         if self.gpu and family and family in self.GPU_ENCODERS:
             hw_enc = self.GPU_ENCODERS[family].get(self.gpu)
             if hw_enc:
-                if self.gpu == "vaapi":
-                    args = [
-                        "-vaapi_device",
-                        "/dev/dri/renderD128",
-                        "-c:v",
-                        hw_enc,
-                        "-qp",
-                        "20",
-                    ]
-                elif self.gpu == "nvidia":
-                    args = [
-                        "-c:v",
-                        hw_enc,
-                        "-preset",
-                        "p5",
-                        "-tune",
-                        "hq",
-                        "-rc",
-                        "constqp",
-                        "-qp",
-                        "20",
-                        "-multipass",
-                        "qres",
-                        "-bf",
-                        "2",
-                    ]
-                else:
-                    args = ["-c:v", hw_enc, "-qp", "20"]
+                match self.gpu:
+                    case "vaapi":
+                        args = [
+                            "-vaapi_device",
+                            "/dev/dri/renderD128",
+                            "-c:v",
+                            hw_enc,
+                            "-qp",
+                            "20",
+                        ]
+                    case "nvidia":
+                        args = [
+                            "-c:v",
+                            hw_enc,
+                            "-preset",
+                            "p5",
+                            "-tune",
+                            "hq",
+                            "-rc",
+                            "constqp",
+                            "-qp",
+                            "20",
+                            "-multipass",
+                            "qres",
+                            "-bf",
+                            "2",
+                        ]
+                    case _:
+                        args = ["-c:v", hw_enc, "-qp", "20"]
         elif info.codec:
             args = ["-c:v", info.codec, "-crf", "20"]
 
@@ -686,13 +721,13 @@ class Encoder:
         if info.color_primaries and info.color_primaries != "unknown":
             args.extend(["-color_primaries", info.color_primaries])
         if info.color_range and info.color_range != "unknown":
-            cr = (
-                "mpeg"
-                if info.color_range == "tv"
-                else "jpeg"
-                if info.color_range == "pc"
-                else info.color_range
-            )
+            match info.color_range:
+                case "tv":
+                    cr = "mpeg"
+                case "pc":
+                    cr = "jpeg"
+                case _:
+                    cr = info.color_range
             args.extend(["-color_range", cr])
 
         return args
@@ -805,13 +840,13 @@ class FancyEncoder(Encoder):
             if video_info.color_primaries and video_info.color_primaries != "unknown":
                 sp.append(f"color_primaries={video_info.color_primaries}")
             if video_info.color_range and video_info.color_range != "unknown":
-                r = (
-                    "limited"
-                    if video_info.color_range == "tv"
-                    else "full"
-                    if video_info.color_range == "pc"
-                    else video_info.color_range
-                )
+                match video_info.color_range:
+                    case "tv":
+                        r = "limited"
+                    case "pc":
+                        r = "full"
+                    case _:
+                        r = video_info.color_range
                 sp.append(f"range={r}")
             if sp:
                 parts.append("setparams=" + ":".join(sp))
@@ -1113,54 +1148,68 @@ class SmartCutEncoder(Encoder):
 class Remsi:
     def __init__(self, args):
         self.args = args
-        stt_provider = args.stt_provider if args.with_whisper else None
-        stt_config = {}
-        if stt_provider == "whisper-cpp":
-            stt_config["model_path"] = self._resolve_model_path()
-        elif stt_provider == "http":
-            stt_config["base_url"] = args.http_base_url
-            stt_config["model"] = args.http_model
+        stt_adapter: Optional[TranscriptionAdapter] = None
+        if args.with_whisper:
+            match args.stt_provider:
+                case "whisper-cpp":
+                    stt_adapter = TranscriptionAdapterWhisperCpp(
+                        model_path=self._resolve_model_path(),
+                    )
+                case "http":
+                    stt_adapter = TranscriptionAdapterHttp(
+                        base_url=args.http_base_url,
+                        model=args.http_model,
+                        api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                    )
+                case _:
+                    raise ValueError(f"unknown stt provider: {args.stt_provider!r}")
         self.analyzer = Analyzer(
             noise=args.noise,
             duration=args.duration,
-            stt_provider=stt_provider,
-            stt_config=stt_config,
+            stt_adapter=stt_adapter,
         )
-        if args.mode == "fast":
-            self.encoder = SmartCutEncoder(
-                gpu=self._resolve_gpu(),
-                codec=args.codec,
-                fade_time=args.fade_time,
-                fade_curve=args.fade_curve,
-                force=args.force,
-            )
-        else:
-            self.encoder = FancyEncoder(
-                gpu=self._resolve_gpu(),
-                codec=args.codec,
-                fade_time=args.fade_time,
-                video_filter=args.fade_video_filter,
-                audio_filter=args.fade_audio_filter,
-                force=args.force,
-            )
+        match args.mode:
+            case "fast":
+                self.encoder = SmartCutEncoder(
+                    gpu=self._resolve_gpu(),
+                    codec=args.codec,
+                    fade_time=args.fade_time,
+                    fade_curve=args.fade_curve,
+                    force=args.force,
+                )
+            case "fancy":
+                self.encoder = FancyEncoder(
+                    gpu=self._resolve_gpu(),
+                    codec=args.codec,
+                    fade_time=args.fade_time,
+                    video_filter=args.fade_video_filter,
+                    audio_filter=args.fade_audio_filter,
+                    force=args.force,
+                )
+            case _:
+                raise ValueError(f"unknown encoder mode: {args.mode!r}")
 
     def _resolve_gpu(self):
-        if self.args.gpu == "auto":
-            gpu = Encoder.detect_gpu()
-            if gpu:
-                log.info("detected gpu encoder: %s", gpu)
-                status(f"GPU encoder: {GREEN}{gpu}{RESET}")
-            else:
-                log.warning("no gpu encoder found, using software encoding")
+        match self.args.gpu:
+            case "auto":
+                gpu = Encoder.detect_gpu()
+                if gpu:
+                    log.info("detected gpu encoder: %s", gpu)
+                    status(f"GPU encoder: {GREEN}{gpu}{RESET}")
+                else:
+                    log.warning("no gpu encoder found, using software encoding")
 
-            return gpu
-        if self.args.gpu != "none":
-            return self.args.gpu
-
-        return None
+                return gpu
+            case "none":
+                return None
+            case _:
+                return self.args.gpu
 
     def _resolve_model_path(self):
-        model_path = Path(self.args.whisper_cpp_model_dir).expanduser() / self.args.whisper_cpp_model
+        model_path = (
+            Path(self.args.whisper_cpp_model_dir).expanduser()
+            / self.args.whisper_cpp_model
+        )
         if not model_path.exists():
             error(f"model not found at {model_path}")
             sys.exit(1)
@@ -1192,8 +1241,8 @@ class Remsi:
             status(f"found {YELLOW}{len(silences)}{RESET} silent region(s)")
 
             fillers = []
-            if self.analyzer.stt_provider:
-                section(f"Speech Analysis ({self.analyzer.stt_provider})")
+            if self.analyzer.stt_adapter:
+                section(f"Speech Analysis ({self.analyzer.stt_adapter.name})")
                 fillers = self.analyzer.detect_filler_words(input_file, silences)
                 n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
                 n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
