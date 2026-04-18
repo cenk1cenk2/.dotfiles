@@ -58,6 +58,25 @@ def _close_pipes(proc: subprocess.Popen) -> None:
             except OSError:
                 pass
 
+def _cleanup_session_files(root: str, patterns: list[str]) -> None:
+    """Best-effort delete of any transcript/session files matching the given
+    glob patterns under `root`. Silent on errors — session cleanup must
+    never block or fail a hard-close path."""
+    import pathlib
+
+    base = pathlib.Path(root).expanduser()
+    if not base.exists():
+        return
+    for pattern in patterns:
+        for path in base.rglob(pattern):
+            if not path.is_file():
+                continue
+            try:
+                path.unlink()
+                log.info("removed session file: %s", path)
+            except OSError as e:
+                log.debug("could not remove %s: %s", path, e)
+
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
 
@@ -294,7 +313,14 @@ class ConversationAdapterClaude:
                     pass
             _close_pipes(proc)
             self._proc = None
+        session_id = self._session_id
         self._session_id = None
+        if session_id:
+            # `claude -p` writes the transcript to ~/.claude/projects/<cwd-hash>/
+            # <session_id>.jsonl. We created it, we clean it up.
+            _cleanup_session_files(
+                "~/.claude/projects", [f"{session_id}.jsonl"]
+            )
 
 class ConversationAdapterCodex:
     """Codex CLI wrapper using `codex exec --json`."""
@@ -393,4 +419,12 @@ class ConversationAdapterCodex:
                     pass
             _close_pipes(proc)
             self._proc = None
+        thread_id = self._session_id
         self._session_id = None
+        if thread_id:
+            # `codex exec --json` writes a rollout file under
+            # ~/.codex/sessions/YYYY/MM/DD/ containing the thread_id in its
+            # name. Glob-match and drop anything that mentions our thread.
+            _cleanup_session_files(
+                "~/.codex/sessions", [f"*{thread_id}*"]
+            )
