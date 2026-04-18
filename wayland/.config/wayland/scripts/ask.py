@@ -7,13 +7,13 @@ first user turn, and streams chunks back via a `ConversationAdapter`. A
 Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
-import os
-import sys
 import argparse
 import errno
 import json
 import logging
+import os
 import socket
+import sys
 import threading
 from typing import Optional
 
@@ -114,10 +114,42 @@ textview text {
     background: transparent;
     color: #e5e9f0;
 }
-entry.ask-compose {
-    font-family: monospace;
-    padding: 8px 10px;
+scrolledwindow.ask-compose {
     margin: 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+}
+textview.ask-compose-text,
+textview.ask-compose-text text {
+    font-family: monospace;
+    background: transparent;
+}
+box.ask-queue {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 2px 0;
+}
+label.ask-queue-header {
+    font-size: 10pt;
+    font-weight: bold;
+    opacity: 0.6;
+}
+row.ask-queue-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+label.ask-queue-preview {
+    font-size: 11pt;
+    opacity: 0.85;
+}
+button.ask-queue-send,
+button.ask-queue-remove {
+    background: transparent;
+    border: none;
+    padding: 2px 6px;
+    opacity: 0.7;
+}
+button.ask-queue-send:hover,
+button.ask-queue-remove:hover {
+    opacity: 1.0;
 }
 """
 
@@ -281,12 +313,172 @@ class MarkdownView:
         else:
             self.buffer.insert(end, text)
 
+class ComposeView:
+    """Multi-line compose area with Enter-to-submit, Shift+Enter for a
+    newline, auto-growing up to `max_lines` before scrolling. Ctrl+P
+    is wired from the window and reaches text in through `append_text`."""
+
+    def __init__(self, max_lines: int = 6, on_submit=None):
+        self._on_submit = on_submit
+        self.scroller = Gtk.ScrolledWindow()
+        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.scroller.set_propagate_natural_height(True)
+        self.scroller.add_css_class("ask-compose")
+
+        self._textview = Gtk.TextView(
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=8,
+            bottom_margin=8,
+            left_margin=10,
+            right_margin=10,
+            accepts_tab=False,
+        )
+        self._textview.add_css_class("ask-compose-text")
+        self.scroller.set_child(self._textview)
+
+        # Cap natural height at ~max_lines. Pango metrics come back in Pango
+        # units (PANGO_SCALE == 1024); convert to pixels for GTK size props.
+        metrics = self._textview.get_pango_context().get_metrics(None)
+        line_px = (metrics.get_ascent() + metrics.get_descent()) / Pango.SCALE
+        pad = 16
+        self.scroller.set_max_content_height(int(line_px * max_lines) + pad)
+        self.scroller.set_min_content_height(int(line_px) + pad)
+
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", self._on_key)
+        self._textview.add_controller(key)
+
+    def get_text(self) -> str:
+        buf = self._textview.get_buffer()
+
+        return buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+
+    def set_text(self, text: str) -> None:
+        self._textview.get_buffer().set_text(text)
+
+    def append_text(self, text: str) -> None:
+        buf = self._textview.get_buffer()
+        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        joiner = "" if (not existing or existing.endswith((" ", "\n"))) else " "
+        buf.insert(buf.get_end_iter(), f"{joiner}{text}")
+
+    def clear(self) -> None:
+        self.set_text("")
+
+    def focus(self) -> None:
+        self._textview.grab_focus()
+
+    def set_sensitive(self, sensitive: bool) -> None:
+        self._textview.set_sensitive(sensitive)
+
+    def _on_key(self, controller, keyval, keycode, state) -> bool:
+        if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            return False
+        if state & Gdk.ModifierType.SHIFT_MASK:
+            # Shift+Enter: default handler inserts a newline, grow the box.
+            return False
+        text = self.get_text().strip()
+        if text and self._on_submit:
+            self.clear()
+            self._on_submit(text)
+
+        return True
+
+class QueueRow(Gtk.ListBoxRow):
+    """A pending turn waiting for its slot. Preview label + send (⏎) +
+    remove (✕) buttons. Double-click the preview to edit in place — an
+    `Entry` replaces the label, Enter commits, focus-out also commits."""
+
+    def __init__(self, text: str, on_send, on_remove, on_edit_commit):
+        super().__init__()
+        self._text = text
+        self._on_send = on_send
+        self._on_remove = on_remove
+        self._on_edit_commit = on_edit_commit
+        self._editing = False
+        self._entry: Optional[Gtk.Entry] = None
+        self.add_css_class("ask-queue-row")
+
+        self._row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._row.set_margin_top(4)
+        self._row.set_margin_bottom(4)
+        self._row.set_margin_start(8)
+        self._row.set_margin_end(8)
+
+        self._label = Gtk.Label(label=self._preview(text), xalign=0.0, hexpand=True)
+        self._label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._label.add_css_class("ask-queue-preview")
+        self._row.append(self._label)
+
+        send_btn = Gtk.Button(label="⏎")
+        send_btn.add_css_class("ask-queue-send")
+        send_btn.set_tooltip_text("Send this now")
+        send_btn.connect("clicked", lambda _b: self._on_send(self))
+        self._row.append(send_btn)
+
+        remove_btn = Gtk.Button(label="✕")
+        remove_btn.add_css_class("ask-queue-remove")
+        remove_btn.set_tooltip_text("Drop from queue")
+        remove_btn.connect("clicked", lambda _b: self._on_remove(self))
+        self._row.append(remove_btn)
+
+        self.set_child(self._row)
+
+        click = Gtk.GestureClick()
+        click.set_button(Gdk.BUTTON_PRIMARY)
+        click.connect("pressed", self._on_click)
+        self.add_controller(click)
+
+    def text(self) -> str:
+        return self._text
+
+    @staticmethod
+    def _preview(text: str) -> str:
+        compact = " ".join(text.split())
+        if len(compact) > 140:
+            compact = compact[:137] + "…"
+
+        return compact
+
+    def _on_click(self, gesture, n_press, x, y) -> None:
+        if n_press == 2 and not self._editing:
+            self._enter_edit_mode()
+
+    def _enter_edit_mode(self) -> None:
+        self._editing = True
+        self._row.remove(self._label)
+        entry = Gtk.Entry(hexpand=True)
+        entry.set_text(self._text)
+        entry.connect("activate", lambda _e: self._commit_edit())
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", lambda _f: self._commit_edit())
+        entry.add_controller(focus)
+        self._row.prepend(entry)
+        entry.grab_focus()
+        entry.set_position(-1)
+        self._entry = entry
+
+    def _commit_edit(self) -> None:
+        if not self._editing or self._entry is None:
+            return
+        new_text = self._entry.get_text().strip()
+        self._editing = False
+        self._row.remove(self._entry)
+        self._entry = None
+        if new_text:
+            self._text = new_text
+        self._label.set_label(self._preview(self._text))
+        self._row.prepend(self._label)
+        self._on_edit_commit(self, self._text)
+
 class AskWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar anchored to the right edge, full-height.
 
     Public API: `dispatch_turn(user_message)` — append a user turn and
     stream the adapter's response into the markdown view. Safe to call
-    from the GTK thread; the adapter runs in a worker."""
+    from the GTK thread; the adapter runs in a worker. Turns submitted
+    while a stream is in flight are pushed onto a visible queue and
+    drained one at a time as each stream finishes."""
 
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
         super().__init__(application=app, title="Ask")
@@ -294,6 +486,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._text = ""
         self._streaming = False
         self._alive = True
+        self._queue: list[QueueRow] = []
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -304,29 +497,13 @@ class AskWindow(Gtk.ApplicationWindow):
         Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
         self.set_default_size(self._overlay_width(), -1)
 
-    @staticmethod
-    def _overlay_width(fraction: float = 0.4) -> int:
-        """40% of the primary monitor's logical width (height is driven by the
-        top+bottom anchor). Falls back to a sane default if monitor info is
-        unavailable — e.g., no display connected or an empty monitor list."""
-        fallback = 520
-        display = Gdk.Display.get_default()
-        if display is None:
-            return fallback
-        monitors = display.get_monitors()
-        if monitors.get_n_items() == 0:
-            return fallback
-        geometry = monitors.get_item(0).get_geometry()
-
-        return max(320, int(geometry.width * fraction))
-
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.add_css_class("ask-root")
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("ask-header")
         provider_label = Gtk.Label(
-            label=f"󰧑 {adapter.provider.value}",
+            label=f"󱍊 {adapter.provider.value}",
             xalign=0.0,
             hexpand=True,
         )
@@ -351,11 +528,23 @@ class AskWindow(Gtk.ApplicationWindow):
         self._scroller.set_child(self._textview)
         root.append(self._scroller)
 
-        self._compose = Gtk.Entry(hexpand=True)
-        self._compose.add_css_class("ask-compose")
-        self._compose.set_placeholder_text("paste / type …")
-        self._compose.connect("activate", self._on_compose_submit)
-        root.append(self._compose)
+        # Queue panel — hidden until a turn is enqueued.
+        self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._queue_box.add_css_class("ask-queue")
+        queue_header = Gtk.Label(label="queued", xalign=0.0)
+        queue_header.add_css_class("ask-queue-header")
+        queue_header.set_margin_top(4)
+        queue_header.set_margin_bottom(2)
+        queue_header.set_margin_start(10)
+        self._queue_box.append(queue_header)
+        self._queue_listbox = Gtk.ListBox()
+        self._queue_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._queue_box.append(self._queue_listbox)
+        self._queue_box.set_visible(False)
+        root.append(self._queue_box)
+
+        self._compose = ComposeView(max_lines=6, on_submit=self.dispatch_turn)
+        root.append(self._compose.scroller)
 
         self.set_child(root)
 
@@ -365,6 +554,22 @@ class AskWindow(Gtk.ApplicationWindow):
         self._wire_keys()
         self.connect("close-request", self._on_close_request)
 
+    @staticmethod
+    def _overlay_width(fraction: float = 0.4) -> int:
+        """40% of the primary monitor's logical width (height is driven by the
+        top+bottom anchor). Falls back to a sane default if monitor info is
+        unavailable — e.g., no display connected or an empty monitor list."""
+        fallback = 520
+        display = Gdk.Display.get_default()
+        if display is None:
+            return fallback
+        monitors = display.get_monitors()
+        if monitors.get_n_items() == 0:
+            return fallback
+        geometry = monitors.get_item(0).get_geometry()
+
+        return max(320, int(geometry.width * fraction))
+
     def append(self, chunk: str) -> None:
         pin_to_bottom = self._at_bottom()
         self._text += chunk
@@ -373,26 +578,89 @@ class AskWindow(Gtk.ApplicationWindow):
             GLib.idle_add(self._scroll_to_end)
 
     def focus_compose(self) -> None:
-        self._compose.grab_focus()
+        self._compose.focus()
 
     def dispatch_turn(self, user_message: str) -> None:
         message = user_message.strip()
         if not message:
-            return
-        if self._streaming:
-            log.info("ignoring turn while streaming")
-
             return
         if not self.get_visible():
             # Escape hid the overlay; a new turn brings it back. present()
             # (after set_visible) re-grabs focus and raises.
             self.set_visible(True)
             self.present()
+        if self._streaming:
+            # Previous turn still in flight — queue this one. It'll drain
+            # automatically when `_mark_idle` fires, and the send/edit
+            # controls let the user reorder or skip ahead manually.
+            self._enqueue(message)
+            return
+        self._start_turn(message)
+
+    def _start_turn(self, message: str) -> None:
         self._append_user_turn(message)
         self._streaming = True
         self._compose.set_sensitive(False)
         _signal_waybar_safe()
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
+
+    def _enqueue(self, message: str) -> None:
+        row = QueueRow(
+            text=message,
+            on_send=self._on_queue_send,
+            on_remove=self._on_queue_remove,
+            on_edit_commit=self._on_queue_edit,
+        )
+        self._queue.append(row)
+        self._queue_listbox.append(row)
+        self._queue_box.set_visible(True)
+
+    def _pop_queue_front(self) -> Optional[str]:
+        if not self._queue:
+            return None
+        row = self._queue.pop(0)
+        self._queue_listbox.remove(row)
+        if not self._queue:
+            self._queue_box.set_visible(False)
+
+        return row.text()
+
+    def _remove_queue_row(self, row: QueueRow) -> Optional[str]:
+        if row not in self._queue:
+            return None
+        self._queue.remove(row)
+        self._queue_listbox.remove(row)
+        if not self._queue:
+            self._queue_box.set_visible(False)
+
+        return row.text()
+
+    def _on_queue_send(self, row: QueueRow) -> None:
+        text = self._remove_queue_row(row)
+        if not text:
+            return
+        if self._streaming:
+            # Promote to head of the queue rather than stepping on the
+            # in-flight stream. `_mark_idle` will drain it next.
+            self._queue.insert(0, QueueRow(
+                text=text,
+                on_send=self._on_queue_send,
+                on_remove=self._on_queue_remove,
+                on_edit_commit=self._on_queue_edit,
+            ))
+            self._queue_listbox.prepend(self._queue[0])
+            self._queue_box.set_visible(True)
+            return
+        self._start_turn(text)
+
+    def _on_queue_remove(self, row: QueueRow) -> None:
+        self._remove_queue_row(row)
+
+    def _on_queue_edit(self, row: QueueRow, new_text: str) -> None:
+        # Row keeps its slot; the user-visible label already shows the new
+        # preview. Nothing else to do here — dispatch_turn will read
+        # row.text() when the queue drains or the send button is hit.
+        pass
 
     def _append_user_turn(self, user_message: str) -> None:
         prefix = "\n\n---\n\n" if self._text else ""
@@ -420,18 +688,20 @@ class AskWindow(Gtk.ApplicationWindow):
         self._streaming = False
         if self._alive:
             self._compose.set_sensitive(True)
-            self._compose.grab_focus()
+            self._compose.focus()
         _signal_waybar_safe()
+        # Drain the next queued turn, if any. Schedule via idle_add so the
+        # UI rerenders the current assistant block before the next `You:`
+        # block arrives — keeps the streaming transition visible.
+        if self._alive:
+            nxt = self._pop_queue_front()
+            if nxt:
+                GLib.idle_add(self._start_turn, nxt)
 
         return False
 
     def is_streaming(self) -> bool:
         return self._streaming
-
-    def _on_compose_submit(self, entry: Gtk.Entry) -> None:
-        text = entry.get_text()
-        entry.set_text("")
-        self.dispatch_turn(text)
 
     def _at_bottom(self) -> bool:
         adj = self._scroller.get_vadjustment()
@@ -502,12 +772,8 @@ class AskWindow(Gtk.ApplicationWindow):
         text = InputAdapterClipboard().read() or ""
         if not text:
             return
-        entry = self._compose
-        entry.grab_focus()
-        existing = entry.get_text()
-        joiner = "" if (not existing or existing.endswith(" ")) else " "
-        entry.set_text(f"{existing}{joiner}{text}")
-        entry.set_position(-1)
+        self._compose.focus()
+        self._compose.append_text(text)
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False
@@ -781,7 +1047,7 @@ def _cmd_status() -> None:
 
     provider = resp.get("provider", "")
     phase = resp.get("phase", "idle")
-    icon = "󰧑"
+    icon = "󱍊"
     if phase == "streaming":
         text = f"{icon} {provider} …"
         tooltip = f"Ask: streaming via {provider}"
