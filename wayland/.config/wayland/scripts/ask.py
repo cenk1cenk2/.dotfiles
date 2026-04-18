@@ -654,6 +654,19 @@ class AskWindow(Gtk.ApplicationWindow):
     def focus_compose(self) -> None:
         self._compose.focus()
 
+    def toggle_visibility(self) -> bool:
+        """Flip overlay visibility without tearing down the session. Safe to
+        call from the GTK main thread; returns False so it can be passed
+        straight to `GLib.idle_add`."""
+        if self.get_visible():
+            self.set_visible(False)
+        else:
+            self.set_visible(True)
+            self.present()
+            self._compose.focus()
+
+        return False
+
     def dispatch_turn(self, user_message: str) -> None:
         message = user_message.strip()
         if not message:
@@ -1046,6 +1059,13 @@ class Session:
                 GLib.idle_add(self._window.close)
 
                 return {"ok": True}
+            case "toggle-window":
+                # Hide-if-visible / show-if-hidden, without touching the
+                # conversation. Same primitive as Escape + a forwarded turn,
+                # exposed so keybinds can drive it from outside the window.
+                GLib.idle_add(self._window.toggle_visibility)
+
+                return {"ok": True}
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
@@ -1177,6 +1197,11 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
+def _cmd_toggle_window() -> None:
+    """Flip overlay visibility on the running session. No-op (silent) when
+    no session is alive — the keybind can't do anything useful there."""
+    _send("toggle-window")
+
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -1248,6 +1273,10 @@ def main():
         help="exit 0 if a session is live, non-zero otherwise",
     )
     subparsers.add_parser("kill", help="terminate the running session (if any)")
+    subparsers.add_parser(
+        "toggle-window",
+        help="show or hide the overlay without ending the session",
+    )
 
     args = parser.parse_args()
 
@@ -1265,6 +1294,8 @@ def main():
             _cmd_is_running()
         case "kill":
             _cmd_kill()
+        case "toggle-window":
+            _cmd_toggle_window()
 
 if __name__ == "__main__":
     main()
