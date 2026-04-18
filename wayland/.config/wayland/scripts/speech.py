@@ -101,8 +101,34 @@ class Phase(StrEnum):
     OUTPUT = "output"
 
 @dataclass
-class Request:
-    cmd: Command
+class EnrichSpec:
+    """Serialisable form of an enrichment choice, sent over the socket.
+
+    `provider` identifies the backend; the remaining fields are config that
+    the `HttpEnrichAdapter` needs. Claude/Codex ignore everything but
+    `provider`."""
+
+    provider: EnrichProvider
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    thinking: str = "none"
+    num_ctx: Optional[int] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "EnrichSpec":
+        return cls(
+            provider=EnrichProvider(d["provider"]),
+            base_url=d.get("base_url"),
+            model=d.get("model"),
+            api_key=d.get("api_key"),
+            temperature=d.get("temperature"),
+            top_p=d.get("top_p"),
+            thinking=d.get("thinking", "none"),
+            num_ctx=d.get("num_ctx"),
+        )
 
 @dataclass
 class SessionState:
@@ -146,8 +172,13 @@ SOCKET_PATH = os.path.join(
 AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
-def _send(cmd: Command) -> Optional[Response]:
+def _send(cmd: Command, **extra) -> Optional[Response]:
     """Deliver a command to the running session over the Unix socket.
+
+    Extra kwargs become top-level fields in the JSON payload. The server
+    inspects `"enrich" in payload` to tell an override from a no-op — only
+    the press-2 toggle path sets it, so presence is the override signal.
+
     Returns the parsed Response, or None when no session answers."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(2)
@@ -166,7 +197,7 @@ def _send(cmd: Command) -> Optional[Response]:
         return None
 
     try:
-        payload = json.dumps(asdict(Request(cmd=cmd))) + "\n"
+        payload = json.dumps({"cmd": cmd.value, **extra}) + "\n"
         sock.sendall(payload.encode())
         chunks = []
         while True:
@@ -193,14 +224,27 @@ class Session:
     def __init__(
         self,
         output: OutputMode,
-        enrich: Optional[EnrichProvider],
+        enricher: Optional[EnrichAdapter],
         adapter: STTAdapter,
     ):
-        self.state = SessionState(phase=Phase.RECORDING, output=output, enrich=enrich)
+        self.state = SessionState(
+            phase=Phase.RECORDING,
+            output=output,
+            enrich=enricher.provider if enricher else None,
+        )
+        self.enricher = enricher
         self._adapter = adapter
         self._lock = threading.Lock()
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
+
+    def set_enricher(self, enricher: Optional[EnrichAdapter]) -> None:
+        """Swap the active enricher mid-session. Updates the state's
+        displayed provider so waybar reflects the new choice."""
+        with self._lock:
+            self.enricher = enricher
+            self.state.enrich = enricher.provider if enricher else None
+        self._signal_waybar()
 
     def start(self):
         # Become our own process group leader so a KILL command can take out
@@ -261,6 +305,39 @@ class Session:
             with self._lock:
                 return Response(ok=True, state=SessionState(**asdict(self.state)))
         if cmd is Command.STOP:
+            # Presence of an "enrich" key signals the press-2 toggle
+            # overriding press-1's choice. Value is either an EnrichSpec
+            # dict (→ new enricher) or null (→ skip enrichment entirely).
+            # Apply the swap BEFORE telling the daemon to stop, so press-1's
+            # main thread sees the new enricher when communicate() unblocks.
+            if "enrich" in obj:
+                spec_dict = obj["enrich"]
+                new_enricher: Optional[EnrichAdapter] = None
+                if spec_dict:
+                    spec = EnrichSpec.from_dict(spec_dict)
+                    match spec.provider:
+                        case EnrichProvider.HTTP:
+                            new_enricher = HttpEnrichAdapter(
+                                system_prompt=AI_SYSTEM_PROMPT,
+                                user_prompt_template=AI_USER_PROMPT,
+                                base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
+                                model=spec.model or DEFAULT_MODEL,
+                                api_key=spec.api_key or "",
+                                temperature=spec.temperature,
+                                top_p=spec.top_p,
+                                thinking=spec.thinking,
+                                num_ctx=spec.num_ctx,
+                                user_agent="speech/1.0",
+                            )
+                        case EnrichProvider.CLAUDE:
+                            new_enricher = ClaudeEnrichAdapter(
+                                AI_SYSTEM_PROMPT, AI_USER_PROMPT,
+                            )
+                        case EnrichProvider.CODEX:
+                            new_enricher = CodexEnrichAdapter(
+                                AI_SYSTEM_PROMPT, AI_USER_PROMPT,
+                            )
+                self.set_enricher(new_enricher)
             self._adapter.stop()
             return Response(ok=True)
         if cmd is Command.KILL:
@@ -326,10 +403,22 @@ class Speech:
         return self._adapter.is_recording()
 
     def _toggle(self):
-        if _send(Command.STOP) is not None:
-            # Press 2: a session is live. It handles the rest (enrich,
-            # output, exit). Session signals waybar itself at each phase
-            # transition, so press-2 has nothing to signal.
+        # Press 2 path: ship this invocation's enrich choice alongside STOP
+        # so the running session can swap its enricher before the daemon
+        # starts transcribing. Sending explicit null = "skip enrichment".
+        enrich_payload = None
+        if getattr(self.args, "enrich", False):
+            enrich_payload = asdict(EnrichSpec(
+                provider=EnrichProvider(self.args.enrich_provider),
+                base_url=self.args.enrich_base_url,
+                model=self.args.enrich_model,
+                api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                temperature=self.args.enrich_temperature,
+                top_p=self.args.enrich_top_p,
+                thinking=self.args.enrich_thinking,
+                num_ctx=self.args.enrich_num_ctx,
+            ))
+        if _send(Command.STOP, enrich=enrich_payload) is not None:
             log.info("signaled running session to stop")
 
             return
@@ -344,7 +433,7 @@ class Speech:
             enrich_provider.value if enrich_provider else None,
         )
 
-        server = Session(output_mode, enrich_provider, self._adapter)
+        server = Session(output_mode, self._enricher, self._adapter)
         server.start()
         try:
             # The STT adapter subscribes to the backend's transcription
@@ -364,13 +453,16 @@ class Speech:
 
             log.info("captured %d chars from socket", len(text))
 
-            if self._enricher is not None:
+            # Read enricher from the session, not self — the dispatch thread
+            # may have swapped it out on STOP with press-2's choice.
+            enricher = server.enricher
+            if enricher is not None:
                 server.set_phase(Phase.WORKING)
                 if self.args.save:
                     log.info("saving raw transcription to clipboard before enrichment")
                     subprocess.run(["wl-copy"], input=text, text=True)
                 self._notify("Enriching transcription...", timeout=3000)
-                enriched = self._enricher.enrich(text)
+                enriched = enricher.enrich(text)
                 if enriched and enriched.strip():
                     text = enriched.strip()
                 else:
@@ -378,7 +470,7 @@ class Speech:
 
             server.set_phase(Phase.OUTPUT)
             self._output.write(text)
-            if self._enricher is not None:
+            if enricher is not None:
                 self._notify("Done")
         finally:
             server.stop()
@@ -420,21 +512,23 @@ class Speech:
         icon = icons[state.output]
         label = labels[state.output]
 
-        enrich_icon = " 󰧑" if state.enrich else ""
+        # RECORDING is ambiguous: press-2 may still swap or drop the enricher,
+        # so we don't claim a provider yet. By WORKING the swap has landed;
+        # by OUTPUT the transcription is out the door.
         enrich_label = f" ({state.enrich.value})" if state.enrich else ""
 
         status_map = {
             Phase.RECORDING: (
-                f"󰍬{enrich_icon} {icon}",
-                f"Recording speech{enrich_label} → {label}",
+                f"󰍬 {icon}",
+                f"Recording speech → {label}",
             ),
             Phase.WORKING: (
-                f"󰍬{enrich_icon} {icon}",
+                f"󰼭 󰧑 {icon}",
                 f"Processing transcription{enrich_label} → {label}",
             ),
             Phase.OUTPUT: (
                 icon,
-                f"Outputting transcription{enrich_label} → {label}",
+                f"Outputting transcription → {label}",
             ),
         }
         text, tooltip = status_map[state.phase]
