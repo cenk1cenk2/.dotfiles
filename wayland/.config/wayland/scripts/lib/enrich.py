@@ -11,7 +11,7 @@ import urllib.request
 from typing import Any, Optional, Protocol
 from enum import StrEnum
 
-DEFAULT_MODEL = "gemma4:31b-cloud"
+DEFAULT_MODEL = "gemma4:e2b"
 
 class EnrichProvider(StrEnum):
     HTTP = "http"
