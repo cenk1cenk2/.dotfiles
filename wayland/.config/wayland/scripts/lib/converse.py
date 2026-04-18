@@ -10,10 +10,16 @@ import os
 import subprocess
 import threading
 from typing import Any, Iterator, Optional, Protocol
-
+from enum import StrEnum
 import requests
 
-from .enrich import EnrichProvider
+class ConversationProvider(StrEnum):
+    HTTP = "http"
+    CLAUDE = "claude"
+    CODEX = "codex"
+
+DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
+DEFAULT_CONVERSE_MODEL = ""
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +61,7 @@ def _close_pipes(proc: subprocess.Popen) -> None:
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
 
-    provider: EnrichProvider
+    provider: ConversationProvider
 
     def turn(self, user_message: str) -> Iterator[str]:
         """Yield assistant response chunks. Appends this turn to internal
@@ -69,7 +75,7 @@ class ConversationAdapter(Protocol):
 class ConversationAdapterHttp:
     """OpenAI-compatible `/chat/completions` with `stream=true`."""
 
-    provider = EnrichProvider.HTTP
+    provider = ConversationProvider.HTTP
 
     def __init__(
         self,
@@ -149,7 +155,6 @@ class ConversationAdapterHttp:
             raise RuntimeError(f"http {resp.status_code}: {detail}")
 
         collected: list[str] = []
-        stream_ok = False
         try:
             for line in resp.iter_lines(decode_unicode=True):
                 if not line or not line.startswith("data:"):
@@ -190,7 +195,7 @@ class ConversationAdapterHttp:
 class ConversationAdapterClaude:
     """Claude CLI wrapper using `stream-json` with partial messages."""
 
-    provider = EnrichProvider.CLAUDE
+    provider = ConversationProvider.CLAUDE
 
     def __init__(self, system_prompt: str):
         self.system_prompt = system_prompt
@@ -205,7 +210,8 @@ class ConversationAdapterClaude:
         common = [
             "claude",
             "-p",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
             "--include-partial-messages",
             *bare,
         ]
@@ -231,7 +237,6 @@ class ConversationAdapterClaude:
 
         drain_thread, stderr_buf = _spawn_stderr_drain(proc)
         error_text: Optional[str] = None
-        rc: Optional[int] = None
         try:
             for raw in proc.stdout:
                 line = raw.strip()
@@ -294,7 +299,7 @@ class ConversationAdapterClaude:
 class ConversationAdapterCodex:
     """Codex CLI wrapper using `codex exec --json`."""
 
-    provider = EnrichProvider.CODEX
+    provider = ConversationProvider.CODEX
 
     def __init__(self, system_prompt: str):
         self.system_prompt = system_prompt
@@ -339,7 +344,6 @@ class ConversationAdapterCodex:
         assert proc.stdout is not None
 
         drain_thread, stderr_buf = _spawn_stderr_drain(proc)
-        rc: Optional[int] = None
         try:
             for raw in proc.stdout:
                 line = raw.strip()
