@@ -31,6 +31,7 @@ from .input import (
     InputAdapterStdin,
 )
 from .mcp import (
+    McpCapability,
     McpConfig,
     McpServer,
     question_route,
@@ -67,6 +68,7 @@ __all__ = [
     "InputAdapterClipboard",
     "InputAdapterStdin",
     "InputMode",
+    "McpCapability",
     "McpConfig",
     "McpServer",
     "OutputAdapter",

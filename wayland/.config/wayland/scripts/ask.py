@@ -70,6 +70,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "toggle":
 if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     # Late import so the normal ask.py paths still load gi below.
     from lib.mcp import (  # noqa: E402
+        McpCapability,
         McpServer,
         question_route,
         socket_approval,
@@ -86,7 +87,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     # `ask_question` MCP tool uses the same callback when the model
     # explicitly picks our tool.
     _question_cb = socket_question(_mcp_sock)
-    _server.enable_approval(socket_approval(_mcp_sock))
+    _server.enable(McpCapability.APPROVAL, callback=socket_approval(_mcp_sock))
     _server.add_approval_route(*question_route(_question_cb))
     # Extra routes can be appended here — each is a (matcher, handler)
     # pair that runs before the base approval callback:
@@ -94,12 +95,12 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     #       matcher=lambda tool, inp: tool == "ExitPlanMode",
     #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
     #   )
-    _server.enable_question(_question_cb)
+    _server.enable(McpCapability.QUESTION, callback=_question_cb)
     # `mcp__ask__open` hands URIs / file paths to `xdg-open` — lets the
     # AI ask to open things in the browser, obsidian, etc. The call
     # still goes through the approval router first, so the user sees a
     # row before anything spawns.
-    _server.enable_open()
+    _server.enable(McpCapability.OPEN)
     _server.run()
     sys.exit(0)
 

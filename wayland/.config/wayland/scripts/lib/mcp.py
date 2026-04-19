@@ -35,11 +35,23 @@ import logging
 import socket
 import subprocess
 import sys
+from enum import StrEnum
 from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = "2025-06-18"
+
+class McpCapability(StrEnum):
+    """Named capabilities that `McpServer.enable()` knows how to wire
+    up. Adding a new capability is a two-step change: add the enum
+    member below, then add an entry to `McpServer._capability_handlers`
+    that installs it (function or bound method — any callable
+    accepting `(server, **kwargs)`)."""
+
+    APPROVAL = "approval"
+    QUESTION = "question"
+    OPEN = "open"
 
 # Type alias for approval callbacks. `(tool_name, input)` arrive from
 # claude; the return `(approved, reason)` is translated into the
@@ -140,6 +152,24 @@ class McpServer:
         # Registered approval routes, tried in insertion order BEFORE
         # the base approval callback. See `add_approval_route`.
         self._approval_routes: list[tuple[ApprovalMatcher, ApprovalRouteHandler]] = []
+        # Dispatcher for `enable()`. Keyed by `McpCapability`, value is
+        # a callable that installs the capability onto `self`. Using
+        # bound methods keeps the handler signature uniform —
+        # `(self, **kwargs) -> None` — and lets subclasses extend the
+        # map by overriding `__init__` if they want extra capabilities.
+        self._capability_handlers: dict[McpCapability, Callable[..., None]] = {
+            McpCapability.APPROVAL: self._install_approval,
+            McpCapability.QUESTION: self._install_question,
+            McpCapability.OPEN: self._install_open,
+        }
+
+    def enable(self, capability: McpCapability, **kwargs) -> None:
+        """Install a capability by its enum value. `kwargs` are
+        forwarded to the matching `_install_*` method — each capability
+        declares its own required and optional args. Unknown values
+        raise `KeyError` so typos at the call site blow up early
+        instead of silently enabling nothing."""
+        self._capability_handlers[capability](**kwargs)
 
     def register_tool(
         self,
@@ -155,7 +185,7 @@ class McpServer:
             "handler": handler,
         }
 
-    def enable_approval(
+    def _install_approval(
         self,
         callback: ApprovalCallback,
         tool_name: str = "approve",
@@ -165,7 +195,8 @@ class McpServer:
             "expects from a permission-prompt tool."
         ),
     ) -> None:
-        """Register the canonical Claude permission-prompt tool.
+        """`McpCapability.APPROVAL` installer. Registers the canonical
+        Claude permission-prompt tool.
 
         `callback(tool_name, input)` must return `(approved, reason)`.
         We handle the translation to Claude's allow/deny envelope and
@@ -254,7 +285,7 @@ class McpServer:
         callback; custom matchers/handlers cover anything else."""
         self._approval_routes.append((matcher, handler))
 
-    def enable_question(
+    def _install_question(
         self,
         callback: QuestionCallback,
         tool_name: str = "ask_question",
@@ -264,9 +295,10 @@ class McpServer:
             "as a string; empty answer means the user declined to answer."
         ),
     ) -> None:
-        """Register an `ask_question` tool claude can invoke to get a
-        typed reply from the user. `callback(question)` must return the
-        user's answer (string). The UI side is responsible for blocking
+        """`McpCapability.QUESTION` installer. Registers an
+        `ask_question` tool claude can invoke to get a typed reply
+        from the user. `callback(question)` must return the user's
+        answer (string). The UI side is responsible for blocking
         until the user actually answers."""
 
         def handler(args: dict) -> dict:
@@ -296,7 +328,7 @@ class McpServer:
             handler,
         )
 
-    def enable_open(
+    def _install_open(
         self,
         tool_name: str = "open",
         description: str = (
@@ -309,7 +341,8 @@ class McpServer:
             "lifecycle."
         ),
     ) -> None:
-        """Register a generic `open` tool backed by `xdg-open`.
+        """`McpCapability.OPEN` installer. Registers a generic `open`
+        tool backed by `xdg-open`.
 
         With strict MCP mode active the permission-prompt tool fires
         FIRST (same path as any other tool), so the user gets an
