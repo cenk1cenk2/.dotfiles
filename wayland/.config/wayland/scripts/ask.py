@@ -426,7 +426,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -815,6 +815,19 @@ class TurnCard:
 
     def get_text(self) -> str:
         return self._text
+
+    def toggle_thinking(self) -> bool:
+        """Flip the thinking expander's open/closed state. Returns
+        True if there was a thinking block to toggle, False otherwise
+        — callers scanning for the latest thinking card use the
+        return value to stop once they find one."""
+        if self._thinking_expander is None:
+            return False
+        self._thinking_expander.set_expanded(
+            not self._thinking_expander.get_expanded()
+        )
+
+        return True
 
 class PermissionRow(Gtk.ListBoxRow):
     """A pending tool-use event rendered as a full-width card above the
@@ -1617,6 +1630,9 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_r:
             self._reject_first_permission()
             return True
+        if ctrl and keyval == Gdk.KEY_t:
+            self._toggle_last_thinking()
+            return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
             return True
@@ -1697,6 +1713,15 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             return
         self._permissions[0]._deny_btn.emit("clicked")
+
+    def _toggle_last_thinking(self) -> None:
+        """Ctrl+T: flip the open state on the most recent assistant
+        card's thinking expander. Walks `self._cards` backwards so
+        the latest reasoning block wins; silent no-op when nothing in
+        the conversation produced one."""
+        for card in reversed(self._cards):
+            if card.toggle_thinking():
+                return
 
     def _yank_last_assistant(self) -> None:
         """Ctrl+Y: copy the most recent assistant reply to the Wayland

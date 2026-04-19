@@ -171,12 +171,10 @@ class EnrichAdapterCodex:
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
         # Skip `--sandbox` entirely when no mode is set — codex picks
-        # up its configured default policy.
-        if not self.mode:
-            sandbox_args: list[str] = []
-        else:
-            sandbox = "read-only" if self.mode == "plan" else self.mode
-            sandbox_args = ["--sandbox", sandbox]
+        # up its configured default policy. When set, the value is
+        # forwarded verbatim (`read-only` / `workspace-write` /
+        # `danger-full-access`).
+        sandbox_args = ["--sandbox", self.mode] if self.mode else []
         proc = subprocess.run(
             [
                 "codex",
@@ -238,8 +236,8 @@ class EnrichAdapterOpenCode:
             "--model",
             model_spec,
         ]
-        if self.mode == "plan":
-            argv.extend(["--agent", "plan"])
+        if self.mode:
+            argv.extend(["--agent", self.mode])
         argv.append(prompt)
 
         env = os.environ.copy()

@@ -618,12 +618,14 @@ class ConversationAdapterCodex:
 
     def _sandbox_args(self) -> list[str]:
         # Mode unset → no `--sandbox` flag at all; codex picks up
-        # whatever its config / default policy prescribes.
+        # whatever its config / default policy prescribes. When set,
+        # the value passes through verbatim so callers pick the exact
+        # codex sandbox (`read-only` / `workspace-write` /
+        # `danger-full-access` / anything else).
         if not self.mode:
             return []
-        sandbox = "read-only" if self.mode == "plan" else self.mode
 
-        return ["--sandbox", sandbox]
+        return ["--sandbox", self.mode]
 
     def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
@@ -778,9 +780,10 @@ class ConversationAdapterOpenCode:
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
         self.model = kwargs.get("model") or self.DEFAULT_MODEL
-        # OpenCode's `plan` agent is a built-in read-only mode. We
-        # pass it through `--agent` when mode == "plan"; otherwise
-        # the CLI uses the default agent.
+        # Passthrough — whatever agent name the caller gives us goes
+        # straight into `--agent`. `plan` is a built-in read-only
+        # agent; other names map to user-defined agents in
+        # opencode.json. Unset → no `--agent` flag, default agent.
         self.mode = kwargs.get("mode")
         self.config_path = kwargs.get("config_path") or os.path.expanduser(
             "~/.config/nvim/utils/agents/opencode/kilic.json"
@@ -803,8 +806,8 @@ class ConversationAdapterOpenCode:
             "--model",
             model_spec,
         ]
-        if self.mode == "plan":
-            argv.extend(["--agent", "plan"])
+        if self.mode:
+            argv.extend(["--agent", self.mode])
         if self._session_id:
             argv.extend(["--session", self._session_id])
 
