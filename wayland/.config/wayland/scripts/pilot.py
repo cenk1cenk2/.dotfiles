@@ -35,11 +35,14 @@ from lib import (
     MarkdownMarkup,
     OutputAdapterClipboard,
     PermissionState,
+    PlanChunk,
+    PromptAttachment,
     ThinkingChunk,
     ToolCall,
     format_tool_args,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
+    image_attachment,
     load_prompt,
     notify,
     signal_waybar,
@@ -87,12 +90,7 @@ from lib.overlay import (  # noqa: E402
     LayerOverlayWindow,
     load_overlay_css,
     load_css_from_path,
-    spawn_backdrops,
 )
-import gi  # noqa: E402
-
-gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gtk4LayerShell  # type: ignore[attr-defined]  # noqa: E402
 from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
     Gdk,
     Gio,
@@ -193,11 +191,50 @@ class ComposeView:
         # Fallback cap until the first monitor-bind call fires.
         self._scroller.set_max_content_height(int(self._line_px * 6) + self._pad_px)
 
+        # Resource-pill strip. Sits ABOVE the hint/send bar so picked
+        # skills / references surface visibly before submit. Hidden
+        # until the first resource is picked. Caller registers a
+        # remove callback via `set_resource_pills`.
+        self._resource_flow = Gtk.FlowBox(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            column_spacing=4,
+            row_spacing=4,
+            hexpand=True,
+            valign=Gtk.Align.START,
+        )
+        self._resource_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._resource_flow.set_max_children_per_line(16)
+        self._resource_flow.set_homogeneous(False)
+        self._resource_flow.add_css_class("pilot-compose-resources")
+        self._resource_flow.set_visible(False)
+        self.widget.append(self._resource_flow)
+        self._resource_remove_cb: Optional[Callable[[str, str], None]] = None
+
+        # Attachment-pill strip. Shows non-text payloads the user has
+        # queued up (pasted images today, audio / arbitrary blobs
+        # later). Sits between the resource pills and the hint/send bar
+        # so a pasted image is visible BEFORE submit without polluting
+        # the compose TextView. Hidden until the first attachment lands.
+        self._attachment_flow = Gtk.FlowBox(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            column_spacing=4,
+            row_spacing=4,
+            hexpand=True,
+            valign=Gtk.Align.START,
+        )
+        self._attachment_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._attachment_flow.set_max_children_per_line(16)
+        self._attachment_flow.set_homogeneous(False)
+        self._attachment_flow.add_css_class("pilot-compose-attachments")
+        self._attachment_flow.set_visible(False)
+        self.widget.append(self._attachment_flow)
+        self._attachment_remove_cb: Optional[Callable[[object], None]] = None
+
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("pilot-compose-bar")
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+Space skills · Ctrl+K permissions · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+Space skills · Ctrl+K permissions · Ctrl+M mcp · Ctrl+S sessions · Ctrl+O plan · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -248,6 +285,80 @@ class ComposeView:
         self._textview.set_sensitive(sensitive)
         self._send_btn.set_sensitive(sensitive)
 
+    def set_resource_pills(
+        self,
+        entries: list[tuple[str, str, str]],
+        on_remove: Optional[Callable[[str, str], None]],
+    ) -> None:
+        """Re-render the resource-pill strip above the compose bar.
+        Each entry is `(kind, name, description)`; `on_remove(kind,
+        name)` fires when the pill's ✕ is clicked. Empty list hides
+        the strip. CodeCompanion-style: picked skills live as chips
+        instead of polluting the compose text with `#{}` tokens, and
+        `PilotWindow.dispatch_turn` prepends their bodies at submit."""
+        self._resource_remove_cb = on_remove
+        child = self._resource_flow.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._resource_flow.remove(child)
+            child = nxt
+        if not entries:
+            self._resource_flow.set_visible(False)
+            return
+        for kind, name, desc in entries:
+            btn = Gtk.Button(label=f"{kind}/{name} ✕")
+            btn.add_css_class("pilot-compose-resource")
+            btn.add_css_class(f"resource-kind-{kind}")
+            if desc:
+                btn.set_tooltip_text(desc)
+            btn.connect(
+                "clicked",
+                lambda _b, k=kind, n=name: self._on_resource_remove(k, n),
+            )
+            self._resource_flow.append(btn)
+        self._resource_flow.set_visible(True)
+
+    def _on_resource_remove(self, kind: str, name: str) -> None:
+        if self._resource_remove_cb is not None:
+            self._resource_remove_cb(kind, name)
+
+    def set_attachment_pills(
+        self,
+        entries: list[tuple[str, str, object]],
+        on_remove: Optional[Callable[[object], None]],
+    ) -> None:
+        """Render the attachment-pill strip. Each entry is
+        `(label, mime, key)` — the pill shows `label` and, on ✕,
+        fires `on_remove(key)` so the caller can resolve the
+        original `PromptAttachment` without us leaking its type
+        here. Empty list hides the strip."""
+        self._attachment_remove_cb = on_remove
+        child = self._attachment_flow.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._attachment_flow.remove(child)
+            child = nxt
+        if not entries:
+            self._attachment_flow.set_visible(False)
+            return
+        for label, mime, key in entries:
+            btn = Gtk.Button(label=f"{label} ✕")
+            btn.add_css_class("pilot-compose-attachment")
+            mime_kind = (mime or "").split("/", 1)[0] or "blob"
+            btn.add_css_class(f"attachment-kind-{mime_kind}")
+            if mime:
+                btn.set_tooltip_text(mime)
+            btn.connect(
+                "clicked",
+                lambda _b, k=key: self._on_attachment_remove(k),
+            )
+            self._attachment_flow.append(btn)
+        self._attachment_flow.set_visible(True)
+
+    def _on_attachment_remove(self, key: object) -> None:
+        if self._attachment_remove_cb is not None:
+            self._attachment_remove_cb(key)
+
     def _submit(self) -> None:
         text = self.get_text().strip()
         if not text:
@@ -274,9 +385,24 @@ class QueueRow(Gtk.ListBoxRow):
     removes it. In edit mode, Ctrl+Enter commits; the edit button
     relabels to `✓ save` while editing."""
 
-    def __init__(self, text: str, on_send, on_remove, on_edit_commit):
+    def __init__(
+        self,
+        text: str,
+        on_send,
+        on_remove,
+        on_edit_commit,
+        *,
+        display: Optional[str] = None,
+        attachments: Optional[list[PromptAttachment]] = None,
+    ):
         super().__init__()
+        # `_text` is the wire prompt (may be huge — inlined skill
+        # bodies etc.); `_display` is what lands in the queue label
+        # and the edit-mode textview. Defaults to `text` for callers
+        # that haven't split the two (compose-less enqueues).
         self._text = text
+        self._display = display if display is not None else text
+        self._attachments: list[PromptAttachment] = list(attachments or [])
         self._on_send = on_send
         self._on_remove = on_remove
         self._on_edit_commit = on_edit_commit
@@ -288,7 +414,7 @@ class QueueRow(Gtk.ListBoxRow):
         self._card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self._card.add_css_class("pilot-queue-card")
 
-        self._label = Gtk.Label(label=text, xalign=0.0, hexpand=True)
+        self._label = Gtk.Label(label=self._display, xalign=0.0, hexpand=True)
         self._label.set_wrap(True)
         self._label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self._label.set_selectable(True)
@@ -324,7 +450,20 @@ class QueueRow(Gtk.ListBoxRow):
         self.set_child(self._card)
 
     def text(self) -> str:
+        """Wire prompt handed to the adapter (may include inlined
+        resource bodies)."""
         return self._text
+
+    def display(self) -> str:
+        """Clean prose for the user card when this queued row drains."""
+        return self._display
+
+    def attachments(self) -> list[PromptAttachment]:
+        """Binary content blocks that ride on this queued turn when it
+        drains. Captured at enqueue time so the user can keep pasting
+        new attachments into the compose without disturbing rows
+        already sitting in the queue."""
+        return list(self._attachments)
 
     def _toggle_edit(self) -> None:
         if self._editing:
@@ -350,7 +489,13 @@ class QueueRow(Gtk.ListBoxRow):
             right_margin=8,
         )
         textview.add_css_class("pilot-queue-edit-text")
-        textview.get_buffer().set_text(self._text)
+        # Edit the DISPLAY text (clean user prose), not the wire
+        # prompt — we don't want to expose 30KB of inlined skill body
+        # in the editor. On commit the wire text collapses to the
+        # edited display: the resources that were attached when the
+        # original submission happened are lost, matching the intuitive
+        # "this is now a brand new message" semantic.
+        textview.get_buffer().set_text(self._display)
         scroller.set_child(textview)
 
         key = Gtk.EventControllerKey()
@@ -384,7 +529,8 @@ class QueueRow(Gtk.ListBoxRow):
         self._edit_textview = None
         if new_text:
             self._text = new_text
-        self._label.set_label(self._text)
+            self._display = new_text
+        self._label.set_label(self._display)
         self._card.prepend(self._label)
         self._edit_btn.set_label("✎ edit")
         self._on_edit_commit(self, self._text)
@@ -399,6 +545,8 @@ class TurnCard:
 
     THINKING_LABEL_STREAMING = "🧠 thinking…"
     THINKING_LABEL_DONE = "🧠 thinking"
+    PLAN_LABEL_STREAMING = "📋 plan"
+    PLAN_LABEL_DONE = "📋 plan · done"
 
     # Per-status glyph on each tool bubble. Intentionally text-only so
     # these render at the card font size without Pango fighting an
@@ -407,6 +555,7 @@ class TurnCard:
         "pending": "⋯",
         "running": "⋯",
         "completed": "✓",
+        "failed": "⚠",
         "cancelled": "✕",
     }
 
@@ -431,6 +580,13 @@ class TurnCard:
         self._thinking_expander: Optional[Gtk.Expander] = None
         self._thinking_label: Optional[Gtk.Label] = None
         self._thinking_collapsed = False
+        # Plan state — lazily built on first `AgentPlanUpdate`. Agents
+        # re-emit the full plan per-tick, so `_plan_items` holds the
+        # most recent snapshot for the Ctrl+O "reopen last plan" hook
+        # on the window.
+        self._plan_expander: Optional[Gtk.Expander] = None
+        self._plan_label: Optional[Gtk.Label] = None
+        self._plan_items: list = []
 
         # Tool-bubble strip — lazily built when the first ToolCall
         # event arrives for this card. `_tool_bubbles_container` is
@@ -519,6 +675,97 @@ class TurnCard:
     def get_text(self) -> str:
         return self._text
 
+    def set_plan(self, items) -> None:
+        """Render / re-render the plan section from an `AgentPlanUpdate`.
+        Lazy on first call — a card that never gets a plan stays
+        structurally identical to a user card. Each re-render replaces
+        the contents so the `in_progress` → `completed` transitions
+        just look like the item's glyph changing.
+
+        Kept expanded while items are still `in_progress`; snaps
+        closed once the plan is fully completed so the card auto-
+        compacts. Same `Gtk.Expander` pattern the thinking section
+        uses."""
+        if not items:
+            return
+        if self._plan_expander is None:
+            self._plan_label = Gtk.Label(
+                xalign=0.0,
+                yalign=0.0,
+                hexpand=True,
+                wrap=True,
+                wrap_mode=Pango.WrapMode.WORD_CHAR,
+                use_markup=True,
+                selectable=True,
+                natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+            )
+            self._plan_label.add_css_class("pilot-card-text")
+            self._plan_label.add_css_class("pilot-plan-text")
+            self._plan_expander = Gtk.Expander(
+                label=self.PLAN_LABEL_STREAMING,
+                expanded=True,
+            )
+            self._plan_expander.add_css_class("pilot-plan-expander")
+            self._plan_expander.set_child(self._plan_label)
+            # Plan slots in between the thinking expander (if any) and
+            # the reply label. Insert after whichever of role/thinking
+            # is currently the last-inserted "above body" widget.
+            anchor = self._thinking_expander or self._role_label
+            self.widget.insert_child_after(self._plan_expander, anchor)
+        self._plan_items = list(items)
+        assert self._plan_label is not None
+        self._plan_label.set_markup(self._render_plan_markup(self._plan_items))
+        # Auto-collapse once every item is done; otherwise leave open.
+        all_done = all(
+            getattr(it, "status", "") == "completed" for it in self._plan_items
+        )
+        if self._plan_expander is not None:
+            if all_done:
+                self._plan_expander.set_expanded(False)
+                self._plan_expander.set_label(self.PLAN_LABEL_DONE)
+            else:
+                self._plan_expander.set_label(self.PLAN_LABEL_STREAMING)
+
+    @staticmethod
+    def _render_plan_markup(items) -> str:
+        """Markdown-ish list with per-item status glyph and priority
+        tint. Feeds straight into Pango markup — we don't need the
+        full markdown pipeline for this."""
+        glyph_for_status = {
+            "completed": "✓",
+            "in_progress": "◐",
+            "pending": "○",
+        }
+        tint_for_priority = {
+            "high": "#e06c75",
+            "medium": "#d19a66",
+            "low": "#5c6370",
+        }
+        out: list[str] = []
+        for item in items:
+            glyph = glyph_for_status.get(
+                getattr(item, "status", ""), "•"
+            )
+            colour = tint_for_priority.get(
+                getattr(item, "priority", ""), "#abb2bf"
+            )
+            body = GLib.markup_escape_text(getattr(item, "content", "") or "")
+            out.append(
+                f'<span foreground="{colour}" weight="bold">{glyph}</span> {body}'
+            )
+        return "\n".join(out)
+
+    def toggle_plan(self) -> bool:
+        """Flip the plan expander. Returns True if a plan section
+        exists, False otherwise."""
+        if self._plan_expander is None:
+            return False
+        self._plan_expander.set_expanded(not self._plan_expander.get_expanded())
+        return True
+
+    def has_plan(self) -> bool:
+        return self._plan_expander is not None
+
     def toggle_thinking(self) -> bool:
         """Flip the thinking expander's open/closed state. Returns
         True if there was a thinking block to toggle, False otherwise
@@ -565,15 +812,24 @@ class TurnCard:
         self._tool_bubbles_flow = flow
         self._tool_details_box = details_box
 
+    # Maximum characters shown on a tool-bubble pill. MCP tool names
+    # like `mcp__mcphub__linear_kilic-dev__save_issue` can be ~50
+    # chars — we still want the leaf (`save_issue`) on screen when the
+    # bubble gets truncated, so 120 leaves comfortable headroom for
+    # server+tool even on the longest MCP registry entries while
+    # capping runaway names (some Playwright / grafana tools nest
+    # another prefix and push past 80 chars). Truncation happens from
+    # the LEFT so the tool leaf stays visible.
+    _BUBBLE_LABEL_MAX_CHARS = 120
+
     def _format_bubble_label(self, name: str, status: str) -> str:
         glyph = self._TOOL_STATUS_GLYPHS.get(status, "⋯")
         label = name or "tool"
-        # Strip `mcp__<server>__` prefix for readability — the full
-        # tool id is still visible in the expanded detail panel.
-        if label.startswith("mcp__"):
-            tail = label.split("__", 2)
-            if len(tail) >= 3:
-                label = tail[2]
+        # Left-truncate so the leaf tool name (the actionable bit) is
+        # always on screen; the full identifier still lives in the
+        # button's tooltip + the expanded detail panel.
+        if len(label) > self._BUBBLE_LABEL_MAX_CHARS:
+            label = "…" + label[-(self._BUBBLE_LABEL_MAX_CHARS - 1):]
         return f"{label} {glyph}"
 
     def _update_bubble_widget(self, slot: dict) -> None:
@@ -582,7 +838,7 @@ class TurnCard:
         update to keep one rendering path."""
         button: Gtk.Button = slot["button"]
         button.set_label(self._format_bubble_label(slot["name"], slot["status"]))
-        for cls in ("pending", "running", "completed", "cancelled"):
+        for cls in ("pending", "running", "completed", "failed", "cancelled"):
             if cls == slot["status"]:
                 button.add_css_class(cls)
             else:
@@ -758,9 +1014,18 @@ class PermissionRow(Gtk.ListBoxRow):
         card.add_css_class("pilot-permission-card")
 
         # Tool name — accent-coloured header so it reads as a fresh
-        # event rather than another turn card.
-        name_label = Gtk.Label(label=call.name or "(unnamed tool)", xalign=0.0)
+        # event rather than another turn card. MCP tool names can be
+        # very long (`mcp__mcphub__linear_kilic-dev__save_issue`); we
+        # ellipsize from the LEFT so the leaf tool name (the
+        # actionable bit) is always visible, and the full identifier
+        # lives in the tooltip. 120-char cap keeps the row single-line
+        # on the narrowest sidebar widths we ship.
+        full_name = call.name or "(unnamed tool)"
+        name_label = Gtk.Label(label=full_name, xalign=0.0, hexpand=True)
         name_label.add_css_class("pilot-permission-tool-name")
+        name_label.set_ellipsize(Pango.EllipsizeMode.START)
+        name_label.set_max_width_chars(120)
+        name_label.set_tooltip_text(full_name)
         card.append(name_label)
 
         # Argument preview. Routes through `format_tool_args` so
@@ -947,15 +1212,11 @@ class PilotWindow(LayerOverlayWindow):
             application=app,
             title="Pilot",
             namespace="pilot",
-            # OVERLAY so pilot renders above the TOP-layer backdrops
-            # that dim every monitor when the sidebar is visible.
-            layer=Gtk4LayerShell.Layer.OVERLAY,
             anchors=("top", "bottom", "right"),
             width_fraction=0.4,
             fallback_width=520,
         )
         self._app = app
-        self._backdrops: list = []
         self._adapter = adapter
         # Session handle wired later via `attach_session` — the overlay
         # uses it to push auto-list mutations into the authoritative
@@ -1009,14 +1270,43 @@ class PilotWindow(LayerOverlayWindow):
         # open so stale selections don't leak across sessions.
         self._palette: Optional[CommandPalette] = None
         self._permissions_palette: Optional[CommandPalette] = None
+        self._mcp_palette: Optional[CommandPalette] = None
+        self._sessions_palette: Optional[CommandPalette] = None
+        # Resources the user has attached via the palette but hasn't
+        # submitted yet. Each `(kind, name, description)` renders as a
+        # pill above the compose hint; `dispatch_turn` inlines them at
+        # submit time.
+        self._pending_resources: list[tuple[str, str, str]] = []
+        # Binary / image payloads the user has pasted (Ctrl+P) but
+        # hasn't submitted yet. These ride on the next turn as ACP
+        # content blocks prefixed to the text prompt — never inlined
+        # into the display text, since they can't be flattened to a
+        # readable string.
+        self._pending_attachments: list[PromptAttachment] = []
+        # Most-recent plan snapshot so Ctrl+O can reopen / scroll to
+        # the latest `AgentPlanUpdate`. `_last_plan_card` is the
+        # TurnCard that rendered it; `_last_plan_items` is the raw
+        # PlanItem list for re-display after turn finalisation.
+        self._last_plan_card: Optional["TurnCard"] = None
+        self._last_plan_items: list = []
         self._install_css()
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.add_css_class("pilot-root")
 
         # Header --------------------------------------------------------
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        # Two-row layout:
+        #   row 1: provider/phase pill + close button
+        #   row 2: cwd + mcp count + skills count (dim breadcrumb)
+        # Users were landing in a pilot window with zero indication of
+        # which project directory the agent was operating in — the
+        # breadcrumb makes `--cwd` / `--mcp` / `--skills-dir` visible at
+        # a glance.
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header.add_css_class("pilot-header")
+
+        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        top_row.add_css_class("pilot-header-top")
         self._provider_label = Gtk.Label(
             label=self._header_title(),
             xalign=0.0,
@@ -1027,8 +1317,19 @@ class PilotWindow(LayerOverlayWindow):
         close_btn = Gtk.Button(label="✕")
         close_btn.add_css_class("pilot-close")
         close_btn.connect("clicked", lambda _b: self.close())
-        header.append(self._provider_label)
-        header.append(close_btn)
+        top_row.append(self._provider_label)
+        top_row.append(close_btn)
+        header.append(top_row)
+
+        self._session_label = Gtk.Label(
+            label=self._session_subtitle(),
+            xalign=0.0,
+            hexpand=True,
+        )
+        self._session_label.add_css_class("pilot-session")
+        self._session_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
+        header.append(self._session_label)
         root.append(header)
 
         # Conversation: a vertical box of TurnCard widgets inside a
@@ -1057,6 +1358,20 @@ class PilotWindow(LayerOverlayWindow):
         vadj = self._conv_scroller.get_vadjustment()
         vadj.connect("value-changed", self._on_vadj_value_changed)
         vadj.connect("notify::upper", self._on_vadj_upper_changed)
+        # page-size shrinks whenever the compose grows (multi-line
+        # submissions, permission row appears) — re-pin in that case
+        # too, otherwise the viewport cuts off the bottom of the
+        # newest card.
+        vadj.connect("notify::page-size", self._on_vadj_upper_changed)
+        # `notify::upper` fires multiple times as content reflows
+        # (markdown cards re-measure across multiple layout passes,
+        # collapsible thinking / plan expanders open, pill strips
+        # appear). Every firing re-runs `_on_vadj_upper_changed`,
+        # but a single `set_value` right when the first firing lands
+        # uses a stale `upper`. `_schedule_pinned_follow_up` kicks
+        # an idle + 60ms timeout so the LAST layout pass wins and
+        # the viewport actually ends at the new bottom.
+        self._scroll_retry_armed = False
 
         # Permissions ---------------------------------------------------
         # Sits above the queue so pending tool-use notifications take
@@ -1087,15 +1402,17 @@ class PilotWindow(LayerOverlayWindow):
 
         # Compose -------------------------------------------------------
         self._compose = ComposeView(on_submit=self.dispatch_turn)
-        # Wrap the compose in a `Gtk.Overlay` so the resource palette
-        # (Ctrl+Space) can float on top of the compose textview without
-        # reflowing the rest of the layout. The palette is added/removed
-        # lazily via `_open_resource_palette` / `_close_palette`.
-        self._compose_overlay = Gtk.Overlay()
-        self._compose_overlay.set_child(self._compose.widget)
-        root.append(self._compose_overlay)
+        root.append(self._compose.widget)
 
-        self.set_child(root)
+        # Root-level overlay so the command palette can float across
+        # the FULL window height (50% of monitor) instead of being
+        # caged inside the ~25%-capped compose box. `_compose_overlay`
+        # still exists for compose-local overlays (nothing uses it
+        # today, but keeping the name stable lets the palette helpers
+        # stay readable).
+        self._compose_overlay = Gtk.Overlay()
+        self._compose_overlay.set_child(root)
+        self.set_child(self._compose_overlay)
 
         # Render pills for the seeded trust + auto-list state so the
         # user sees pre-authorised / auto-decided tools from the moment
@@ -1111,35 +1428,6 @@ class PilotWindow(LayerOverlayWindow):
 
     def focus_compose(self) -> None:
         self._compose.focus()
-
-    def set_visible(self, visible: bool) -> None:  # type: ignore[override]
-        """Toggle both the overlay window and its per-monitor dim
-        backdrops together. Showing pilot spawns one backdrop per
-        output; hiding tears them down. Each backdrop catches clicks
-        and hides the overlay, so tapping any non-pilot region of any
-        screen dismisses the sidebar."""
-        if visible:
-            super().set_visible(True)
-            if not self._backdrops:
-                self._backdrops = spawn_backdrops(
-                    self._app, on_click=self._hide_from_backdrop
-                )
-        else:
-            self._dismiss_backdrops()
-            super().set_visible(False)
-
-    def _dismiss_backdrops(self) -> None:
-        for bd in self._backdrops:
-            try:
-                bd.destroy()
-            except Exception as e:
-                log.debug("backdrop destroy raised: %s", e)
-        self._backdrops = []
-
-    def _hide_from_backdrop(self) -> None:
-        """Backdrop click-through handler. Hide the overlay — a
-        subsequent toggle/turn will re-open it."""
-        self.set_visible(False)
 
     def toggle_visibility(self) -> bool:
         if self.get_visible():
@@ -1199,29 +1487,67 @@ class PilotWindow(LayerOverlayWindow):
         return None
 
     def dispatch_turn(self, user_message: str) -> None:
-        # Expand `#{kind/name}` resource tokens inserted by the
-        # Ctrl+Space palette. Skills and references get inlined as
-        # fenced markdown blocks above the user's prose so the agent
-        # sees the full body in a single prompt — no round-trip
-        # through `resources/read` needed.
-        user_message = self._expand_resource_tokens(user_message)
-        message = user_message.strip()
-        if not message:
+        # Two views of the turn:
+        #   - `display`: the user's clean typed prose. Shown in the
+        #     chat card.
+        #   - `prompt`: display + every resource body (pill-attached or
+        #     `#{kind/name}`-inlined) prepended as fenced sections.
+        #     Handed to the adapter; the user never sees it.
+        # Keeps the conversation readable — a skill attachment might
+        # be 30KB of markdown, and dumping that into the card on every
+        # submit made the chat unscrollable.
+        display = user_message.strip()
+        prompt = self._build_agent_prompt(user_message)
+        attachments = list(self._pending_attachments)
+        log.info(
+            "dispatch_turn: display_len=%d prompt_len=%d resources=%d attachments=%d "
+            "streaming=%s queue=%d",
+            len(display),
+            len(prompt),
+            len(self._pending_resources),
+            len(attachments),
+            self._streaming,
+            len(self._queue),
+        )
+        if self._pending_resources:
+            self._pending_resources = []
+            self._refresh_resource_pills()
+        if self._pending_attachments:
+            self._pending_attachments = []
+            self._refresh_attachment_pills()
+        # An attachment-only turn (pasted image, no prose) is still a
+        # valid submission — the ACP prompt requires at least one
+        # content block but the text block may be empty.
+        if not prompt and not attachments:
+            log.debug("dispatch_turn: nothing to send; dropping")
             return
         if not self.get_visible():
-            # Coming back from hidden — re-home to whichever output the
-            # user is looking at NOW, same policy as manual toggle.
             self._bind_to_focused_monitor()
             self.set_visible(True)
             self.present()
         if self._streaming or self._queue:
-            # Manual-drain queue semantics: anything pending stays put
-            # until the user hits a card's ⏎. If there's already a
-            # stream in flight OR the queue is non-empty, new incoming
-            # turns join the tail instead of jumping ahead.
-            self._enqueue(message)
+            # Queue rows store the WIRE prompt (with resources) so the
+            # drain later submits exactly what the user composed.
+            # Display remains the clean prose.
+            self._enqueue(prompt, display=display, attachments=attachments)
             return
-        self._start_turn(message)
+        self._start_turn(prompt, display=display, attachments=attachments)
+
+    def _build_agent_prompt(self, user_message: str) -> str:
+        """Merge pill-attached resources + any inline `#{kind/name}`
+        tokens with the user's typed text. Empty `user_message` plus
+        no resources → empty string (caller drops the turn)."""
+        body = self._expand_resource_tokens(user_message)
+        sections: list[str] = []
+        for kind, name, _desc in self._pending_resources:
+            resolved = self._resolve_resource(kind, name)
+            if resolved is not None:
+                sections.append(f"### {kind}/{name}\n\n{resolved}")
+        if not sections:
+            return body.strip()
+        tail = body.strip()
+        joined = "\n\n".join(sections)
+        return f"{joined}\n\n---\n\n{tail}" if tail else joined
 
     def phase(self) -> str:
         return self._phase
@@ -1234,17 +1560,31 @@ class PilotWindow(LayerOverlayWindow):
 
     # -- Turn lifecycle -------------------------------------------------
 
-    def _start_turn(self, message: str) -> None:
-        self._append_user_card(message)
+    def _start_turn(
+        self,
+        message: str,
+        *,
+        display: Optional[str] = None,
+        attachments: Optional[list[PromptAttachment]] = None,
+    ) -> None:
+        """`message` is the wire prompt handed to the adapter (may
+        contain inlined resource bodies); `display` is the clean text
+        rendered in the user card. `attachments` is an optional list
+        of binary content blocks (pasted images today) that prefix
+        the text block in the ACP prompt."""
+        card_text = display if display is not None else message
+        self._append_user_card(card_text)
         self._active_assistant = self._append_assistant_card()
         self._streaming = True
         self._stream_started = False
         self._turn_cancelled = False
-        # Compose stays enabled: the queue system handles anything the
-        # user types while this turn is streaming — new submissions get
-        # pushed behind the current stream automatically.
         self._update_phase()
-        threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
+        threading.Thread(
+            target=self._run_turn,
+            args=(message,),
+            kwargs={"attachments": list(attachments or [])},
+            daemon=True,
+        ).start()
 
     def _append_user_card(self, text: str) -> TurnCard:
         card = TurnCard(
@@ -1255,10 +1595,9 @@ class PilotWindow(LayerOverlayWindow):
         self._cards.append(card)
         # Explicit user action → always pin-to-bottom and scroll, even
         # if the user had scrolled up before clicking send.
-        self._pinned = True
         self._conv_box.append(card.widget)
         card.set_text(text)
-
+        self._force_scroll_to_bottom()
         return card
 
     def _append_assistant_card(self) -> TurnCard:
@@ -1269,7 +1608,7 @@ class PilotWindow(LayerOverlayWindow):
         )
         self._cards.append(card)
         self._conv_box.append(card.widget)
-
+        self._force_scroll_to_bottom()
         return card
 
     def _header_title(self) -> str:
@@ -1282,6 +1621,44 @@ class PilotWindow(LayerOverlayWindow):
         if self._session_suffix:
             return f"[{self._session_suffix}] {base}"
         return base
+
+    def _pretty_cwd(self) -> str:
+        """Return a compact cwd label. Collapses `$HOME` to `~`, and
+        when the full path is longer than 48 chars keeps only the last
+        three segments (with a leading `…/`) so the breadcrumb stays
+        one line on a ~400px-wide sidebar."""
+        raw = self._cwd or os.getcwd()
+        home = os.path.expanduser("~")
+        if raw.startswith(home):
+            raw = "~" + raw[len(home):]
+        if len(raw) <= 48:
+            return raw
+        parts = raw.split(os.sep)
+        if len(parts) <= 3:
+            return raw
+        tail = os.sep.join(parts[-3:])
+        return f"…/{tail}"
+
+    def _session_subtitle(self, *, verbose: bool = False) -> str:
+        """Second header row: cwd · mcp count · skills count. `verbose`
+        returns the un-truncated path for the tooltip."""
+        segments: list[str] = []
+        if verbose:
+            segments.append(self._cwd or os.getcwd())
+        else:
+            segments.append(self._pretty_cwd())
+        if self._mcp_server_names:
+            segments.append(f"{len(self._mcp_server_names)} mcp")
+        if self._skills_dir:
+            segments.append("skills on")
+        return "  ·  ".join(segments)
+
+    def _refresh_session_label(self) -> None:
+        """Re-render the breadcrumb — called on attach_session / every
+        config change that could flip one of the three segments."""
+        if hasattr(self, "_session_label"):
+            self._session_label.set_label(self._session_subtitle())
+            self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
 
     def _assistant_title(self) -> str:
         if self._model:
@@ -1308,13 +1685,43 @@ class PilotWindow(LayerOverlayWindow):
         with `GLib.idle_add`."""
         if self._active_assistant is not None:
             self._active_assistant.append_thinking(chunk)
+        # Thinking sections are collapsible; when the first chunk
+        # arrives the card inserts an expander whose natural height
+        # depends on several layout passes. Kick the follow-up so we
+        # don't end up with the expander peeking off the bottom.
+        self._schedule_pinned_follow_up()
 
         return False
 
-    def _run_turn(self, user_message: str) -> None:
+    def _apply_plan(self, items: list) -> bool:
+        """Main-thread sink for `PlanChunk` events. Re-renders the
+        plan section on the active assistant card AND caches the
+        snapshot as `_last_plan` so Ctrl+O can reopen it later, even
+        after the turn has finalised."""
+        if self._active_assistant is not None:
+            self._active_assistant.set_plan(items)
+            self._last_plan_card = self._active_assistant
+        self._last_plan_items = list(items)
+        # Plan widgets can grow / shrink several rows in one update;
+        # nudge the follow-up so the viewport re-targets the new
+        # bottom once layout settles.
+        self._schedule_pinned_follow_up()
+        return False
+
+    def _run_turn(
+        self,
+        user_message: str,
+        *,
+        attachments: Optional[list[PromptAttachment]] = None,
+    ) -> None:
+        log.info(
+            "run_turn: start wire_len=%d attachments=%d",
+            len(user_message),
+            len(attachments or []),
+        )
         first_text_chunk = True
         try:
-            for chunk in self._adapter.turn(user_message):
+            for chunk in self._adapter.turn(user_message, attachments=attachments):
                 if not self._alive:
                     return
                 if isinstance(chunk, ToolCall):
@@ -1331,6 +1738,9 @@ class PilotWindow(LayerOverlayWindow):
                 if isinstance(chunk, ThinkingChunk):
                     GLib.idle_add(self._append_thinking, chunk.text)
                     continue
+                if isinstance(chunk, PlanChunk):
+                    GLib.idle_add(self._apply_plan, chunk.items)
+                    continue
                 if first_text_chunk:
                     GLib.idle_add(self._mark_stream_started)
                     first_text_chunk = False
@@ -1338,9 +1748,10 @@ class PilotWindow(LayerOverlayWindow):
         except Exception as e:
             if not self._alive:
                 return
-            log.error("turn failed: %s", e)
+            log.exception("turn failed: %s", e)
             GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
         finally:
+            log.info("run_turn: end streamed=%s", self._stream_started)
             if self._alive:
                 GLib.idle_add(self._mark_idle)
 
@@ -1452,9 +1863,17 @@ class PilotWindow(LayerOverlayWindow):
 
     # -- Queue ----------------------------------------------------------
 
-    def _enqueue(self, message: str) -> None:
+    def _enqueue(
+        self,
+        message: str,
+        *,
+        display: Optional[str] = None,
+        attachments: Optional[list[PromptAttachment]] = None,
+    ) -> None:
         row = QueueRow(
             text=message,
+            display=display,
+            attachments=attachments,
             on_send=self._on_queue_send,
             on_remove=self._on_queue_remove,
             on_edit_commit=self._on_queue_edit,
@@ -1464,7 +1883,7 @@ class PilotWindow(LayerOverlayWindow):
         self._queue_box.set_visible(True)
         _signal_waybar_safe()
 
-    def _pop_queue_front(self) -> Optional[str]:
+    def _pop_queue_front(self) -> Optional[tuple[str, str]]:
         if not self._queue:
             return None
         row = self._queue.pop(0)
@@ -1473,7 +1892,7 @@ class PilotWindow(LayerOverlayWindow):
             self._queue_box.set_visible(False)
         _signal_waybar_safe()
 
-        return row.text()
+        return row.text(), row.display()
 
     def _remove_queue_row(self, row: QueueRow) -> Optional[str]:
         if row not in self._queue:
@@ -1494,10 +1913,13 @@ class PilotWindow(LayerOverlayWindow):
         if self._streaming:
             log.info("ignoring queue-send while streaming")
             return
-        text = self._remove_queue_row(row)
-        if not text:
+        wire = row.text()
+        display = row.display()
+        attachments = row.attachments()
+        self._remove_queue_row(row)
+        if not wire and not attachments:
             return
-        self._start_turn(text)
+        self._start_turn(wire, display=display, attachments=attachments)
 
     def _on_queue_remove(self, row: QueueRow) -> None:
         self._remove_queue_row(row)
@@ -1741,15 +2163,75 @@ class PilotWindow(LayerOverlayWindow):
         """User-initiated scroll updates the pinned flag. If they scroll
         to within `_PIN_THRESHOLD_PX` of the bottom we consider them
         pinned; scrolling up beyond that unpins so subsequent content
-        arrivals don't fight the reader."""
-        bottom = adj.get_upper() - adj.get_page_size()
-        self._pinned = adj.get_value() >= bottom - self._PIN_THRESHOLD_PX
+        arrivals don't fight the reader.
+
+        Programmatic `set_value` also emits `value-changed`, so we
+        only flip the flag when the incoming value is clearly off the
+        bottom — a tiny overshoot from our own follow-up scroll must
+        not unpin us."""
+        bottom = max(0.0, adj.get_upper() - adj.get_page_size())
+        if adj.get_value() >= bottom - self._PIN_THRESHOLD_PX:
+            self._pinned = True
+        else:
+            self._pinned = False
 
     def _on_vadj_upper_changed(self, adj, _pspec) -> None:
-        """Content grew (card appended or streaming chunk landed). If
-        we were pinned, stick to the new bottom."""
-        if self._pinned:
-            adj.set_value(max(0, adj.get_upper() - adj.get_page_size()))
+        """Content grew (card appended or streaming chunk landed), OR
+        viewport shrank (compose expanded into the scroller's space).
+        Either way, if we were pinned, stick to the new bottom —
+        AND schedule a follow-up pass in case the layout hasn't
+        finished growing yet (thinking / plan expanders, pill strips,
+        and freshly-rendered markdown cards all re-measure over
+        multiple ticks)."""
+        if not self._pinned:
+            return
+        adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
+        self._schedule_pinned_follow_up()
+
+    def _schedule_pinned_follow_up(self) -> None:
+        """Idle + 60ms re-scroll so whichever layout pass settles last
+        still leaves us at the bottom. Guarded by `_scroll_retry_armed`
+        so the rapid-fire `notify::upper` / `notify::page-size` bursts
+        from a single content change collapse into ONE follow-up pair
+        instead of flooding the idle queue."""
+        if self._scroll_retry_armed or not self._pinned:
+            return
+        self._scroll_retry_armed = True
+        adj = self._conv_scroller.get_vadjustment()
+
+        def _idle() -> bool:
+            if self._pinned:
+                adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
+            return False
+
+        def _timeout() -> bool:
+            if self._pinned:
+                adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
+            self._scroll_retry_armed = False
+            return False
+
+        GLib.idle_add(_idle)
+        GLib.timeout_add(60, _timeout)
+
+    def _force_scroll_to_bottom(self) -> None:
+        """Queue several idle-ticks worth of "scroll to bottom". GTK
+        measures Gtk.Label natural height over multiple layout passes
+        (it caches conservatively on first measure then grows as the
+        text wraps), so one `set_value` right after `append()` lands
+        mid-measurement and gets leapfrogged by the card's final size.
+        Retrying across three ticks + a 60ms timeout covers every
+        measurement schedule I've seen hit in practice."""
+        self._pinned = True
+        adj = self._conv_scroller.get_vadjustment()
+
+        def _scroll() -> bool:
+            adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
+            return False
+
+        GLib.idle_add(_scroll)
+        GLib.idle_add(_scroll)
+        GLib.timeout_add(60, _scroll)
+        GLib.timeout_add(180, _scroll)
 
     def _open_link(self, url: str) -> None:
         Gio.AppInfo.launch_default_for_uri(url, None)
@@ -1771,6 +2253,11 @@ class PilotWindow(LayerOverlayWindow):
             self._permissions_palette is not None
             and self._permissions_palette.is_open()
         )
+        mcp_open = self._mcp_palette is not None and self._mcp_palette.is_open()
+        sessions_open = (
+            self._sessions_palette is not None
+            and self._sessions_palette.is_open()
+        )
         if ctrl and keyval == Gdk.KEY_space:
             if resource_open:
                 self._palette.close()
@@ -1783,11 +2270,23 @@ class PilotWindow(LayerOverlayWindow):
             else:
                 self._open_permissions_palette()
             return True
+        if ctrl and keyval == Gdk.KEY_m:
+            if mcp_open:
+                self._mcp_palette.close()
+            else:
+                self._open_mcp_palette()
+            return True
+        if ctrl and keyval == Gdk.KEY_s:
+            if sessions_open:
+                self._sessions_palette.close()
+            else:
+                self._open_sessions_palette()
+            return True
         # Esc when any palette is open should dismiss only the palette.
-        # `is_open()` is synchronous on the attachment flag, so this
-        # check is race-free with the palette's own capture-phase Esc
-        # handler that actually runs close().
-        if (resource_open or permissions_open) and keyval == Gdk.KEY_Escape:
+        any_palette_open = (
+            resource_open or permissions_open or mcp_open or sessions_open
+        )
+        if any_palette_open and keyval == Gdk.KEY_Escape:
             return False
         if ctrl and keyval == Gdk.KEY_q:
             self.close()
@@ -1812,6 +2311,9 @@ class PilotWindow(LayerOverlayWindow):
             return True
         if ctrl and keyval == Gdk.KEY_t:
             self._toggle_last_thinking()
+            return True
+        if ctrl and keyval == Gdk.KEY_o:
+            self._open_last_plan()
             return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
@@ -1869,12 +2371,83 @@ class PilotWindow(LayerOverlayWindow):
         if self._active_assistant is not None:
             self._active_assistant.append("\n\n*— cancelled —*")
 
+    # MIME prefixes that Ctrl+P captures as attachments instead of text.
+    # Today just images (CodeCompanion's `ResourceResponse:image(data,
+    # mime)` equivalent); extend here when audio / arbitrary blobs are
+    # worth surfacing as pills.
+    _ATTACHMENT_MIME_PREFIXES: tuple[str, ...] = ("image/",)
+
     def _paste_clipboard_into_compose(self) -> None:
+        """Ctrl+P: inspect the clipboard and route into the right sink.
+        Image / binary payloads become attachment pills so they ride on
+        the next turn as ACP content blocks; text falls through to the
+        compose TextView."""
+        mimes = InputAdapterClipboard.list_mime_types()
+        log.info("paste: clipboard mimes=%s", mimes)
+        chosen_mime = self._pick_attachment_mime(mimes)
+        if chosen_mime is not None:
+            data = InputAdapterClipboard.read_binary(chosen_mime)
+            if data:
+                log.info(
+                    "paste: attaching %s (%d bytes)", chosen_mime, len(data)
+                )
+                self._pending_attachments.append(
+                    PromptAttachment(mime_type=chosen_mime, data=data)
+                )
+                self._refresh_attachment_pills()
+                self._compose.focus()
+                return
+            log.warning(
+                "clipboard advertised %s but wl-paste returned nothing; "
+                "falling back to text",
+                chosen_mime,
+            )
         text = InputAdapterClipboard().read() or ""
+        log.info("paste: text fallback len=%d", len(text))
         if not text:
             return
         self._compose.focus()
         self._compose.append_text(text)
+
+    def _pick_attachment_mime(self, mimes: list[str]) -> Optional[str]:
+        for mime in mimes:
+            for prefix in self._ATTACHMENT_MIME_PREFIXES:
+                if mime.startswith(prefix):
+                    return mime
+        return None
+
+    def _refresh_attachment_pills(self) -> None:
+        self._compose.set_attachment_pills(
+            [
+                (self._attachment_label(att), att.mime_type, att)
+                for att in self._pending_attachments
+            ],
+            on_remove=self._on_pending_attachment_remove,
+        )
+
+    @staticmethod
+    def _attachment_label(att: PromptAttachment) -> str:
+        """Short human label for the pill. Images say `📎 image/png` with
+        the byte size so the user knows what they're about to send."""
+        mime = att.mime_type or "blob"
+        if att.data is not None:
+            size = len(att.data)
+            if size >= 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f}MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f}KB"
+            else:
+                size_str = f"{size}B"
+            return f"📎 {mime} · {size_str}"
+        if att.uri:
+            return f"📎 {mime} · {att.uri}"
+        return f"📎 {mime}"
+
+    def _on_pending_attachment_remove(self, key: object) -> None:
+        self._pending_attachments = [
+            att for att in self._pending_attachments if att is not key
+        ]
+        self._refresh_attachment_pills()
 
     def _open_resource_palette(self) -> None:
         """Ctrl+Space: raise the resource palette over the compose area
@@ -1891,21 +2464,48 @@ class PilotWindow(LayerOverlayWindow):
         if self._palette is None:
             self._palette = CommandPalette(
                 host_overlay=self._compose_overlay,
-                on_commit=lambda entries: _commit_resources_to_compose(
-                    self._compose, entries
-                ),
+                on_commit=self._commit_resources_as_pills,
                 on_cancel=self._compose.focus,
                 placeholder=(
-                    "Search resources — Tab toggles · Enter inserts · Esc cancels"
+                    "Search skills — Tab ticks · Enter attaches · Esc cancels"
                 ),
             )
+        self._size_palette(self._palette)
         resources = self._collect_resources()
-        # Preseed BEFORE open() so the palette's set survives its own
-        # `known`-filter trim inside `open()`.
+        # Preseed from the already-attached pills so re-opening the
+        # palette shows which resources are currently queued.
         self._palette.preseed_active(
-            _preseed_resource_active_from_compose(self._compose, resources)
+            {(k, n) for (k, n, _d) in self._pending_resources}
         )
         self._palette.open(resources)
+
+    def _commit_resources_as_pills(
+        self, active_entries: list[tuple[str, str, str, str]]
+    ) -> None:
+        """Palette commit handler — stores picked resources in the
+        window's `_pending_resources` list and refreshes the compose-
+        bar pill strip. No tokens get inserted into the compose text;
+        the expansion happens inside `dispatch_turn` right before the
+        message is handed to the adapter."""
+        self._pending_resources = [
+            (k, n, d) for (k, n, d, _p) in active_entries
+        ]
+        self._refresh_resource_pills()
+        self._compose.focus()
+
+    def _refresh_resource_pills(self) -> None:
+        self._compose.set_resource_pills(
+            [(k, n, d) for (k, n, d) in self._pending_resources],
+            on_remove=self._on_pending_resource_remove,
+        )
+
+    def _on_pending_resource_remove(self, kind: str, name: str) -> None:
+        self._pending_resources = [
+            (k, n, d)
+            for (k, n, d) in self._pending_resources
+            if not (k == kind and n == name)
+        ]
+        self._refresh_resource_pills()
 
     def _open_permissions_palette(self) -> None:
         """Ctrl+K: raise a palette listing every trusted / auto-
@@ -1923,8 +2523,22 @@ class PilotWindow(LayerOverlayWindow):
                     "Search permissions — Tab toggles · Enter drops · Esc cancels"
                 ),
             )
+        self._size_palette(self._permissions_palette)
         self._permissions_palette.preseed_active(set())
         self._permissions_palette.open(self._collect_permission_entries())
+
+    def _size_palette(self, palette) -> None:
+        """Size the floating palette panel to roughly 70% width × 60%
+        height of the current sidebar, then let `CommandPalette` force
+        those dimensions via `set_size_request`. Falls back to the
+        palette's own defaults when the window hasn't laid out yet —
+        happens the first time Ctrl+Space fires before the window has
+        painted a frame."""
+        height = self.get_allocated_height()
+        width = self.get_allocated_width()
+        if height <= 0 or width <= 0:
+            return
+        palette.set_size(int(width * 0.9), int(height * 0.6))
 
     def _commit_permission_removal(self, entries) -> None:
         """Drop every ticked entry from its corresponding permission
@@ -1933,6 +2547,98 @@ class PilotWindow(LayerOverlayWindow):
         for _kind, name, _desc, _preview in entries:
             self._permission.discard(name)
         self._sync_permission_state()
+        self._compose.focus()
+
+    def _open_mcp_palette(self) -> None:
+        """Ctrl+M: view-only palette listing every MCP server the
+        adapter's ACP session attached. Commit is a no-op — this is
+        a cheat-sheet for "what can the agent actually call right
+        now", not an editor."""
+        if self._mcp_palette is None:
+            self._mcp_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=lambda _entries: self._compose.focus(),
+                on_cancel=self._compose.focus,
+                placeholder="Active MCP servers — Esc closes",
+            )
+        self._size_palette(self._mcp_palette)
+        self._mcp_palette.preseed_active(set())
+        self._mcp_palette.open(self._collect_mcp_entries())
+
+    def _collect_mcp_entries(self) -> list[tuple[str, str, str, str]]:
+        """List every MCP server bound to the active ACP session.
+        `McpServerStdio` vs `HttpMcpServer` vs `SseMcpServer` gets
+        tagged via the `kind` column so the palette colouring signals
+        transport at a glance."""
+        out: list[tuple[str, str, str, str]] = []
+        session = getattr(self._adapter, "_session", None)
+        servers = getattr(session, "mcp_servers", None) or []
+        for s in servers:
+            transport = type(s).__name__
+            if transport == "McpServerStdio":
+                desc = f"stdio · {s.command}"
+                kind = "mcp_stdio"
+            elif transport == "HttpMcpServer":
+                desc = f"http · {s.url}"
+                kind = "mcp_http"
+            elif transport == "SseMcpServer":
+                desc = f"sse · {s.url}"
+                kind = "mcp_sse"
+            else:
+                desc = transport
+                kind = "mcp"
+            out.append((kind, s.name, desc, s.name))
+        return out
+
+    def _open_sessions_palette(self) -> None:
+        """Ctrl+S: palette listing known ACP sessions the adapter can
+        resume. Commit replays the picked session — pilot asks the
+        adapter to tear down the current session and re-bind to the
+        chosen id. Gracefully degrades to the current session only
+        when the adapter can't enumerate."""
+        if self._sessions_palette is None:
+            self._sessions_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_session_restore,
+                on_cancel=self._compose.focus,
+                placeholder=(
+                    "Switch session — Enter restores · Esc cancels"
+                ),
+            )
+        self._size_palette(self._sessions_palette)
+        self._sessions_palette.preseed_active(set())
+        self._sessions_palette.open(self._collect_session_entries())
+
+    def _collect_session_entries(self) -> list[tuple[str, str, str, str]]:
+        """Build the (kind, id, description, preview) list for the
+        sessions palette. The adapter exposes the current session id
+        via `_session._session_id`; listing all sessions isn't on the
+        ACP surface so we show only the current one for now, plus a
+        `new` sentinel that starts fresh on commit."""
+        out: list[tuple[str, str, str, str]] = []
+        session = getattr(self._adapter, "_session", None)
+        current = getattr(session, "_session_id", None)
+        if current:
+            out.append(
+                ("session", current, "current session · press Enter to keep", current)
+            )
+        out.append(("new-session", "new", "start a fresh ACP session", "new"))
+        return out
+
+    def _commit_session_restore(self, entries) -> None:
+        """Commit handler for the Ctrl+S sessions palette. Only the
+        `new-session` sentinel has a real effect today — it tears the
+        adapter down, freeing the agent subprocess for a clean start.
+        Existing-session picks are a no-op (we're already on the
+        current session)."""
+        for kind, _name, _desc, _preview in entries:
+            if kind == "new-session":
+                try:
+                    self._adapter.close()
+                except Exception as e:
+                    log.warning("adapter close raised: %s", e)
+                self._active_assistant = None
+                break
         self._compose.focus()
 
     def _collect_resources(self) -> list[tuple[str, str, str, str]]:
@@ -1989,6 +2695,31 @@ class PilotWindow(LayerOverlayWindow):
         for card in reversed(self._cards):
             if card.toggle_thinking():
                 return
+
+    def _open_last_plan(self) -> None:
+        """Ctrl+O: re-expand the most recent plan block and scroll it
+        into view. If the plan card auto-collapsed after all items
+        finished, this reopens it so the user can re-read the
+        finalised list. Silent no-op when no plan has landed yet."""
+        card = self._last_plan_card
+        if card is None or not card.has_plan():
+            # Fall back to walking cards — handles the edge case of a
+            # turn replay that landed plans on an older card.
+            for candidate in reversed(self._cards):
+                if candidate.has_plan():
+                    card = candidate
+                    break
+        if card is None or not card.has_plan():
+            return
+        card.toggle_plan()
+        # Ensure it ends up expanded regardless of prior state — Ctrl+O
+        # is "show me the plan", not a toggle.
+        if card._plan_expander is not None and not card._plan_expander.get_expanded():
+            card._plan_expander.set_expanded(True)
+        try:
+            card.widget.grab_focus()
+        except Exception:
+            pass
 
     def _yank_last_assistant(self) -> None:
         """Ctrl+Y: copy the most recent assistant reply to the Wayland
@@ -2350,17 +3081,20 @@ def _read_agents_md(path: Optional[str]) -> str:
     configured). Any read error degrades to "" + a warning — we never
     block `toggle` on a missing bootstrap file."""
     if not path:
+        log.info("agents-md: no path configured; injection disabled")
         return ""
     expanded = os.path.expanduser(path)
     if not os.path.isfile(expanded):
-        log.warning("--agents-md %s: file not found; skipping injection", expanded)
+        log.warning("agents-md %s: file not found; skipping injection", expanded)
         return ""
     try:
         with open(expanded, "r", encoding="utf-8") as f:
-            return f.read().strip()
+            contents = f.read().strip()
     except OSError as e:
-        log.warning("--agents-md %s: read failed (%s); skipping injection", expanded, e)
+        log.warning("agents-md %s: read failed (%s); skipping injection", expanded, e)
         return ""
+    log.info("agents-md %s: loaded %d chars", expanded, len(contents))
+    return contents
 
 def _compose_system_prompt(base: str, agents_md: str) -> str:
     """Prepend `agents_md` to `base`, separated by a blank line, iff
@@ -2721,9 +3455,17 @@ def main():
 
     args = parser.parse_args()
 
+    # Always log to stderr — stdout belongs to waybar-style status
+    # subcommands (`status` emits JSON) and to any future pipe consumer.
+    # INFO default so the key event-points (spawn, session-id, prompt
+    # shape, permission round-trips, MCP server chatter) surface
+    # without needing `-v`; `-v` bumps to DEBUG which adds per-chunk
+    # and per-RPC detail.
     logging.basicConfig(
-        format="%(name)s: %(message)s",
-        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        stream=sys.stderr,
     )
 
     global _PATHS

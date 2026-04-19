@@ -277,82 +277,6 @@ class LayerOverlayWindow(Gtk.ApplicationWindow):
         the compose scroller at 25% of the monitor height."""
         return None
 
-# ── Backdrop ────────────────────────────────────────────────────
-
-
-class OverlayBackdrop(Gtk.ApplicationWindow):
-    """Full-screen click-catcher, one per monitor, rendered below the
-    primary overlay. Used by pilot to (a) dim every monitor when the
-    overlay is visible so it's obvious something else has focus, and
-    (b) accept a click-outside as a hide request.
-
-    The backdrop sits on `Layer.TOP`; callers should put their main
-    overlay on `Layer.OVERLAY` so it renders above the backdrop on
-    the same monitor. `on_click` fires on any press and is expected
-    to hide the overlay — we don't call it ourselves so callers keep
-    control of the whole lifecycle."""
-
-    def __init__(
-        self,
-        *,
-        application: Gtk.Application,
-        monitor,
-        on_click: Callable[[], None],
-    ):
-        super().__init__(application=application)
-        self.add_css_class("overlay-backdrop")
-        self._on_click = on_click
-
-        Gtk4LayerShell.init_for_window(self)
-        Gtk4LayerShell.set_namespace(self, "overlay-backdrop")
-        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
-        for edge in (
-            Gtk4LayerShell.Edge.TOP,
-            Gtk4LayerShell.Edge.BOTTOM,
-            Gtk4LayerShell.Edge.LEFT,
-            Gtk4LayerShell.Edge.RIGHT,
-        ):
-            Gtk4LayerShell.set_anchor(self, edge, True)
-        # Don't steal struts from the compositor; we want to cover the
-        # output visually but not push panels around.
-        Gtk4LayerShell.set_exclusive_zone(self, -1)
-        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
-        if monitor is not None:
-            Gtk4LayerShell.set_monitor(self, monitor)
-
-        click = Gtk.GestureClick()
-        click.set_button(0)  # any button
-        click.connect("released", self._on_press)
-        self.add_controller(click)
-
-    def _on_press(self, *_ignored) -> None:
-        try:
-            self._on_click()
-        except Exception:
-            log.exception("overlay backdrop on_click raised")
-
-
-def spawn_backdrops(
-    application: Gtk.Application, on_click: Callable[[], None]
-) -> list[OverlayBackdrop]:
-    """Create and present one `OverlayBackdrop` per monitor currently
-    known to the default display. Returns the list so the caller can
-    destroy them on hide."""
-    backdrops: list[OverlayBackdrop] = []
-    display = Gdk.Display.get_default()
-    if display is None:
-        return backdrops
-    monitors = display.get_monitors()
-    for i in range(monitors.get_n_items()):
-        monitor = monitors.get_item(i)
-        bd = OverlayBackdrop(
-            application=application, monitor=monitor, on_click=on_click
-        )
-        bd.present()
-        backdrops.append(bd)
-    return backdrops
-
-
 # ── Card / collapsible / pill / button helpers ──────────────────
 
 def make_card(role: str, title: str) -> tuple[Gtk.Box, Gtk.Label]:
@@ -533,8 +457,16 @@ class CommandPalette(Gtk.Box):
         # Preserve pilot's older class names so existing CSS keeps
         # landing on the same widgets. Scripts can layer more on top.
         self.add_css_class("pilot-palette")
-        self.set_valign(Gtk.Align.FILL)
-        self.set_halign(Gtk.Align.FILL)
+        # Floating centred panel. CENTER alignment + an explicit
+        # size-request on the palette Box itself (set by `set_size`)
+        # means the overlay positions us over the middle of the host
+        # — same visual pattern as VSCode / rofi / swayncc's command
+        # palettes. `.pilot-palette-frame` CSS paints a chunky border
+        # + shadow so the panel reads as "floating above the chat"
+        # rather than inline with it.
+        self.set_valign(Gtk.Align.CENTER)
+        self.set_halign(Gtk.Align.CENTER)
+        self.add_css_class("pilot-palette-frame")
 
         self._host_overlay = host_overlay
         self._on_commit = on_commit
@@ -557,6 +489,12 @@ class CommandPalette(Gtk.Box):
 
         self._scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # Palette should feel generous — we reserve a chunky default
+        # min height so small result sets still get a visible scroller
+        # frame, and `set_height` lets callers push it to half the
+        # overlay when they want extra real estate.
+        self._scroller.set_min_content_height(320)
+        self._default_height = 320
         self._listbox = Gtk.ListBox()
         self._listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         # Keep the Entry as the sole focus target. A focusable ListBox
@@ -586,6 +524,22 @@ class CommandPalette(Gtk.Box):
         pairs (not present in the next `open()` entries list) are
         silently dropped when the list rebuilds."""
         self._active = set(pairs)
+
+    def set_size(self, width: int, height: int) -> None:
+        """Force the palette to `(width, height)` via `set_size_request`
+        on the Box itself AND on the inner scroller. Setting only the
+        scroller's min_content_height was a hint the Gtk.Overlay was
+        free to ignore — requesting on BOTH widgets guarantees the
+        floating panel actually takes the requested footprint instead
+        of collapsing to natural content size."""
+        if height <= 0:
+            height = self._default_height
+        if width <= 0:
+            width = -1
+        self.set_size_request(width, height)
+        body = max(0, height - 60)  # leave room for the Entry + padding
+        self._scroller.set_min_content_height(body)
+        self._scroller.set_max_content_height(body)
 
     def is_open(self) -> bool:
         """True between `open()` and `close()`. Prefer this over
@@ -646,10 +600,42 @@ class CommandPalette(Gtk.Box):
         return out
 
     # ── rendering ──
+    @staticmethod
+    def _fuzzy_score(query: str, haystack: str) -> Optional[int]:
+        """Subsequence-match `query` against `haystack` (both
+        lowercased). Returns a non-negative score where LOWER is
+        better (earlier + more contiguous matches score higher); None
+        if `query` isn't a subsequence of `haystack`.
+
+        Scoring:
+          - Start position of the first matched char (earlier = lower).
+          - Plus the sum of gaps between consecutive matched chars.
+          - Empty query scores 0.
+
+        Cheap and good enough for N<1000 palette entries; matches the
+        fzf behaviour users expect without pulling in a native lib."""
+        if not query:
+            return 0
+        hi = 0
+        score = 0
+        first = -1
+        last = -1
+        for ch in query:
+            hi = haystack.find(ch, hi)
+            if hi < 0:
+                return None
+            if first < 0:
+                first = hi
+            if last >= 0:
+                score += (hi - last - 1)
+            last = hi
+            hi += 1
+        return first + score
+
     def _rebuild_list(self) -> None:
-        """Wipe and rebuild the ListBox from `_entries` filtered by
-        the current search input. Substring-only fuzziness — matches
-        case-insensitively across `name + kind + description`."""
+        """Wipe and rebuild the ListBox from `_entries`, fuzzy-matched
+        (subsequence) against the search input. Case-insensitive;
+        searches `name + kind + description` concatenated."""
         child = self._listbox.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
@@ -657,13 +643,18 @@ class CommandPalette(Gtk.Box):
             child = nxt
 
         query = (self._search.get_text() or "").strip().lower()
-        self._filtered = []
-        for entry in self._entries:
+        scored: list[tuple[int, int, CommandPaletteEntry]] = []
+        for idx, entry in enumerate(self._entries):
             kind, name, desc, _preview = entry
             haystack = f"{name} {kind} {desc}".lower()
-            if query and query not in haystack:
+            score = self._fuzzy_score(query, haystack)
+            if score is None:
                 continue
-            self._filtered.append(entry)
+            scored.append((score, idx, entry))
+        scored.sort(key=lambda t: (t[0], t[1]))
+        self._filtered = [e for _s, _i, e in scored]
+        for entry in self._filtered:
+            kind, name, desc, _preview = entry
             row = self._make_row(kind, name, desc)
             self._listbox.append(row)
 

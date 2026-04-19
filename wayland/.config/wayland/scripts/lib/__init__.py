@@ -11,8 +11,11 @@ from .converse import (
     ConversationAdapterClaude,
     ConversationAdapterOpenCode,
     ConversationProvider,
+    PlanChunk,
+    PromptAttachment,
     ThinkingChunk,
     ToolCall,
+    image_attachment,
 )
 from .mcp_servers import (
     DEFAULT_SERVER_NAMES,
@@ -107,8 +110,11 @@ __all__ = [
     "PermissionKind",
     "PermissionState",
     "PillVariant",
+    "PlanChunk",
+    "PromptAttachment",
     "ThinkingChunk",
     "ToolCall",
+    "image_attachment",
     "ensure_layer_shell_preload",
     "focused_gdk_monitor",
     "focused_monitor_name",

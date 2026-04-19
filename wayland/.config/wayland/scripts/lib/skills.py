@@ -231,12 +231,17 @@ def list_skills_via_mcp(
     env = dict(os.environ)
     if skills_dir:
         env["PILOT_SKILLS_DIR"] = skills_dir
+    # stderr flows straight through so `logging` output from the MCP
+    # server surfaces in pilot's own stderr — debugging why the palette
+    # shows no skills used to mean blindly re-running the server by
+    # hand; now it lands in the same log stream as pilot's other
+    # chatter.
     try:
         proc = subprocess.Popen(
             [sys.executable, "-u", mcp_server_script],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=None,
             text=True,
             bufsize=1,
             env=env,
@@ -282,15 +287,32 @@ def list_skills_via_mcp(
     out: list[SkillListing] = []
     for r in resources:
         uri = r.get("uri", "")
-        if not uri.startswith("skill/") or "/" in uri[len("skill/"):]:
+        # Accept both `skill/<name>` (legacy) and `pilot://skill/<name>`
+        # (current) — the MCP server emits the pilot:// form now for
+        # compatibility with strict clients, but older caches may still
+        # round-trip the unscoped URIs.
+        body = uri
+        for prefix in ("pilot://", ""):
+            if prefix and body.startswith(prefix):
+                body = body[len(prefix):]
+                break
+        if not body.startswith("skill/"):
+            continue
+        tail = body[len("skill/"):]
+        if "/" in tail:
             continue
         out.append(
             SkillListing(
-                name=r.get("name") or uri[len("skill/"):],
+                name=r.get("name") or tail,
                 description=r.get("description", ""),
                 uri=uri,
             )
         )
+    log.info(
+        "list_skills_via_mcp: %d resources total, %d matched skill/*",
+        len(resources),
+        len(out),
+    )
     return out
 
 

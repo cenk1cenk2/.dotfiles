@@ -326,12 +326,3 @@
   opacity: 0.75;
 }
 
-/* ======================================================== Backdrop
- * Full-monitor click-catcher spawned alongside every overlay so (a)
- * every screen dims to signal "something else is active" and (b)
- * clicking outside the overlay hides it. Paired with a layer-shell
- * `OVERLAY` primary surface so the main overlay still draws on top.
- */
-window.overlay-backdrop {
-  background-color: alpha(black, 0.55);
-}

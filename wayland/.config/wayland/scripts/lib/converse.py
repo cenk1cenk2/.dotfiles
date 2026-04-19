@@ -14,7 +14,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Iterator, Protocol, Union
 
-from .acp_adapter import AcpAdapter, build_mcp_servers  # noqa: F401
+from .acp_adapter import (  # noqa: F401
+    AcpAdapter,
+    PromptAttachment,
+    build_mcp_servers,
+    image_attachment,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +53,21 @@ class ThinkingChunk:
 
     text: str
 
-TurnChunk = Union[str, ToolCall, ThinkingChunk]
+
+@dataclass
+class PlanChunk:
+    """A snapshot of the agent's current plan. ACP agents re-emit the
+    full plan each time an entry's status changes; consumers should
+    replace-not-append. Each item carries `content`, `status`
+    (pending/in_progress/completed), and `priority` (low/medium/high).
+
+    Shape mirrors CodeCompanion's `on_plan` handler (PR #3008) so the
+    UI semantics stay portable between clients."""
+
+    items: list
+
+
+TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk]
 
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
@@ -56,7 +75,12 @@ class ConversationAdapter(Protocol):
     provider: ConversationProvider
     model: str
 
-    def turn(self, user_message: str) -> Iterator[TurnChunk]: ...
+    def turn(
+        self,
+        user_message: str,
+        *,
+        attachments: list[PromptAttachment] | None = None,
+    ) -> Iterator[TurnChunk]: ...
 
     def cancel(self) -> None: ...
 
@@ -76,6 +100,8 @@ def _translate_acp_chunk(kind: str, payload: Any) -> TurnChunk | None:
             status=payload.status,
             audit=True,
         )
+    if kind == "plan":
+        return PlanChunk(items=list(payload))
     return None
 
 class _AcpConverseAdapter(AcpAdapter):
@@ -84,8 +110,13 @@ class _AcpConverseAdapter(AcpAdapter):
 
     provider: ConversationProvider
 
-    def turn(self, user_message: str) -> Iterator[TurnChunk]:
-        for kind, payload in super().turn(user_message):
+    def turn(
+        self,
+        user_message: str,
+        *,
+        attachments: list[PromptAttachment] | None = None,
+    ) -> Iterator[TurnChunk]:
+        for kind, payload in super().turn(user_message, attachments=attachments):
             chunk = _translate_acp_chunk(kind, payload)
             if chunk is not None:
                 yield chunk
@@ -102,6 +133,13 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
     DEFAULT_ARGS: tuple[str, ...] = ("--bun", "@agentclientprotocol/claude-agent-acp")
 
     def __init__(self, system_prompt: str, **kwargs: Any):
+        # `system_prompt` rides on the first `session/prompt` turn as an
+        # `<SYSTEM_AGENTS>`-fenced prefix — claude-agent-acp doesn't read
+        # a CLAUDE_SYSTEM_PROMPT env var (we used to set one, it was a
+        # no-op that silently dropped every AGENTS.md injection), and
+        # the ACP `new_session` schema has no system-prompt slot. The
+        # first-turn prefix is the portable path that both Claude Code
+        # and OpenCode agents honour.
         self.system_prompt = system_prompt
         self.model = kwargs.get("model") or "sonnet"
         self.mode = kwargs.get("mode")
@@ -109,12 +147,18 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
         env.setdefault("ANTHROPIC_MODEL", self.model)
         if self.mode:
             env["CLAUDE_PERMISSION_MODE"] = self.mode
-        if self.system_prompt:
-            env["CLAUDE_SYSTEM_PROMPT"] = self.system_prompt
         kwargs["env"] = env
         kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
         kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-claude"
+        kwargs["agents_file"] = self.system_prompt
+        log.info(
+            "ConversationAdapterClaude: model=%s mode=%s cwd=%s prefix_len=%d",
+            self.model,
+            self.mode,
+            kwargs.get("cwd"),
+            len(self.system_prompt or ""),
+        )
         super().__init__(**kwargs)
 
 class ConversationAdapterOpenCode(_AcpConverseAdapter):
@@ -132,6 +176,9 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
     )
 
     def __init__(self, system_prompt: str, **kwargs: Any):
+        # See `ConversationAdapterClaude` — same story: the
+        # `OPENCODE_SYSTEM_PROMPT` env var isn't honoured by opencode,
+        # so we deliver `system_prompt` as a first-turn prefix instead.
         self.system_prompt = system_prompt
         self.model = kwargs.get("model")
         self.mode = kwargs.get("mode")
@@ -142,10 +189,16 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
             env.setdefault("OPENCODE_CONFIG", self.config_path)
         if self.model:
             env.setdefault("OPENCODE_MODEL", f"{self.provider_name}/{self.model}")
-        if self.system_prompt:
-            env.setdefault("OPENCODE_SYSTEM_PROMPT", self.system_prompt)
         kwargs["env"] = env
         kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
         kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-opencode"
+        kwargs["agents_file"] = self.system_prompt
+        log.info(
+            "ConversationAdapterOpenCode: model=%s config=%s cwd=%s prefix_len=%d",
+            self.model,
+            self.config_path if os.path.exists(self.config_path) else None,
+            kwargs.get("cwd"),
+            len(self.system_prompt or ""),
+        )
         super().__init__(**kwargs)

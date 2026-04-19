@@ -29,6 +29,7 @@ import logging
 import os
 import queue
 import threading
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Optional
 
@@ -38,11 +39,14 @@ from acp import (
     ClientSideConnection,
     PROTOCOL_VERSION,
     RequestPermissionResponse,
+    image_block,
     spawn_agent_process,
     text_block,
 )
+import base64
 from acp.schema import (
     AgentMessageChunk,
+    AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
     AuthCapabilities,
@@ -65,6 +69,19 @@ from acp.schema import (
 
 log = logging.getLogger(__name__)
 
+# Raises asyncio's default 64KB line-buffer ceiling. ACP agents emit
+# newline-delimited JSON-RPC frames that routinely cross the default
+# on turns that stream a tool with a large `raw_input` / `raw_output`
+# (file reads, image blocks already base64-encoded, long diff patches),
+# and the SDK surfaces that as `LimitOverrunError` inside the receive
+# loop — which tears the connection down and leaves the UI stuck on a
+# half-delivered reply. Anthropic's streaming payloads stay well under
+# 16MB per line, so bumping the ceiling to that buys headroom without
+# making us buffer anything we wouldn't have already. If an agent ever
+# ships a single frame larger than this, the right fix is on the agent
+# side — we'd rather crash here than silently wedge."""
+_ACP_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
+
 # Preference order per PermissionRow action. When the agent didn't ship
 # the exact kind we'd like (opencode offers only `allow_once / allow_always
 # / reject_once`, no `reject_always`), fall through to the closest match.
@@ -84,6 +101,34 @@ class ToolCallSummary:
     name: str
     arguments: str
     status: str
+
+
+@dataclass(frozen=True)
+class PromptAttachment:
+    """A non-text payload to prepend to a prompt. Used today for
+    pasted images; audio / arbitrary blobs fit the same shape. Either
+    `data` (raw bytes) OR `uri` + `mime_type` must be set — the
+    adapter converts into the appropriate ACP content block at
+    submit-time."""
+
+    mime_type: str
+    data: Optional[bytes] = None
+    uri: Optional[str] = None
+
+
+def image_attachment(data: bytes, mime_type: str = "image/png") -> PromptAttachment:
+    return PromptAttachment(mime_type=mime_type, data=data)
+
+
+@dataclass(frozen=True)
+class PlanItem:
+    """One entry in an `AgentPlanUpdate`. Agents emit a fresh plan
+    list on every `notify::plan` — we re-render the whole thing each
+    time rather than diffing."""
+
+    content: str
+    status: str  # "pending" | "in_progress" | "completed"
+    priority: str  # "low" | "medium" | "high"
 
 PermissionHandler = Callable[[ToolCallSummary, list[PermissionOption]], Optional[str]]
 """Invoked from the ACP worker thread when the agent asks for
@@ -172,8 +217,38 @@ _ACP_STATUS_MAP: dict[str, str] = {
     "pending": "pending",
     "in_progress": "running",
     "completed": "completed",
-    "failed": "completed",
+    "failed": "failed",
 }
+
+def _build_prompt_blocks(
+    user_message: str,
+    attachments: list[PromptAttachment],
+) -> list:
+    """Compose the ACP prompt payload. Attachments prefix the text so
+    their content is visible BEFORE the prose (matches how agents
+    typically quote images in responses). A text block always comes
+    out last — even an empty prose turn keeps the content array
+    non-empty which the ACP spec requires."""
+    blocks: list = []
+    for att in attachments:
+        if att.data is not None:
+            blocks.append(
+                image_block(
+                    data=base64.b64encode(att.data).decode("ascii"),
+                    mime_type=att.mime_type,
+                    uri=att.uri,
+                )
+            )
+        elif att.uri is not None:
+            # No inline bytes; reference the URI directly. `uri` alone
+            # on an image_block is the "server-resolved" shape from
+            # MCP `resources/read` results.
+            blocks.append(
+                image_block(data="", mime_type=att.mime_type, uri=att.uri)
+            )
+    blocks.append(text_block(user_message))
+    return blocks
+
 
 def _summarise_tool_call(
     update: ToolCallUpdate | ToolCallStart | ToolCallProgress,
@@ -233,16 +308,41 @@ class AcpClient(Client):
             if isinstance(update, AgentMessageChunk):
                 text = _content_text(update.content)
                 if text:
+                    log.debug("acp update: text chunk len=%d", len(text))
                     self._put(("text", text))
             elif isinstance(update, AgentThoughtChunk):
                 text = _content_text(update.content)
                 if text:
+                    log.debug("acp update: thinking chunk len=%d", len(text))
                     self._put(("thinking", text))
             elif isinstance(update, (ToolCallStart, ToolCallProgress)):
-                self._put(("tool", _summarise_tool_call(update)))
+                summary = _summarise_tool_call(update)
+                log.info(
+                    "acp update: tool %s name=%s status=%s",
+                    "start" if isinstance(update, ToolCallStart) else "progress",
+                    summary.name,
+                    summary.status,
+                )
+                self._put(("tool", summary))
+            elif isinstance(update, AgentPlanUpdate):
+                items = [
+                    PlanItem(
+                        content=str(e.content or "").strip() or "Untitled",
+                        status=str(e.status or "pending"),
+                        priority=str(e.priority or "medium"),
+                    )
+                    for e in (update.entries or [])
+                ]
+                if items:
+                    log.info("acp update: plan entries=%d", len(items))
+                    self._put(("plan", items))
             elif isinstance(update, UserMessageChunk):
                 return
-            # Plan / usage / mode updates intentionally dropped.
+            else:
+                log.debug(
+                    "acp update: dropped kind=%s", type(update).__name__
+                )
+            # Usage / mode updates intentionally dropped.
         except Exception as e:  # pragma: no cover — defensive
             log.warning("session_update dispatch failed: %s", e)
 
@@ -254,10 +354,16 @@ class AcpClient(Client):
         **_: Any,
     ) -> RequestPermissionResponse:
         handler = self._permission_handler_lookup()
+        summary = _summarise_tool_call(tool_call)
+        kinds = [opt.kind for opt in options if opt.kind]
+        log.info(
+            "acp request_permission: tool=%s options=%s",
+            summary.name,
+            kinds,
+        )
         if handler is None:
             log.warning("no permission handler set; cancelling ACP prompt")
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
-        summary = _summarise_tool_call(tool_call)
         loop = asyncio.get_running_loop()
         try:
             option_id = await loop.run_in_executor(None, handler, summary, options)
@@ -265,7 +371,13 @@ class AcpClient(Client):
             log.warning("permission handler raised: %s", e)
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         if not option_id:
+            log.info("acp request_permission: user cancelled tool=%s", summary.name)
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        log.info(
+            "acp request_permission: user picked option_id=%s tool=%s",
+            option_id,
+            summary.name,
+        )
         return RequestPermissionResponse(
             outcome=AllowedOutcome(outcome="selected", option_id=option_id)
         )
@@ -349,16 +461,28 @@ class AcpSession:
             self.mcp_servers = build_mcp_servers(raw_mcp)
         else:
             self.mcp_servers = list(raw_mcp)
+        # Optional AGENTS.md / system-instruction blob that rides on the
+        # FIRST prompt of the session and then gets cleared. Claude /
+        # OpenCode CLIs don't honour the env-var injection we used to
+        # try, so delivering this via a user-message prefix is the
+        # portable path. Consumed + nulled inside `prompt()`.
+        raw_prefix = kwargs.get("agents_file")
+        self._agents_file: str = (raw_prefix or "").strip()
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._conn: Optional[ClientSideConnection] = None
         self._process_cm: Any = None
+        self._process: Any = None
         self._session_id: Optional[str] = None
         self._permission_handler: Optional[PermissionHandler] = None
         # Rebound by `prompt()` so a single long-lived `AcpClient` can
         # drain events into whichever turn is currently in flight.
         self._current_queue: Optional[queue.Queue[tuple[str, Any] | _Sentinel]] = None
+        # Tuple of (concurrent.futures.Future, {"task": asyncio.Task})
+        # set by `prompt()` and cleared by its finally block. `cancel()`
+        # reads the task to force-unwind a stuck `conn.prompt`.
+        self._in_flight: Optional[tuple[Any, dict[str, Any]]] = None
         self._closed = False
 
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
@@ -411,31 +535,47 @@ class AcpSession:
                 lambda: self._current_queue,
                 lambda: self._permission_handler,
             )
+            log.info(
+                "acp spawn: %s %s cwd=%s mcp=%s",
+                self.command,
+                " ".join(self.args) if self.args else "",
+                self.cwd or os.getcwd(),
+                [s.name for s in self.mcp_servers],
+            )
             cm = spawn_agent_process(
                 client,
                 self.command,
                 *self.args,
                 env=self.env,
                 cwd=self.cwd,
+                transport_kwargs={"limit": _ACP_STREAM_LIMIT_BYTES},
             )
-            conn, _ = await cm.__aenter__()
+            conn, process = await cm.__aenter__()
             self._process_cm = cm
             self._conn = conn
+            self._process = process
             caps = ClientCapabilities(
                 fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
                 auth=AuthCapabilities(terminal=False),
                 terminal=False,
             )
             info = Implementation(name=self.client_name, version=self.client_version)
+            log.debug("acp initialize: protocol=%s", PROTOCOL_VERSION)
             await conn.initialize(
                 protocol_version=PROTOCOL_VERSION,
                 client_capabilities=caps,
                 client_info=info,
             )
+            log.debug(
+                "acp new_session: cwd=%s mcp=%s",
+                self.cwd or os.getcwd(),
+                [s.name for s in self.mcp_servers],
+            )
             session = await conn.new_session(
                 cwd=self.cwd or os.getcwd(),
                 mcp_servers=list(self.mcp_servers),
             )
+            log.info("acp session established: id=%s", session.session_id)
             return session.session_id
 
         fut = asyncio.run_coroutine_threadsafe(_bootstrap(), loop)
@@ -446,59 +586,148 @@ class AcpSession:
         self,
         user_message: str,
         event_queue: queue.Queue[tuple[str, Any] | _Sentinel],
+        *,
+        attachments: Optional[list["PromptAttachment"]] = None,
     ) -> None:
         """Submit a prompt and block until it resolves. `event_queue`
-        becomes the session's active queue for the duration of the call
-        so the shared `AcpClient` routes streaming updates into it; a
-        `_Sentinel` is pushed when the prompt completes (with `error`
-        set on failure)."""
+        becomes the session's active queue for the duration of the
+        call. `attachments` is an optional list of binary / image /
+        audio payloads that prefix the text block in the ACP prompt
+        — callers wrap them via `pilot.image_attachment(data, mime)`
+        etc.
+
+        An `asyncio.Future` for the in-flight drive is stashed on the
+        session so `cancel()` can attack from the outside."""
         session_id = self._ensure_started()
         conn = self._conn
         loop = self._loop
         assert conn is not None and loop is not None
         self._current_queue = event_queue
 
+        drive_task_holder: dict[str, Any] = {}
+        effective_message = user_message
+        if self._agents_file:
+            # First turn only: fence the injected instructions so the
+            # agent can visually distinguish them from the user's typed
+            # prose. `<SYSTEM_AGENTS>` was chosen over triple-backtick
+            # because agents sometimes close stray code fences with
+            # their own output — an XML-style tag reads as scoped
+            # metadata in every model we ship against.
+            prefix = self._agents_file
+            log.info(
+                "acp prompt: prefixing first turn with %d chars of AGENTS.md",
+                len(prefix),
+            )
+            sep = "\n\n" if user_message else ""
+            effective_message = (
+                f"<SYSTEM_AGENTS>\n{prefix}\n</SYSTEM_AGENTS>{sep}{user_message}"
+            )
+            self._agents_file = ""
+        blocks = _build_prompt_blocks(effective_message, attachments or [])
+        log.info(
+            "acp prompt: session=%s text_len=%d attachments=%d",
+            session_id,
+            len(effective_message),
+            len(attachments or []),
+        )
+
         async def _drive() -> None:
+            drive_task_holder["task"] = asyncio.current_task()
             try:
-                await conn.prompt(
-                    prompt=[text_block(user_message)],
-                    session_id=session_id,
-                )
+                await conn.prompt(prompt=blocks, session_id=session_id)
                 event_queue.put(_Sentinel())
+            except asyncio.CancelledError:
+                event_queue.put(_Sentinel())
+                raise
             except BaseException as e:
                 event_queue.put(_Sentinel(error=e))
                 raise
 
         fut = asyncio.run_coroutine_threadsafe(_drive(), loop)
+        self._in_flight = (fut, drive_task_holder)
         try:
-            fut.result()
-        except BaseException:
-            # Sentinel carries the error for the caller's generator to
-            # observe; swallow here so cancellation is benign.
-            pass
+            # Block on the driver OR the subprocess; whichever wins
+            # tears the turn down so the UI never gets stuck when the
+            # agent crashes mid-stream.
+            self._wait_for_drive_or_subprocess(fut, event_queue)
         finally:
-            # Drop the slot so a late session_update from the agent
-            # after the sentinel fires doesn't leak into the next turn.
+            self._in_flight = None
             if self._current_queue is event_queue:
                 self._current_queue = None
 
+    def _wait_for_drive_or_subprocess(
+        self,
+        drive_future,
+        event_queue: queue.Queue[tuple[str, Any] | _Sentinel],
+    ) -> None:
+        """Poll both the drive future and the agent subprocess. If the
+        subprocess exits before the future resolves, push a sentinel
+        with the exit status — otherwise a crashed agent leaves the
+        generator blocked on `queue.get()` forever."""
+        process = self._process
+        while True:
+            try:
+                drive_future.result(timeout=0.5)
+                return
+            except FuturesTimeout:
+                pass
+            except BaseException:
+                # Driver resolved with an exception; the sentinel is
+                # already on the queue from `_drive`'s except branch.
+                return
+            if process is not None and process.returncode is not None:
+                log.warning(
+                    "ACP agent process exited rc=%s before prompt finished",
+                    process.returncode,
+                )
+                event_queue.put(
+                    _Sentinel(error=RuntimeError(
+                        f"acp agent exited (rc={process.returncode})"
+                    ))
+                )
+                try:
+                    drive_future.cancel()
+                except Exception:
+                    pass
+                return
+
     def cancel(self) -> None:
+        """Cancel the in-flight prompt. Sends `session/cancel` for
+        agents that honour it AND aggressively terminates our local
+        asyncio task + unblocks the generator so the UI recovers even
+        when the agent is unresponsive."""
         conn = self._conn
         loop = self._loop
         sid = self._session_id
+        in_flight = self._in_flight
+        active_queue = self._current_queue
         if conn is None or loop is None or sid is None:
             return
+        log.info("acp cancel: session=%s in_flight=%s", sid, in_flight is not None)
 
         async def _cancel() -> None:
             try:
                 await conn.cancel(session_id=sid)
             except Exception as e:
                 log.warning("ACP cancel failed: %s", e)
+            # Also cancel the drive task so `conn.prompt` unwinds
+            # even when the agent never answers the session/cancel.
+            if in_flight is not None:
+                task = in_flight[1].get("task")
+                if task is not None and not task.done():
+                    task.cancel()
 
         try:
             asyncio.run_coroutine_threadsafe(_cancel(), loop)
         except RuntimeError:
             pass
+        # Belt-and-braces: push a sentinel onto the queue so the
+        # adapter's generator stops waiting even if the async loop
+        # is itself stuck. The `_drive` task's `asyncio.CancelledError`
+        # path will also push one — an extra sentinel is harmless
+        # because the generator returns on the first one.
+        if active_queue is not None:
+            active_queue.put(_Sentinel())
 
     def close(self) -> None:
         if self._closed:
@@ -544,18 +773,24 @@ class AcpAdapter:
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
         self._session.set_permission_handler(handler)
 
-    def turn(self, user_message: str) -> Iterator[tuple[str, Any]]:
+    def turn(
+        self,
+        user_message: str,
+        *,
+        attachments: Optional[list[PromptAttachment]] = None,
+    ) -> Iterator[tuple[str, Any]]:
         """Yields `(kind, payload)` tuples where `kind` is one of
-        `"text" | "thinking" | "tool"`. `lib.converse` wraps this into
-        its public `str | ThinkingChunk | ToolCall` contract; keeping
-        the raw shape here means this module doesn't need to import
-        from `lib.converse` (avoids a circular import)."""
+        `"text" | "thinking" | "tool" | "plan"`. `attachments` is
+        optional — pasted images or other binary blobs flow through
+        as ACP content blocks prefixed to the text prose."""
         event_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
         error_holder: dict[str, BaseException] = {}
 
         def driver() -> None:
             try:
-                self._session.prompt(user_message, event_queue)
+                self._session.prompt(
+                    user_message, event_queue, attachments=attachments
+                )
             except BaseException as e:  # pragma: no cover
                 error_holder["error"] = e
 
