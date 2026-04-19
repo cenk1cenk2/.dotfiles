@@ -1755,15 +1755,26 @@ class PilotWindow(LayerOverlayWindow):
 
     def _session_subtitle(self, *, verbose: bool = False) -> str:
         """Single-line breadcrumb next to the provider pill:
-        `@ ~/notes  +3 mcps  +skills`. `verbose` swaps the truncated
-        cwd for the full untruncated path so the tooltip can show the
-        absolute path on hover."""
+        `@ ~/notes  +3 mcps  +skills  ↻ restored`. `verbose` swaps the
+        truncated cwd for the full untruncated path so the tooltip can
+        show the absolute path on hover.
+
+        The `↻ restored` tag only appears once the adapter has
+        bootstrapped a session AND `load_session` succeeded; a fresh
+        `new_session` leaves it off. That way the user can tell at a
+        glance whether the current conversation is resuming a prior
+        session off disk or starting from scratch. `start_fresh_session`
+        forces the flag off by tearing the old session down before the
+        next bootstrap — no stale "restored" tag after a Ctrl+S reset.
+        """
         cwd = self._cwd or os.getcwd() if verbose else self._pretty_cwd()
         parts = [f"@ {cwd}"]
         if self._mcp_server_names:
             parts.append(f"+{len(self._mcp_server_names)} mcps")
         if self._skills_dir:
             parts.append("+skills")
+        if getattr(self._adapter, "session_resumed", False):
+            parts.append("↻ restored")
         return "  ".join(parts)
 
     def _refresh_session_label(self) -> None:
@@ -1895,6 +1906,10 @@ class PilotWindow(LayerOverlayWindow):
             # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
             self._update_phase()
+            # Session-resume flag is finalised by the time the first
+            # turn wraps; refresh the breadcrumb so `↻ restored` shows
+            # up (or stays hidden for a fresh new_session).
+            self._refresh_session_label()
             if streamed:
                 self._notify_finished()
 
@@ -1903,9 +1918,13 @@ class PilotWindow(LayerOverlayWindow):
     def _mark_stream_started(self) -> bool:
         """Main-thread sink: first reply chunk landed, flip pending →
         streaming (unless we're currently awaiting approval / an answer,
-        in which case `_update_phase` keeps the blue awaiting pill)."""
+        in which case `_update_phase` keeps the blue awaiting pill).
+        Also refreshes the session breadcrumb — by now
+        `_ensure_started` has run, so `session_resumed` is authoritative
+        and the `↻ restored` tag can surface."""
         self._stream_started = True
         self._update_phase()
+        self._refresh_session_label()
 
         return False
 
@@ -2772,20 +2791,99 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _commit_session_restore(self, entries) -> None:
-        """Commit handler for the Ctrl+S sessions palette. Only the
-        `new-session` sentinel has a real effect today — it tears the
-        adapter down, freeing the agent subprocess for a clean start.
-        Existing-session picks are a no-op (we're already on the
-        current session)."""
+        """Commit handler for the Ctrl+S sessions palette. The
+        `new-session` sentinel tears down the current ACP session,
+        unlinks its on-disk pointer, and resets the adapter so the next
+        turn bootstraps a brand-new session (via `new_session`, never
+        `load_session`). Existing-session picks are a no-op — we're
+        already on that session."""
         for kind, _name, _desc, _preview in entries:
             if kind == "new-session":
-                try:
-                    self._adapter.close()
-                except Exception as e:
-                    log.warning("adapter close raised: %s", e)
-                self._active_assistant = None
+                self.start_fresh_session()
                 break
         self._compose.focus()
+
+    def start_fresh_session(self) -> None:
+        """Hard reset: drop the ACP session + wipe the visible
+        conversation. Used by Ctrl+S's "new session" sentinel.
+
+        Actions:
+          1. `_adapter.reset()` — tears down subprocess, unlinks the
+             store file, re-arms AGENTS.md for the first turn of the
+             replacement session.
+          2. Clear the transcript stack (cards, active-assistant
+             pointer, plan cache, tool-bubble state).
+          3. Clear the queue (pending outgoing turns would land on the
+             NEW session which hasn't been told about them; safer to
+             drop them than silently retarget).
+          4. Drop pending permission rows — they referenced tool calls
+             from the OLD session's in-flight turn, which cancel() /
+             teardown already invalidated.
+          5. Clear any pending compose attachments / resource pills
+             that were queued for submission.
+          6. Reset phase so the provider pill returns to `idle`.
+
+        After this, the next `dispatch_turn` / staged submission
+        triggers `_ensure_started` against a fresh session_id."""
+        log.info("start_fresh_session: tearing down + wiping transcript")
+        try:
+            self._adapter.reset()
+        except Exception as e:
+            log.warning("adapter reset raised: %s", e)
+
+        # Stream/turn flags.
+        self._streaming = False
+        self._stream_started = False
+        self._turn_cancelled = False
+        self._active_assistant = None
+
+        # Wipe every card out of the conversation scroller.
+        for card in list(self._cards):
+            try:
+                self._conv_box.remove(card.widget)
+            except Exception:
+                pass
+        self._cards.clear()
+
+        # Queue goes too — queued rows target a session that no
+        # longer exists.
+        for row in list(self._queue):
+            try:
+                self._queue_listbox.remove(row)
+            except Exception:
+                pass
+        self._queue.clear()
+        self._queue_box.set_visible(False)
+
+        # Pending permission rows from the old in-flight turn.
+        for row in list(self._permissions):
+            try:
+                self._permissions_listbox.remove(row)
+            except Exception:
+                pass
+        self._permissions.clear()
+        self._permissions_box.set_visible(False)
+
+        # Plan cache — Ctrl+O should not reopen the previous session's
+        # plan after the user explicitly asked for a fresh start.
+        self._last_plan_card = None
+        self._last_plan_items = []
+
+        # Clear pending compose state so stale resources / attachments
+        # don't ride on the first turn of the new session.
+        if self._pending_resources:
+            self._pending_resources = []
+            self._refresh_resource_pills()
+        if self._pending_attachments:
+            self._pending_attachments = []
+            self._refresh_attachment_pills()
+
+        self._update_phase()
+        # `_adapter.reset()` zeroed `session_resumed`; refresh the
+        # breadcrumb so the `↻ restored` tag drops in the same frame
+        # as the transcript wipe.
+        self._refresh_session_label()
+        _signal_waybar_safe()
 
     def _collect_resources(self) -> list[tuple[str, str, str, str]]:
         """Build the `(kind, name, description, preview)` list feeding

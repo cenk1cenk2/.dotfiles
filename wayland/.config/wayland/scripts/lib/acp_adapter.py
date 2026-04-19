@@ -479,7 +479,14 @@ class AcpSession:
         # try, so delivering this via a user-message prefix is the
         # portable path. Consumed + nulled inside `prompt()`.
         raw_prefix = kwargs.get("agents_file")
-        self._agents_file: str = (raw_prefix or "").strip()
+        # `_original_agents_file` is the immutable reference we read on
+        # `reset()` to re-arm the prefix when spinning up a replacement
+        # session inside the same adapter — without it, a Ctrl+S
+        # "new session" would skip the AGENTS.md injection because
+        # `_agents_file` was already consumed by the previous session's
+        # first prompt.
+        self._original_agents_file: str = (raw_prefix or "").strip()
+        self._agents_file: str = self._original_agents_file
         # Optional path to a plain-text file that holds the last ACP
         # `session_id` this adapter obtained. When set, `_ensure_started`
         # tries `conn.load_session(session_id, ...)` first — if the agent
@@ -855,6 +862,50 @@ class AcpSession:
         self._thread = None
         self._process_cm = None
 
+    def reset(self) -> None:
+        """Start a *fresh* ACP session without destroying the adapter.
+        Sequence:
+
+          1. Tear the current subprocess + asyncio loop down via
+             `close()` (same teardown used on pilot exit).
+          2. Unlink the on-disk session-id pointer so the next
+             `_ensure_started` can't resume the old session.
+          3. Re-arm the AGENTS.md prefix (`_agents_file`) from the
+             original blob — `prompt()` consumed it at first-turn, a
+             fresh session needs it re-injected.
+          4. Reset the lifecycle flags so the next `prompt()` walks the
+             bootstrap path again.
+
+        The adapter stays alive and keeps its config (command, args,
+        env, mcp_servers, session_store_path). The next turn spawns a
+        brand-new subprocess and mints a brand-new `session_id` via
+        `new_session` (never `load_session`, since the store is gone).
+        """
+        log.info(
+            "acp reset: dropping session + rearming fresh bootstrap (store=%s)",
+            self.session_store_path,
+        )
+        self.close()
+        if self.session_store_path:
+            try:
+                os.unlink(self.session_store_path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                log.warning(
+                    "session store unlink failed (%s): %s",
+                    self.session_store_path,
+                    e,
+                )
+        # Flip `_closed` back off + zero the cached session_id so
+        # `_ensure_started` walks the bootstrap branch on next turn.
+        self._closed = False
+        self._session_id = None
+        self._resumed_from_store = False
+        self._agents_file = self._original_agents_file
+        self._current_queue = None
+        self._in_flight = None
+
 class AcpAdapter:
     """Base class for any `lib.converse` adapter that speaks ACP.
 
@@ -870,6 +921,14 @@ class AcpAdapter:
 
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
         self._session.set_permission_handler(handler)
+
+    def reset(self) -> None:
+        """Drop the current ACP session + restart fresh on the next
+        turn. Keeps the adapter instance + its config alive; just
+        forgets the session_id (on disk + in memory) and tears the
+        subprocess down. See `AcpSession.reset` for the full teardown
+        sequence."""
+        self._session.reset()
 
     @property
     def mcp_server_names(self) -> list[str]:
