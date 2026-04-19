@@ -26,35 +26,16 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 log = logging.getLogger("lib.overlay")
 
-# gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
-# shim hooks in at load time, so without it `is_supported()` returns
-# false and every layer-shell call becomes a no-op — the window falls
-# through to a normal xdg_toplevel. Re-exec ourselves with the preload
-# if needed. Callers gate on the command they care about (e.g.
-# pilot.py only preloads for `toggle`; waybar-poll commands skip this).
-_LAYER_SHELL_SONAME = "libgtk4-layer-shell.so.0"
+# Re-exported from `lib.layer_shell` so callers that already reach for
+# `lib.overlay.ensure_layer_shell_preload` keep working. IMPORTANT: the
+# real implementation lives in the stdlib-only `lib.layer_shell` module,
+# because importing the helper through `lib.overlay` would load `gi`
+# BEFORE the preload re-exec set LD_PRELOAD — which is exactly the
+# scenario the preload exists to prevent. Use `lib.layer_shell` at the
+# actual call site (pilot.py does) and treat the alias here as
+# documentation-only.
+from .layer_shell import ensure_layer_shell_preload  # noqa: E402,F401
 
-
-def ensure_layer_shell_preload(script_path: Optional[str] = None) -> None:
-    """Re-exec the current Python process with `libgtk4-layer-shell.so.0`
-    on LD_PRELOAD if it isn't already loaded. No-op when the preload is
-    in place. Pass `script_path` explicitly when the module's __file__
-    isn't the real entry point (e.g. a wrapper that invokes a bundled
-    script). Defaults to sys.argv[0] so a direct `python pilot.py ...`
-    invocation works out of the box."""
-    current = os.environ.get("LD_PRELOAD", "")
-    if _LAYER_SHELL_SONAME in current.split(":"):
-        return
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = (
-        f"{current}:{_LAYER_SHELL_SONAME}" if current else _LAYER_SHELL_SONAME
-    )
-    script = script_path or sys.argv[0]
-    os.execvpe(sys.executable, [sys.executable, script, *sys.argv[1:]], env)
-
-
-# Back-compat alias for existing pilot.py wiring + any external callers
-# that shipped before the name change.
 _ensure_layer_shell_preload = ensure_layer_shell_preload
 
 

@@ -52,6 +52,7 @@ from .mcp import (
     socket_auto_check,
     socket_question,
 )
+from .layer_shell import ensure_layer_shell_preload
 from .notify import notify
 from .pango_highlight import highlight_code
 from .output import (
@@ -72,7 +73,6 @@ _OVERLAY_EXPORTS = frozenset({
     "Header",
     "LayerOverlayWindow",
     "PillVariant",
-    "ensure_layer_shell_preload",
     "focused_gdk_monitor",
     "focused_monitor_name",
     "load_css_from_path",

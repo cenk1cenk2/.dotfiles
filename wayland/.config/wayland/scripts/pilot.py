@@ -48,15 +48,21 @@ from lib.converse import _deep_merge
 
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
-# and every layer-shell call becomes a no-op — the window falls through to
-# a normal xdg_toplevel. Only for `toggle`; waybar-poll commands (status /
-# is-running / kill) don't open a window and don't need the preload or
-# the GTK display. The preload helper lives in `lib.overlay` so other
-# scripts can reuse it, but we don't import that module here yet —
-# pulling gi into the headless mcp-server subprocess below is avoidable
-# and the preload call stands alone.
+# and every layer-shell call becomes a no-op — the window falls through
+# to a normal xdg_toplevel. Only for `toggle`; waybar-poll commands
+# (status / is-running / kill) don't open a window and don't need the
+# preload or the GTK display.
+#
+# IMPORTANT: import from `lib.layer_shell`, NOT `lib.overlay`. The
+# overlay module runs `import gi` at module-top, and if gi is imported
+# BEFORE the re-exec sets LD_PRELOAD, the layer-shell shim never hooks
+# libwayland and the window renders as a normal xdg_toplevel. The
+# `layer_shell` sub-module is stdlib-only so importing it has no side
+# effects on gi.
 if len(sys.argv) > 1 and sys.argv[1] == "toggle":
-    from lib.overlay import ensure_layer_shell_preload as _ensure_layer_shell_preload
+    from lib.layer_shell import (  # noqa: E402
+        ensure_layer_shell_preload as _ensure_layer_shell_preload,
+    )
 
     _ensure_layer_shell_preload(__file__)
 
