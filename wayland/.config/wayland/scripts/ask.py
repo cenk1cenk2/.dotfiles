@@ -223,10 +223,19 @@ class MarkdownView:
         }
 
     def render(self, text: str) -> None:
-        self.buffer.set_text("")
-        tokens = self._md.parse(text)
-        self._walk(tokens, tag_stack=[], list_stack=[])
-        self._trim_trailing_whitespace()
+        # Batch the clear + walk inside a single user-action so GTK
+        # coalesces signals and only fires the layout update at the end.
+        # Without this, the intermediate empty-buffer state can collapse
+        # the TextView's allocation and never re-expand as content arrives.
+        buf = self.buffer
+        buf.begin_user_action()
+        try:
+            buf.set_text("")
+            tokens = self._md.parse(text)
+            self._walk(tokens, tag_stack=[], list_stack=[])
+            self._trim_trailing_whitespace()
+        finally:
+            buf.end_user_action()
 
     def _trim_trailing_whitespace(self) -> None:
         """Paragraph/heading/list closers emit trailing newlines so blocks
@@ -595,10 +604,16 @@ class TurnCard:
     def append(self, chunk: str) -> None:
         self._text += chunk
         self._md.render(self._text)
+        # Nudge the allocator — TextView's content-height changed, so the
+        # parent Box / scroller need to re-measure. Without this, cards
+        # can stay at their initial (tiny) allocation and later chunks
+        # render into an already-exhausted size.
+        self._textview.queue_resize()
 
     def set_text(self, text: str) -> None:
         self._text = text
         self._md.render(text)
+        self._textview.queue_resize()
 
     def get_text(self) -> str:
         return self._text
@@ -680,8 +695,16 @@ class AskWindow(Gtk.ApplicationWindow):
         # Conversation: a vertical box of TurnCard widgets inside a
         # scroller. Each card is its own markdown-rendered surface.
         self._conv_scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        # NEVER horizontal so the child Box fills the viewport width
+        # instead of collapsing to its minimum natural width — that was
+        # making cards render as narrow slivers (sometimes invisible
+        # entirely when the short role label was the only measurable
+        # natural-width content).
+        self._conv_scroller.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+        )
         self._conv_scroller.add_css_class("ask-conv-scroller")
-        self._conv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._conv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self._conv_box.add_css_class("ask-conv")
         self._conv_scroller.set_child(self._conv_box)
         root.append(self._conv_scroller)

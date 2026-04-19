@@ -49,7 +49,7 @@ label.ask-provider {
   font-size: 0.9em;
   font-weight: 700;
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: 12px;
   background: alpha(@ask_fg_dim, 0.15);
   color: @ask_fg;
   letter-spacing: 0.04em;
@@ -139,6 +139,9 @@ window textview.ask-card-text text {
   background-color: transparent;
   background: transparent;
   color: @ask_fg;
+  /* Keep at least one line of vertical presence so a fresh assistant
+   * card (awaiting the first chunk) doesn't collapse to zero height. */
+  min-height: 1.4em;
 }
 
 /* ========================================================== Compose */
@@ -235,7 +238,7 @@ row.ask-queue-row:hover {
 box.ask-queue-card {
   background: @ask_card;
   border: 1px solid @ask_border_soft;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 12px;
   margin: 4px 0;
   transition: border-color 120ms ease;
