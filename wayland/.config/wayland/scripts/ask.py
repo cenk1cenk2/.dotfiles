@@ -139,81 +139,166 @@ def _focused_monitor_width_logical() -> Optional[int]:
 
     return None
 
-BASE_CSS = b"""
+BASE_CSS = """
+/* Tokens — keep design decisions centralised via @define-color so the
+ * rest of the sheet reads like semantic role applications, not hex
+ * noise. Adjust here, ripple everywhere. */
+@define-color ask_bg        #1a1c23;
+@define-color ask_bg_soft   rgba(255, 255, 255, 0.04);
+@define-color ask_bg_softer rgba(255, 255, 255, 0.025);
+@define-color ask_border    rgba(255, 255, 255, 0.08);
+@define-color ask_border_hi rgba(255, 255, 255, 0.14);
+@define-color ask_fg        #e5e9f0;
+@define-color ask_fg_dim    #9aa0a6;
+@define-color ask_accent    #6ea8fe;
+@define-color ask_idle      #8fbf7a;
+@define-color ask_stream    #e6c07b;
+@define-color ask_pending   #e06c75;
+
+/* Overall surface. Slightly warmer than pure black, with a hint of
+ * translucency so compositor blur can peek through when enabled. */
 window {
-    background: rgba(20, 22, 28, 0.96);
+    background: rgba(26, 28, 35, 0.97);
+    color: @ask_fg;
 }
-box.ask-root {
-    border-radius: 12px 0 0 12px;
-    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.4);
-}
+
+/* Header bar — compact, a subtle divider. No background colour of its
+ * own so the provider pill reads as the one emphasized element. */
 box.ask-header {
-    padding: 6px 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 10px 14px 10px 16px;
+    border-bottom: 1px solid @ask_border;
 }
+
+/* Provider pill: rounded background, coloured text + tinted fill per
+ * phase. The colour contract is the same as the waybar module — green
+ * when idle, yellow when streaming, red when pending first chunk. */
 label.ask-provider {
-    font-weight: bold;
-    color: #d8dee9;
+    font-size: 11pt;
+    font-weight: 600;
+    padding: 4px 10px;
+    margin-right: 6px;
+    border-radius: 999px;
+    background: @ask_bg_soft;
+    color: @ask_fg;
 }
-/* Phase colouring on the provider label. Idle: conversation is ready,
- * adapter is resting. Pending: we sent a turn, no chunk yet (something
- * might be wrong). Streaming: chunks arriving, everything is fine. */
-label.ask-provider.idle { color: #8fbf7a; }
-label.ask-provider.streaming { color: #e6c07b; }
-label.ask-provider.pending { color: #e06c75; }
+label.ask-provider.idle {
+    color: @ask_idle;
+    background: alpha(@ask_idle, 0.14);
+}
+label.ask-provider.streaming {
+    color: @ask_stream;
+    background: alpha(@ask_stream, 0.14);
+}
+label.ask-provider.pending {
+    color: @ask_pending;
+    background: alpha(@ask_pending, 0.14);
+}
+
+/* Header close button. Minimal, goes red on hover so there's a clear
+ * "this ends things" hint without being shouty at rest. */
 button.ask-close {
     background: transparent;
     border: none;
-    padding: 2px 8px;
-    color: #d8dee9;
+    padding: 4px 10px;
+    min-width: 0;
+    color: @ask_fg_dim;
+    font-size: 12pt;
+    border-radius: 6px;
 }
 button.ask-close:hover {
-    color: #ffffff;
+    color: @ask_pending;
+    background: alpha(@ask_pending, 0.12);
+}
+
+/* Conversation scroller — textview is transparent so the window colour
+ * shows through; content padding via margins on the TextView itself. */
+scrolledwindow {
+    background: transparent;
 }
 textview {
     font-size: 14pt;
     background: transparent;
+    color: @ask_fg;
 }
 textview text {
     background: transparent;
-    color: #e5e9f0;
+    color: @ask_fg;
 }
+
+/* Compose — framed box with a focus ring, same rounding as the pill so
+ * the surface feels coherent. Box grows up to max_lines thanks to the
+ * ScrolledWindow cap set in Python. */
 scrolledwindow.ask-compose {
-    margin: 8px;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.04);
+    margin: 10px 12px 12px 12px;
+    border: 1px solid @ask_border;
+    border-radius: 10px;
+    background: @ask_bg_soft;
+}
+scrolledwindow.ask-compose:focus-within {
+    border-color: alpha(@ask_accent, 0.6);
+    background: @ask_bg_soft;
+    box-shadow: 0 0 0 2px alpha(@ask_accent, 0.18);
 }
 textview.ask-compose-text,
 textview.ask-compose-text text {
     font-family: monospace;
     background: transparent;
+    font-size: 12pt;
+    color: @ask_fg;
 }
+
+/* Queue panel — treated as a stacked card strip above the compose. */
 box.ask-queue {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 2px 0;
+    background: @ask_bg_softer;
+    border-top: 1px solid @ask_border;
+    padding: 6px 0 2px 0;
 }
 label.ask-queue-header {
-    font-size: 10pt;
-    font-weight: bold;
-    opacity: 0.6;
+    font-size: 9pt;
+    font-weight: 700;
+    color: @ask_fg_dim;
+    padding: 0 14px 4px 14px;
+    letter-spacing: 0.08em;
+}
+
+/* Each row is its own card. Listbox gets no background — rows own it. */
+list {
+    background: transparent;
+}
+row.ask-queue-row {
+    margin: 2px 8px;
+    border-radius: 8px;
+    background: @ask_bg_soft;
+    border: 1px solid @ask_border;
+    transition: background 120ms ease, border-color 120ms ease;
 }
 row.ask-queue-row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: alpha(@ask_accent, 0.08);
+    border-color: alpha(@ask_accent, 0.4);
 }
 label.ask-queue-preview {
     font-size: 11pt;
-    opacity: 0.85;
+    color: @ask_fg;
 }
+
+/* Row buttons — ghost by default, tint on hover so they don't compete
+ * with the preview label for attention until the user reaches for them. */
 button.ask-queue-send,
 button.ask-queue-remove {
     background: transparent;
     border: none;
-    padding: 2px 6px;
-    opacity: 0.7;
+    padding: 4px 10px;
+    min-width: 0;
+    color: @ask_fg_dim;
+    border-radius: 6px;
 }
-button.ask-queue-send:hover,
+button.ask-queue-send:hover {
+    color: @ask_idle;
+    background: alpha(@ask_idle, 0.14);
+}
 button.ask-queue-remove:hover {
-    opacity: 1.0;
+    color: @ask_pending;
+    background: alpha(@ask_pending, 0.14);
 }
 """
 
@@ -558,6 +643,10 @@ class AskWindow(Gtk.ApplicationWindow):
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
+        # Explicit namespace so compositors can target us with a stable
+        # layerrule (`layer = namespace:^(ask)$`) regardless of the
+        # application_id GDK would otherwise advertise as the namespace.
+        Gtk4LayerShell.set_namespace(self, "ask")
         Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
@@ -864,7 +953,8 @@ class AskWindow(Gtk.ApplicationWindow):
     @staticmethod
     def _install_css() -> None:
         provider = Gtk.CssProvider()
-        provider.load_from_data(BASE_CSS, len(BASE_CSS))
+        css = BASE_CSS.encode("utf-8")
+        provider.load_from_data(css, len(css))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
             provider,
