@@ -325,14 +325,6 @@ class ComposeView:
             int(self._line_px * 6) + self._pad_px
         )
 
-    def set_max_content_fraction(self, window_height_px: int, fraction: float) -> None:
-        """Cap the compose scroller at `fraction` of the overlay's total
-        height. The overlay is anchored top+bottom so its height equals
-        the monitor's geometry height; callers pass that in."""
-        cap = int(window_height_px * fraction)
-        floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
-        self._scroller.set_max_content_height(max(floor, cap))
-
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("ask-compose-bar")
         hint = Gtk.Label(
@@ -353,6 +345,14 @@ class ComposeView:
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
         self._textview.add_controller(key)
+
+    def set_max_content_fraction(self, window_height_px: int, fraction: float) -> None:
+        """Cap the compose scroller at `fraction` of the overlay's total
+        height. The overlay is anchored top+bottom so its height equals
+        the monitor's geometry height; callers pass that in."""
+        cap = int(window_height_px * fraction)
+        floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
+        self._scroller.set_max_content_height(max(floor, cap))
 
     def get_text(self) -> str:
         buf = self._textview.get_buffer()
