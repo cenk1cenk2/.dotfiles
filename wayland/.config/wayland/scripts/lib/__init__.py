@@ -46,6 +46,7 @@ from .mcp import (
     socket_question,
 )
 from .notify import notify
+from .pango_highlight import highlight_code
 from .output import (
     OutputAdapterClipboard,
     OutputAdapter,
@@ -91,6 +92,7 @@ __all__ = [
     "ToolCall",
     "format_tool_args",
     "get_server",
+    "highlight_code",
     "load_prompt",
     "load_relative_file",
     "notify",

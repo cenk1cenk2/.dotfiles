@@ -39,6 +39,7 @@ from lib import (
     ToolCall,
     format_tool_args,
     get_server as _DEFAULT_SERVER_GET,
+    highlight_code,
     load_prompt,
     load_relative_file,
     notify,
@@ -405,10 +406,19 @@ class MarkdownMarkup:
                 out.append("</span></a>")
             case "fence" | "code_block":
                 content = tok.content.rstrip("\n")
+                # `tok.info` on a fence is the language string after the
+                # opening triple-backticks (e.g. ```python foo → "python
+                # foo"). We take the first whitespace-delimited word and
+                # let `highlight_code` pygments-dispatch from there.
+                # `code_block` (indented) has no language hint at all —
+                # None triggers pygments' `guess_lexer` fallback.
+                info = (getattr(tok, "info", "") or "").strip().split()
+                language = info[0] if info else None
+                highlighted = highlight_code(content, language)
                 out.append(
                     f'<span font_family="monospace" '
                     f'background="{self.CODE_BG}">'
-                    f"{self._esc(content)}</span>\n\n"
+                    f"{highlighted}</span>\n\n"
                 )
             case "bullet_list_open":
                 list_stack.append(["bullet", 0])
