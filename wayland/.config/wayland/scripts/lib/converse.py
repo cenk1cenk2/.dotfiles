@@ -20,7 +20,7 @@ class ConversationProvider(StrEnum):
     CODEX = "codex"
     OPENCODE = "opencode"
 
-DEFAULT_CONVERSE_ADAPTER = ConversationProvider.OPENCODE
+DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
 
 @dataclass
 class ToolCall:

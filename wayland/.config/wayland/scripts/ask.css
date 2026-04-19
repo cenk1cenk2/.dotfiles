@@ -30,6 +30,7 @@
 @define-color ask_idle #98c379;
 @define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
+@define-color ask_awaiting #d19a66;
 @define-color ask_edge #d3b051;
 
 /* Base font for the overlay. Every other `font-size` is an `em` multiplier
@@ -99,6 +100,11 @@
 .overlay label.ask-provider.pending {
   color: @ask_pending;
   background-color: alpha(@ask_pending, 0.22);
+}
+
+.overlay label.ask-provider.awaiting {
+  color: @ask_awaiting;
+  background-color: alpha(@ask_awaiting, 0.22);
 }
 
 /* Button shadows. Depth comes from a hairline top-highlight and a soft

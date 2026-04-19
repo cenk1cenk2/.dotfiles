@@ -553,6 +553,11 @@ class ComposeView:
         self._question_callback = None
         self._question_banner.set_visible(False)
 
+    def has_question(self) -> bool:
+        """True while the compose is in question-answer mode. Window
+        reads this to include the banner in its awaiting-phase check."""
+        return self._question_callback is not None
+
     def _on_question_skip(self) -> None:
         """`✕ skip` button: resolve the question with an empty answer
         and dismiss the banner without sending a turn."""
@@ -920,6 +925,12 @@ class AskWindow(Gtk.ApplicationWindow):
         self._alive = True
         self._queue: list[QueueRow] = []
         self._phase: str = "idle"
+        # `_stream_started` flips true on the first text chunk of a
+        # turn; combined with `_streaming` and the permissions /
+        # question-banner state it fully determines the effective
+        # phase via `_update_phase()` — no caller needs to pick a
+        # phase string directly.
+        self._stream_started = False
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
         # Tool permission rows live above the queue; trust set is
@@ -1089,10 +1100,11 @@ class AskWindow(Gtk.ApplicationWindow):
         self._append_user_card(message)
         self._active_assistant = self._append_assistant_card()
         self._streaming = True
+        self._stream_started = False
         # Compose stays enabled: the queue system handles anything the
         # user types while this turn is streaming — new submissions get
         # pushed behind the current stream automatically.
-        self._set_phase("pending")
+        self._update_phase()
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
     def _append_user_card(self, text: str) -> TurnCard:
@@ -1181,7 +1193,7 @@ class AskWindow(Gtk.ApplicationWindow):
                     GLib.idle_add(self._append_thinking, chunk.text)
                     continue
                 if first_text_chunk:
-                    GLib.idle_add(self._set_phase, "streaming")
+                    GLib.idle_add(self._mark_stream_started)
                     first_text_chunk = False
                 GLib.idle_add(self._append_chunk, chunk)
         except Exception as e:
@@ -1195,21 +1207,54 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _mark_idle(self) -> bool:
         self._streaming = False
+        self._stream_started = False
         self._active_assistant = None
         if self._alive:
             # Compose was never disabled; just reclaim focus so the user
             # can continue typing without clicking. Queued items stay
             # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
-            self._set_phase("idle")
+            self._update_phase()
+
+        return False
+
+    def _mark_stream_started(self) -> bool:
+        """Main-thread sink: first reply chunk landed, flip pending →
+        streaming (unless we're currently awaiting approval / an answer,
+        in which case `_update_phase` keeps the blue awaiting pill)."""
+        self._stream_started = True
+        self._update_phase()
 
         return False
 
     # -- Phase colouring -----------------------------------------------
 
-    def _set_phase(self, phase: str) -> bool:
+    _PHASE_CLASSES = ("idle", "pending", "streaming", "awaiting")
+
+    def _update_phase(self) -> bool:
+        """Recompute the provider pill's phase from current state.
+
+        Priority order:
+        - Any pending permission row OR an active question banner →
+          `awaiting` (blue). The user's input is the blocker; the
+          stream is either holding an approval envelope or typing
+          into the question box, and the yellow/red turn colours
+          would misrepresent that.
+        - `_stream_started` → `streaming` (yellow). Chunks are
+          flowing into the active assistant card.
+        - `_streaming` without any chunks yet → `pending` (red).
+          Turn is in flight, we're waiting for the first byte.
+        - Otherwise → `idle` (green)."""
+        if self._permissions or self._compose.has_question():
+            phase = "awaiting"
+        elif self._stream_started:
+            phase = "streaming"
+        elif self._streaming:
+            phase = "pending"
+        else:
+            phase = "idle"
         self._phase = phase
-        for cls in ("idle", "pending", "streaming"):
+        for cls in self._PHASE_CLASSES:
             if cls == phase:
                 self._provider_label.add_css_class(cls)
             else:
@@ -1294,6 +1339,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._permissions.append(row)
         self._permissions_listbox.append(row)
         self._permissions_box.set_visible(True)
+        self._update_phase()
 
         return False
 
@@ -1304,6 +1350,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._permissions_listbox.remove(row)
         if not self._permissions:
             self._permissions_box.set_visible(False)
+        self._update_phase()
 
     def show_question(self, question: str, resolve) -> bool:
         """Route a claude `ask_question` MCP tool through the overlay.
@@ -1314,8 +1361,22 @@ class AskWindow(Gtk.ApplicationWindow):
         dispatching a normal turn. The banner disappears as soon as
         they answer (or skip). Returns False so `GLib.idle_add` fires
         once."""
-        self._compose.set_question_mode(question, on_answer=resolve)
+
+        # Wrap `resolve` so the phase pill flips back to whatever it
+        # was before the question arrived (pending / streaming /
+        # idle) as soon as the user answers or skips. The compose
+        # clears `_question_callback` before firing the callback, so
+        # by the time we reach `_update_phase()` `has_question()`
+        # already reports False.
+        def resolved(answer: str) -> None:
+            try:
+                resolve(answer)
+            finally:
+                self._update_phase()
+
+        self._compose.set_question_mode(question, on_answer=resolved)
         self._compose.focus()
+        self._update_phase()
 
         return False
 
@@ -1355,6 +1416,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._permissions.append(row)
         self._permissions_listbox.append(row)
         self._permissions_box.set_visible(True)
+        self._update_phase()
 
         return False
 
@@ -2019,8 +2081,9 @@ def _cmd_toggle(args) -> None:
 def _cmd_status() -> None:
     """Waybar custom-module payload. Compact icon-only text (provider lives
     in the tooltip); class picks the state colour (idle green / pending red
-    / streaming yellow); queue depth renders as a Pango superscript badge
-    so N pending turns show as `󱍊³` without stealing horizontal space."""
+    / streaming yellow / awaiting blue); queue depth renders as a Pango
+    superscript badge so N pending turns show as `󱍊³` without stealing
+    horizontal space."""
     resp = _send("status")
     if not resp or not resp.get("ok"):
         print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
@@ -2038,6 +2101,8 @@ def _cmd_status() -> None:
             tooltip = f"Ask: streaming via {provider}"
         case "pending":
             tooltip = f"Ask: waiting on first chunk from {provider}"
+        case "awaiting":
+            tooltip = f"Ask: waiting on user input ({provider})"
         case _:
             tooltip = f"Ask: {provider} idle"
     if queue > 0:
