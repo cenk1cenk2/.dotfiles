@@ -869,6 +869,16 @@ class TurnCard:
     THINKING_LABEL_STREAMING = "🧠 thinking…"
     THINKING_LABEL_DONE = "🧠 thinking"
 
+    # Per-status glyph on each tool bubble. Intentionally text-only so
+    # these render at the card font size without Pango fighting an
+    # inline `<tt>` or PangoAttrList.
+    _TOOL_STATUS_GLYPHS = {
+        "pending": "⋯",
+        "running": "⋯",
+        "completed": "✓",
+        "cancelled": "✕",
+    }
+
     def __init__(self, role: str, title: str, on_link):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
@@ -890,6 +900,19 @@ class TurnCard:
         self._thinking_expander: Optional[Gtk.Expander] = None
         self._thinking_label: Optional[Gtk.Label] = None
         self._thinking_collapsed = False
+
+        # Tool-bubble strip — lazily built when the first ToolCall
+        # event arrives for this card. `_tool_bubbles_container` is
+        # the outer vertical Box (bubbles row + stacked detail
+        # panels); `_tool_bubbles_flow` is the FlowBox that actually
+        # lays out the pill buttons. Bubbles are keyed by tool_id so
+        # later status updates (pending → completed / cancelled)
+        # find the right slot to rewrite.
+        self._tool_bubbles_container: Optional[Gtk.Box] = None
+        self._tool_bubbles_flow: Optional[Gtk.FlowBox] = None
+        self._tool_details_box: Optional[Gtk.Box] = None
+        self._tool_bubbles: dict[str, dict] = {}
+        self._tool_bubbles_frozen = False
 
         self._label = Gtk.Label(
             xalign=0.0,
@@ -977,6 +1000,196 @@ class TurnCard:
         )
 
         return True
+
+    # -- Tool bubbles --------------------------------------------------
+
+    def _ensure_tool_bubbles_container(self) -> None:
+        """Lazily build the bubble strip + detail-panel area. Inserted
+        below the role label and above both the thinking expander (if
+        already present) and the reply label, so the visual order is:
+        role → tool bubbles → thinking → reply."""
+        if self._tool_bubbles_container is not None:
+            return
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        container.add_css_class("pilot-tool-bubbles")
+
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_homogeneous(False)
+        flow.set_column_spacing(4)
+        flow.set_row_spacing(4)
+        flow.set_max_children_per_line(20)
+        flow.add_css_class("pilot-tool-bubbles-flow")
+        container.append(flow)
+
+        # Detail panels go in their own vertical box so expanding one
+        # doesn't shift bubble positions. Each panel is a Gtk.Revealer
+        # wrapping a details label; the bubble button toggles the
+        # revealer's `reveal-child` property.
+        details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        details_box.add_css_class("pilot-tool-bubble-details-box")
+        container.append(details_box)
+
+        # Slot the strip immediately after the role label.
+        self.widget.insert_child_after(container, self._role_label)
+        self._tool_bubbles_container = container
+        self._tool_bubbles_flow = flow
+        self._tool_details_box = details_box
+
+    def _format_bubble_label(self, name: str, status: str) -> str:
+        glyph = self._TOOL_STATUS_GLYPHS.get(status, "⋯")
+        label = name or "tool"
+        # Strip `mcp__<server>__` prefix for readability — the full
+        # tool id is still visible in the expanded detail panel.
+        if label.startswith("mcp__"):
+            tail = label.split("__", 2)
+            if len(tail) >= 3:
+                label = tail[2]
+        return f"{label} {glyph}"
+
+    def _update_bubble_widget(self, slot: dict) -> None:
+        """Rewrite the bubble button label + status CSS class from
+        the slot's current name/status. Called by both append and
+        update to keep one rendering path."""
+        button: Gtk.Button = slot["button"]
+        button.set_label(self._format_bubble_label(slot["name"], slot["status"]))
+        for cls in ("pending", "running", "completed", "cancelled"):
+            if cls == slot["status"]:
+                button.add_css_class(cls)
+            else:
+                button.remove_css_class(cls)
+
+    def _render_bubble_details(self, slot: dict) -> None:
+        """Write the args preview + result text into the slot's
+        detail label. Called lazily when the panel becomes visible
+        (initial toggle) and on every subsequent status/result
+        update so the panel stays in sync."""
+        label: Gtk.Label = slot["details_label"]
+        name = slot.get("name") or ""
+        args = slot.get("arguments") or ""
+        args_pretty = format_tool_args(name, args)
+        parts = [f"<b>{GLib.markup_escape_text(name)}</b>"]
+        if args_pretty:
+            parts.append(f"<tt>{GLib.markup_escape_text(args_pretty)}</tt>")
+        result = slot.get("result")
+        if result:
+            parts.append(f"<i>result:</i>\n<tt>{GLib.markup_escape_text(str(result))}</tt>")
+        label.set_markup("\n\n".join(parts))
+
+    def _on_bubble_clicked(self, _button, tool_id: str) -> None:
+        slot = self._tool_bubbles.get(tool_id)
+        if slot is None:
+            return
+        revealer: Gtk.Revealer = slot["revealer"]
+        expanded = not revealer.get_reveal_child()
+        # Refresh before revealing so the label shows the latest
+        # args/result instead of whatever was written at first toggle.
+        self._render_bubble_details(slot)
+        revealer.set_reveal_child(expanded)
+
+    def append_tool_bubble(self, call: ToolCall) -> None:
+        """Add a bubble for a freshly-seen ToolCall, or merge a
+        follow-up event into an existing bubble. `call.tool_id` is
+        the merge key. Calling with the same id a second time
+        updates the existing slot in-place (delegates to
+        `update_tool_bubble`)."""
+        if self._tool_bubbles_frozen:
+            # Post-finalisation updates: still merge so late
+            # completions from a cancelled turn reflect accurately.
+            pass
+        self._ensure_tool_bubbles_container()
+        tool_id = call.tool_id or f"bubble-{len(self._tool_bubbles)}"
+        existing = self._tool_bubbles.get(tool_id)
+        if existing is not None:
+            self.update_tool_bubble(
+                tool_id,
+                status=call.status,
+                arguments=call.arguments,
+            )
+            return
+
+        button = Gtk.Button()
+        button.add_css_class("pilot-tool-bubble")
+        button.set_tooltip_text(call.name or "")
+        button.set_can_focus(True)
+
+        # Detail panel lives in the details_box (below the flow),
+        # wrapped in a Revealer so toggling doesn't reshuffle layout.
+        details_label = Gtk.Label(
+            xalign=0.0,
+            yalign=0.0,
+            hexpand=True,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            use_markup=True,
+            selectable=True,
+            natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+        )
+        details_label.add_css_class("pilot-tool-bubble-details")
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_reveal_child(False)
+        revealer.set_child(details_label)
+        assert self._tool_details_box is not None
+        self._tool_details_box.append(revealer)
+
+        slot = {
+            "tool_id": tool_id,
+            "name": call.name or "",
+            "arguments": call.arguments or "",
+            "status": call.status or "pending",
+            "result": None,
+            "button": button,
+            "revealer": revealer,
+            "details_label": details_label,
+        }
+        self._tool_bubbles[tool_id] = slot
+        button.connect("clicked", self._on_bubble_clicked, tool_id)
+        self._update_bubble_widget(slot)
+        assert self._tool_bubbles_flow is not None
+        self._tool_bubbles_flow.append(button)
+
+    def update_tool_bubble(
+        self,
+        tool_id: str,
+        status: Optional[str] = None,
+        arguments: Optional[str] = None,
+        result: Optional[str] = None,
+    ) -> None:
+        """Mutate an existing bubble by tool_id. Any of status/args/
+        result may be None to leave that field unchanged. No-op if
+        the id isn't known (a completion without a matching open
+        event — shouldn't happen but we stay defensive)."""
+        slot = self._tool_bubbles.get(tool_id)
+        if slot is None:
+            return
+        if status:
+            slot["status"] = status
+        if arguments:
+            slot["arguments"] = arguments
+        if result is not None:
+            slot["result"] = result
+        self._update_bubble_widget(slot)
+        revealer: Gtk.Revealer = slot["revealer"]
+        if revealer.get_reveal_child():
+            # Keep an open detail panel in sync with the latest
+            # args / result as they arrive.
+            self._render_bubble_details(slot)
+
+    def freeze_tool_bubbles(self, *, cancelled: bool = False) -> None:
+        """Called by the window when the turn finalises. Flips any
+        still-pending/running bubble to `completed` (clean end) or
+        `cancelled` (user/adapter cancelled the turn), and stamps
+        the `.frozen` CSS class on the strip so it can render as
+        static rather than live."""
+        self._tool_bubbles_frozen = True
+        terminal_state = "cancelled" if cancelled else "completed"
+        for slot in self._tool_bubbles.values():
+            if slot["status"] in ("pending", "running"):
+                slot["status"] = terminal_state
+                self._update_bubble_widget(slot)
+        if self._tool_bubbles_container is not None:
+            self._tool_bubbles_container.add_css_class("frozen")
 
 class PermissionRow(Gtk.ListBoxRow):
     """A pending tool-use event rendered as a full-width card above the
@@ -1141,6 +1354,12 @@ class PilotWindow(Gtk.ApplicationWindow):
         # phase via `_update_phase()` — no caller needs to pick a
         # phase string directly.
         self._stream_started = False
+        # Sticky per-turn flag. Set by the cancel paths (Ctrl+D,
+        # deny, auto-reject) so `_mark_idle` knows to freeze the
+        # assistant card's tool-bubble strip with the `cancelled`
+        # terminal state rather than `completed`. Reset at the top
+        # of every new turn.
+        self._turn_cancelled = False
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
         # Tool permission rows live above the queue; trust set is
@@ -1326,6 +1545,7 @@ class PilotWindow(Gtk.ApplicationWindow):
         self._active_assistant = self._append_assistant_card()
         self._streaming = True
         self._stream_started = False
+        self._turn_cancelled = False
         # Compose stays enabled: the queue system handles anything the
         # user types while this turn is streaming — new submissions get
         # pushed behind the current stream automatically.
@@ -1413,7 +1633,15 @@ class PilotWindow(Gtk.ApplicationWindow):
                 # doesn't help because by the time we see the event
                 # the turn is already done).
                 if isinstance(chunk, ToolCall):
-                    GLib.idle_add(self._on_tool_call, chunk)
+                    # `audit=True` is the new normal — bubble strip on
+                    # the active assistant card. `audit=False` goes to
+                    # the legacy permission-row sink (kept for MCP
+                    # bridge-initiated paths and any future non-audit
+                    # producers).
+                    if getattr(chunk, "audit", False):
+                        GLib.idle_add(self._on_tool_stream_event, chunk)
+                    else:
+                        GLib.idle_add(self._on_tool_call, chunk)
                     continue
                 if isinstance(chunk, ThinkingChunk):
                     GLib.idle_add(self._append_thinking, chunk.text)
@@ -1436,8 +1664,19 @@ class PilotWindow(Gtk.ApplicationWindow):
         # streamed something — a denied / cancelled / error-bailed
         # turn that never produced text shouldn't claim completion.
         streamed = self._stream_started
+        # Freeze the assistant card's tool-bubble strip BEFORE we
+        # drop the active-assistant ref so still-pending bubbles
+        # flip to their terminal state on the right card.
+        if self._active_assistant is not None:
+            try:
+                self._active_assistant.freeze_tool_bubbles(
+                    cancelled=self._turn_cancelled
+                )
+            except Exception as e:
+                log.warning("freeze_tool_bubbles raised: %s", e)
         self._streaming = False
         self._stream_started = False
+        self._turn_cancelled = False
         self._active_assistant = None
         if self._alive:
             # Compose was never disabled; just reclaim focus so the user
@@ -1597,6 +1836,37 @@ class PilotWindow(Gtk.ApplicationWindow):
 
     # -- Permissions ---------------------------------------------------
 
+    def _on_tool_stream_event(self, call: ToolCall) -> bool:
+        """Main-thread sink for `audit=True` `ToolCall` events from
+        `adapter.turn()`. Routes to the assistant card's bubble strip:
+        first event for a tool_id builds the bubble; follow-ups update
+        its status (pending → completed / cancelled). Returns False
+        so `GLib.idle_add` fires once."""
+        card = self._active_assistant
+        if card is None:
+            # Turn may have already finalised (late completion arriving
+            # after `_mark_idle`). Replay onto the most recent
+            # assistant card so audit remains accurate.
+            for existing in reversed(self._cards):
+                if existing.role == "assistant":
+                    card = existing
+                    break
+        if card is None:
+            return False
+        try:
+            if call.tool_id in card._tool_bubbles:
+                card.update_tool_bubble(
+                    call.tool_id,
+                    status=call.status,
+                    arguments=call.arguments,
+                )
+            else:
+                card.append_tool_bubble(call)
+        except Exception as e:
+            log.warning("tool bubble update raised: %s", e)
+
+        return False
+
     def _on_tool_call(self, call: ToolCall) -> bool:
         """Main-thread sink for `ToolCall` events from `adapter.turn()`.
         Scheduled via `GLib.idle_add` from the worker thread — returns
@@ -1746,6 +2016,7 @@ class PilotWindow(Gtk.ApplicationWindow):
                 # wise we shouldn't show both pills.
                 self._auto_approved_tools.discard(r.tool_name)
                 self._sync_permission_state()
+            self._turn_cancelled = True
             try:
                 self._adapter.cancel()
             except Exception as e:
@@ -1801,6 +2072,7 @@ class PilotWindow(Gtk.ApplicationWindow):
             self._auto_rejected_tools.add(row.tool_name)
             self._auto_approved_tools.discard(row.tool_name)
             self._sync_permission_state()
+        self._turn_cancelled = True
         try:
             self._adapter.cancel()
         except Exception as e:
@@ -1905,6 +2177,7 @@ class PilotWindow(Gtk.ApplicationWindow):
         best-effort cancel of the remaining response plus a trust
         revoke so the next turn can't re-trigger the same tool."""
         tool_name = row.tool_name or "tool"
+        self._turn_cancelled = True
         try:
             self._adapter.cancel()
         except Exception as e:
@@ -2022,6 +2295,7 @@ class PilotWindow(Gtk.ApplicationWindow):
         if not self._streaming:
             log.debug("cancel requested with no turn in flight")
             return
+        self._turn_cancelled = True
         try:
             self._adapter.cancel()
         except Exception as e:
@@ -2442,6 +2716,8 @@ class Session:
                     tool_id=f"mcp-{id(event)}",
                     name=tool_name,
                     arguments=str(arguments),
+                    status="running",
+                    audit=False,
                 )
                 GLib.idle_add(self._window.show_permission_for_mcp, call, resolve)
                 # 10-min ceiling matches `socket_approval`'s timeout.

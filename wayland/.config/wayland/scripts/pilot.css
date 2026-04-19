@@ -233,6 +233,98 @@
   margin-top: 2px;
 }
 
+/* ================================================ Tool-bubble strip
+ * A compact pill strip inside every assistant TurnCard that audits
+ * every tool call the adapter streamed. Pills render at the card
+ * font size with a colour-coded tint per status, and toggle an
+ * expanded detail panel below the strip showing pretty-printed
+ * arguments and (when available) result text. Once the turn
+ * finalises the strip gets a `.frozen` class so it reads as a
+ * static audit trail rather than a live indicator. */
+.overlay box.pilot-tool-bubbles {
+  margin: 2px 0 6px 0;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow > flowboxchild {
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow > flowboxchild:selected {
+  background-color: transparent;
+}
+
+.overlay button.pilot-tool-bubble {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  border-radius: 999px;
+  padding: 1px 10px;
+  min-width: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.82em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.pilot-tool-bubble:hover {
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.pilot-tool-bubble:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+/* Status tints. Pending/running share the awaiting hue (blue-ish
+ * orange tone), completed picks up the idle green, cancelled
+ * borrows the pending red. */
+.overlay button.pilot-tool-bubble.pending,
+.overlay button.pilot-tool-bubble.running {
+  color: @pilot_awaiting;
+  background-color: alpha(@pilot_awaiting, 0.14);
+  border-color: alpha(@pilot_awaiting, 0.4);
+}
+
+.overlay button.pilot-tool-bubble.completed {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.14);
+  border-color: alpha(@pilot_idle, 0.4);
+}
+
+.overlay button.pilot-tool-bubble.cancelled {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.14);
+  border-color: alpha(@pilot_pending, 0.4);
+}
+
+/* Frozen: once the turn finalised the strip is a historical audit
+ * trail. Dim the whole thing by a touch so the eye skips it in
+ * favour of the live card below. */
+.overlay box.pilot-tool-bubbles.frozen button.pilot-tool-bubble {
+  opacity: 0.75;
+}
+
+.overlay label.pilot-tool-bubble-details {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg_dim;
+  font-size: 0.85em;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
 /* Question banner — shown inside the compose wrap when claude's
  * `pilot_question` MCP tool is awaiting a typed answer. Sits above the
  * textview so the question frames the input it's prompting for. */

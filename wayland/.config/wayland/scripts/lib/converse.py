@@ -34,11 +34,29 @@ class ToolCall:
     the user dismiss / trust / cancel the turn. `tool_id` is whatever
     stable id the backend gave us so follow-up deltas for the same call
     can be coalesced; `arguments` is the raw JSON string (or shell
-    fragment for codex) — the UI does the pretty-printing."""
+    fragment for codex) — the UI does the pretty-printing.
+
+    `status` tracks where in the invocation lifecycle this event sits:
+
+    - `pending` — tool_use block opened; we know the name + id but
+      args may still be streaming.
+    - `running` — args finalised / the tool actually started executing
+      (for Claude, equivalent to `content_block_stop`; for Codex /
+      OpenCode we reach it at `item.completed`).
+    - `completed` — tool returned successfully.
+    - `cancelled` — user denied, turn was cancelled, or the stream
+      closed without producing a completion for this tool.
+
+    `audit` is True when this event was derived purely from the stream
+    for audit display (bubble strip in the assistant card). It's False
+    for the payload carried by the MCP permission-prompt path, which
+    opens a PermissionRow the user must answer."""
 
     tool_id: str
     name: str
     arguments: str
+    status: str = "completed"
+    audit: bool = False
 
 @dataclass
 class ThinkingChunk:
@@ -283,6 +301,8 @@ class ConversationAdapterHttp:
                     tool_id=t.get("id") or f"idx-{idx}",
                     name=t.get("name") or "",
                     arguments=t.get("arguments") or "",
+                    status="completed",
+                    audit=True,
                 )
             pending_tools.clear()
 
@@ -571,29 +591,44 @@ class ConversationAdapterClaude:
                             block = inner.get("content_block") or {}
                             if block.get("type") == "tool_use":
                                 idx = inner.get("index", 0)
+                                tool_id = block.get("id") or f"idx-{idx}"
+                                name = block.get("name") or ""
                                 pending_tools[idx] = {
-                                    "id": block.get("id") or f"idx-{idx}",
-                                    "name": block.get("name") or "",
+                                    "id": tool_id,
+                                    "name": name,
                                     "arguments": "",
                                 }
+                                # Emit a `pending` audit event as soon
+                                # as the block opens so the UI can draw
+                                # a bubble immediately. When MCP gating
+                                # is active the same tool will surface
+                                # a PermissionRow via the approval hook
+                                # — the stream event is flagged `audit`
+                                # so the UI routes it as a bubble, not
+                                # a blocking row.
+                                if name:
+                                    yield ToolCall(
+                                        tool_id=tool_id,
+                                        name=name,
+                                        arguments="",
+                                        status="pending",
+                                        audit=True,
+                                    )
                         elif itype == "content_block_stop":
                             idx = inner.get("index", 0)
                             slot = pending_tools.pop(idx, None)
-                            # When MCP permission gating is active the
-                            # approval tool already fired a row BEFORE
-                            # the tool ran; emitting the in-stream
-                            # event here would duplicate it. Gating
-                            # path wins; in-stream tool_use becomes a
-                            # no-op.
-                            if (
-                                slot
-                                and slot.get("name")
-                                and not (self.mcp_config and self.permission_tool)
-                            ):
+                            # Completed event carries the final args +
+                            # flips the bubble to the ✓ glyph. We
+                            # always emit this (even with MCP gating
+                            # active) — the approval row is driven
+                            # separately over the bridge socket.
+                            if slot and slot.get("name"):
                                 yield ToolCall(
                                     tool_id=slot["id"],
                                     name=slot["name"],
                                     arguments=slot.get("arguments") or "",
+                                    status="completed",
+                                    audit=True,
                                 )
                     case "result":
                         if event.get("is_error"):
@@ -747,10 +782,16 @@ class ConversationAdapterCodex:
                             )
                             if isinstance(args, (dict, list)):
                                 args = json.dumps(args)
+                            # Codex only emits `item.completed` for
+                            # tool items — no separate `pending`
+                            # state. Flip straight to `completed` so
+                            # the bubble renders with the ✓ glyph.
                             yield ToolCall(
                                 tool_id=item.get("id") or itype,
                                 name=item.get("name") or itype,
                                 arguments=str(args),
+                                status="completed",
+                                audit=True,
                             )
         finally:
             try:
@@ -981,10 +1022,16 @@ class ConversationAdapterOpenCode:
                         tool_args = json.dumps(tool_input)
                     else:
                         tool_args = str(tool_input)
+                    # OpenCode emits tool events as a single aggregate
+                    # per call (no progressive deltas), so we can't
+                    # distinguish pending/running — just go straight to
+                    # completed when we see the tool-start/tool-use.
                     yield ToolCall(
                         tool_id=part.get("id") or f"oc-{etype}",
                         name=str(tool_name),
                         arguments=tool_args,
+                        status="completed",
+                        audit=True,
                     )
                 elif etype == "step_finish":
                     # One step complete. OpenCode may emit multiple
