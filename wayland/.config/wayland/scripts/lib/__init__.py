@@ -54,6 +54,7 @@ from .output import (
     OutputAdapterType,
 )
 from .prompts import load_prompt, load_relative_file
+from .tool_format import format_tool_args
 from .waybar import signal_waybar
 
 __all__ = [
@@ -88,6 +89,7 @@ __all__ = [
     "OutputMode",
     "ThinkingChunk",
     "ToolCall",
+    "format_tool_args",
     "get_server",
     "load_prompt",
     "load_relative_file",

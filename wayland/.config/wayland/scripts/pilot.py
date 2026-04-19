@@ -37,6 +37,7 @@ from lib import (
     OutputAdapterClipboard,
     ThinkingChunk,
     ToolCall,
+    format_tool_args,
     get_server as _DEFAULT_SERVER_GET,
     load_prompt,
     load_relative_file,
@@ -1018,15 +1019,12 @@ class PermissionRow(Gtk.ListBoxRow):
         name_label.add_css_class("pilot-permission-tool-name")
         card.append(name_label)
 
-        # Argument preview. Try to pretty-print JSON; fall back to the
-        # raw string for non-JSON payloads (codex shell_command etc.).
-        pretty = call.arguments or ""
-        try:
-            parsed = json.loads(pretty) if pretty.strip() else None
-            if parsed is not None:
-                pretty = json.dumps(parsed, indent=2)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # Argument preview. Routes through `format_tool_args` so
+        # common tool names (Bash / Read / Edit / …) render as a
+        # short readable summary (`$ ls -la`, `📖 /path/to/file`)
+        # instead of a JSON dump. Unknown tools still fall through to
+        # the JSON-pretty branch inside the formatter.
+        pretty = format_tool_args(call.name or "", call.arguments or "")
         args_label = Gtk.Label(label=pretty, xalign=0.0, hexpand=True)
         args_label.set_wrap(True)
         args_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
