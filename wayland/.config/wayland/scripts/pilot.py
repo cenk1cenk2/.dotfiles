@@ -240,7 +240,7 @@ class ComposeView:
         bar.add_css_class("pilot-compose-bar")
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+P paste · Ctrl+Y yank · ESC hide · Ctrl+Q quit",
+            label="pilot",
             xalign=0.0,
             hexpand=True,
         )
