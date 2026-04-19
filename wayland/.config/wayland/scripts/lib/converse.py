@@ -179,7 +179,7 @@ class ConversationAdapterHttp:
         # we accept the kwarg for API parity with the CLI adapters
         # and expose it as an attribute for callers that want to
         # reflect it in the UI.
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
         # OpenWebUI extensions (silently ignored by generic OpenAI servers).
         # tool_ids: server-side tool UUIDs, also accepting the pseudo-ids
         # that represent built-ins (web_search, memory, code_interpreter,
@@ -397,7 +397,7 @@ class ConversationAdapterClaude:
         # is `plan` so claude explores read-only and surfaces write
         # intents through our permission hook instead of silently
         # mutating the workspace.
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
         self.mcp_config = kwargs.get("mcp_config")
         self.permission_tool: Optional[str] = kwargs.get("permission_tool")
         self._session_id: Optional[str] = None
@@ -447,13 +447,16 @@ class ConversationAdapterClaude:
         # ANTHROPIC_API_KEY-only auth. Fall back to a non-bare spawn when the
         # key isn't set so keychain auth keeps working.
         bare = ["--bare"] if os.environ.get("ANTHROPIC_API_KEY") else []
+        # `--permission-mode` is optional — without it claude falls
+        # back to its user-level default. Only add the flag pair when
+        # the caller actually specified a mode.
+        permission_mode = ["--permission-mode", self.mode] if self.mode else []
         common = [
             "claude",
             "-p",
             "--model",
             self.model,
-            "--permission-mode",
-            self.mode,
+            *permission_mode,
             "--output-format",
             "stream-json",
             "--include-partial-messages",
@@ -608,12 +611,16 @@ class ConversationAdapterCodex:
         # mode "plan" → `--sandbox read-only` and leave any other mode
         # string to pass through verbatim (so callers can pick
         # `workspace-write` / `danger-full-access` if they want).
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
 
     def _sandbox_args(self) -> list[str]:
+        # Mode unset → no `--sandbox` flag at all; codex picks up
+        # whatever its config / default policy prescribes.
+        if not self.mode:
+            return []
         sandbox = "read-only" if self.mode == "plan" else self.mode
 
         return ["--sandbox", sandbox]
@@ -774,7 +781,7 @@ class ConversationAdapterOpenCode:
         # OpenCode's `plan` agent is a built-in read-only mode. We
         # pass it through `--agent` when mode == "plan"; otherwise
         # the CLI uses the default agent.
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
         self.config_path = kwargs.get("config_path") or os.path.expanduser(
             "~/.config/nvim/utils/agents/opencode/kilic.json"
         )

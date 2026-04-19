@@ -61,7 +61,7 @@ class EnrichAdapterHttp:
         self.files = kwargs.get("files")
         # Accepted for API parity with the CLI adapters — no plan/edit
         # distinction exists at the chat-completions layer.
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
         body: dict[str, Any] = {
@@ -125,17 +125,19 @@ class EnrichAdapterClaude:
         self.model = kwargs.get("model") or "haiku"
         # Maps to `--permission-mode`. Default "plan" keeps enrich
         # read-only — a rewrite task shouldn't be editing files anyway.
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
+        # `--permission-mode` is optional; skip the flag pair when
+        # `self.mode` is None so claude uses its default policy.
+        permission_mode = ["--permission-mode", self.mode] if self.mode else []
         proc = subprocess.run(
             [
                 "claude",
                 "-p",
                 "--model",
                 self.model,
-                "--permission-mode",
-                self.mode,
+                *permission_mode,
                 "--system-prompt",
                 self.system_prompt,
                 self.user_prompt_template.format(text=text),
@@ -162,13 +164,19 @@ class EnrichAdapterCodex:
         # Codex has no literal plan flag — map "plan" to read-only
         # sandbox. Any other string passes through verbatim (e.g.
         # "workspace-write", "danger-full-access").
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
-        sandbox = "read-only" if self.mode == "plan" else self.mode
+        # Skip `--sandbox` entirely when no mode is set — codex picks
+        # up its configured default policy.
+        if not self.mode:
+            sandbox_args: list[str] = []
+        else:
+            sandbox = "read-only" if self.mode == "plan" else self.mode
+            sandbox_args = ["--sandbox", sandbox]
         proc = subprocess.run(
             [
                 "codex",
@@ -176,8 +184,7 @@ class EnrichAdapterCodex:
                 "-",
                 "--model",
                 self.model,
-                "--sandbox",
-                sandbox,
+                *sandbox_args,
                 "--ephemeral",
                 "--skip-git-repo-check",
             ],
@@ -214,7 +221,7 @@ class EnrichAdapterOpenCode:
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.model = kwargs.get("model") or self.DEFAULT_MODEL
-        self.mode = kwargs.get("mode") or "plan"
+        self.mode = kwargs.get("mode")
         self.config_path = kwargs.get("config_path") or self.DEFAULT_CONFIG_PATH
         self.provider_name = kwargs.get("provider_name") or self.DEFAULT_PROVIDER
 
