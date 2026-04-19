@@ -163,13 +163,41 @@ class McpServer:
             McpCapability.OPEN: self._install_open,
         }
 
-    def enable(self, capability: McpCapability, **kwargs) -> None:
-        """Install a capability by its enum value. `kwargs` are
-        forwarded to the matching `_install_*` method — each capability
-        declares its own required and optional args. Unknown values
-        raise `KeyError` so typos at the call site blow up early
-        instead of silently enabling nothing."""
+    def enable(self, capability: "str | McpCapability", **kwargs) -> None:
+        """Install a capability by its enum value OR a plain string
+        key registered via `register_capability`. `kwargs` are
+        forwarded to the matching installer — each capability declares
+        its own required and optional args. Unknown keys raise
+        `KeyError` so typos at the call-site blow up early instead of
+        silently enabling nothing.
+
+        Strings and `McpCapability` members interoperate: StrEnum
+        values hash as their underlying string, so `enable("approval")`
+        and `enable(McpCapability.APPROVAL)` hit the same slot."""
         self._capability_handlers[capability](**kwargs)
+
+    def register_capability(
+        self,
+        key: "str | McpCapability",
+        handler: Callable[..., None],
+    ) -> None:
+        """Plug a custom installer into the capability map.
+
+        `handler` is invoked as `handler(server, **kwargs)` whenever
+        `enable(key, **kwargs)` is called, where `server` is this
+        `McpServer` instance. The handler's job is to call
+        `server.register_tool(...)` (and optionally
+        `server.add_approval_route(...)`) — we take care of the
+        dispatch glue.
+
+        Handlers can be functions, lambdas, bound methods, or any
+        callable. For class-based installers implement
+        `__call__(self, server, **kwargs)` or pass a bound method.
+
+        Keys can be `McpCapability` members or arbitrary strings for
+        third-party capabilities; the two interoperate because
+        `McpCapability` is a `StrEnum`."""
+        self._capability_handlers[key] = lambda **kw: handler(self, **kw)
 
     def register_tool(
         self,
