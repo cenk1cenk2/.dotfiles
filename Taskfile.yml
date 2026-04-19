@@ -75,6 +75,7 @@ tasks:
             mimetypes
             mpv
             neomutt
+            obsbot
             pacman
             pipewire
             rofi
