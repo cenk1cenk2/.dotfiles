@@ -12,6 +12,7 @@ import errno
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -548,7 +549,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+Space resources · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -1318,6 +1319,289 @@ class PermissionRow(Gtk.ListBoxRow):
     def call(self) -> ToolCall:
         return self._call
 
+# Tokens we insert into the compose via the resource palette. The parser
+# in `PilotWindow.dispatch_turn` and the pre-check logic in
+# `ResourcePalette.open` both use this regex — keep the character class
+# permissive enough for nested paths (`file/sub/dir/foo.py`) but tight
+# enough that unrelated `#{…}` text in the user's message doesn't get
+# swept up. The kind token restricts to `skill` / `file` / `mcp:*` etc.
+_RESOURCE_TOKEN_RE = re.compile(
+    r"#\{(?P<kind>[A-Za-z0-9_.:-]+)/(?P<name>[^}]+)\}"
+)
+
+
+def _format_resource_token(kind: str, name: str) -> str:
+    """Canonical `#{<kind>/<name>}` wire form for the compose box. Kept
+    in one place so the palette inserts the same shape the dispatch
+    pre-filter looks for."""
+    return "#{" + kind + "/" + name + "}"
+
+
+class ResourcePalette(Gtk.Box):
+    """Rofi-like in-overlay palette. Floats over the compose area via
+    `Gtk.Overlay`, shows a fuzzy-search entry + a filterable list of
+    resources (skills / MCP servers / top-level files). Tab toggles the
+    highlighted row's active state; Enter inserts all active rows as
+    `#{kind/name}` tokens into the compose textview and closes;
+    Escape cancels.
+
+    The class is deliberately self-contained — it doesn't reach into
+    `PilotWindow` internals beyond `_compose`, `_compose_overlay` and
+    the resource list it's handed at `open()` time. That keeps a future
+    lib-extraction mechanical: swap the two widget refs for a handful
+    of callbacks and move the file."""
+
+    def __init__(self, compose, compose_overlay):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.add_css_class("pilot-palette")
+        self.set_valign(Gtk.Align.FILL)
+        self.set_halign(Gtk.Align.FILL)
+
+        self._compose = compose
+        self._compose_overlay = compose_overlay
+        # `_resources` holds every (kind, name, description, preview)
+        # tuple the current session knows about. `_filtered` mirrors the
+        # slice currently rendered — rebuilt on every search keystroke.
+        self._resources: list[tuple[str, str, str, str]] = []
+        self._filtered: list[tuple[str, str, str, str]] = []
+        # Toggle state keyed on (kind, name) — survives filter changes,
+        # clears on open(). Enter reads this to emit tokens.
+        self._active: set[tuple[str, str]] = set()
+        self._attached = False
+
+        self._search = Gtk.Entry(
+            placeholder_text="Search resources — Tab toggles · Enter inserts · Esc cancels",
+            hexpand=True,
+        )
+        self._search.add_css_class("pilot-palette-search")
+        self._search.connect("changed", self._on_search_changed)
+        # Forward Enter from the entry to the commit path. The palette's
+        # own key controller catches Enter at the capture phase when the
+        # list has focus, but the entry consumes Return by default.
+        self._search.connect("activate", lambda _e: self._commit_and_close())
+        self.append(self._search)
+
+        self._scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._listbox = Gtk.ListBox()
+        self._listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._listbox.add_css_class("pilot-palette-list")
+        self._scroller.set_child(self._listbox)
+        self.append(self._scroller)
+
+        # Capture-phase controller so Tab / Enter / Escape beat the
+        # default Entry / ListBox bindings. `_on_key` pivots on the
+        # palette state and returns True to stop propagation whenever
+        # it handled the key.
+        key = Gtk.EventControllerKey()
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        key.connect("key-pressed", self._on_key)
+        self.add_controller(key)
+
+    # ── lifecycle ──
+    def open(self, resources: list[tuple[str, str, str, str]]) -> None:
+        """Populate with `resources`, pre-tick any (kind, name) pairs
+        already referenced in the compose textview, add ourselves to
+        the overlay and focus the search entry. Safe to call
+        repeatedly — a second call re-seeds the state."""
+        self._resources = list(resources)
+        self._active = self._preseed_active_from_compose(resources)
+        self._search.set_text("")
+        self._rebuild_list()
+        if not self._attached:
+            self._compose_overlay.add_overlay(self)
+            self._attached = True
+        self.set_visible(True)
+        # Idle-add the focus so GTK has finished the overlay
+        # attachment by the time we reach for `grab_focus`. Without it
+        # the entry's grab can race with the layer-shell surface's
+        # initial keyboard grab and silently fail.
+        GLib.idle_add(self._search.grab_focus)
+
+    def close(self) -> None:
+        """Hide + detach. Stateful widgets keep their contents — the
+        next `open()` call re-seeds them from scratch."""
+        self.set_visible(False)
+        if self._attached:
+            self._compose_overlay.remove_overlay(self)
+            self._attached = False
+        # Hand focus back to the compose textview so typing resumes
+        # where the user left off.
+        self._compose.focus()
+
+    def _preseed_active_from_compose(
+        self, resources: list[tuple[str, str, str, str]]
+    ) -> set[tuple[str, str]]:
+        """Scan the compose text for any `#{kind/name}` tokens that
+        match a known resource and pre-check them so re-opening the
+        palette doesn't lose state. Unknown tokens are ignored here —
+        the dispatch pre-filter logs + strips them anyway."""
+        text = self._compose.get_text()
+        known = {(k, n) for k, n, _d, _p in resources}
+        active: set[tuple[str, str]] = set()
+        for match in _RESOURCE_TOKEN_RE.finditer(text):
+            pair = (match.group("kind"), match.group("name"))
+            if pair in known:
+                active.add(pair)
+
+        return active
+
+    # ── rendering ──
+    def _rebuild_list(self) -> None:
+        """Wipe and rebuild the ListBox from `_resources` filtered by
+        the current search input. Substring-only fuzziness — matches
+        case-insensitively across `name + kind + description`."""
+        child = self._listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._listbox.remove(child)
+            child = nxt
+
+        query = (self._search.get_text() or "").strip().lower()
+        self._filtered = []
+        for entry in self._resources:
+            kind, name, desc, _preview = entry
+            haystack = f"{name} {kind} {desc}".lower()
+            if query and query not in haystack:
+                continue
+            self._filtered.append(entry)
+            row = self._make_row(kind, name, desc)
+            self._listbox.append(row)
+
+        # Select the first row so arrow keys + Tab have something to
+        # operate on without the user first clicking.
+        first = self._listbox.get_row_at_index(0)
+        if first is not None:
+            self._listbox.select_row(first)
+
+    def _make_row(self, kind: str, name: str, desc: str) -> Gtk.ListBoxRow:
+        row = Gtk.ListBoxRow()
+        row.add_css_class("pilot-palette-row")
+        # Track the identity on the row so `_toggle_active` /
+        # `_commit_and_close` can look it up without a dict.
+        row._palette_key = (kind, name)  # type: ignore[attr-defined]
+        if (kind, name) in self._active:
+            row.add_css_class("active")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+        box.set_margin_top(4)
+        box.set_margin_bottom(4)
+
+        mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
+        mark.add_css_class("pilot-palette-mark")
+        box.append(mark)
+        row._palette_mark = mark  # type: ignore[attr-defined]
+
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+        title = Gtk.Label(xalign=0.0, hexpand=True)
+        title.set_markup(
+            f'<span weight="bold">{GLib.markup_escape_text(name)}</span>'
+            f' <span alpha="60%">({GLib.markup_escape_text(kind)})</span>'
+        )
+        title.add_css_class("pilot-palette-name")
+        text_box.append(title)
+        if desc:
+            desc_label = Gtk.Label(
+                label=desc,
+                xalign=0.0,
+                ellipsize=Pango.EllipsizeMode.END,
+            )
+            desc_label.add_css_class("pilot-palette-desc")
+            text_box.append(desc_label)
+        box.append(text_box)
+
+        row.set_child(box)
+
+        return row
+
+    # ── interaction ──
+    def _on_search_changed(self, _entry) -> None:
+        self._rebuild_list()
+
+    def _on_key(self, _controller, keyval, _keycode, state) -> bool:
+        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self._commit_and_close()
+            return True
+        if keyval == Gdk.KEY_Tab or keyval == Gdk.KEY_ISO_Left_Tab:
+            self._toggle_current()
+            return True
+        if keyval == Gdk.KEY_Down or (ctrl and keyval == Gdk.KEY_n):
+            self._move_selection(1)
+            return True
+        if keyval == Gdk.KEY_Up or (ctrl and keyval == Gdk.KEY_p):
+            self._move_selection(-1)
+            return True
+
+        return False
+
+    def _move_selection(self, direction: int) -> None:
+        row = self._listbox.get_selected_row()
+        idx = row.get_index() if row is not None else -1
+        target = idx + direction
+        nxt = self._listbox.get_row_at_index(target)
+        if nxt is not None:
+            self._listbox.select_row(nxt)
+            nxt.grab_focus()
+
+    def _toggle_current(self) -> None:
+        row = self._listbox.get_selected_row()
+        if row is None:
+            return
+        key = getattr(row, "_palette_key", None)
+        mark = getattr(row, "_palette_mark", None)
+        if not key:
+            return
+        if key in self._active:
+            self._active.discard(key)
+            row.remove_css_class("active")
+            if mark is not None:
+                mark.set_label("☐")
+        else:
+            self._active.add(key)
+            row.add_css_class("active")
+            if mark is not None:
+                mark.set_label("☑")
+
+    def _commit_and_close(self) -> None:
+        """Enter / Entry `activate`: emit tokens for every active entry
+        into the compose textview. We strip any pre-existing
+        `#{kind/name}` tokens FIRST so toggling a resource off is a
+        real remove, not an additive no-op, then insert the fresh set
+        at the current cursor position."""
+        buf = self._compose._textview.get_buffer()
+        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        stripped = _RESOURCE_TOKEN_RE.sub("", existing)
+        # Collapse double-spaces left behind by the strip — keeps the
+        # textual flow clean when a user toggles off every resource.
+        stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+        buf.set_text(stripped)
+
+        tokens = [
+            _format_resource_token(k, n)
+            for k, n in sorted(self._active)
+        ]
+        if tokens:
+            joined = " ".join(tokens)
+            cursor = buf.get_iter_at_mark(buf.get_insert())
+            # Prefix a space if the existing text doesn't already end on
+            # whitespace so tokens don't fuse with the previous word.
+            before_iter = cursor.copy()
+            prefix = ""
+            if before_iter.backward_char():
+                ch = buf.get_text(before_iter, cursor, True)
+                if ch and ch not in (" ", "\n", "\t"):
+                    prefix = " "
+            buf.insert(cursor, prefix + joined + " ")
+
+        self.close()
+
+
 class PilotWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
     widgets (one per user/assistant turn), queued turns are cards of
@@ -1337,6 +1621,9 @@ class PilotWindow(Gtk.ApplicationWindow):
         adapter: ConversationAdapter,
         auto_approve: Optional[list[str]] = None,
         auto_reject: Optional[list[str]] = None,
+        cwd: Optional[str] = None,
+        skills_dir: Optional[str] = None,
+        mcp_server_names: Optional[list[str]] = None,
     ):
         super().__init__(application=app, title="Pilot")
         # `.overlay` is our root scope — every CSS rule is namespaced under
@@ -1396,6 +1683,17 @@ class PilotWindow(Gtk.ApplicationWindow):
         # both start identical on session launch.
         self._auto_approved_tools: set[str] = set(auto_approve or [])
         self._auto_rejected_tools: set[str] = set(auto_reject or [])
+        # Palette seed data: `--cwd` / `--skills-dir` / the resolved
+        # list of MCP server names from `_build_mcp_config`. All three
+        # can be None/empty — the palette's `_collect_resources` drops
+        # empty sections gracefully.
+        self._cwd: Optional[str] = cwd
+        self._skills_dir: Optional[str] = skills_dir
+        self._mcp_server_names: list[str] = list(mcp_server_names or [])
+        # Palette widget is built on demand (first Ctrl+Space) and then
+        # cached — we reset state (search box, active set) on every
+        # open so stale selections don't leak across sessions.
+        self._palette: Optional[ResourcePalette] = None
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -1487,7 +1785,13 @@ class PilotWindow(Gtk.ApplicationWindow):
 
         # Compose -------------------------------------------------------
         self._compose = ComposeView(on_submit=self.dispatch_turn)
-        root.append(self._compose.widget)
+        # Wrap the compose in a `Gtk.Overlay` so the resource palette
+        # (Ctrl+Space) can float on top of the compose textview without
+        # reflowing the rest of the layout. The palette is added/removed
+        # lazily via `_open_resource_palette` / `_close_palette`.
+        self._compose_overlay = Gtk.Overlay()
+        self._compose_overlay.set_child(self._compose.widget)
+        root.append(self._compose_overlay)
 
         self.set_child(root)
 
@@ -1521,6 +1825,20 @@ class PilotWindow(Gtk.ApplicationWindow):
         return False
 
     def dispatch_turn(self, user_message: str) -> None:
+        # Parse + strip `#{kind/name}` resource references inserted
+        # via the Ctrl+Space palette. For this iteration we just log
+        # them at debug level so the user's compose-as-typed is
+        # captured literally; real expansion (loading the skill body
+        # / embedding the file content) is a follow-up that'll
+        # pre-process the prompt before it reaches the adapter.
+        refs = [
+            (m.group("kind"), m.group("name"))
+            for m in _RESOURCE_TOKEN_RE.finditer(user_message)
+        ]
+        if refs:
+            log.debug("resource refs in compose (not yet expanded): %s", refs)
+            user_message = _RESOURCE_TOKEN_RE.sub("", user_message)
+            user_message = re.sub(r"[ \t]{2,}", " ", user_message)
         message = user_message.strip()
         if not message:
             return
@@ -2233,6 +2551,9 @@ class PilotWindow(Gtk.ApplicationWindow):
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if ctrl and keyval == Gdk.KEY_space:
+            self._open_resource_palette()
+            return True
         if ctrl and keyval == Gdk.KEY_q:
             self.close()
             return True
@@ -2319,6 +2640,89 @@ class PilotWindow(Gtk.ApplicationWindow):
             return
         self._compose.focus()
         self._compose.append_text(text)
+
+    def _open_resource_palette(self) -> None:
+        """Ctrl+Space: raise the resource palette over the compose area
+        with a freshly-collected resource list. Lazy-constructs the
+        palette on first call, re-uses the same widget on subsequent
+        opens — state (search input, active toggles) resets every
+        `open()` call so stale ticks don't leak across sessions."""
+        if self._palette is None:
+            self._palette = ResourcePalette(self._compose, self._compose_overlay)
+        resources = self._collect_resources()
+        self._palette.open(resources)
+
+    def _collect_resources(self) -> list[tuple[str, str, str, str]]:
+        """Build the `(kind, name, description, preview)` list that
+        feeds the palette. Three sources today — skills from
+        `--skills-dir`, MCP server names from `_build_mcp_config`, and
+        one-level-deep files under `--cwd`. Any source may be empty
+        (None / missing dir); the palette handles that gracefully."""
+        resources: list[tuple[str, str, str, str]] = []
+
+        # Skills — one row per `<skills_dir>/<slug>/SKILL.md`. The
+        # first heading line (stripped of leading `#`) becomes the
+        # description so the user sees human-readable skill purpose
+        # next to the slug. Silent on any IO / dir-listing failure —
+        # a broken skills dir shouldn't nuke the whole palette.
+        if self._skills_dir:
+            try:
+                for entry in sorted(os.listdir(self._skills_dir)):
+                    skill_md = os.path.join(self._skills_dir, entry, "SKILL.md")
+                    if not os.path.isfile(skill_md):
+                        continue
+                    desc = ""
+                    try:
+                        with open(skill_md, "r", encoding="utf-8") as f:
+                            for raw in f:
+                                line = raw.strip()
+                                if not line:
+                                    continue
+                                if line.startswith("#"):
+                                    desc = line.lstrip("# ").strip()
+                                else:
+                                    desc = line
+                                break
+                    except OSError as e:
+                        log.debug("skill %s header read failed: %s", skill_md, e)
+                    resources.append(("skill", entry, desc, skill_md))
+            except OSError as e:
+                log.debug("skills-dir enumerate failed: %s", e)
+
+        # MCP servers — every registered server becomes a resource so
+        # the user can reference one as `#{mcp/github}` etc. No file
+        # preview to show; description just notes the mcp nature.
+        for name in self._mcp_server_names:
+            resources.append(
+                ("mcp", name, f"MCP server: {name}", name)
+            )
+
+        # Top-level files under `--cwd`. One level deep only — walking
+        # the entire tree for a palette would explode on any real
+        # project. Hidden files / `__pycache__` / `node_modules` get
+        # filtered so the list stays useful.
+        if self._cwd and os.path.isdir(self._cwd):
+            _IGNORED = {"__pycache__", "node_modules", ".git", ".venv"}
+            try:
+                for entry in sorted(os.listdir(self._cwd)):
+                    if entry.startswith(".") or entry in _IGNORED:
+                        continue
+                    full = os.path.join(self._cwd, entry)
+                    if os.path.isdir(full):
+                        desc = "directory"
+                    elif os.path.isfile(full):
+                        try:
+                            size = os.path.getsize(full)
+                            desc = f"file · {size} bytes"
+                        except OSError:
+                            desc = "file"
+                    else:
+                        continue
+                    resources.append(("file", entry, desc, full))
+            except OSError as e:
+                log.debug("cwd enumerate failed: %s", e)
+
+        return resources
 
     def _accept_first_permission(self) -> None:
         """Ctrl+G: click the `✓ allow` button on the oldest pending
@@ -3066,6 +3470,17 @@ def _cmd_toggle(args) -> None:
 
     auto_approve = list(getattr(args, "auto_approve", None) or [])
     auto_reject = list(getattr(args, "auto_reject", None) or [])
+    skills_dir = getattr(args, "skills_dir", None)
+    # Resolve the MCP server names the adapter will actually talk to so
+    # the palette can surface them as `#{mcp/<name>}` references. We
+    # read the adapter's `mcp_config` when present (claude / opencode),
+    # falling back to the CLI-resolved default list for adapters that
+    # don't carry an mcp_config themselves.
+    raw_mcp_config = getattr(adapter, "mcp_config", None)
+    if raw_mcp_config is not None and hasattr(raw_mcp_config, "names"):
+        mcp_server_names = list(raw_mcp_config.names())
+    else:
+        mcp_server_names = list(_resolve_default_mcp(args))
 
     def on_activate(application):
         window = PilotWindow(
@@ -3073,6 +3488,9 @@ def _cmd_toggle(args) -> None:
             adapter,
             auto_approve=auto_approve,
             auto_reject=auto_reject,
+            cwd=getattr(args, "cwd", None),
+            skills_dir=skills_dir,
+            mcp_server_names=mcp_server_names,
         )
         server = Session(
             window,

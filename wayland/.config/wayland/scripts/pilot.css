@@ -787,3 +787,85 @@
     inset 0 1px 2px alpha(black, 0.4),
     0 0 0 transparent;
 }
+
+/* ============================================================ Palette
+ * Ctrl+Space resource palette: a rofi-like overlay floating on top of
+ * the compose box. Elevation matches PermissionRow's card — same
+ * bg/border/shadow pairing so the overlay reads as an authoritative
+ * in-overlay surface, not a popover. The `.active` tint uses the
+ * user-card accent (onedarker's warm yellow) so a toggled row stands
+ * out without competing with the tool-bubble strip's green/red. */
+.overlay box.pilot-palette {
+  background-color: @pilot_card_hi;
+  background-image: none;
+  border: 1px solid @pilot_border;
+  padding: 8px;
+  margin: 6px;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 4px 12px alpha(black, 0.55);
+}
+
+.overlay entry.pilot-palette-search,
+.overlay entry.pilot-palette-search text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  color: @pilot_fg;
+  padding: 6px 10px;
+  font-size: 0.95em;
+}
+
+.overlay entry.pilot-palette-search:focus,
+.overlay entry.pilot-palette-search:focus text {
+  border-color: @pilot_border_focus;
+}
+
+.overlay listbox.pilot-palette-list {
+  background-color: transparent;
+  background-image: none;
+  margin-top: 4px;
+}
+
+.overlay row.pilot-palette-row {
+  background-color: transparent;
+  background-image: none;
+  border: 1px solid transparent;
+  padding: 2px 0;
+  transition: background-color 100ms ease, border-color 100ms ease;
+}
+
+.overlay row.pilot-palette-row:selected {
+  background-color: alpha(@pilot_fg_dim, 0.12);
+  border-color: @pilot_border_soft;
+}
+
+.overlay row.pilot-palette-row.active {
+  background-color: alpha(@pilot_user, 0.14);
+  border-color: alpha(@pilot_user, 0.45);
+}
+
+.overlay row.pilot-palette-row.active:selected {
+  background-color: alpha(@pilot_user, 0.22);
+  border-color: @pilot_user;
+}
+
+.overlay label.pilot-palette-mark {
+  font-size: 1.05em;
+  color: @pilot_fg_dim;
+  min-width: 18px;
+}
+
+.overlay row.pilot-palette-row.active label.pilot-palette-mark {
+  color: @pilot_user;
+}
+
+.overlay label.pilot-palette-name {
+  font-size: 0.95em;
+  color: @pilot_fg;
+}
+
+.overlay label.pilot-palette-desc {
+  font-size: 0.85em;
+  color: @pilot_fg_dim;
+}
