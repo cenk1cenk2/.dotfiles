@@ -30,6 +30,7 @@
 @define-color ask_idle #98c379;
 @define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
+@define-color ask_awaiting #d19a66;
 @define-color ask_edge #d3b051;
 
 /* Base font for the overlay. Every other `font-size` is an `em` multiplier
@@ -99,6 +100,11 @@
 .overlay label.ask-provider.pending {
   color: @ask_pending;
   background-color: alpha(@ask_pending, 0.22);
+}
+
+.overlay label.ask-provider.awaiting {
+  color: @ask_awaiting;
+  background-color: alpha(@ask_awaiting, 0.22);
 }
 
 /* Button shadows. Depth comes from a hairline top-highlight and a soft
@@ -199,6 +205,72 @@
   min-height: 2em;
 }
 
+/* Collapsible reasoning section. Sister to the card-text reply: same
+ * bg[200] text surface, slightly smaller + italic + dimmed foreground
+ * so the reply remains the visual anchor. Header row lives on the
+ * expander's title node. */
+.overlay expander.ask-thinking-expander {
+  background-color: transparent;
+  background-image: none;
+  color: @ask_fg_dim;
+  margin: 2px 0 4px 0;
+}
+
+.overlay expander.ask-thinking-expander > title {
+  color: @ask_fg_dim;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+}
+
+.overlay label.ask-thinking-text {
+  background-color: @ask_text_surface;
+  background-image: none;
+  color: @ask_fg_muted;
+  font-size: 0.95em;
+  font-style: italic;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
+/* Question banner — shown inside the compose wrap when claude's
+ * `ask_question` MCP tool is awaiting a typed answer. Sits above the
+ * textview so the question frames the input it's prompting for. */
+.overlay box.ask-question-banner {
+  background-color: alpha(@ask_accent, 0.12);
+  background-image: none;
+  border-bottom: 1px solid alpha(@ask_accent, 0.4);
+  padding: 8px 10px;
+}
+
+.overlay label.ask-question-text {
+  background-color: transparent;
+  background-image: none;
+  color: @ask_accent;
+  font-size: 0.95em;
+}
+
+.overlay button.ask-question-skip {
+  background-color: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 2px 10px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 0.8em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.ask-question-skip:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
 /* ========================================================== Compose */
 .overlay box.ask-compose-wrap {
   margin: 8px 12px 12px 12px;
@@ -241,6 +313,52 @@
 .overlay label.ask-compose-hint {
   font-size: 0.8em;
   color: @ask_fg_muted;
+}
+
+/* Trusted-tool pills on the submit bar. Each pill is a compact
+ * button labelled `name ✕`; click removes the tool from the
+ * per-session trust set so future calls surface a permission row
+ * again. Accent tint since they represent active trust grants. */
+.overlay flowbox.ask-compose-pills {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay flowbox.ask-compose-pills > flowboxchild {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay button.ask-compose-pill {
+  background-color: alpha(@ask_accent, 0.18);
+  border: 1px solid alpha(@ask_accent, 0.45);
+  padding: 2px 10px;
+  min-width: 0;
+  color: @ask_accent;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.ask-compose-pill:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.22);
+  border-color: alpha(@ask_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.ask-compose-pill:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
 }
 
 /* Primary action — SEND. Stronger shadow than secondary buttons; the
@@ -399,6 +517,120 @@
 .overlay button.ask-queue-edit:active,
 .overlay button.ask-queue-send:active,
 .overlay button.ask-queue-remove:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+/* ========================================= Permissions (tool-use) */
+/* Sits between the conversation and the queue. Shape mirrors the
+ * queue panel so the two read as siblings; colour hints lean
+ * warning-ish (accent left stripe) because tool events are more
+ * attention-grabby than queued user messages. */
+.overlay box.ask-permissions {
+  background-color: alpha(black, 0.35);
+  background-image: none;
+  border-top: 1px solid @ask_border_soft;
+  padding: 6px 10px 10px 10px;
+}
+
+.overlay label.ask-permissions-header {
+  font-size: 0.8em;
+  font-weight: 700;
+  color: @ask_fg_muted;
+  padding: 4px 2px 6px 2px;
+  letter-spacing: 0.14em;
+}
+
+.overlay row.ask-permission-row {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  margin: 0;
+}
+
+.overlay row.ask-permission-row:hover {
+  background-color: transparent;
+}
+
+.overlay box.ask-permission-card {
+  background-color: @ask_card;
+  background-image: none;
+  border: 1px solid @ask_border_soft;
+  border-left: 3px solid @ask_accent;
+  padding: 10px 12px;
+  margin: 4px 0;
+  transition: border-color 120ms ease;
+}
+
+.overlay box.ask-permission-card:hover {
+  border-color: alpha(@ask_accent, 0.6);
+  border-left-color: @ask_accent;
+}
+
+.overlay label.ask-permission-tool-name {
+  font-size: 0.9em;
+  font-weight: 800;
+  color: @ask_accent;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.overlay label.ask-permission-args {
+  font-size: 0.9em;
+  color: @ask_fg_dim;
+}
+
+.overlay box.ask-permission-actions {
+  margin-top: 8px;
+}
+
+/* Button row: allow → green (idle), trust → accent, deny → red
+ * (pending). Same base shadow as the queue trio. */
+.overlay button.ask-permission-allow,
+.overlay button.ask-permission-trust,
+.overlay button.ask-permission-deny {
+  background-color: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 12px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 0.85em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.ask-permission-allow:hover {
+  color: @ask_idle;
+  background-color: alpha(@ask_idle, 0.18);
+  border-color: alpha(@ask_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-trust:hover {
+  color: @ask_accent;
+  background-color: alpha(@ask_accent, 0.18);
+  border-color: alpha(@ask_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-deny:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-allow:active,
+.overlay button.ask-permission-trust:active,
+.overlay button.ask-permission-deny:active {
   box-shadow:
     inset 0 1px 2px alpha(black, 0.4),
     0 0 0 transparent;

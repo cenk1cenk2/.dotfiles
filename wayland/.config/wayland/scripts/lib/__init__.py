@@ -10,13 +10,17 @@ from .converse import (
     ConversationAdapterClaude,
     ConversationAdapterCodex,
     ConversationAdapterHttp,
+    ConversationAdapterOpenCode,
     ConversationProvider,
+    ThinkingChunk,
+    ToolCall,
 )
 from .enrich import (
     DEFAULT_ENRICH_ADAPTER,
     EnrichAdapterClaude,
     EnrichAdapterCodex,
     EnrichAdapter,
+    EnrichAdapterOpenCode,
     EnrichProvider,
     EnrichAdapterHttp,
 )
@@ -25,6 +29,13 @@ from .input import (
     InputAdapter,
     InputMode,
     InputAdapterStdin,
+)
+from .mcp import (
+    McpConfig,
+    McpServer,
+    question_route,
+    socket_approval,
+    socket_question,
 )
 from .notify import notify
 from .output import (
@@ -42,6 +53,7 @@ __all__ = [
     "ConversationAdapterClaude",
     "ConversationAdapterCodex",
     "ConversationAdapterHttp",
+    "ConversationAdapterOpenCode",
     "ConversationProvider",
     "DEFAULT_CONVERSE_ADAPTER",
     "DEFAULT_ENRICH_ADAPTER",
@@ -49,18 +61,26 @@ __all__ = [
     "EnrichAdapterClaude",
     "EnrichAdapterCodex",
     "EnrichAdapterHttp",
+    "EnrichAdapterOpenCode",
     "EnrichProvider",
     "InputAdapter",
     "InputAdapterClipboard",
     "InputAdapterStdin",
     "InputMode",
+    "McpConfig",
+    "McpServer",
     "OutputAdapter",
     "OutputAdapterClipboard",
     "OutputAdapterStdout",
     "OutputAdapterType",
     "OutputMode",
+    "ThinkingChunk",
+    "ToolCall",
     "load_prompt",
     "load_relative_file",
     "notify",
+    "question_route",
     "signal_waybar",
+    "socket_approval",
+    "socket_question",
 ]

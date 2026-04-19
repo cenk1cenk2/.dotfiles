@@ -16,7 +16,7 @@ import socket
 import subprocess
 import sys
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from markdown_it import MarkdownIt
 
@@ -27,11 +27,17 @@ from lib import (
     ConversationAdapterCodex,
     ConversationAdapterHttp,
     ConversationProvider,
+    ConversationAdapterOpenCode,
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
+    McpConfig,
+    OutputAdapterClipboard,
+    ThinkingChunk,
+    ToolCall,
     load_prompt,
     load_relative_file,
+    notify,
     signal_waybar,
 )
 
@@ -56,6 +62,42 @@ def _ensure_layer_shell_preload() -> None:
 if len(sys.argv) > 1 and sys.argv[1] == "toggle":
     _ensure_layer_shell_preload()
 
+# Very-early MCP server mode. Claude spawns us as a stdio MCP server
+# via `--mcp-config` → our config points back at this same script with
+# `mcp-server` as argv[1]. We don't want to drag gtk4-layer-shell /
+# GTK imports into that subprocess (it has no display + doesn't need
+# them), so we short-circuit to the MCP event loop here and exit.
+if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
+    # Late import so the normal ask.py paths still load gi below.
+    from lib.mcp import (  # noqa: E402
+        McpServer,
+        question_route,
+        socket_approval,
+        socket_question,
+    )
+
+    _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    _mcp_sock = os.path.join(_runtime, "wayland-ask-mcp.sock")
+    _server = McpServer("ask")
+    # Single question callback shared between two entry points: the
+    # generic approval router (registered below via
+    # `add_approval_route`) pivots the model's built-in
+    # `AskUserQuestion`-style tools onto it, AND the standalone
+    # `ask_question` MCP tool uses the same callback when the model
+    # explicitly picks our tool.
+    _question_cb = socket_question(_mcp_sock)
+    _server.enable_approval(socket_approval(_mcp_sock))
+    _server.add_approval_route(*question_route(_question_cb))
+    # Extra routes can be appended here — each is a (matcher, handler)
+    # pair that runs before the base approval callback:
+    #   _server.add_approval_route(
+    #       matcher=lambda tool, inp: tool == "ExitPlanMode",
+    #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
+    #   )
+    _server.enable_question(_question_cb)
+    _server.run()
+    sys.exit(0)
+
 import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
@@ -73,10 +115,14 @@ from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
 log = logging.getLogger("ask")
 
 APP_ID = "dev.kilic.wayland.ask"
-SOCKET_PATH = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
-    "wayland-ask.sock",
-)
+_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+# Main CLI socket — toggle/status/kill/turn from user-facing invocations.
+SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask.sock")
+# Dedicated MCP permission-prompt socket. `ask-mcp.py` connects here and
+# blocks on overlay approval before returning allow/deny to claude. Split
+# from the main socket so a user kill / stale-cleanup never trips the
+# MCP bridge (and vice-versa).
+MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask-mcp.sock")
 
 AI_SYSTEM_PROMPT = load_prompt("ask.md", relative_to=__file__)
 
@@ -292,6 +338,35 @@ class ComposeView:
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.widget.add_css_class("ask-compose-wrap")
 
+        # Question banner. Hidden until `set_question_mode` is called
+        # by a claude `ask_question` MCP forward; shows the question
+        # text above the compose textview with a "✕ skip" button. The
+        # next submit sends its text to the question callback instead
+        # of dispatching a normal turn; the banner clears as soon as
+        # the user answers or skips.
+        self._question_banner = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+        )
+        self._question_banner.add_css_class("ask-question-banner")
+        self._question_label = Gtk.Label(
+            xalign=0.0,
+            hexpand=True,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            selectable=True,
+        )
+        self._question_label.add_css_class("ask-question-text")
+        self._question_banner.append(self._question_label)
+        skip_btn = Gtk.Button(label="✕ skip")
+        skip_btn.add_css_class("ask-question-skip")
+        skip_btn.set_tooltip_text("Skip this question — return an empty answer")
+        skip_btn.connect("clicked", lambda _b: self._on_question_skip())
+        self._question_banner.append(skip_btn)
+        self._question_banner.set_visible(False)
+        self.widget.append(self._question_banner)
+        self._question_callback: Optional[Callable[[str], None]] = None
+
         self._scroller = Gtk.ScrolledWindow()
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._scroller.set_propagate_natural_height(True)
@@ -323,12 +398,34 @@ class ComposeView:
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("ask-compose-bar")
+
+        # Trusted-tool pills live on the left of the submit bar. Each
+        # pill is a single button labelled `name ✕`; clicking invokes
+        # the registered remove callback (set from AskWindow). Hidden
+        # until at least one tool is trusted. Using a FlowBox so we
+        # wrap gracefully if the user has trusted a lot of tools.
+        self._pills_flow = Gtk.FlowBox(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            column_spacing=4,
+            row_spacing=4,
+            hexpand=True,
+            valign=Gtk.Align.CENTER,
+        )
+        self._pills_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._pills_flow.set_max_children_per_line(64)
+        self._pills_flow.set_homogeneous(False)
+        self._pills_flow.add_css_class("ask-compose-pills")
+        self._pills_flow.set_visible(False)
+        bar.append(self._pills_flow)
+        self._pill_remove_cb = None
+
         hint = Gtk.Label(
-            label="Enter to send  ·  Shift+Enter newline  ·  Ctrl+P paste",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
         hint.add_css_class("ask-compose-hint")
+        self._hint_label = hint
         bar.append(hint)
 
         self._send_btn = Gtk.Button(label="⏎ send")
@@ -349,6 +446,43 @@ class ComposeView:
         cap = int(window_height_px * fraction)
         floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
         self._scroller.set_max_content_height(max(floor, cap))
+
+    def set_trusted_pills(self, names, on_remove) -> None:
+        """Rebuild the trusted-tool pill strip. `names` is an iterable of
+        tool names; `on_remove(name)` is invoked when a pill is clicked.
+        Hides the pill row when empty, hides the hint label when we
+        have pills so they get room to breathe inline with the submit."""
+        self._pill_remove_cb = on_remove
+        # Clear the old children — FlowBox doesn't have a bulk-clear.
+        child = self._pills_flow.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._pills_flow.remove(child)
+            child = nxt
+
+        names = list(names)
+        if not names:
+            self._pills_flow.set_visible(False)
+            if self._hint_label is not None:
+                self._hint_label.set_visible(True)
+
+            return
+
+        for name in names:
+            btn = Gtk.Button(label=f"{name} ✕")
+            btn.add_css_class("ask-compose-pill")
+            btn.set_tooltip_text(f"Click to untrust {name} (re-enables prompts)")
+            btn.connect("clicked", lambda _b, n=name: self._on_pill_click(n))
+            self._pills_flow.append(btn)
+        self._pills_flow.set_visible(True)
+        # Hide the hint when pills are present — pills + hint + send
+        # would crowd the submit bar on narrow overlays.
+        if self._hint_label is not None:
+            self._hint_label.set_visible(False)
+
+    def _on_pill_click(self, name: str) -> None:
+        if self._pill_remove_cb is not None:
+            self._pill_remove_cb(name)
 
     def get_text(self) -> str:
         buf = self._textview.get_buffer()
@@ -376,9 +510,65 @@ class ComposeView:
 
     def _submit(self) -> None:
         text = self.get_text().strip()
-        if text and self._on_submit:
+        if not text:
+            return
+        # Question mode wins: while a claude `ask_question` is pending,
+        # submit routes the typed text back to that callback instead of
+        # dispatching a normal user turn. Clear the banner + callback
+        # before firing so re-entrant calls don't double-answer.
+        if self._question_callback is not None:
+            cb = self._question_callback
+            self.clear()
+            self.clear_question_mode()
+            cb(text)
+
+            return
+        if self._on_submit:
             self.clear()
             self._on_submit(text)
+
+    def set_question_mode(
+        self, question: str, on_answer: Callable[[str], None]
+    ) -> None:
+        """Show the question banner above the textview and wire the
+        next submit to `on_answer(text)` instead of the normal turn
+        dispatch. Replaces any previous question in flight — the prior
+        callback is resolved with empty-string so the socket handler
+        doesn't hang."""
+        if (
+            self._question_callback is not None
+            and self._question_callback is not on_answer
+        ):
+            # Resolve the stale one so its socket thread unblocks.
+            try:
+                self._question_callback("")
+            except Exception:
+                log.exception("stale question callback raised")
+        self._question_callback = on_answer
+        self._question_label.set_label(f"🤔 {question}")
+        self._question_banner.set_visible(True)
+
+    def clear_question_mode(self) -> None:
+        """Hide the banner and forget the callback. Safe to call when
+        no question is active."""
+        self._question_callback = None
+        self._question_banner.set_visible(False)
+
+    def has_question(self) -> bool:
+        """True while the compose is in question-answer mode. Window
+        reads this to include the banner in its awaiting-phase check."""
+        return self._question_callback is not None
+
+    def _on_question_skip(self) -> None:
+        """`✕ skip` button: resolve the question with an empty answer
+        and dismiss the banner without sending a turn."""
+        cb = self._question_callback
+        self.clear_question_mode()
+        if cb is not None:
+            try:
+                cb("")
+            except Exception:
+                log.exception("question skip callback raised")
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
@@ -521,16 +711,30 @@ class TurnCard:
     layout pass (TextView doesn't, which used to leave user cards
     collapsed until the assistant reply forced a re-layout)."""
 
+    THINKING_LABEL_STREAMING = "🧠 thinking…"
+    THINKING_LABEL_DONE = "🧠 thinking"
+
     def __init__(self, role: str, title: str, on_link):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.widget.add_css_class("ask-card")
         self.widget.add_css_class(f"ask-card-{role}")
 
-        role_label = Gtk.Label(label=title, xalign=0.0)
-        role_label.add_css_class("ask-card-role")
-        role_label.add_css_class(f"ask-card-role-{role}")
-        self.widget.append(role_label)
+        self._role_label = Gtk.Label(label=title, xalign=0.0)
+        self._role_label.add_css_class("ask-card-role")
+        self._role_label.add_css_class(f"ask-card-role-{role}")
+        self.widget.append(self._role_label)
+
+        self._md = MarkdownMarkup()
+        self._on_link = on_link
+        self._text = ""
+        self._thinking_text = ""
+        # Lazily built when the first ThinkingChunk arrives — assistant
+        # cards that never surface reasoning stay structurally
+        # identical to user cards.
+        self._thinking_expander: Optional[Gtk.Expander] = None
+        self._thinking_label: Optional[Gtk.Label] = None
+        self._thinking_collapsed = False
 
         self._label = Gtk.Label(
             xalign=0.0,
@@ -540,8 +744,6 @@ class TurnCard:
             wrap_mode=Pango.WrapMode.WORD_CHAR,
             use_markup=True,
             selectable=True,
-            # Prefer wrapping at word boundaries where possible, fall
-            # back to inline when a single long token would overflow.
             natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
         )
         self._label.add_css_class("ask-card-text")
@@ -555,11 +757,18 @@ class TurnCard:
         )
         self.widget.append(self._label)
 
-        self._md = MarkdownMarkup()
-        self._text = ""
-        self._on_link = on_link
-
     def append(self, chunk: str) -> None:
+        # First visible reply chunk — auto-collapse any thinking block
+        # so the user's eye doesn't have to scroll past reasoning to
+        # see the answer.
+        if (
+            not self._text
+            and self._thinking_expander is not None
+            and not self._thinking_collapsed
+        ):
+            self._thinking_expander.set_expanded(False)
+            self._thinking_expander.set_label(self.THINKING_LABEL_DONE)
+            self._thinking_collapsed = True
         self._text += chunk
         self._label.set_markup(self._md.render(self._text))
 
@@ -567,8 +776,133 @@ class TurnCard:
         self._text = text
         self._label.set_markup(self._md.render(text))
 
+    def append_thinking(self, chunk: str) -> None:
+        """Append a reasoning chunk to the card's thinking section,
+        creating the collapsible expander on first arrival. While
+        streaming, the expander is open so the user sees reasoning
+        land live; `append()` closes it once the real reply starts."""
+        if self._thinking_expander is None:
+            self._thinking_label = Gtk.Label(
+                xalign=0.0,
+                yalign=0.0,
+                hexpand=True,
+                wrap=True,
+                wrap_mode=Pango.WrapMode.WORD_CHAR,
+                use_markup=True,
+                selectable=True,
+                natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+            )
+            self._thinking_label.add_css_class("ask-card-text")
+            self._thinking_label.add_css_class("ask-thinking-text")
+            self._thinking_expander = Gtk.Expander(
+                label=self.THINKING_LABEL_STREAMING,
+                expanded=True,
+            )
+            self._thinking_expander.add_css_class("ask-thinking-expander")
+            self._thinking_expander.set_child(self._thinking_label)
+            # Slot the expander between the role label and the reply
+            # label so the visual order is: role → thinking → reply.
+            self.widget.insert_child_after(self._thinking_expander, self._role_label)
+        self._thinking_text += chunk
+        assert self._thinking_label is not None
+        self._thinking_label.set_markup(self._md.render(self._thinking_text))
+
     def get_text(self) -> str:
         return self._text
+
+class PermissionRow(Gtk.ListBoxRow):
+    """A pending tool-use event rendered as a full-width card above the
+    queue. Mirrors `QueueRow`'s structure: a wrapping body + an action
+    strip with three buttons. Buttons are:
+
+    * `✓ allow`  — dismiss the row; the call already happened server-
+                   side / in-CLI, this just acknowledges it.
+    * ` trust`  — add this tool name to the session allowlist so
+                   future invocations skip the row entirely.
+    * `✕ deny`   — cancel the in-flight turn (same path as Ctrl+D) and
+                   stamp the assistant card with a cancelled marker.
+
+    The UI is visibility-only: we don't have a protocol for gating the
+    actual tool execution in any of our backends. Documented in the
+    plan; user-facing copy keeps the verbs honest."""
+
+    def __init__(self, call: ToolCall, on_allow, on_trust, on_deny):
+        super().__init__()
+        self._call = call
+        self._on_allow = on_allow
+        self._on_trust = on_trust
+        self._on_deny = on_deny
+        self.add_css_class("ask-permission-row")
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card.add_css_class("ask-permission-card")
+
+        # Tool name — accent-coloured header so it reads as a fresh
+        # event rather than another turn card.
+        name_label = Gtk.Label(label=call.name or "(unnamed tool)", xalign=0.0)
+        name_label.add_css_class("ask-permission-tool-name")
+        card.append(name_label)
+
+        # Argument preview. Try to pretty-print JSON; fall back to the
+        # raw string for non-JSON payloads (codex shell_command etc.).
+        pretty = call.arguments or ""
+        try:
+            parsed = json.loads(pretty) if pretty.strip() else None
+            if parsed is not None:
+                pretty = json.dumps(parsed, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        args_label = Gtk.Label(label=pretty, xalign=0.0, hexpand=True)
+        args_label.set_wrap(True)
+        args_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        args_label.set_selectable(True)
+        args_label.add_css_class("ask-permission-args")
+        card.append(args_label)
+
+        actions = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
+            halign=Gtk.Align.END,
+        )
+        actions.add_css_class("ask-permission-actions")
+
+        self._allow_btn = Gtk.Button(label="✓ allow")
+        self._allow_btn.add_css_class("ask-permission-allow")
+        self._allow_btn.set_tooltip_text("Dismiss this tool-use notification")
+        self._allow_btn.connect("clicked", lambda _b: self._on_allow(self))
+        actions.append(self._allow_btn)
+
+        trust_btn = Gtk.Button(label=" trust")
+        trust_btn.add_css_class("ask-permission-trust")
+        trust_btn.set_tooltip_text(
+            "Trust this tool for the rest of the session — future calls "
+            "will be auto-dismissed without a prompt"
+        )
+        trust_btn.connect("clicked", lambda _b: self._on_trust(self))
+        actions.append(trust_btn)
+
+        deny_btn = Gtk.Button(label="✕ deny")
+        deny_btn.add_css_class("ask-permission-deny")
+        deny_btn.set_tooltip_text("Cancel the current turn")
+        deny_btn.connect("clicked", lambda _b: self._on_deny(self))
+        actions.append(deny_btn)
+
+        card.append(actions)
+        self.set_child(card)
+
+    def focus_allow(self) -> None:
+        """Grab focus on the `✓ allow` button so keyboard users can
+        accept without mousing. Tab cycles to trust / deny peers via
+        GTK's default focus chain (all three buttons are focusable)."""
+        self._allow_btn.grab_focus()
+
+    @property
+    def tool_name(self) -> str:
+        return self._call.name or ""
+
+    @property
+    def call(self) -> ToolCall:
+        return self._call
 
 class AskWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
@@ -598,8 +932,25 @@ class AskWindow(Gtk.ApplicationWindow):
         self._alive = True
         self._queue: list[QueueRow] = []
         self._phase: str = "idle"
+        # `_stream_started` flips true on the first text chunk of a
+        # turn; combined with `_streaming` and the permissions /
+        # question-banner state it fully determines the effective
+        # phase via `_update_phase()` — no caller needs to pick a
+        # phase string directly.
+        self._stream_started = False
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
+        # Tool permission rows live above the queue; trust set is
+        # per-session. The trust set is ALSO the pre-flight gate: the
+        # adapter's `tool_ids` is rewritten from this set before every
+        # turn, so untrusted tools never reach the server. Rows in the
+        # panel are a live audit trail of tools the server DID run
+        # (trusted) plus anything surprising that slipped through.
+        # Seed from whatever the adapter was constructed with so CLI
+        # defaults (`--tool-id web_search memory`) pre-populate trust.
+        self._permissions: list[PermissionRow] = []
+        initial_tool_ids = getattr(adapter, "tool_ids", None) or []
+        self._trusted_tools: set[str] = set(initial_tool_ids)
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -662,6 +1013,21 @@ class AskWindow(Gtk.ApplicationWindow):
         vadj.connect("value-changed", self._on_vadj_value_changed)
         vadj.connect("notify::upper", self._on_vadj_upper_changed)
 
+        # Permissions ---------------------------------------------------
+        # Sits above the queue so pending tool-use notifications take
+        # priority visually — they're transient and often need a
+        # response before the user cares about queued turns.
+        self._permissions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._permissions_box.add_css_class("ask-permissions")
+        permissions_header = Gtk.Label(label="TOOLS", xalign=0.0)
+        permissions_header.add_css_class("ask-permissions-header")
+        self._permissions_box.append(permissions_header)
+        self._permissions_listbox = Gtk.ListBox()
+        self._permissions_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._permissions_box.append(self._permissions_listbox)
+        self._permissions_box.set_visible(False)
+        root.append(self._permissions_box)
+
         # Queue ---------------------------------------------------------
         self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._queue_box.add_css_class("ask-queue")
@@ -679,6 +1045,11 @@ class AskWindow(Gtk.ApplicationWindow):
         root.append(self._compose.widget)
 
         self.set_child(root)
+
+        # Render pills for the seeded trust set (from CLI defaults) so
+        # the user sees which tools are pre-authorised for this session
+        # from the moment the window opens.
+        self._sync_tool_gate()
 
         self._wire_keys()
         self.connect("close-request", self._on_close_request)
@@ -736,10 +1107,11 @@ class AskWindow(Gtk.ApplicationWindow):
         self._append_user_card(message)
         self._active_assistant = self._append_assistant_card()
         self._streaming = True
+        self._stream_started = False
         # Compose stays enabled: the queue system handles anything the
         # user types while this turn is streaming — new submissions get
         # pushed behind the current stream automatically.
-        self._set_phase("pending")
+        self._update_phase()
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
     def _append_user_card(self, text: str) -> TurnCard:
@@ -794,17 +1166,42 @@ class AskWindow(Gtk.ApplicationWindow):
 
         return False
 
+    def _append_thinking(self, chunk: str) -> bool:
+        """Main-thread-safe sink for `ThinkingChunk` events. Routes
+        the reasoning text into the active assistant card's
+        collapsible thinking section. Returns False so it composes
+        with `GLib.idle_add`."""
+        if self._active_assistant is not None:
+            self._active_assistant.append_thinking(chunk)
+
+        return False
+
     def _run_turn(self, user_message: str) -> None:
-        first_chunk = True
+        first_text_chunk = True
         try:
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
-                if first_chunk:
-                    # First delta arrived — leave red `pending`, go yellow
-                    # `streaming`.
-                    GLib.idle_add(self._set_phase, "streaming")
-                    first_chunk = False
+                # Tool events surface in the permission panel as an
+                # audit trail; they do NOT pause the stream. Real
+                # gating happens pre-flight via `_trusted_tools` ->
+                # `adapter.tool_ids` — an untrusted tool simply isn't
+                # advertised to the server, so the AI can't call it.
+                # Mid-stream blocking would just desync us from the
+                # server's native-function-calling protocol (server
+                # ends the stream at `finish_reason: tool_calls`
+                # expecting us to send tool results; blocking reads
+                # doesn't help because by the time we see the event
+                # the turn is already done).
+                if isinstance(chunk, ToolCall):
+                    GLib.idle_add(self._on_tool_call, chunk)
+                    continue
+                if isinstance(chunk, ThinkingChunk):
+                    GLib.idle_add(self._append_thinking, chunk.text)
+                    continue
+                if first_text_chunk:
+                    GLib.idle_add(self._mark_stream_started)
+                    first_text_chunk = False
                 GLib.idle_add(self._append_chunk, chunk)
         except Exception as e:
             if not self._alive:
@@ -816,22 +1213,104 @@ class AskWindow(Gtk.ApplicationWindow):
                 GLib.idle_add(self._mark_idle)
 
     def _mark_idle(self) -> bool:
+        # Only fire the "response finished" toast when we actually
+        # streamed something — a denied / cancelled / error-bailed
+        # turn that never produced text shouldn't claim completion.
+        streamed = self._stream_started
         self._streaming = False
+        self._stream_started = False
         self._active_assistant = None
         if self._alive:
             # Compose was never disabled; just reclaim focus so the user
             # can continue typing without clicking. Queued items stay
             # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
-            self._set_phase("idle")
+            self._update_phase()
+            if streamed:
+                self._notify_finished()
+
+        return False
+
+    def _mark_stream_started(self) -> bool:
+        """Main-thread sink: first reply chunk landed, flip pending →
+        streaming (unless we're currently awaiting approval / an answer,
+        in which case `_update_phase` keeps the blue awaiting pill)."""
+        self._stream_started = True
+        self._update_phase()
 
         return False
 
     # -- Phase colouring -----------------------------------------------
 
-    def _set_phase(self, phase: str) -> bool:
+    _PHASE_CLASSES = ("idle", "pending", "streaming", "awaiting")
+    # Icon theme names so `notify-send` can pull the right glyph per
+    # notification type. `dialog-*` names are stable across Adwaita /
+    # Papirus / Breeze; if a theme is missing one the daemon just
+    # drops the icon without failing.
+    _NOTIFY_ICON_FINISHED = "dialog-information-symbolic"
+    _NOTIFY_ICON_APPROVAL = "dialog-password-symbolic"
+    _NOTIFY_ICON_QUESTION = "dialog-question-symbolic"
+
+    def _should_notify(self) -> bool:
+        """Only fire desktop toasts when the overlay itself is hidden.
+        If it's on screen the provider pill + the new row / banner
+        already tell the user what happened — doubling up with a
+        notification is just noise. Layer-shell surfaces don't have a
+        meaningful `is_active()` (the compositor keeps them focusable
+        on-demand only), so visibility alone is the right gate."""
+        return not self.get_visible()
+
+    def _notify_finished(self) -> None:
+        if not self._should_notify():
+            return
+        notify("Ask", "Response finished", self._NOTIFY_ICON_FINISHED, timeout=3000)
+
+    def _notify_approval(self, tool_name: str) -> None:
+        if not self._should_notify():
+            return
+        label = tool_name or "tool"
+        notify(
+            "Ask — approval needed",
+            f"Waiting on approval: {label}",
+            self._NOTIFY_ICON_APPROVAL,
+            timeout=8000,
+        )
+
+    def _notify_question(self, question: str) -> None:
+        if not self._should_notify():
+            return
+        preview = question if len(question) <= 140 else question[:137] + "…"
+        notify(
+            "Ask — question",
+            preview or "The AI is waiting for your answer",
+            self._NOTIFY_ICON_QUESTION,
+            timeout=10000,
+        )
+
+    def _update_phase(self) -> bool:
+        """Recompute the provider pill's phase from current state.
+
+        Priority order:
+        - Any pending permission row OR an active question banner →
+          `awaiting` (blue). The user's input is the blocker; the
+          stream is either holding an approval envelope or typing
+          into the question box, and the yellow/red turn colours
+          would misrepresent that.
+        - `_stream_started` → `streaming` (yellow). Chunks are
+          flowing into the active assistant card.
+        - `_streaming` without any chunks yet → `pending` (red).
+          Turn is in flight, we're waiting for the first byte.
+        - Otherwise → `idle` (green)."""
+        if self._permissions or self._compose.has_question():
+            phase = "awaiting"
+        elif self._stream_started:
+            phase = "streaming"
+        elif self._streaming:
+            phase = "pending"
+        else:
+            phase = "idle"
         self._phase = phase
-        for cls in ("idle", "pending", "streaming"):
+        for cls in self._PHASE_CLASSES:
             if cls == phase:
                 self._provider_label.add_css_class(cls)
             else:
@@ -897,6 +1376,187 @@ class AskWindow(Gtk.ApplicationWindow):
         # else to do — dispatch_turn reads row.text() on drain / send.
         pass
 
+    # -- Permissions ---------------------------------------------------
+
+    def _on_tool_call(self, call: ToolCall) -> bool:
+        """Main-thread sink for `ToolCall` events from `adapter.turn()`.
+        Scheduled via `GLib.idle_add` from the worker thread — returns
+        False so it fires once and detaches."""
+        if call.name and call.name in self._trusted_tools:
+            log.debug("tool %r is trusted; skipping permission row", call.name)
+
+            return False
+        row = PermissionRow(
+            call,
+            on_allow=self._on_permission_allow,
+            on_trust=self._on_permission_trust,
+            on_deny=self._on_permission_deny,
+        )
+        was_empty = not self._permissions
+        self._permissions.append(row)
+        self._permissions_listbox.append(row)
+        self._permissions_box.set_visible(True)
+        self._update_phase()
+        # Only grab focus when this is the first pending row — otherwise
+        # we'd yank keyboard focus away from whichever row the user is
+        # already answering.
+        if was_empty:
+            # Deferred so focus lands after GTK has allocated the new
+            # widget; grab_focus on a freshly-added button is a no-op.
+            GLib.idle_add(row.focus_allow)
+        self._notify_approval(call.name)
+
+        return False
+
+    def _remove_permission_row(self, row: PermissionRow) -> None:
+        if row not in self._permissions:
+            return
+        self._permissions.remove(row)
+        self._permissions_listbox.remove(row)
+        if self._permissions:
+            # Pull focus onto the new oldest row so the user can keep
+            # tabbing without hunting for the next prompt.
+            GLib.idle_add(self._permissions[0].focus_allow)
+        else:
+            self._permissions_box.set_visible(False)
+        self._update_phase()
+
+    def show_question(self, question: str, resolve) -> bool:
+        """Route a claude `ask_question` MCP tool through the overlay.
+
+        Places a question banner inside the compose wrap so the
+        question reads right above the input box; the user's next
+        submit sends the typed text back to `resolve` instead of
+        dispatching a normal turn. The banner disappears as soon as
+        they answer (or skip). Returns False so `GLib.idle_add` fires
+        once."""
+
+        # Wrap `resolve` so the phase pill flips back to whatever it
+        # was before the question arrived (pending / streaming /
+        # idle) as soon as the user answers or skips. The compose
+        # clears `_question_callback` before firing the callback, so
+        # by the time we reach `_update_phase()` `has_question()`
+        # already reports False.
+        def resolved(answer: str) -> None:
+            try:
+                resolve(answer)
+            finally:
+                self._update_phase()
+
+        self._compose.set_question_mode(question, on_answer=resolved)
+        # Always focus the compose textview when a question lands,
+        # even if focus is currently on an approval row or elsewhere.
+        # The `idle_add` defer ensures the grab fires after the
+        # banner's size-allocate, otherwise grab_focus on a freshly-
+        # laid-out widget can no-op.
+        self._compose.focus()
+        GLib.idle_add(self._compose.focus)
+        self._update_phase()
+        self._notify_question(question)
+
+        return False
+
+    def show_permission_for_mcp(self, call: ToolCall, resolve) -> bool:
+        """Render a permission row for a Claude MCP permission-prompt
+        request and invoke `resolve(approved: bool, reason: str)` when
+        the user clicks. This is the REAL gate for `--converse-provider
+        claude` — the ask-mcp.py server is blocked on a socket round-
+        trip here, so claude's subprocess won't run the tool until we
+        return. Returns False so `GLib.idle_add` fires once."""
+
+        def on_allow(r: PermissionRow) -> None:
+            self._remove_permission_row(r)
+            resolve(True, "")
+
+        def on_trust(r: PermissionRow) -> None:
+            name = r.tool_name
+            if name:
+                self._trusted_tools.add(name)
+                self._sync_tool_gate()
+            for existing in list(self._permissions):
+                if existing.tool_name == name:
+                    self._remove_permission_row(existing)
+            resolve(True, "")
+
+        def on_deny(r: PermissionRow) -> None:
+            name = r.tool_name or "tool"
+            self._remove_permission_row(r)
+            resolve(False, f"user denied {name}")
+
+        row = PermissionRow(
+            call,
+            on_allow=on_allow,
+            on_trust=on_trust,
+            on_deny=on_deny,
+        )
+        was_empty = not self._permissions
+        self._permissions.append(row)
+        self._permissions_listbox.append(row)
+        self._permissions_box.set_visible(True)
+        self._update_phase()
+        if was_empty:
+            GLib.idle_add(row.focus_allow)
+        self._notify_approval(call.name)
+
+        return False
+
+    def _on_permission_allow(self, row: PermissionRow) -> None:
+        self._remove_permission_row(row)
+
+    def _on_permission_trust(self, row: PermissionRow) -> None:
+        name = row.tool_name
+        if name:
+            self._trusted_tools.add(name)
+            self._sync_tool_gate()
+        # Drop every pending row for the same tool while we're at it —
+        # the user just said they trust it, no point keeping duplicate
+        # prompts for concurrent calls on screen.
+        for existing in list(self._permissions):
+            if existing.tool_name == name:
+                self._remove_permission_row(existing)
+
+    def _untrust_tool(self, name: str) -> None:
+        """Remove `name` from the per-session trust set so future turns
+        stop advertising it to the server. Wired to the compose-bar
+        pill click handler."""
+        if name in self._trusted_tools:
+            self._trusted_tools.discard(name)
+            self._sync_tool_gate()
+
+    def _sync_tool_gate(self) -> None:
+        """Mirror `_trusted_tools` into the adapter's `tool_ids` so the
+        next turn sends exactly the trusted set to the server, and
+        refresh the compose-bar pills to match. This is the real gate —
+        untrusted tools aren't advertised, so the server can't invoke
+        them. Runs every time trust changes."""
+        if hasattr(self._adapter, "tool_ids"):
+            self._adapter.tool_ids = (
+                sorted(self._trusted_tools) if self._trusted_tools else None
+            )
+        self._compose.set_trusted_pills(
+            sorted(self._trusted_tools),
+            self._untrust_tool,
+        )
+
+    def _on_permission_deny(self, row: PermissionRow) -> None:
+        """Cancel the in-flight stream and revoke trust for this tool.
+        Server-side tools have usually run by the time we see the event
+        (we're reading the record, not predicting it); this is a
+        best-effort cancel of the remaining response plus a trust
+        revoke so the next turn can't re-trigger the same tool."""
+        tool_name = row.tool_name or "tool"
+        try:
+            self._adapter.cancel()
+        except Exception as e:
+            log.warning("adapter cancel raised during deny: %s", e)
+        if self._active_assistant is not None:
+            self._active_assistant.append(f"\n\n*— cancelled (denied: {tool_name}) —*")
+        if tool_name in self._trusted_tools:
+            self._trusted_tools.discard(tool_name)
+            self._sync_tool_gate()
+        for existing in list(self._permissions):
+            self._remove_permission_row(existing)
+
     # -- Scroll / keys / links -----------------------------------------
 
     _PIN_THRESHOLD_PX = 24
@@ -941,6 +1601,9 @@ class AskWindow(Gtk.ApplicationWindow):
             return True
         if ctrl and keyval == Gdk.KEY_f:
             self._compose.focus()
+            return True
+        if ctrl and keyval == Gdk.KEY_y:
+            self._yank_last_assistant()
             return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
@@ -1003,6 +1666,24 @@ class AskWindow(Gtk.ApplicationWindow):
             return
         self._compose.focus()
         self._compose.append_text(text)
+
+    def _yank_last_assistant(self) -> None:
+        """Ctrl+Y: copy the most recent assistant reply to the Wayland
+        clipboard via `wl-copy`. Walks `self._cards` backwards so the
+        most-recent completed assistant turn wins. Silent no-op when
+        no assistant has replied yet."""
+        for card in reversed(self._cards):
+            if card.role != "assistant":
+                continue
+            text = card.get_text()
+            if not text:
+                continue
+            try:
+                OutputAdapterClipboard().write(text)
+            except Exception as e:
+                log.warning("yank-to-clipboard failed: %s", e)
+
+            return
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False
@@ -1164,54 +1845,70 @@ class Session:
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
+        self._mcp_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
+        self._mcp_thread: Optional[threading.Thread] = None
 
-    def start(self) -> None:
+    def _bind(self, path: str, live_check: bool) -> socket.socket:
+        """Bind a listener to `path`, cleaning up stale socket files.
+        Set `live_check=True` only for the main socket — there we must
+        detect another running session; for the MCP socket we can
+        always clobber a stale file because it's only meaningful while
+        OUR session is alive."""
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.bind(SOCKET_PATH)
+            sock.bind(path)
         except OSError as e:
             if e.errno != errno.EADDRINUSE:
                 sock.close()
                 raise
-            # Socket file exists. Probe to tell live owner from stale file:
-            # a live owner answers connect; a stale file gives ECONNREFUSED.
-            # Only unlink after confirming stale, so we don't race another
-            # starting owner into a two-windows-one-path state.
-            if _is_live():
+            if live_check and _is_live():
                 sock.close()
-                raise RuntimeError(
-                    f"another ask session is already running at {SOCKET_PATH}"
-                )
+                raise RuntimeError(f"another ask session is already running at {path}")
             try:
-                os.unlink(SOCKET_PATH)
+                os.unlink(path)
             except FileNotFoundError:
                 pass
-            sock.bind(SOCKET_PATH)
+            sock.bind(path)
 
-        os.chmod(SOCKET_PATH, 0o600)
+        os.chmod(path, 0o600)
         sock.listen(4)
-        self._sock = sock
-        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+        return sock
+
+    def start(self) -> None:
+        self._sock = self._bind(SOCKET_PATH, live_check=True)
+        self._mcp_sock = self._bind(MCP_SOCKET_PATH, live_check=False)
+        self._thread = threading.Thread(
+            target=self._serve, args=(self._sock,), daemon=True
+        )
         self._thread.start()
+        self._mcp_thread = threading.Thread(
+            target=self._serve, args=(self._mcp_sock,), daemon=True
+        )
+        self._mcp_thread.start()
 
     def stop(self) -> None:
-        if self._sock:
+        for attr, path in (
+            ("_sock", SOCKET_PATH),
+            ("_mcp_sock", MCP_SOCKET_PATH),
+        ):
+            sock = getattr(self, attr, None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                setattr(self, attr, None)
             try:
-                self._sock.close()
-            except OSError:
+                os.unlink(path)
+            except FileNotFoundError:
                 pass
-            self._sock = None
-        try:
-            os.unlink(SOCKET_PATH)
-        except FileNotFoundError:
-            pass
 
-    def _serve(self) -> None:
-        assert self._sock is not None, "_serve requires start() to have run"
+    def _serve(self, listener: socket.socket) -> None:
         while True:
             try:
-                conn, _ = self._sock.accept()
+                conn, _ = listener.accept()
             except OSError:
                 return
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
@@ -1272,8 +1969,67 @@ class Session:
                 GLib.idle_add(self._window.toggle_visibility)
 
                 return {"ok": True}
+            case "permission":
+                # Claude's MCP permission-prompt-tool forwards here.
+                # Block this socket handler thread until the user
+                # clicks allow/deny in the overlay, then return the
+                # answer. The MCP server translates the `approved`
+                # flag into claude's allow/deny envelope.
+                tool_name = (obj.get("tool_name") or "").strip()
+                arguments = obj.get("arguments") or ""
+                event = threading.Event()
+                verdict = {"approved": False, "reason": "timeout"}
+
+                def resolve(approved: bool, reason: str = "") -> None:
+                    verdict["approved"] = bool(approved)
+                    verdict["reason"] = reason
+                    event.set()
+
+                call = ToolCall(
+                    tool_id=f"mcp-{id(event)}",
+                    name=tool_name,
+                    arguments=str(arguments),
+                )
+                GLib.idle_add(self._window.show_permission_for_mcp, call, resolve)
+                # 10-min ceiling matches `socket_approval`'s timeout.
+                if not event.wait(timeout=600):
+                    verdict = {"approved": False, "reason": "overlay timeout"}
+
+                return verdict
+            case "question":
+                # Claude's `ask_question` MCP tool forwards here. Block
+                # the handler thread until the user types an answer
+                # into compose and hits send; return the answer string.
+                question = (obj.get("question") or "").strip()
+                q_event = threading.Event()
+                q_holder = {"answer": ""}
+
+                def q_resolve(answer: str) -> None:
+                    q_holder["answer"] = answer or ""
+                    q_event.set()
+
+                GLib.idle_add(self._window.show_question, question, q_resolve)
+                if not q_event.wait(timeout=600):
+                    return {"answer": ""}
+
+                return {"answer": q_holder["answer"]}
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
+
+def _build_mcp_config() -> McpConfig:
+    """Compose the `McpConfig` we hand to the Claude adapter.
+
+    Pre-seeds one entry — the `ask` server, which re-execs THIS SAME
+    script with `mcp-server` as argv[1]. The top of ask.py short-
+    circuits to `lib.mcp.McpServer.run()` for that argv and exits
+    without touching GTK, so the subprocess is a pure stdio server.
+    Callers can layer additional servers (github, filesystem, …) by
+    mutating the returned `McpConfig` before it reaches the adapter."""
+    self_script = os.path.abspath(__file__)
+    config = McpConfig()
+    config.add("ask", sys.executable, args=["-u", self_script, "mcp-server"])
+
+    return config
 
 def _build_adapter(args) -> ConversationAdapter:
     # Callers pass argparse values through as-is. None / missing values
@@ -1296,10 +2052,22 @@ def _build_adapter(args) -> ConversationAdapter:
             )
         case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(
-                AI_SYSTEM_PROMPT, model=args.converse_model
+                AI_SYSTEM_PROMPT,
+                model=args.converse_model,
+                mcp_config=_build_mcp_config(),
+                permission_tool="mcp__ask__approve",
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
+        case ConversationProvider.OPENCODE:
+            return ConversationAdapterOpenCode(
+                AI_SYSTEM_PROMPT,
+                model=args.converse_model,
+                # Same MCP config the claude branch uses — opencode
+                # supports MCP servers natively, we just splice ours
+                # into its config JSON.
+                mcp_config=_build_mcp_config(),
+            )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
 
@@ -1393,8 +2161,9 @@ def _cmd_toggle(args) -> None:
 def _cmd_status() -> None:
     """Waybar custom-module payload. Compact icon-only text (provider lives
     in the tooltip); class picks the state colour (idle green / pending red
-    / streaming yellow); queue depth renders as a Pango superscript badge
-    so N pending turns show as `󱍊³` without stealing horizontal space."""
+    / streaming yellow / awaiting blue); queue depth renders as a Pango
+    superscript badge so N pending turns show as `󱍊³` without stealing
+    horizontal space."""
     resp = _send("status")
     if not resp or not resp.get("ok"):
         print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
@@ -1412,6 +2181,8 @@ def _cmd_status() -> None:
             tooltip = f"Ask: streaming via {provider}"
         case "pending":
             tooltip = f"Ask: waiting on first chunk from {provider}"
+        case "awaiting":
+            tooltip = f"Ask: waiting on user input ({provider})"
         case _:
             tooltip = f"Ask: {provider} idle"
     if queue > 0:

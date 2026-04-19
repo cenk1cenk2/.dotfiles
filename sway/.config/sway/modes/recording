@@ -2,7 +2,7 @@
 
 ### Recording Mode
 
-set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→ask/hide | (w/W) copywriter/kill | (q/Q) stop recording/speech | <ESC>"
+set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→ask/hide | (w/W) copywriter/kill | (q/Q) stop speech/recording | <ESC>"
 
 mode $mode_recording {
         # Toggle recording (start/stop)
@@ -15,7 +15,7 @@ mode $mode_recording {
         bindsym o exec $recorder open, mode "default"
 
         # Stop recording
-        bindsym q exec $recorder stop, mode "default"
+        bindsym Shift+q exec $recorder stop, mode "default"
 
         # Speech-to-text direct typing with AI enrichment
         bindsym s exec $speech toggle --output type --enrich, mode "default"
@@ -42,7 +42,7 @@ mode $mode_recording {
         bindsym Shift+w exec $copywriter kill, mode "default"
 
         # Stop speech-to-text
-        bindsym Shift+q exec $speech kill, mode "default"
+        bindsym q exec $speech kill, mode "default"
 
         # Exit recording mode
         bindsym Escape mode "default"
