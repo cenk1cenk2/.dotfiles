@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-
 def _fmt_read(args: dict) -> str:
     path = args.get("file_path", "")
     out = f"📖 {path}"
@@ -35,12 +34,10 @@ def _fmt_read(args: dict) -> str:
         out += f"  from line {offset}"
     return out
 
-
 def _fmt_write(args: dict) -> str:
     path = args.get("file_path", "")
     content = args.get("content") or ""
     return f"📝 {path}  ({len(content)} chars)"
-
 
 def _fmt_edit(args: dict) -> str:
     path = args.get("file_path", "")
@@ -48,18 +45,15 @@ def _fmt_edit(args: dict) -> str:
     suffix = "  (replace all)" if replace_all else ""
     return f"✏️  {path}{suffix}"
 
-
 def _fmt_multi_edit(args: dict) -> str:
     path = args.get("file_path", "")
     edits = args.get("edits") or []
     return f"✏️  {path}  ({len(edits)} edits)"
 
-
 def _fmt_grep(args: dict) -> str:
     pattern = args.get("pattern", "")
     path = args.get("path", ".")
     return f"🔍 {pattern} in {path}"
-
 
 def _fmt_glob(args: dict) -> str:
     pattern = args.get("pattern", "")
@@ -68,14 +62,11 @@ def _fmt_glob(args: dict) -> str:
         return f"📂 {pattern} in {path}"
     return f"📂 {pattern}"
 
-
 def _fmt_web_fetch(args: dict) -> str:
     return f"🌐 {args.get('url', '')}"
 
-
 def _fmt_web_search(args: dict) -> str:
     return f"🔎 {args.get('query', '')}"
-
 
 def _fmt_task(args: dict) -> str:
     subagent = args.get("subagent_type") or "agent"
@@ -84,11 +75,9 @@ def _fmt_task(args: dict) -> str:
         description = description[:117] + "…"
     return f"🤖 {subagent}: {description}"
 
-
 def _fmt_todo_write(args: dict) -> str:
     todos = args.get("todos") or []
     return f"📋 {len(todos)} items"
-
 
 def _fmt_notebook_edit(args: dict) -> str:
     path = args.get("notebook_path") or args.get("file_path", "")
@@ -97,19 +86,15 @@ def _fmt_notebook_edit(args: dict) -> str:
         return f"📓 {path}  cell={cell_id}"
     return f"📓 {path}"
 
-
 def _fmt_kill_shell(args: dict) -> str:
     return f"☠️  shell {args.get('shell_id', '')}"
-
 
 def _fmt_bash_output(args: dict) -> str:
     return f"📜 bash output {args.get('bash_id', '')}"
 
-
 def _fmt_mcp_pilot_approve(args: dict) -> str:
     target = args.get("tool_name") or args.get("name") or "?"
     return f"approve({target})"
-
 
 def _fmt_mcp_pilot_ask_question(args: dict) -> str:
     question = args.get("question") or ""
@@ -117,16 +102,13 @@ def _fmt_mcp_pilot_ask_question(args: dict) -> str:
         question = question[:197] + "…"
     return f'❓ "{question}"'
 
-
 def _fmt_mcp_pilot_open(args: dict) -> str:
     url = args.get("url") or args.get("uri") or ""
     return f"↗ {url}"
 
-
 def _fmt_mcp_pilot_load_skill(args: dict) -> str:
     name = args.get("name") or args.get("skill") or ""
     return f"🧠 skill: {name}"
-
 
 TOOL_FORMATTERS: dict[str, Callable[[dict], str]] = {
     "Bash": lambda a: f"$ {a.get('command', '')}",
@@ -150,7 +132,6 @@ TOOL_FORMATTERS: dict[str, Callable[[dict], str]] = {
     "mcp__pilot__load_skill": _fmt_mcp_pilot_load_skill,
 }
 
-
 def _mcp_resource_fallback(name: str, args: dict) -> str:
     """`mcp__pilot__resource__<something>` family — we don't enumerate
     every resource tool here, so just show the trailing segment plus
@@ -161,7 +142,6 @@ def _mcp_resource_fallback(name: str, args: dict) -> str:
         return f"📄 {tail}: {hint}"
     return f"📄 {tail}"
 
-
 def _mcp_fallback(name: str, args: dict) -> str:
     """Last-resort formatter for an unknown `mcp__<server>__<tool>` —
     pull out the first sensible string value so the preview at least
@@ -171,7 +151,17 @@ def _mcp_fallback(name: str, args: dict) -> str:
     parts = name.split("__", 2)
     tail = parts[2] if len(parts) >= 3 else name
     if isinstance(args, dict):
-        for key in ("url", "uri", "query", "question", "path", "name", "pattern", "text", "command"):
+        for key in (
+            "url",
+            "uri",
+            "query",
+            "question",
+            "path",
+            "name",
+            "pattern",
+            "text",
+            "command",
+        ):
             value = args.get(key)
             if isinstance(value, str) and value:
                 preview = value if len(value) <= 160 else value[:157] + "…"
@@ -184,7 +174,6 @@ def _mcp_fallback(name: str, args: dict) -> str:
         return f"{tail} {json.dumps(args)}"
     except (TypeError, ValueError):
         return f"{tail} {args}"
-
 
 def _coerce_args(arguments: Any) -> Any:
     """Accept the value from either `ToolCall.arguments` (raw string)
@@ -203,7 +192,6 @@ def _coerce_args(arguments: Any) -> Any:
         except (json.JSONDecodeError, ValueError):
             return arguments
     return arguments
-
 
 def format_tool_args(name: str, arguments: Any) -> str:
     """Return a short, human-readable summary line for `(name, args)`.

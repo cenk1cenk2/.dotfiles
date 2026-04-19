@@ -15,7 +15,6 @@ from enum import StrEnum
 class EnrichProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
-    CODEX = "codex"
     OPENCODE = "opencode"
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
@@ -151,58 +150,13 @@ class EnrichAdapterClaude:
 
         return proc.stdout.strip()
 
-class EnrichAdapterCodex:
-    """Codex CLI in ephemeral mode."""
-
-    provider = EnrichProvider.CODEX
-
-    def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
-        self.system_prompt = system_prompt
-        self.user_prompt_template = user_prompt_template
-        self.model = kwargs.get("model") or "gpt-5.4-mini"
-        # Codex has no literal plan flag — map "plan" to read-only
-        # sandbox. Any other string passes through verbatim (e.g.
-        # "workspace-write", "danger-full-access").
-        self.mode = kwargs.get("mode")
-
-    def enrich(self, text: str) -> Optional[str]:
-        prompt = (
-            f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
-        )
-        proc = subprocess.run(
-            [
-                "codex",
-                "exec",
-                "-",
-                "--model",
-                self.model,
-                # `--sandbox` is optional; passthrough when set
-                # (`read-only` / `workspace-write` / `danger-full-
-                # access`), codex's configured default when unset.
-                *(["--sandbox", self.mode] if self.mode else []),
-                "--ephemeral",
-                "--skip-git-repo-check",
-            ],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("codex enrichment failed (exit=%d)", proc.returncode)
-            return None
-
-        return proc.stdout.strip()
-
 class EnrichAdapterOpenCode:
     """OpenCode CLI in one-shot mode.
 
     One `opencode run` per call, no session state — rewrites are
-    stateless by definition. Uses the `--format default` plain-text
-    output so we just collect stdout as the result. The `<provider>/
-    <model>` addressing scheme matches ConversationAdapterOpenCode;
-    default provider is `kilic`, default model is `gemma4:e2b` (fast
-    local)."""
+    stateless by definition. `--format default` plain-text output goes
+    straight to stdout. Models are addressed as `<provider>/<model>`;
+    default provider `kilic`, default model `gemma4:e2b`."""
 
     provider = EnrichProvider.OPENCODE
 

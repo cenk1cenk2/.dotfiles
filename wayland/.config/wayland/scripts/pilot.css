@@ -209,10 +209,22 @@
   background-color: transparent;
 }
 
+/* Square the default GTK rounding on every control inside the
+ * overlay so the look stays consistent — pills, pass-through
+ * buttons, list rows, and the palette cells all flatten to the same
+ * 2px corner. Individual rules can override when a specific control
+ * needs a different radius. */
+.overlay button,
+.overlay entry,
+.overlay row,
+.overlay flowboxchild {
+  border-radius: 2px;
+}
+
 .overlay button.pilot-tool-bubble {
   background-color: alpha(@pilot_fg_dim, 0.08);
   border: 1px solid @pilot_border_soft;
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 1px 10px;
   min-width: 0;
   color: @pilot_fg_dim;
@@ -780,7 +792,9 @@
   background-image: none;
   border: 1px solid transparent;
   padding: 2px 0;
-  transition: background-color 100ms ease, border-color 100ms ease;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease;
 }
 
 .overlay row.pilot-palette-row:selected {

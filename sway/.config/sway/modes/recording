@@ -29,18 +29,18 @@ mode $mode_recording {
         # Speech-to-text to clipboard (raw, no enrichment)
         bindsym Shift+c exec $speech toggle --output clipboard, mode "default"
 
-        # Speech-to-text piped into the pilot overlay (new session or live-forward)
-        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py toggle --input stdin', mode "default"
+        # `ask` pilot overlay — default provider, speech-piped new
+        # session (or live-forward into an existing one). Session
+        # suffix `ask` keeps its socket / app-id isolated from `plan`.
+        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py --session ask toggle --input stdin', mode "default"
 
-        # Toggle the pilot overlay (hides/shows without ending the session)
-        bindsym Shift+a exec $pilot toggle, mode "default"
+        # Hide/show the already-running `ask` pilot.
+        bindsym Shift+a exec $pilot --session ask toggle, mode "default"
 
-        # Dedicated "plan" pilot overlay — opencode+glm-5.1:cloud, cwd=~/notes.
-        # Session suffix `plan` keeps sockets / app-id separate from the
-        # default overlay so both can be live at once.
-        bindsym p exec $pilot --session plan toggle --converse-provider opencode --converse-model glm-5.1:cloud --cwd ~/notes, mode "default"
+        # `plan` pilot overlay — opencode+glm-5.1:cloud, cwd=~/notes.
+        bindsym p exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py --session plan toggle --converse-provider opencode --converse-model glm-5.1:cloud --cwd ~/notes --input stdin', mode "default"
 
-        # Hide/show the already-running plan pilot without touching its session.
+        # Hide/show the already-running `plan` pilot.
         bindsym Shift+p exec $pilot --session plan toggle, mode "default"
 
         # Copywriter: refine clipboard through AI

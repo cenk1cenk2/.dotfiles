@@ -83,13 +83,22 @@
     "signal": 11,
   },
 
-  "custom/pilot": {
+  "custom/pilot#ask": {
     "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/pilot.py status",
-    "exec-if": "~/.config/wayland/scripts/pilot.py is-running",
-    "on-click": "~/.config/wayland/scripts/pilot.py kill",
+    "exec": "~/.config/wayland/scripts/pilot.py --session ask status",
+    "exec-if": "~/.config/wayland/scripts/pilot.py --session ask is-running",
+    "on-click": "~/.config/wayland/scripts/pilot.py --session ask kill",
+    "signal": 12,
+  },
+  "custom/pilot#plan": {
+    "interval": 3,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/wayland/scripts/pilot.py --session plan status",
+    "exec-if": "~/.config/wayland/scripts/pilot.py --session plan is-running",
+    "on-click": "~/.config/wayland/scripts/pilot.py --session plan kill",
     "signal": 12,
   },
 
@@ -166,7 +175,8 @@
     "custom/recorder",
     "custom/speech",
     "custom/copywriter",
-    "custom/pilot",
+    "custom/pilot#ask",
+    "custom/pilot#plan",
     "sway/mode",
     "sway/window",
   ],

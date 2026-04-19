@@ -20,28 +20,16 @@ import json
 import logging
 import os
 import subprocess
-import sys
 from enum import Enum
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 log = logging.getLogger("lib.overlay")
 
-# Re-exported from `lib.layer_shell` so callers that already reach for
-# `lib.overlay.ensure_layer_shell_preload` keep working. IMPORTANT: the
-# real implementation lives in the stdlib-only `lib.layer_shell` module,
-# because importing the helper through `lib.overlay` would load `gi`
-# BEFORE the preload re-exec set LD_PRELOAD — which is exactly the
-# scenario the preload exists to prevent. Use `lib.layer_shell` at the
-# actual call site (pilot.py does) and treat the alias here as
-# documentation-only.
-from .layer_shell import ensure_layer_shell_preload  # noqa: E402,F401
-
-_ensure_layer_shell_preload = ensure_layer_shell_preload
-
-
 # ── GTK imports ─────────────────────────────────────────────────
-# Deferred past the preload helper so callers can invoke it before
-# any GTK side-effect.
+# IMPORTANT: do NOT import `ensure_layer_shell_preload` here. Callers
+# must reach it through `lib.layer_shell` directly — importing it via
+# `lib.overlay` drags the `gi` module in below, which must only happen
+# AFTER LD_PRELOAD has been set by the re-exec.
 import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
@@ -54,9 +42,7 @@ from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
     Gtk4LayerShell,
 )
 
-
 # ── Monitor helpers ─────────────────────────────────────────────
-
 
 def focused_monitor_name() -> Optional[str]:
     """Ask the compositor for the connector name of the focused output
@@ -101,7 +87,6 @@ def focused_monitor_name() -> Optional[str]:
 
     return None
 
-
 def focused_gdk_monitor():
     """Resolve the compositor-focused output to a `GdkMonitor` by
     matching connector names. Returns None on miss."""
@@ -117,14 +102,7 @@ def focused_gdk_monitor():
 
     return None
 
-
-# Back-compat aliases — pilot.py historically imported these names.
-_focused_monitor_name = focused_monitor_name
-_focused_gdk_monitor = focused_gdk_monitor
-
-
 # ── CSS pipeline ────────────────────────────────────────────────
-
 
 def load_css_from_path(path: str, *, tag: str = "overlay.css") -> Gtk.CssProvider:
     """Register `path` (absolute or resolvable) as a Gtk.CssProvider at
@@ -157,7 +135,6 @@ def load_css_from_path(path: str, *, tag: str = "overlay.css") -> Gtk.CssProvide
 
     return provider
 
-
 def load_overlay_css() -> Gtk.CssProvider:
     """Install the shared `overlay.css` sitting next to this module at
     `USER + 1` priority — same priority pilot.py uses for pilot.css so
@@ -169,9 +146,7 @@ def load_overlay_css() -> Gtk.CssProvider:
 
     return load_css_from_path(css_path, tag="overlay.css")
 
-
 # ── Layer-shell base window ─────────────────────────────────────
-
 
 class LayerOverlayWindow(Gtk.ApplicationWindow):
     """Gtk.ApplicationWindow subclass that configures itself as a
@@ -302,9 +277,83 @@ class LayerOverlayWindow(Gtk.ApplicationWindow):
         the compose scroller at 25% of the monitor height."""
         return None
 
+# ── Backdrop ────────────────────────────────────────────────────
+
+
+class OverlayBackdrop(Gtk.ApplicationWindow):
+    """Full-screen click-catcher, one per monitor, rendered below the
+    primary overlay. Used by pilot to (a) dim every monitor when the
+    overlay is visible so it's obvious something else has focus, and
+    (b) accept a click-outside as a hide request.
+
+    The backdrop sits on `Layer.TOP`; callers should put their main
+    overlay on `Layer.OVERLAY` so it renders above the backdrop on
+    the same monitor. `on_click` fires on any press and is expected
+    to hide the overlay — we don't call it ourselves so callers keep
+    control of the whole lifecycle."""
+
+    def __init__(
+        self,
+        *,
+        application: Gtk.Application,
+        monitor,
+        on_click: Callable[[], None],
+    ):
+        super().__init__(application=application)
+        self.add_css_class("overlay-backdrop")
+        self._on_click = on_click
+
+        Gtk4LayerShell.init_for_window(self)
+        Gtk4LayerShell.set_namespace(self, "overlay-backdrop")
+        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
+        for edge in (
+            Gtk4LayerShell.Edge.TOP,
+            Gtk4LayerShell.Edge.BOTTOM,
+            Gtk4LayerShell.Edge.LEFT,
+            Gtk4LayerShell.Edge.RIGHT,
+        ):
+            Gtk4LayerShell.set_anchor(self, edge, True)
+        # Don't steal struts from the compositor; we want to cover the
+        # output visually but not push panels around.
+        Gtk4LayerShell.set_exclusive_zone(self, -1)
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
+        if monitor is not None:
+            Gtk4LayerShell.set_monitor(self, monitor)
+
+        click = Gtk.GestureClick()
+        click.set_button(0)  # any button
+        click.connect("released", self._on_press)
+        self.add_controller(click)
+
+    def _on_press(self, *_ignored) -> None:
+        try:
+            self._on_click()
+        except Exception:
+            log.exception("overlay backdrop on_click raised")
+
+
+def spawn_backdrops(
+    application: Gtk.Application, on_click: Callable[[], None]
+) -> list[OverlayBackdrop]:
+    """Create and present one `OverlayBackdrop` per monitor currently
+    known to the default display. Returns the list so the caller can
+    destroy them on hide."""
+    backdrops: list[OverlayBackdrop] = []
+    display = Gdk.Display.get_default()
+    if display is None:
+        return backdrops
+    monitors = display.get_monitors()
+    for i in range(monitors.get_n_items()):
+        monitor = monitors.get_item(i)
+        bd = OverlayBackdrop(
+            application=application, monitor=monitor, on_click=on_click
+        )
+        bd.present()
+        backdrops.append(bd)
+    return backdrops
+
 
 # ── Card / collapsible / pill / button helpers ──────────────────
-
 
 def make_card(role: str, title: str) -> tuple[Gtk.Box, Gtk.Label]:
     """Build the shared card skeleton: a vertical Gtk.Box with an
@@ -327,7 +376,6 @@ def make_card(role: str, title: str) -> tuple[Gtk.Box, Gtk.Label]:
 
     return box, role_label
 
-
 def make_collapsible(label: str, child: Gtk.Widget) -> Gtk.Expander:
     """Pre-styled Gtk.Expander for secondary/collapsible content like
     reasoning traces or log snippets. Matches pilot's thinking-block
@@ -340,7 +388,6 @@ def make_collapsible(label: str, child: Gtk.Widget) -> Gtk.Expander:
 
     return expander
 
-
 class PillVariant(str, Enum):
     """Tokens for `make_pill`. Values match the CSS class names so
     callers can also pass raw strings if preferred."""
@@ -348,7 +395,6 @@ class PillVariant(str, Enum):
     ACCENT = "accent"
     APPROVE = "approve"
     REJECT = "reject"
-
 
 def make_pill(label: str, variant: str = "accent") -> Gtk.Button:
     """Compose-style pill button. Variant picks the tint:
@@ -364,7 +410,6 @@ def make_pill(label: str, variant: str = "accent") -> Gtk.Button:
 
     return btn
 
-
 class ButtonVariant(str, Enum):
     """Tokens for `make_button`. Values map 1:1 to the CSS classes
     in overlay.css so callers can use either the enum or a raw
@@ -374,7 +419,6 @@ class ButtonVariant(str, Enum):
     TRUST = "trust"
     DENY = "deny"
     AUTOREJECT = "autoreject"
-
 
 def make_button(label: str, variant: str) -> Gtk.Button:
     """Secondary action button with the shared shadow recipe from
@@ -390,9 +434,7 @@ def make_button(label: str, variant: str) -> Gtk.Button:
 
     return btn
 
-
 # ── Header row ──────────────────────────────────────────────────
-
 
 class Header(Gtk.Box):
     """Top-row: a provider pill + a close button. Exposes the pill
@@ -450,12 +492,9 @@ class Header(Gtk.Box):
             else:
                 self._label.remove_css_class(cls)
 
-
 # ── Command palette ─────────────────────────────────────────────
 
-
 CommandPaletteEntry = tuple[str, str, str, str]  # (kind, name, desc, preview)
-
 
 class CommandPalette(Gtk.Box):
     """Rofi-like fuzzy-match palette. Floats inside a `Gtk.Overlay`
@@ -520,6 +559,13 @@ class CommandPalette(Gtk.Box):
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._listbox = Gtk.ListBox()
         self._listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        # Keep the Entry as the sole focus target. A focusable ListBox
+        # yanks keyboard focus the moment `select_row` fires during
+        # `_rebuild_list`, which stole every character past the first
+        # from the search input. All keyboard navigation (Tab, Enter,
+        # arrows) already routes through the palette's `_on_key`, so
+        # the listbox never needs keyboard focus of its own.
+        self._listbox.set_can_focus(False)
         self._listbox.add_css_class("overlay-palette-list")
         self._listbox.add_css_class("pilot-palette-list")
         self._scroller.set_child(self._listbox)
@@ -541,6 +587,12 @@ class CommandPalette(Gtk.Box):
         silently dropped when the list rebuilds."""
         self._active = set(pairs)
 
+    def is_open(self) -> bool:
+        """True between `open()` and `close()`. Prefer this over
+        `get_visible()` for key-dispatch decisions — the attachment
+        state flips synchronously, while GTK's visibility can lag."""
+        return self._attached
+
     def open(self, entries: Sequence[CommandPaletteEntry]) -> None:
         """Populate with `entries`, keep any preseeded active pairs
         that survive the new entry set, then add ourselves to the
@@ -556,10 +608,15 @@ class CommandPalette(Gtk.Box):
             self._attached = True
         self.set_visible(True)
         # Idle-add the focus so GTK has finished the overlay
-        # attachment by the time we reach for `grab_focus`. Without it
-        # the entry's grab can race with the layer-shell surface's
-        # initial keyboard grab and silently fail.
-        GLib.idle_add(self._search.grab_focus)
+        # attachment by the time we reach for the entry. The Entry
+        # re-selects its text on a plain `grab_focus()`, so use
+        # `grab_focus_without_selecting()` to keep the cursor at the
+        # end without wiping whatever the user typed pre-open.
+        def _claim_focus() -> bool:
+            self._search.grab_focus_without_selecting()
+            return False
+
+        GLib.idle_add(_claim_focus)
 
     def close(self) -> None:
         """Hide + detach without committing. Stateful widgets keep
@@ -615,9 +672,19 @@ class CommandPalette(Gtk.Box):
         first = self._listbox.get_row_at_index(0)
         if first is not None:
             self._listbox.select_row(first)
+            self._ensure_row_visible(first)
+        # Do NOT call `grab_focus()` here — `Gtk.Entry.grab_focus()`
+        # re-selects all existing text by default, so the next
+        # keystroke would replace the entry's content. Listbox + rows
+        # are already `can_focus=False`, so the entry never loses
+        # focus during a rebuild and no re-grab is needed.
 
     def _make_row(self, kind: str, name: str, desc: str) -> Gtk.ListBoxRow:
         row = Gtk.ListBoxRow()
+        # Matches the ListBox-level `set_can_focus(False)` — keyboard
+        # navigation runs entirely through the palette's `_on_key`, so
+        # rows should never become the keyboard focus target.
+        row.set_can_focus(False)
         row.add_css_class("overlay-palette-row")
         row.add_css_class("pilot-palette-row")
         # Track the identity on the row so `_toggle_active` /
@@ -694,7 +761,33 @@ class CommandPalette(Gtk.Box):
         nxt = self._listbox.get_row_at_index(target)
         if nxt is not None:
             self._listbox.select_row(nxt)
-            nxt.grab_focus()
+            self._ensure_row_visible(nxt)
+
+    def _ensure_row_visible(self, row: Gtk.ListBoxRow) -> None:
+        """Scroll the palette's ScrolledWindow so `row` is on screen.
+        Called on every keyboard-driven selection change. We can't rely
+        on `row.grab_focus()` to pull the viewport along because the
+        row is intentionally non-focusable — drive the vadjustment
+        directly. `idle_add` defers the computation to the next tick
+        so GTK has finished laying out any just-appended children."""
+        def _scroll() -> bool:
+            adj = self._scroller.get_vadjustment()
+            if adj is None:
+                return False
+            alloc = row.get_allocation()
+            if alloc.height <= 0:
+                return False
+            top = alloc.y
+            bottom = top + alloc.height
+            view_top = adj.get_value()
+            view_bottom = view_top + adj.get_page_size()
+            if top < view_top:
+                adj.set_value(top)
+            elif bottom > view_bottom:
+                adj.set_value(bottom - adj.get_page_size())
+            return False
+
+        GLib.idle_add(_scroll)
 
     def _toggle_current(self) -> None:
         row = self._listbox.get_selected_row()
@@ -730,7 +823,6 @@ class CommandPalette(Gtk.Box):
             self._on_commit(active)
         except Exception:
             log.exception("palette on_commit raised")
-
 
 __all__ = [
     "ButtonVariant",

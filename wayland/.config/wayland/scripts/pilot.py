@@ -7,6 +7,8 @@ first user turn, and streams chunks back via a `ConversationAdapter`. A
 Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
+from __future__ import annotations
+
 import argparse
 import errno
 import json
@@ -17,34 +19,37 @@ import socket
 import sys
 import tempfile
 import threading
-from typing import Any, Callable, Optional
-
-from markdown_it import MarkdownIt
+from dataclasses import dataclass
+from typing import Optional
 
 from lib import (
     DEFAULT_CONVERSE_ADAPTER,
     DEFAULT_SERVER_NAMES,
     ConversationAdapter,
     ConversationAdapterClaude,
-    ConversationAdapterCodex,
-    ConversationAdapterHttp,
-    ConversationProvider,
     ConversationAdapterOpenCode,
+    ConversationProvider,
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
-    McpConfig,
+    MarkdownMarkup,
     OutputAdapterClipboard,
+    PermissionState,
     ThinkingChunk,
     ToolCall,
     format_tool_args,
+    get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
-    highlight_code,
     load_prompt,
     notify,
     signal_waybar,
 )
-from lib.converse import _deep_merge
+from lib.skills import (
+    list_skills_via_mcp,
+    load_skill_references,
+    parse_skill,
+    read_reference,
+)
 
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
@@ -59,142 +64,17 @@ from lib.converse import _deep_merge
 # libwayland and the window renders as a normal xdg_toplevel. The
 # `layer_shell` sub-module is stdlib-only so importing it has no side
 # effects on gi.
-if len(sys.argv) > 1 and sys.argv[1] == "toggle":
-    from lib.layer_shell import (  # noqa: E402
-        ensure_layer_shell_preload as _ensure_layer_shell_preload,
-    )
+from lib.layer_shell import ensure_layer_shell_preload  # noqa: E402
 
-    _ensure_layer_shell_preload(__file__)
-
-# Very-early MCP server mode. Claude spawns us as a stdio MCP server
-# via `--mcp-config` → our config points back at this same script with
-# `mcp-server` as argv[1]. We don't want to drag gtk4-layer-shell /
-# GTK imports into that subprocess (it has no display + doesn't need
-# them), so we short-circuit to the MCP event loop here and exit.
-def _early_session_suffix() -> str:
-    """Extract `--session <value>` / `--session=<value>` from sys.argv
-    without running argparse. Needed for the early mcp-server branch at
-    the top of the file, which can't build a full parser (the GTK /
-    layer-shell imports below haven't run yet and the subparsers aren't
-    defined). Returns "" when the flag isn't present."""
-    argv = sys.argv[1:]
-    i = 0
-    while i < len(argv):
-        token = argv[i]
-        if token == "--session" and i + 1 < len(argv):
-            return argv[i + 1]
-        if token.startswith("--session="):
-            return token.split("=", 1)[1]
-        i += 1
-
-    return ""
-
-def _early_repeat_flag(flag: str) -> list[str]:
-    """Pull every `--<flag> <value>` / `--<flag>=<value>` occurrence from
-    sys.argv without touching argparse. Mirrors `_early_session_suffix`
-    but for repeatable flags like `--auto-approve` / `--auto-reject`
-    that the early mcp-server branch needs to honour before the main
-    CLI parser exists."""
-    prefix_equals = f"{flag}="
-    out: list[str] = []
-    argv = sys.argv[1:]
-    i = 0
-    while i < len(argv):
-        token = argv[i]
-        if token == flag and i + 1 < len(argv):
-            out.append(argv[i + 1])
-            i += 2
-            continue
-        if token.startswith(prefix_equals):
-            out.append(token.split("=", 1)[1])
-        i += 1
-
-    return out
-
-def _mcp_sock_name(suffix: str) -> str:
-    """Return the runtime-relative socket filename for the MCP bridge.
-    With no suffix that's `wayland-pilot-mcp.sock`; with suffix `plan`
-    it's `wayland-pilot-mcp-plan.sock`. Centralised so both the early
-    mcp-server branch and the main-path session plumbing agree."""
-    return f"wayland-pilot-mcp-{suffix}.sock" if suffix else "wayland-pilot-mcp.sock"
-
-if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
-    # Late import so the normal pilot.py paths still load gi below.
-    from lib.mcp import (  # noqa: E402
-        McpCapability,
-        McpServer,
-        question_route,
-        socket_approval,
-        socket_auto_check,
-        socket_question,
-    )
-
-    _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    _mcp_sock = os.path.join(_runtime, _mcp_sock_name(_early_session_suffix()))
-    _server = McpServer("pilot")
-    # Seed the subprocess's local auto sets from CLI args. These serve
-    # as the offline-mode source of truth when the bridge socket is
-    # unreachable; when it IS reachable the socket_auto_check route
-    # (installed first below) consults the overlay's live sets instead,
-    # so user-driven mutations (pill clicks, ⛔ auto-reject button)
-    # take effect mid-session without having to rebuild the subprocess.
-    _server.add_auto_approve(*_early_repeat_flag("--auto-approve"))
-    _server.add_auto_reject(*_early_repeat_flag("--auto-reject"))
-    # Install the socket-backed auto-check route BEFORE anything else —
-    # the overlay is the authoritative source for live auto-list
-    # membership. `continue` responses / transport errors fall through
-    # to the server's local auto-list route (seeded above), then the
-    # question route, then the base socket_approval callback.
-    _server.prepend_approval_route(*socket_auto_check(_mcp_sock))
-    # Single question callback shared between two entry points: the
-    # generic approval router (registered below via
-    # `add_approval_route`) pivots the model's built-in
-    # `AskUserQuestion`-style tools onto it, AND the standalone
-    # `ask_question` MCP tool uses the same callback when the model
-    # explicitly picks our tool.
-    _question_cb = socket_question(_mcp_sock)
-    _server.enable(McpCapability.APPROVAL, callback=socket_approval(_mcp_sock))
-    _server.add_approval_route(*question_route(_question_cb))
-    # Extra routes can be appended here — each is a (matcher, handler)
-    # pair that runs before the base approval callback:
-    #   _server.add_approval_route(
-    #       matcher=lambda tool, inp: tool == "ExitPlanMode",
-    #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
-    #   )
-    _server.enable(McpCapability.QUESTION, callback=_question_cb)
-    # `mcp__pilot__open` hands URIs / file paths to `xdg-open` — lets the
-    # AI ask to open things in the browser, obsidian, etc. The call
-    # still goes through the approval router first, so the user sees a
-    # row before anything spawns.
-    _server.enable(McpCapability.OPEN)
-    # Skills directory: one --skills-dir flag enables the list/load tools
-    # backed by that directory. Parsed via the same early-flag trick as
-    # the auto-approve / auto-reject lists — argparse hasn't run yet.
-    for _skills_dir in _early_repeat_flag("--skills-dir"):
-        if not _skills_dir:
-            continue
-        _server.enable(McpCapability.SKILLS, skills_dir=_skills_dir)
-        break  # only one skills dir per subprocess; later flags ignored
-    # Agents.md (and any other file-backed resources): each --agents-md
-    # registers `resource__agents` pointing at the given path. If more
-    # bootstrap files ever need the same treatment we can splat more
-    # `--resource name=path` flags through here.
-    for _agents_path in _early_repeat_flag("--agents-md"):
-        if not _agents_path:
-            continue
-        _server.enable(
-            McpCapability.RESOURCE,
-            name="agents",
-            path=_agents_path,
-            description=(
-                "Fetch the AGENTS.md bootstrap rules — read this at the "
-                "start of the session to load project conventions, MCP "
-                "discovery steps, and long-standing context."
-            ),
-        )
-        break  # single agents.md per subprocess
-    _server.run()
-    sys.exit(0)
+# Only `toggle` opens a GTK window, so the LD_PRELOAD re-exec is
+# scoped to that subcommand. We can't use argparse this early (GTK
+# imports below haven't run yet), and global flags like
+# `--session <name>` push `toggle` past argv[1] — so scan the whole
+# argv for the subcommand token. None of the four subcommand names
+# (toggle / status / is-running / kill) collide with any value a user
+# might pass to `--session` or `-v`, so membership is enough.
+if "toggle" in sys.argv[1:]:
+    ensure_layer_shell_preload(__file__)
 
 # `lib.overlay` handles the `gi.require_version` calls + layer-shell
 # setup; importing it first ensures the right GI versions are pinned
@@ -207,7 +87,12 @@ from lib.overlay import (  # noqa: E402
     LayerOverlayWindow,
     load_overlay_css,
     load_css_from_path,
+    spawn_backdrops,
 )
+import gi  # noqa: E402
+
+gi.require_version("Gtk4LayerShell", "1.0")
+from gi.repository import Gtk4LayerShell  # type: ignore[attr-defined]  # noqa: E402
 from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
     Gdk,
     Gio,
@@ -218,34 +103,36 @@ from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
 
 log = logging.getLogger("pilot")
 
-APP_ID = "dev.kilic.wayland.pilot"
-_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-# Main CLI socket — toggle/status/kill/turn from user-facing invocations.
-SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot.sock")
-# Dedicated MCP permission-prompt socket. The pilot MCP subprocess connects
-# here and blocks on overlay approval before returning allow/deny to claude.
-# Split from the main socket so a user kill / stale-cleanup never trips the
-# MCP bridge (and vice-versa).
-MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot-mcp.sock")
-# Session suffix applied at startup via `_apply_session_suffix` when
-# `--session <name>` is passed. Empty string keeps the original paths /
-# app-id verbatim so no-flag behaviour matches exactly what shipped
-# before. We track the bare suffix separately (not baked into the
-# globals) so adapter-config files can reuse it.
-SESSION_SUFFIX: str = ""
+@dataclass(frozen=True)
+class PilotPaths:
+    """Per-session filesystem coordinates. `--session <suffix>` derives a
+    parallel set of paths so multiple pilot overlays can coexist on the
+    same user."""
 
-def _apply_session_suffix(suffix: str) -> None:
-    """Rewrite the module-level socket paths + app-id to include
-    `-<suffix>` before the extension. Called from `main()` after
-    parsing `--session`; with an empty suffix the globals keep the
-    shipped defaults exactly."""
-    global APP_ID, SOCKET_PATH, MCP_SOCKET_PATH, SESSION_SUFFIX
-    SESSION_SUFFIX = suffix or ""
-    if not suffix:
-        return
-    APP_ID = f"dev.kilic.wayland.pilot.{suffix}"
-    SOCKET_PATH = os.path.join(_RUNTIME, f"wayland-pilot-{suffix}.sock")
-    MCP_SOCKET_PATH = os.path.join(_RUNTIME, _mcp_sock_name(suffix))
+    app_id: str
+    socket_path: str
+    suffix: str = ""
+
+    @classmethod
+    def from_suffix(cls, suffix: str) -> PilotPaths:
+        suffix = suffix or ""
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        base_app = "dev.kilic.wayland.pilot"
+        if suffix:
+            return cls(
+                app_id=f"{base_app}.{suffix}",
+                socket_path=os.path.join(runtime, f"wayland-pilot-{suffix}.sock"),
+                suffix=suffix,
+            )
+        return cls(
+            app_id=base_app,
+            socket_path=os.path.join(runtime, "wayland-pilot.sock"),
+        )
+
+# Populated in main() once `--session` has been parsed. Module-level
+# holder so the waybar-poll helpers (_send, _is_live, _cmd_status) can
+# share it without every caller threading a paths argument through.
+_PATHS: PilotPaths = PilotPaths.from_suffix("")
 
 AI_SYSTEM_PROMPT = load_prompt("pilot.md", relative_to=__file__)
 
@@ -258,141 +145,6 @@ def _signal_waybar_safe() -> None:
     except Exception as e:
         log.debug("waybar signal failed: %s", e)
 
-class MarkdownMarkup:
-    """Render CommonMark to a Pango markup string for Gtk.Label.
-
-    We swapped from a TextView+TextBuffer+TextTags pipeline to emitting a
-    Pango markup string that feeds `Gtk.Label.set_markup()`. Reasons:
-
-    * `Gtk.Label` lays out synchronously during `measure()`, so a freshly
-      populated card reports its true natural-height on the first layout
-      pass. TextView defers validation and returns a single-line natural
-      height until the buffer has been walked post-realize, which is
-      what made user cards render collapsed until the assistant reply
-      forced a re-layout.
-    * `<a href="…">` inside Pango markup drives the Label's native
-      `activate-link` signal, so link clicks no longer need
-      buffer-coordinate math or a custom GestureClick.
-    * Streaming stays cheap: each chunk we re-parse + re-emit markup and
-      call `label.set_markup()`. Markdown-it runs in microseconds at the
-      sizes AI responses produce."""
-
-    HEADING_SIZES = {1: "x-large", 2: "large", 3: "medium"}
-    LINK_COLOR = "#61afef"
-    CODE_BG = "#17191e"
-    INLINE_CODE_BG = "#2c333d"
-    FG_COLOR = "#abb2bf"
-
-    def __init__(self):
-        self._md = MarkdownIt("commonmark")
-
-    def render(self, text: str) -> str:
-        """Parse `text` as CommonMark and return Pango markup. Safe to
-        feed straight to `Gtk.Label.set_markup()`."""
-        tokens = self._md.parse(text)
-        out: list[str] = []
-        self._walk(tokens, out, list_stack=[])
-        markup = "".join(out).rstrip(" \n\t")
-
-        return markup
-
-    def _esc(self, text: str) -> str:
-        # Pango markup is XML-flavoured; escape every `&`, `<`, `>` in
-        # user-supplied content. Quotes only matter inside attribute
-        # values but escape_text handles them anyway.
-        return GLib.markup_escape_text(text)
-
-    def _walk(self, tokens, out, list_stack) -> None:
-        for tok in tokens:
-            self._handle(tok, out, list_stack)
-
-    def _handle(self, tok, out, list_stack) -> None:  # noqa: C901
-        match tok.type:
-            case "heading_open":
-                level = int(tok.tag[1])
-                size = self.HEADING_SIZES.get(level, "medium")
-                out.append(f'<span size="{size}" weight="bold">')
-            case "heading_close":
-                out.append("</span>\n\n")
-            case "paragraph_open":
-                pass
-            case "paragraph_close":
-                # Tight lists use paragraphs for item bodies; emit one
-                # break instead of two so list items don't double-space.
-                out.append("\n" if list_stack else "\n\n")
-            case "inline":
-                self._walk(tok.children or [], out, list_stack)
-            case "text":
-                out.append(self._esc(tok.content))
-            case "softbreak":
-                out.append(" ")
-            case "hardbreak":
-                out.append("\n")
-            case "strong_open":
-                out.append("<b>")
-            case "strong_close":
-                out.append("</b>")
-            case "em_open":
-                out.append("<i>")
-            case "em_close":
-                out.append("</i>")
-            case "code_inline":
-                out.append(
-                    f'<span font_family="monospace" '
-                    f'background="{self.INLINE_CODE_BG}">'
-                    f"{self._esc(tok.content)}</span>"
-                )
-            case "link_open":
-                href = self._esc(tok.attrGet("href") or "")
-                out.append(
-                    f'<a href="{href}">'
-                    f'<span foreground="{self.LINK_COLOR}" underline="single">'
-                )
-            case "link_close":
-                out.append("</span></a>")
-            case "fence" | "code_block":
-                content = tok.content.rstrip("\n")
-                # `tok.info` on a fence is the language string after the
-                # opening triple-backticks (e.g. ```python foo → "python
-                # foo"). We take the first whitespace-delimited word and
-                # let `highlight_code` pygments-dispatch from there.
-                # `code_block` (indented) has no language hint at all —
-                # None triggers pygments' `guess_lexer` fallback.
-                info = (getattr(tok, "info", "") or "").strip().split()
-                language = info[0] if info else None
-                highlighted = highlight_code(content, language)
-                out.append(
-                    f'<span font_family="monospace" '
-                    f'background="{self.CODE_BG}">'
-                    f"{highlighted}</span>\n\n"
-                )
-            case "bullet_list_open":
-                list_stack.append(["bullet", 0])
-            case "ordered_list_open":
-                list_stack.append(["ordered", int(tok.attrGet("start") or 1)])
-            case "bullet_list_close" | "ordered_list_close":
-                list_stack.pop()
-                if not list_stack:
-                    out.append("\n")
-            case "list_item_open":
-                ctx = list_stack[-1] if list_stack else None
-                indent = "  " * max(0, len(list_stack) - 1)
-                if ctx and ctx[0] == "ordered":
-                    out.append(f"{indent}{ctx[1]}. ")
-                    ctx[1] += 1
-                else:
-                    out.append(f"{indent}• ")
-            case "list_item_close":
-                pass
-            case "blockquote_open":
-                out.append("<i>")
-            case "blockquote_close":
-                out.append("</i>")
-            case "hr":
-                out.append('<span foreground="#4b5263">' + ("─" * 40) + "</span>\n\n")
-            case _:
-                log.debug("unhandled token: %s", tok.type)
-
 class ComposeView:
     """Multi-line compose with an obvious visual box, hint line, and a
     clickable SEND button. Enter submits, Shift+Enter inserts a newline,
@@ -404,42 +156,13 @@ class ComposeView:
     # feels like a proper compose box, not a single-line entry, and
     # stays usable on short screens where 25% of the height would be
     # even less.
-    MIN_ROWS = 5
+    MIN_ROWS = 8
 
     def __init__(self, on_submit=None):
         self._on_submit = on_submit
 
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.widget.add_css_class("pilot-compose-wrap")
-
-        # Question banner. Hidden until `set_question_mode` is called
-        # by a claude `ask_question` MCP forward; shows the question
-        # text above the compose textview with a "✕ skip" button. The
-        # next submit sends its text to the question callback instead
-        # of dispatching a normal turn; the banner clears as soon as
-        # the user answers or skips.
-        self._question_banner = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            spacing=8,
-        )
-        self._question_banner.add_css_class("pilot-question-banner")
-        self._question_label = Gtk.Label(
-            xalign=0.0,
-            hexpand=True,
-            wrap=True,
-            wrap_mode=Pango.WrapMode.WORD_CHAR,
-            selectable=True,
-        )
-        self._question_label.add_css_class("pilot-question-text")
-        self._question_banner.append(self._question_label)
-        skip_btn = Gtk.Button(label="✕ skip")
-        skip_btn.add_css_class("pilot-question-skip")
-        skip_btn.set_tooltip_text("Skip this question — return an empty answer")
-        skip_btn.connect("clicked", lambda _b: self._on_question_skip())
-        self._question_banner.append(skip_btn)
-        self._question_banner.set_visible(False)
-        self.widget.append(self._question_banner)
-        self._question_callback: Optional[Callable[[str], None]] = None
 
         self._scroller = Gtk.ScrolledWindow()
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -473,28 +196,8 @@ class ComposeView:
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("pilot-compose-bar")
 
-        # Trusted-tool pills live on the left of the submit bar. Each
-        # pill is a single button labelled `name ✕`; clicking invokes
-        # the registered remove callback (set from PilotWindow). Hidden
-        # until at least one tool is trusted. Using a FlowBox so we
-        # wrap gracefully if the user has trusted a lot of tools.
-        self._pills_flow = Gtk.FlowBox(
-            orientation=Gtk.Orientation.HORIZONTAL,
-            column_spacing=4,
-            row_spacing=4,
-            hexpand=True,
-            valign=Gtk.Align.CENTER,
-        )
-        self._pills_flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._pills_flow.set_max_children_per_line(64)
-        self._pills_flow.set_homogeneous(False)
-        self._pills_flow.add_css_class("pilot-compose-pills")
-        self._pills_flow.set_visible(False)
-        bar.append(self._pills_flow)
-        self._pill_remove_cb = None
-
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+Space resources · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+Space skills · Ctrl+K permissions · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -520,80 +223,6 @@ class ComposeView:
         cap = int(window_height_px * fraction)
         floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
         self._scroller.set_max_content_height(max(floor, cap))
-
-    def set_trusted_pills(self, names, on_remove) -> None:
-        """Back-compat shim. Old callers pass just the trusted list and
-        a 1-arg remove callback. Adapts to the new tri-list API by
-        wrapping the callback to ignore the `kind` arg."""
-        self.set_permission_pills(
-            trusted=list(names),
-            auto_approved=[],
-            auto_rejected=[],
-            on_remove=lambda name, _kind: on_remove(name),
-        )
-
-    def set_permission_pills(
-        self,
-        trusted,
-        auto_approved,
-        auto_rejected,
-        on_remove,
-    ) -> None:
-        """Rebuild the compose-bar pill strip with three colour bands —
-        accent (trusted), green (auto-approved), red (auto-rejected).
-        `on_remove(name, kind)` gets the list the clicked pill came
-        from so the window knows which set to drop it from
-        (`"trusted"` / `"auto_approve"` / `"auto_reject"`).
-
-        Hides the row when all three lists are empty; hides the hint
-        label otherwise so pills + hint + send don't crowd the bar."""
-        self._pill_remove_cb = on_remove
-        # Clear the old children — FlowBox doesn't have a bulk-clear.
-        child = self._pills_flow.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            self._pills_flow.remove(child)
-            child = nxt
-
-        groups = [
-            ("trusted", list(trusted), None, "Click to untrust {name} (re-enables prompts)"),
-            ("auto_approve", list(auto_approved), "auto-approve", "Click to drop {name} from the auto-approve list"),
-            ("auto_reject", list(auto_rejected), "auto-reject", "Click to drop {name} from the auto-reject list"),
-        ]
-        total = sum(len(lst) for _k, lst, _cls, _tip in groups)
-        if total == 0:
-            self._pills_flow.set_visible(False)
-            if self._hint_label is not None:
-                self._hint_label.set_visible(True)
-
-            return
-
-        for kind, names, extra_cls, tooltip_fmt in groups:
-            for name in names:
-                btn = Gtk.Button(label=f"{name} ✕")
-                btn.add_css_class("pilot-compose-pill")
-                if extra_cls:
-                    btn.add_css_class(extra_cls)
-                btn.set_tooltip_text(tooltip_fmt.format(name=name))
-                btn.connect(
-                    "clicked",
-                    lambda _b, n=name, k=kind: self._on_pill_click(n, k),
-                )
-                self._pills_flow.append(btn)
-        self._pills_flow.set_visible(True)
-        # Hide the hint when pills are present — pills + hint + send
-        # would crowd the submit bar on narrow overlays.
-        if self._hint_label is not None:
-            self._hint_label.set_visible(False)
-
-    def _on_pill_click(self, name: str, kind: str = "trusted") -> None:
-        if self._pill_remove_cb is not None:
-            # Accommodate both the new (name, kind) callback and any
-            # legacy single-arg callers that slip through.
-            try:
-                self._pill_remove_cb(name, kind)
-            except TypeError:
-                self._pill_remove_cb(name)
 
     def get_text(self) -> str:
         buf = self._textview.get_buffer()
@@ -623,63 +252,9 @@ class ComposeView:
         text = self.get_text().strip()
         if not text:
             return
-        # Question mode wins: while a claude `ask_question` is pending,
-        # submit routes the typed text back to that callback instead of
-        # dispatching a normal user turn. Clear the banner + callback
-        # before firing so re-entrant calls don't double-answer.
-        if self._question_callback is not None:
-            cb = self._question_callback
-            self.clear()
-            self.clear_question_mode()
-            cb(text)
-
-            return
         if self._on_submit:
             self.clear()
             self._on_submit(text)
-
-    def set_question_mode(
-        self, question: str, on_answer: Callable[[str], None]
-    ) -> None:
-        """Show the question banner above the textview and wire the
-        next submit to `on_answer(text)` instead of the normal turn
-        dispatch. Replaces any previous question in flight — the prior
-        callback is resolved with empty-string so the socket handler
-        doesn't hang."""
-        if (
-            self._question_callback is not None
-            and self._question_callback is not on_answer
-        ):
-            # Resolve the stale one so its socket thread unblocks.
-            try:
-                self._question_callback("")
-            except Exception:
-                log.exception("stale question callback raised")
-        self._question_callback = on_answer
-        self._question_label.set_label(f"🤔 {question}")
-        self._question_banner.set_visible(True)
-
-    def clear_question_mode(self) -> None:
-        """Hide the banner and forget the callback. Safe to call when
-        no question is active."""
-        self._question_callback = None
-        self._question_banner.set_visible(False)
-
-    def has_question(self) -> bool:
-        """True while the compose is in question-answer mode. Window
-        reads this to include the banner in its awaiting-phase check."""
-        return self._question_callback is not None
-
-    def _on_question_skip(self) -> None:
-        """`✕ skip` button: resolve the question with an empty answer
-        and dismiss the banner without sending a turn."""
-        cb = self._question_callback
-        self.clear_question_mode()
-        if cb is not None:
-            try:
-                cb("")
-            except Exception:
-                log.exception("question skip callback raised")
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
@@ -951,9 +526,7 @@ class TurnCard:
         return value to stop once they find one."""
         if self._thinking_expander is None:
             return False
-        self._thinking_expander.set_expanded(
-            not self._thinking_expander.get_expanded()
-        )
+        self._thinking_expander.set_expanded(not self._thinking_expander.get_expanded())
 
         return True
 
@@ -1029,7 +602,9 @@ class TurnCard:
             parts.append(f"<tt>{GLib.markup_escape_text(args_pretty)}</tt>")
         result = slot.get("result")
         if result:
-            parts.append(f"<i>result:</i>\n<tt>{GLib.markup_escape_text(str(result))}</tt>")
+            parts.append(
+                f"<i>result:</i>\n<tt>{GLib.markup_escape_text(str(result))}</tt>"
+            )
         label.set_markup("\n\n".join(parts))
 
     def _on_bubble_clicked(self, _button, tool_id: str) -> None:
@@ -1190,14 +765,17 @@ class PermissionRow(Gtk.ListBoxRow):
 
         # Argument preview. Routes through `format_tool_args` so
         # common tool names (Bash / Read / Edit / …) render as a
-        # short readable summary (`$ ls -la`, `📖 /path/to/file`)
-        # instead of a JSON dump. Unknown tools still fall through to
-        # the JSON-pretty branch inside the formatter.
+        # short readable summary. Long values (multi-line jq / python
+        # one-liners, huge diffs) collapse to a single ellipsized
+        # line so the row stays scannable; the full text lives in the
+        # tooltip for hover-inspection.
         pretty = format_tool_args(call.name or "", call.arguments or "")
-        args_label = Gtk.Label(label=pretty, xalign=0.0, hexpand=True)
-        args_label.set_wrap(True)
-        args_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        single_line = " ".join(pretty.split())
+        args_label = Gtk.Label(label=single_line, xalign=0.0, hexpand=True)
+        args_label.set_ellipsize(Pango.EllipsizeMode.END)
+        args_label.set_max_width_chars(80)
         args_label.set_selectable(True)
+        args_label.set_tooltip_text(pretty)
         args_label.add_css_class("pilot-permission-args")
         card.append(args_label)
 
@@ -1271,17 +849,13 @@ class PermissionRow(Gtk.ListBoxRow):
 # (`file/sub/dir/foo.py`) but tight enough that unrelated `#{…}` text in
 # the user's message doesn't get swept up. The kind token restricts to
 # `skill` / `file` / `mcp:*` etc.
-_RESOURCE_TOKEN_RE = re.compile(
-    r"#\{(?P<kind>[A-Za-z0-9_.:-]+)/(?P<name>[^}]+)\}"
-)
-
+_RESOURCE_TOKEN_RE = re.compile(r"#\{(?P<kind>[A-Za-z0-9_.:-]+)/(?P<name>[^}]+)\}")
 
 def _format_resource_token(kind: str, name: str) -> str:
     """Canonical `#{<kind>/<name>}` wire form for the compose box. Kept
     in one place so the palette inserts the same shape the dispatch
     pre-filter looks for."""
     return "#{" + kind + "/" + name + "}"
-
 
 def _preseed_resource_active_from_compose(
     compose: "ComposeView",
@@ -1301,7 +875,6 @@ def _preseed_resource_active_from_compose(
             active.add(pair)
 
     return active
-
 
 def _commit_resources_to_compose(
     compose: "ComposeView",
@@ -1340,7 +913,6 @@ def _commit_resources_to_compose(
     # where the user left off.
     compose.focus()
 
-
 class PilotWindow(LayerOverlayWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
     widgets (one per user/assistant turn), queued turns are cards of
@@ -1363,6 +935,7 @@ class PilotWindow(LayerOverlayWindow):
         cwd: Optional[str] = None,
         skills_dir: Optional[str] = None,
         mcp_server_names: Optional[list[str]] = None,
+        session_suffix: str = "",
     ):
         # LayerOverlayWindow handles Gtk4LayerShell init, anchors,
         # keyboard mode, and the initial width sizing. Pilot's shape
@@ -1374,10 +947,15 @@ class PilotWindow(LayerOverlayWindow):
             application=app,
             title="Pilot",
             namespace="pilot",
+            # OVERLAY so pilot renders above the TOP-layer backdrops
+            # that dim every monitor when the sidebar is visible.
+            layer=Gtk4LayerShell.Layer.OVERLAY,
             anchors=("top", "bottom", "right"),
             width_fraction=0.4,
             fallback_width=520,
         )
+        self._app = app
+        self._backdrops: list = []
         self._adapter = adapter
         # Session handle wired later via `attach_session` — the overlay
         # uses it to push auto-list mutations into the authoritative
@@ -1385,8 +963,8 @@ class PilotWindow(LayerOverlayWindow):
         # socket). None-safe so tests can construct windows without a
         # live socket.
         self._session: Optional["Session"] = None
-        # HTTP adapter carries a model; claude/codex wrap CLIs that pick
-        # their own. Model string can be empty → treat as absent.
+        # Adapter may expose `model` (ACP adapters always do); empty /
+        # missing → treat as absent.
         raw_model = getattr(adapter, "model", "") or ""
         self._model: Optional[str] = raw_model.strip() or None
         self._provider_name = adapter.provider.value
@@ -1408,41 +986,29 @@ class PilotWindow(LayerOverlayWindow):
         self._turn_cancelled = False
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
-        # Tool permission rows live above the queue; trust set is
-        # per-session. The trust set is ALSO the pre-flight gate: the
-        # adapter's `extra_body["tool_ids"]` is rewritten from this set
-        # before every turn, so untrusted tools never reach the server.
-        # Rows in the panel are a live audit trail of tools the server
-        # DID run (trusted) plus anything surprising that slipped
-        # through. Seed from whatever the adapter was constructed with
-        # so CLI defaults (`--extra-body '{"tool_ids": [...]}'`)
-        # pre-populate trust.
+        # Permission rows stack above the queue. `PermissionState`
+        # tracks the three disjoint sets (trust / auto-approve /
+        # auto-reject); `show_permission_for_acp` consults
+        # `decide(name)` first and short-circuits without surfacing a
+        # row when a tool is already in one of them.
         self._permissions: list[PermissionRow] = []
-        extra_body = getattr(adapter, "extra_body", None) or {}
-        initial_tool_ids = extra_body.get("tool_ids") if isinstance(extra_body, dict) else None
-        self._trusted_tools: set[str] = set(initial_tool_ids or [])
-        # Auto-lists are a SEPARATE short-circuit from trust:
-        # - `_auto_approved_tools` — responses come back `allow` without
-        #   the user seeing a row. Rendered as green pills.
-        # - `_auto_rejected_tools` — responses come back `deny` without
-        #   the user seeing a row. Rendered as red pills.
-        # These sets drive UI rendering; the Session owns the
-        # authoritative copy the MCP subprocess consults over the
-        # bridge. Seeded from CLI args in parallel with the Session so
-        # both start identical on session launch.
-        self._auto_approved_tools: set[str] = set(auto_approve or [])
-        self._auto_rejected_tools: set[str] = set(auto_reject or [])
+        self._permission = PermissionState.from_seeds(
+            auto_approve=auto_approve or (),
+            auto_reject=auto_reject or (),
+        )
         # Palette seed data: `--cwd` / `--skills-dir` / the resolved
-        # list of MCP server names from `_build_mcp_config`. All three
+        # list of MCP server names. All three
         # can be None/empty — the palette's `_collect_resources` drops
         # empty sections gracefully.
         self._cwd: Optional[str] = cwd
         self._skills_dir: Optional[str] = skills_dir
         self._mcp_server_names: list[str] = list(mcp_server_names or [])
+        self._session_suffix: str = session_suffix or ""
         # Palette widget is built on demand (first Ctrl+Space) and then
         # cached — we reset state (search box, active set) on every
         # open so stale selections don't leak across sessions.
         self._palette: Optional[CommandPalette] = None
+        self._permissions_palette: Optional[CommandPalette] = None
         self._install_css()
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1546,6 +1112,35 @@ class PilotWindow(LayerOverlayWindow):
     def focus_compose(self) -> None:
         self._compose.focus()
 
+    def set_visible(self, visible: bool) -> None:  # type: ignore[override]
+        """Toggle both the overlay window and its per-monitor dim
+        backdrops together. Showing pilot spawns one backdrop per
+        output; hiding tears them down. Each backdrop catches clicks
+        and hides the overlay, so tapping any non-pilot region of any
+        screen dismisses the sidebar."""
+        if visible:
+            super().set_visible(True)
+            if not self._backdrops:
+                self._backdrops = spawn_backdrops(
+                    self._app, on_click=self._hide_from_backdrop
+                )
+        else:
+            self._dismiss_backdrops()
+            super().set_visible(False)
+
+    def _dismiss_backdrops(self) -> None:
+        for bd in self._backdrops:
+            try:
+                bd.destroy()
+            except Exception as e:
+                log.debug("backdrop destroy raised: %s", e)
+        self._backdrops = []
+
+    def _hide_from_backdrop(self) -> None:
+        """Backdrop click-through handler. Hide the overlay — a
+        subsequent toggle/turn will re-open it."""
+        self.set_visible(False)
+
     def toggle_visibility(self) -> bool:
         if self.get_visible():
             self.set_visible(False)
@@ -1560,21 +1155,56 @@ class PilotWindow(LayerOverlayWindow):
 
         return False
 
+    def _expand_resource_tokens(self, text: str) -> str:
+        """Replace every `#{kind/name}` in `text` with the referenced
+        resource body (skill / reference), then strip leftover tokens
+        for unknown kinds. Missing resources collapse to an inline
+        `-- resource unavailable: … --` note rather than crashing the
+        turn, so a stale palette pick still produces a valid prompt."""
+        resolved: list[str] = []
+        for match in _RESOURCE_TOKEN_RE.finditer(text):
+            kind, name = match.group("kind"), match.group("name")
+            body = self._resolve_resource(kind, name)
+            if body is not None:
+                resolved.append(f"### {kind}/{name}\n\n{body}")
+        if not resolved:
+            return _RESOURCE_TOKEN_RE.sub("", text).strip()
+        user_tail = _RESOURCE_TOKEN_RE.sub("", text)
+        user_tail = re.sub(r"[ \t]{2,}", " ", user_tail).strip()
+        sections = "\n\n".join(resolved)
+        if user_tail:
+            return f"{sections}\n\n---\n\n{user_tail}"
+        return sections
+
+    def _resolve_resource(self, kind: str, name: str) -> Optional[str]:
+        """Load the body of a palette-picked resource. Returns None when
+        the kind is unknown or the file is unreadable — caller drops
+        the token in that case."""
+        if not self._skills_dir:
+            return None
+        if kind == "skill":
+            skill_md = os.path.join(self._skills_dir, name, "SKILL.md")
+            skill = parse_skill(skill_md, fallback_name=name)
+            if skill is None:
+                return None
+            refs = load_skill_references(self._skills_dir, name)
+            if refs and refs.startswith("No references"):
+                refs = None
+            parts = [skill.body]
+            if refs:
+                parts.append("### References\n\n" + refs)
+            return "\n\n".join(parts)
+        if kind == "reference":
+            return read_reference(self._skills_dir, name)
+        return None
+
     def dispatch_turn(self, user_message: str) -> None:
-        # Parse + strip `#{kind/name}` resource references inserted
-        # via the Ctrl+Space palette. For this iteration we just log
-        # them at debug level so the user's compose-as-typed is
-        # captured literally; real expansion (loading the skill body
-        # / embedding the file content) is a follow-up that'll
-        # pre-process the prompt before it reaches the adapter.
-        refs = [
-            (m.group("kind"), m.group("name"))
-            for m in _RESOURCE_TOKEN_RE.finditer(user_message)
-        ]
-        if refs:
-            log.debug("resource refs in compose (not yet expanded): %s", refs)
-            user_message = _RESOURCE_TOKEN_RE.sub("", user_message)
-            user_message = re.sub(r"[ \t]{2,}", " ", user_message)
+        # Expand `#{kind/name}` resource tokens inserted by the
+        # Ctrl+Space palette. Skills and references get inlined as
+        # fenced markdown blocks above the user's prose so the agent
+        # sees the full body in a single prompt — no round-trip
+        # through `resources/read` needed.
+        user_message = self._expand_resource_tokens(user_message)
         message = user_message.strip()
         if not message:
             return
@@ -1644,11 +1274,14 @@ class PilotWindow(LayerOverlayWindow):
 
     def _header_title(self) -> str:
         if self._model:
-            return self.HEADER_WITH_MODEL_FMT.format(
+            base = self.HEADER_WITH_MODEL_FMT.format(
                 provider=self._provider_name, model=self._model
             )
-
-        return self.HEADER_FMT.format(provider=self._provider_name)
+        else:
+            base = self.HEADER_FMT.format(provider=self._provider_name)
+        if self._session_suffix:
+            return f"[{self._session_suffix}] {base}"
+        return base
 
     def _assistant_title(self) -> str:
         if self._model:
@@ -1684,24 +1317,12 @@ class PilotWindow(LayerOverlayWindow):
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
-                # Tool events surface in the permission panel as an
-                # audit trail; they do NOT pause the stream. Real
-                # gating happens pre-flight via `_trusted_tools` ->
-                # `adapter.extra_body["tool_ids"]` — an untrusted tool
-                # simply isn't advertised to the server, so the AI
-                # can't call it.
-                # Mid-stream blocking would just desync us from the
-                # server's native-function-calling protocol (server
-                # ends the stream at `finish_reason: tool_calls`
-                # expecting us to send tool results; blocking reads
-                # doesn't help because by the time we see the event
-                # the turn is already done).
                 if isinstance(chunk, ToolCall):
-                    # `audit=True` is the new normal — bubble strip on
-                    # the active assistant card. `audit=False` goes to
-                    # the legacy permission-row sink (kept for MCP
-                    # bridge-initiated paths and any future non-audit
-                    # producers).
+                    # audit=True → tool bubble on the assistant card.
+                    # audit=False → blocking PermissionRow (the ACP
+                    # `request_permission` path routes around this
+                    # through `set_permission_handler`, so this branch
+                    # is a fallback for any non-audit producer).
                     if getattr(chunk, "audit", False):
                         GLib.idle_add(self._on_tool_stream_event, chunk)
                     else:
@@ -1771,7 +1392,6 @@ class PilotWindow(LayerOverlayWindow):
     # drops the icon without failing.
     _NOTIFY_ICON_FINISHED = "dialog-information-symbolic"
     _NOTIFY_ICON_APPROVAL = "dialog-password-symbolic"
-    _NOTIFY_ICON_QUESTION = "dialog-question-symbolic"
 
     def _should_notify(self) -> bool:
         """Only fire desktop toasts when the overlay itself is hidden.
@@ -1798,17 +1418,6 @@ class PilotWindow(LayerOverlayWindow):
             timeout=8000,
         )
 
-    def _notify_question(self, question: str) -> None:
-        if not self._should_notify():
-            return
-        preview = question if len(question) <= 140 else question[:137] + "…"
-        notify(
-            "Pilot — question",
-            preview or "The AI is waiting for your answer",
-            self._NOTIFY_ICON_QUESTION,
-            timeout=10000,
-        )
-
     def _update_phase(self) -> bool:
         """Recompute the provider pill's phase from current state.
 
@@ -1823,7 +1432,7 @@ class PilotWindow(LayerOverlayWindow):
         - `_streaming` without any chunks yet → `pending` (red).
           Turn is in flight, we're waiting for the first byte.
         - Otherwise → `idle` (green)."""
-        if self._permissions or self._compose.has_question():
+        if self._permissions:
             phase = "awaiting"
         elif self._stream_started:
             phase = "streaming"
@@ -1935,23 +1544,9 @@ class PilotWindow(LayerOverlayWindow):
         """Main-thread sink for `ToolCall` events from `adapter.turn()`.
         Scheduled via `GLib.idle_add` from the worker thread — returns
         False so it fires once and detaches."""
-        if call.name and call.name in self._trusted_tools:
-            log.debug("tool %r is trusted; skipping permission row", call.name)
-
+        if call.name and self._permission.decide(call.name) is not None:
+            log.debug("tool %r short-circuited by permission state", call.name)
             return False
-        # Belt-and-suspenders: the MCP subprocess's approval route
-        # should have short-circuited before any row reaches this
-        # branch, but non-Claude adapters (HTTP, codex) bypass MCP
-        # entirely and still surface ToolCall events through the audit
-        # trail. Filter those here so the pills and the audit trail
-        # stay consistent.
-        if call.name:
-            if call.name in self._auto_approved_tools:
-                log.debug("tool %r auto-approved; skipping row", call.name)
-                return False
-            if call.name in self._auto_rejected_tools:
-                log.debug("tool %r auto-rejected; skipping row", call.name)
-                return False
         row = PermissionRow(
             call,
             on_allow=self._on_permission_allow,
@@ -1988,97 +1583,51 @@ class PilotWindow(LayerOverlayWindow):
             self._permissions_box.set_visible(False)
         self._update_phase()
 
-    def show_question(self, question: str, resolve) -> bool:
-        """Route a claude `ask_question` MCP tool through the overlay.
+    def show_permission_for_acp(self, call: ToolCall, options, resolve) -> bool:
+        """Render a permission row for an ACP `session/request_permission`
+        event and invoke `resolve(option_id: Optional[str])` when the
+        user clicks. The agent subprocess is blocked on this round-trip
+        — it won't run the tool until we pick an option.
 
-        Places a question banner inside the compose wrap so the
-        question reads right above the input box; the user's next
-        submit sends the typed text back to `resolve` instead of
-        dispatching a normal turn. The banner disappears as soon as
-        they answer (or skip). Returns False so `GLib.idle_add` fires
-        once."""
+        `resolve(None)` sends a `cancelled` outcome; `resolve("<id>")`
+        sends `selected`. The four PermissionRow buttons each map to a
+        PermissionOption kind (`allow_once`, `allow_always`,
+        `reject_once`, `reject_always`); `select_option_id` finds the
+        closest match when the agent didn't ship that exact kind (e.g.
+        opencode's `once / always / reject` triad has no `reject_always`).
 
-        # Wrap `resolve` so the phase pill flips back to whatever it
-        # was before the question arrived (pending / streaming /
-        # idle) as soon as the user answers or skips. The compose
-        # clears `_question_callback` before firing the callback, so
-        # by the time we reach `_update_phase()` `has_question()`
-        # already reports False.
-        def resolved(answer: str) -> None:
-            try:
-                resolve(answer)
-            finally:
-                self._update_phase()
+        Belt-and-suspenders short-circuits: if the tool name is already
+        in an auto list, we answer without surfacing a row so the UI
+        stays consistent with the pill state."""
+        from lib.acp_adapter import select_option_id  # lazy import
 
-        self._compose.set_question_mode(question, on_answer=resolved)
-        # Always focus the compose textview when a question lands,
-        # even if focus is currently on an approval row or elsewhere.
-        # The `idle_add` defer ensures the grab fires after the
-        # banner's size-allocate, otherwise grab_focus on a freshly-
-        # laid-out widget can no-op.
-        self._compose.focus()
-        GLib.idle_add(self._compose.focus)
-        self._update_phase()
-        self._notify_question(question)
-
-        return False
-
-    def show_permission_for_mcp(self, call: ToolCall, resolve) -> bool:
-        """Render a permission row for a Claude MCP permission-prompt
-        request and invoke `resolve(approved: bool, reason: str)` when
-        the user clicks. This is the REAL gate for `--converse-provider
-        claude` — the pilot MCP subprocess is blocked on a socket round-
-        trip here, so claude's subprocess won't run the tool until we
-        return. Returns False so `GLib.idle_add` fires once.
-
-        Belt-and-suspenders: if the tool is in an auto list the MCP
-        subprocess's socket_auto_check route should have resolved the
-        request upstream. If a request still reaches us (racy mutation,
-        first-call-per-tool, etc.) we resolve without surfacing a row
-        so the UI stays consistent with the pill state."""
-        name = call.name or ""
-        if name and name in self._auto_rejected_tools:
-            resolve(False, f"auto-rejected: {name}")
-            return False
-        if name and name in self._auto_approved_tools:
-            resolve(True, "")
+        auto_kind = self._permission.decide(call.name or "")
+        if auto_kind is not None:
+            resolve(select_option_id(options, auto_kind))
             return False
 
         def on_allow(r: PermissionRow) -> None:
             self._remove_permission_row(r)
-            resolve(True, "")
+            resolve(select_option_id(options, "allow_once"))
 
         def on_trust(r: PermissionRow) -> None:
-            name = r.tool_name
-            if name:
-                self._trusted_tools.add(name)
+            tool_name = r.tool_name
+            if tool_name:
+                self._permission.trust(tool_name)
                 self._sync_permission_state()
             for existing in list(self._permissions):
-                if existing.tool_name == name:
+                if existing.tool_name == tool_name:
                     self._remove_permission_row(existing)
-            resolve(True, "")
+            resolve(select_option_id(options, "allow_always"))
 
         def on_deny(r: PermissionRow) -> None:
-            name = r.tool_name or "tool"
             self._remove_permission_row(r)
-            resolve(False, f"user denied {name}")
+            resolve(select_option_id(options, "reject_once"))
 
         def on_auto_reject(r: PermissionRow) -> None:
-            # Add to auto-reject, push to session so the MCP subprocess
-            # sees the update for subsequent calls, cancel the turn,
-            # stamp the assistant card, clear the row + any siblings
-            # for the same tool. The `resolve(False)` path finalises
-            # the current in-flight MCP request — subsequent requests
-            # for the same tool will short-circuit upstream via the
-            # socket_auto_check route.
-            name = r.tool_name or "tool"
+            tool_name = r.tool_name or "tool"
             if r.tool_name:
-                self._auto_rejected_tools.add(r.tool_name)
-                # Removing from auto_approve keeps mutual exclusion
-                # honest — a tool in both sets would pick reject
-                # (reject wins in McpServer's normalisation), but UI
-                # wise we shouldn't show both pills.
-                self._auto_approved_tools.discard(r.tool_name)
+                self._permission.auto_reject(r.tool_name)
                 self._sync_permission_state()
             self._turn_cancelled = True
             try:
@@ -2087,12 +1636,12 @@ class PilotWindow(LayerOverlayWindow):
                 log.warning("adapter cancel raised during auto-reject: %s", e)
             if self._active_assistant is not None:
                 self._active_assistant.append(
-                    f"\n\n*— cancelled (auto-rejected: {name}) —*"
+                    f"\n\n*— cancelled (auto-rejected: {tool_name}) —*"
                 )
             for existing in list(self._permissions):
                 if existing.tool_name == r.tool_name:
                     self._remove_permission_row(existing)
-            resolve(False, f"auto-rejected: {name}")
+            resolve(select_option_id(options, "reject_always"))
 
         row = PermissionRow(
             call,
@@ -2118,7 +1667,7 @@ class PilotWindow(LayerOverlayWindow):
     def _on_permission_trust(self, row: PermissionRow) -> None:
         name = row.tool_name
         if name:
-            self._trusted_tools.add(name)
+            self._permission.trust(name)
             self._sync_permission_state()
         # Drop every pending row for the same tool while we're at it —
         # the user just said they trust it, no point keeping duplicate
@@ -2128,13 +1677,12 @@ class PilotWindow(LayerOverlayWindow):
                 self._remove_permission_row(existing)
 
     def _on_permission_auto_reject(self, row: PermissionRow) -> None:
-        """Non-MCP auto-reject path. Same shape as the MCP variant in
-        `show_permission_for_mcp` but without the resolver — this
-        fires for ToolCall audit rows, which are fire-and-forget."""
+        """Audit-only auto-reject path — mirrors the gated variant in
+        `show_permission_for_acp` but without a resolver, because the
+        bubbles it fires for already surfaced fire-and-forget."""
         name = row.tool_name or "tool"
         if row.tool_name:
-            self._auto_rejected_tools.add(row.tool_name)
-            self._auto_approved_tools.discard(row.tool_name)
+            self._permission.auto_reject(row.tool_name)
             self._sync_permission_state()
         self._turn_cancelled = True
         try:
@@ -2149,90 +1697,22 @@ class PilotWindow(LayerOverlayWindow):
             if existing.tool_name == row.tool_name:
                 self._remove_permission_row(existing)
 
-    def _untrust_tool(self, name: str) -> None:
-        """Remove `name` from the per-session trust set so future turns
-        stop advertising it to the server. Wired to the compose-bar
-        pill click handler."""
-        if name in self._trusted_tools:
-            self._trusted_tools.discard(name)
-            self._sync_permission_state()
-
-    def attach_session(self, session: "Session") -> None:
-        """Wire a live Session onto the window so permission actions
-        (pill clicks, ⛔ auto-reject button) can push auto-list
-        mutations into the authoritative Session state. The window
-        stays functional without a session attached — mutations just
-        stay local, which matches the expected behaviour for tests and
-        non-MCP providers that don't spawn an approval bridge."""
+    def attach_session(self, session: Session) -> None:
+        """Wire a live Session onto the window. The window stays
+        functional without one — every mutation is local-only, the
+        session handle just lets us signal waybar when state changes."""
         self._session = session
-        # Seed the session's lists from the window so both sides
-        # agree at attach time (the session has its own CLI-seed path;
-        # this is belt-and-suspenders for construction orderings that
-        # pass lists to the window but not the session).
-        session.set_auto_lists(
-            approve=sorted(self._auto_approved_tools),
-            reject=sorted(self._auto_rejected_tools),
-        )
-        self._sync_permission_state()
-
-    def _sync_tool_gate(self) -> None:
-        """Kept for back-compat — older callers use this name. Routes
-        through `_sync_permission_state` which handles the full (trust
-        + auto-approve + auto-reject) tri-list sync."""
         self._sync_permission_state()
 
     def _sync_permission_state(self) -> None:
-        """Push the current trust / auto-approve / auto-reject sets
-        into three places so every consumer sees the same truth:
-
-        1. `adapter.extra_body["tool_ids"]` — pre-flight trust gate
-           for HTTP adapters. Unchanged from `_sync_tool_gate`'s
-           original responsibility.
-        2. `Session._auto_approve` / `_auto_reject` — authority the
-           MCP subprocess consults over the bridge socket. Only
-           touched when a Session is attached (tests skip).
-        3. Compose-bar pills — visual reflection of all three sets
-           with click-to-remove affordances per list.
-
-        Called from attach_session and every time the user mutates
-        trust or an auto-list via a pill click / permission button."""
-        extra_body = getattr(self._adapter, "extra_body", None)
-        if isinstance(extra_body, dict):
-            if self._trusted_tools:
-                extra_body["tool_ids"] = sorted(self._trusted_tools)
-            else:
-                # Leave no `tool_ids` key at all when nothing is trusted
-                # — the server then sees the request with zero advertised
-                # tools, matching the pre-refactor behaviour where
-                # tool_ids=None suppressed the field entirely.
-                extra_body.pop("tool_ids", None)
-        if self._session is not None:
-            self._session.set_auto_lists(
-                approve=sorted(self._auto_approved_tools),
-                reject=sorted(self._auto_rejected_tools),
-            )
-        self._compose.set_permission_pills(
-            trusted=sorted(self._trusted_tools),
-            auto_approved=sorted(self._auto_approved_tools),
-            auto_rejected=sorted(self._auto_rejected_tools),
-            on_remove=self._on_pill_remove,
-        )
-
-    def _on_pill_remove(self, name: str, kind: str) -> None:
-        """Compose-bar pill click handler. `kind` picks which list the
-        tool gets removed from; the caller (ComposeView) passes
-        whichever list the clicked pill was rendered from, so each
-        pill's click affordance stays predictable (click green pill →
-        leaves auto-approve, click red → leaves auto-reject, etc.)."""
-        match kind:
-            case "trusted":
-                self._untrust_tool(name)
-            case "auto_approve":
-                self._auto_approved_tools.discard(name)
-                self._sync_permission_state()
-            case "auto_reject":
-                self._auto_rejected_tools.discard(name)
-                self._sync_permission_state()
+        """Nudge the permissions palette so it reflects the latest
+        trust / auto-approve / auto-reject sets. If the palette isn't
+        open, the next open() pulls fresh entries automatically."""
+        if (
+            self._permissions_palette is not None
+            and self._permissions_palette.is_open()
+        ):
+            self._permissions_palette.open(self._collect_permission_entries())
 
     def _on_permission_deny(self, row: PermissionRow) -> None:
         """Cancel the in-flight stream and revoke trust for this tool.
@@ -2248,9 +1728,8 @@ class PilotWindow(LayerOverlayWindow):
             log.warning("adapter cancel raised during deny: %s", e)
         if self._active_assistant is not None:
             self._active_assistant.append(f"\n\n*— cancelled (denied: {tool_name}) —*")
-        if tool_name in self._trusted_tools:
-            self._trusted_tools.discard(tool_name)
-            self._sync_permission_state()
+        self._permission.discard(tool_name)
+        self._sync_permission_state()
         for existing in list(self._permissions):
             self._remove_permission_row(existing)
 
@@ -2287,9 +1766,29 @@ class PilotWindow(LayerOverlayWindow):
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        resource_open = self._palette is not None and self._palette.is_open()
+        permissions_open = (
+            self._permissions_palette is not None
+            and self._permissions_palette.is_open()
+        )
         if ctrl and keyval == Gdk.KEY_space:
-            self._open_resource_palette()
+            if resource_open:
+                self._palette.close()
+            else:
+                self._open_resource_palette()
             return True
+        if ctrl and keyval == Gdk.KEY_k:
+            if permissions_open:
+                self._permissions_palette.close()
+            else:
+                self._open_permissions_palette()
+            return True
+        # Esc when any palette is open should dismiss only the palette.
+        # `is_open()` is synchronous on the attachment flag, so this
+        # check is race-free with the palette's own capture-phase Esc
+        # handler that actually runs close().
+        if (resource_open or permissions_open) and keyval == Gdk.KEY_Escape:
+            return False
         if ctrl and keyval == Gdk.KEY_q:
             self.close()
             return True
@@ -2408,77 +1907,60 @@ class PilotWindow(LayerOverlayWindow):
         )
         self._palette.open(resources)
 
-    def _collect_resources(self) -> list[tuple[str, str, str, str]]:
-        """Build the `(kind, name, description, preview)` list that
-        feeds the palette. Three sources today — skills from
-        `--skills-dir`, MCP server names from `_build_mcp_config`, and
-        one-level-deep files under `--cwd`. Any source may be empty
-        (None / missing dir); the palette handles that gracefully."""
-        resources: list[tuple[str, str, str, str]] = []
-
-        # Skills — one row per `<skills_dir>/<slug>/SKILL.md`. The
-        # first heading line (stripped of leading `#`) becomes the
-        # description so the user sees human-readable skill purpose
-        # next to the slug. Silent on any IO / dir-listing failure —
-        # a broken skills dir shouldn't nuke the whole palette.
-        if self._skills_dir:
-            try:
-                for entry in sorted(os.listdir(self._skills_dir)):
-                    skill_md = os.path.join(self._skills_dir, entry, "SKILL.md")
-                    if not os.path.isfile(skill_md):
-                        continue
-                    desc = ""
-                    try:
-                        with open(skill_md, "r", encoding="utf-8") as f:
-                            for raw in f:
-                                line = raw.strip()
-                                if not line:
-                                    continue
-                                if line.startswith("#"):
-                                    desc = line.lstrip("# ").strip()
-                                else:
-                                    desc = line
-                                break
-                    except OSError as e:
-                        log.debug("skill %s header read failed: %s", skill_md, e)
-                    resources.append(("skill", entry, desc, skill_md))
-            except OSError as e:
-                log.debug("skills-dir enumerate failed: %s", e)
-
-        # MCP servers — every registered server becomes a resource so
-        # the user can reference one as `#{mcp/github}` etc. No file
-        # preview to show; description just notes the mcp nature.
-        for name in self._mcp_server_names:
-            resources.append(
-                ("mcp", name, f"MCP server: {name}", name)
+    def _open_permissions_palette(self) -> None:
+        """Ctrl+K: raise a palette listing every trusted / auto-
+        approved / auto-rejected tool. Tab ticks rows, Enter drops
+        each ticked tool from its bucket. Exists because the compose-
+        bar pill strip overflows past a dozen or so entries — a
+        filterable list scales better and keeps the compose area
+        clear."""
+        if self._permissions_palette is None:
+            self._permissions_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_permission_removal,
+                on_cancel=self._compose.focus,
+                placeholder=(
+                    "Search permissions — Tab toggles · Enter drops · Esc cancels"
+                ),
             )
+        self._permissions_palette.preseed_active(set())
+        self._permissions_palette.open(self._collect_permission_entries())
 
-        # Top-level files under `--cwd`. One level deep only — walking
-        # the entire tree for a palette would explode on any real
-        # project. Hidden files / `__pycache__` / `node_modules` get
-        # filtered so the list stays useful.
-        if self._cwd and os.path.isdir(self._cwd):
-            _IGNORED = {"__pycache__", "node_modules", ".git", ".venv"}
-            try:
-                for entry in sorted(os.listdir(self._cwd)):
-                    if entry.startswith(".") or entry in _IGNORED:
-                        continue
-                    full = os.path.join(self._cwd, entry)
-                    if os.path.isdir(full):
-                        desc = "directory"
-                    elif os.path.isfile(full):
-                        try:
-                            size = os.path.getsize(full)
-                            desc = f"file · {size} bytes"
-                        except OSError:
-                            desc = "file"
-                    else:
-                        continue
-                    resources.append(("file", entry, desc, full))
-            except OSError as e:
-                log.debug("cwd enumerate failed: %s", e)
+    def _commit_permission_removal(self, entries) -> None:
+        """Drop every ticked entry from its corresponding permission
+        set. Called by the Ctrl+K palette on Enter; `entries` is the
+        active-selection list the palette hands back."""
+        for _kind, name, _desc, _preview in entries:
+            self._permission.discard(name)
+        self._sync_permission_state()
+        self._compose.focus()
 
+    def _collect_resources(self) -> list[tuple[str, str, str, str]]:
+        """Build the `(kind, name, description, preview)` list feeding
+        the Ctrl+Space palette — skills only. Sourced via our own MCP
+        server's `resources/list` so the palette and the agent see the
+        same set."""
+        resources: list[tuple[str, str, str, str]] = []
+        if self._skills_dir:
+            for skill in list_skills_via_mcp(
+                _PILOT_MCP_SCRIPT, skills_dir=self._skills_dir
+            ):
+                resources.append(("skill", skill.name, skill.description, skill.uri))
         return resources
+
+    def _collect_permission_entries(self) -> list[tuple[str, str, str, str]]:
+        """Build palette entries for the Ctrl+K permissions view. Each
+        row's `kind` matches the permission bucket (`trusted` /
+        `auto_approve` / `auto_reject`) so the commit handler can drop
+        the tool from the right set."""
+        out: list[tuple[str, str, str, str]] = []
+        for name in sorted(self._permission.trusted):
+            out.append(("trusted", name, "trusted · click to revoke", name))
+        for name in sorted(self._permission.auto_approved):
+            out.append(("auto_approve", name, "auto-approve · click to drop", name))
+        for name in sorted(self._permission.auto_rejected):
+            out.append(("auto_reject", name, "auto-reject · click to drop", name))
+        return out
 
     def _accept_first_permission(self) -> None:
         """Ctrl+G: click the `✓ allow` button on the oldest pending
@@ -2544,9 +2026,7 @@ class PilotWindow(LayerOverlayWindow):
         at 25% of the bound monitor's height so a tall conversation
         can't push the compose box off-screen."""
         if monitor is not None:
-            self._compose.set_max_content_fraction(
-                monitor.get_geometry().height, 0.25
-            )
+            self._compose.set_max_content_fraction(monitor.get_geometry().height, 0.25)
 
     @staticmethod
     def _install_css() -> None:
@@ -2575,7 +2055,7 @@ def _is_live() -> bool:
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     probe.settimeout(1)
     try:
-        probe.connect(SOCKET_PATH)
+        probe.connect(_PATHS.socket_path)
 
         return True
     except (ConnectionRefusedError, FileNotFoundError):
@@ -2596,10 +2076,10 @@ def _send(cmd: str, **kwargs) -> Optional[dict]:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(2)
     try:
-        sock.connect(SOCKET_PATH)
+        sock.connect(_PATHS.socket_path)
     except (FileNotFoundError, ConnectionRefusedError):
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
         return None
@@ -2630,78 +2110,15 @@ def _send(cmd: str, **kwargs) -> Optional[dict]:
 class Session:
     """Owns the Unix socket for a live pilot window. A background thread
     accepts connections from forwarder invocations and dispatches their
-    `turn` / `status` commands back onto the GTK main thread.
+    `turn` / `status` commands back onto the GTK main thread."""
 
-    Also acts as the AUTHORITATIVE source for auto-approve /
-    auto-reject sets. The MCP subprocess pings us over the bridge
-    socket via `auto-check` before every approval request; the user
-    mutates the sets by clicking pills / the ⛔ button in the overlay,
-    and the overlay forwards the new state into this object via
-    `set_auto_lists()`. Using a Lock around the sets keeps socket
-    handler threads (serving `auto-check`) and the GTK thread (pushing
-    mutations) from racing."""
-
-    def __init__(
-        self,
-        window: PilotWindow,
-        provider: ConversationProvider,
-        auto_approve: Optional[list[str]] = None,
-        auto_reject: Optional[list[str]] = None,
-    ):
+    def __init__(self, window: PilotWindow, provider: ConversationProvider):
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
-        self._mcp_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
-        self._mcp_thread: Optional[threading.Thread] = None
-        self._auto_lock = threading.Lock()
-        # Normalise on insert so the mcp-server subprocess's canonical
-        # form (`lower + replace("-", "_")`) matches what it compares
-        # against over the bridge. Keep the raw forms readable — the
-        # overlay uses the un-normalised form for UI pills, but the
-        # authority needs canonical for correctness.
-        self._auto_approve: set[str] = set(
-            self._normalise_name(n) for n in (auto_approve or [])
-        )
-        self._auto_reject: set[str] = set(
-            self._normalise_name(n) for n in (auto_reject or [])
-        )
 
-    @staticmethod
-    def _normalise_name(name: str) -> str:
-        """Match `McpServer._normalise_tool_name` so the authority's
-        canonical form lines up with the subprocess's lookup keys."""
-        return (name or "").lower().replace("-", "_")
-
-    def set_auto_lists(self, approve: list[str], reject: list[str]) -> None:
-        """Replace the in-memory auto lists wholesale. Called from the
-        overlay whenever the user mutates a pill / button; subsequent
-        `auto-check` lookups from the MCP subprocess see the new
-        state immediately."""
-        with self._auto_lock:
-            self._auto_approve = set(self._normalise_name(n) for n in approve)
-            self._auto_reject = set(self._normalise_name(n) for n in reject)
-
-    def _auto_decision(self, tool_name: str) -> str:
-        """Return `"approve"`, `"reject"`, or `"continue"` for the
-        given tool name. Reject wins over approve when both lists
-        somehow contain the same tool — matches McpServer's local
-        route ordering."""
-        key = self._normalise_name(tool_name)
-        with self._auto_lock:
-            if key in self._auto_reject:
-                return "reject"
-            if key in self._auto_approve:
-                return "approve"
-
-            return "continue"
-
-    def _bind(self, path: str, live_check: bool) -> socket.socket:
-        """Bind a listener to `path`, cleaning up stale socket files.
-        Set `live_check=True` only for the main socket — there we must
-        detect another running session; for the MCP socket we can
-        always clobber a stale file because it's only meaningful while
-        OUR session is alive."""
+    def _bind(self, path: str) -> socket.socket:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.bind(path)
@@ -2709,48 +2126,38 @@ class Session:
             if e.errno != errno.EADDRINUSE:
                 sock.close()
                 raise
-            if live_check and _is_live():
+            if _is_live():
                 sock.close()
-                raise RuntimeError(f"another pilot session is already running at {path}")
+                raise RuntimeError(
+                    f"another pilot session is already running at {path}"
+                )
             try:
                 os.unlink(path)
             except FileNotFoundError:
                 pass
             sock.bind(path)
-
         os.chmod(path, 0o600)
         sock.listen(4)
-
         return sock
 
     def start(self) -> None:
-        self._sock = self._bind(SOCKET_PATH, live_check=True)
-        self._mcp_sock = self._bind(MCP_SOCKET_PATH, live_check=False)
+        self._sock = self._bind(_PATHS.socket_path)
         self._thread = threading.Thread(
             target=self._serve, args=(self._sock,), daemon=True
         )
         self._thread.start()
-        self._mcp_thread = threading.Thread(
-            target=self._serve, args=(self._mcp_sock,), daemon=True
-        )
-        self._mcp_thread.start()
 
     def stop(self) -> None:
-        for attr, path in (
-            ("_sock", SOCKET_PATH),
-            ("_mcp_sock", MCP_SOCKET_PATH),
-        ):
-            sock = getattr(self, attr, None)
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-                setattr(self, attr, None)
+        if self._sock is not None:
             try:
-                os.unlink(path)
-            except FileNotFoundError:
+                self._sock.close()
+            except OSError:
                 pass
+            self._sock = None
+        try:
+            os.unlink(_PATHS.socket_path)
+        except FileNotFoundError:
+            pass
 
     def _serve(self, listener: socket.socket) -> None:
         while True:
@@ -2801,6 +2208,7 @@ class Session:
                     "phase": self._window.phase(),
                     "provider": self._provider.value,
                     "queue": self._window.queue_size(),
+                    "session": _PATHS.suffix,
                 }
             case "kill":
                 # Tear down from the GTK main thread so close-request handlers
@@ -2816,201 +2224,126 @@ class Session:
                 GLib.idle_add(self._window.toggle_visibility)
 
                 return {"ok": True}
-            case "permission":
-                # Claude's MCP permission-prompt-tool forwards here.
-                # Block this socket handler thread until the user
-                # clicks allow/deny in the overlay, then return the
-                # answer. The MCP server translates the `approved`
-                # flag into claude's allow/deny envelope.
-                tool_name = (obj.get("tool_name") or "").strip()
-                arguments = obj.get("arguments") or ""
-                event = threading.Event()
-                verdict = {"approved": False, "reason": "timeout"}
-
-                def resolve(approved: bool, reason: str = "") -> None:
-                    verdict["approved"] = bool(approved)
-                    verdict["reason"] = reason
-                    event.set()
-
-                call = ToolCall(
-                    tool_id=f"mcp-{id(event)}",
-                    name=tool_name,
-                    arguments=str(arguments),
-                    status="running",
-                    audit=False,
-                )
-                GLib.idle_add(self._window.show_permission_for_mcp, call, resolve)
-                # 10-min ceiling matches `socket_approval`'s timeout.
-                if not event.wait(timeout=600):
-                    verdict = {"approved": False, "reason": "overlay timeout"}
-
-                return verdict
-            case "auto-check":
-                # MCP subprocess asks whether to short-circuit this
-                # tool call without surfacing a row. Pure in-memory
-                # lookup — no GTK hop, no user interaction, answers
-                # instantly. `continue` tells the subprocess to fall
-                # through to its next route (local fallback, question
-                # route, normal approval flow).
-                tool_name = (obj.get("tool_name") or "").strip()
-                decision = self._auto_decision(tool_name)
-                response: dict[str, Any] = {"decision": decision}
-                if decision == "reject":
-                    response["message"] = f"auto-rejected: {tool_name}"
-
-                return response
-            case "question":
-                # Claude's `ask_question` MCP tool forwards here. Block
-                # the handler thread until the user types an answer
-                # into compose and hits send; return the answer string.
-                question = (obj.get("question") or "").strip()
-                q_event = threading.Event()
-                q_holder = {"answer": ""}
-
-                def q_resolve(answer: str) -> None:
-                    q_holder["answer"] = answer or ""
-                    q_event.set()
-
-                GLib.idle_add(self._window.show_question, question, q_resolve)
-                if not q_event.wait(timeout=600):
-                    return {"answer": ""}
-
-                return {"answer": q_holder["answer"]}
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
-def _build_mcp_config(
-    auto_approve: Optional[list[str]] = None,
-    auto_reject: Optional[list[str]] = None,
-    agents_md: Optional[str] = None,
-    skills_dir: Optional[str] = None,
-    default_mcp: Optional[list[str]] = None,
-) -> McpConfig:
-    """Compose the `McpConfig` we hand to the Claude adapter.
+_PILOT_MCP_SERVER_NAME = "system"
+_PILOT_MCP_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "lib", "mcp_server.py"
+)
 
-    Pre-seeds one entry — the `pilot` server, which re-execs THIS SAME
-    script with `mcp-server` as argv[1]. The top of pilot.py short-
-    circuits to `lib.mcp.McpServer.run()` for that argv and exits
-    without touching GTK, so the subprocess is a pure stdio server.
-    Callers can layer additional servers (github, filesystem, …) by
-    mutating the returned `McpConfig` before it reaches the adapter.
+def _build_pilot_mcp_server(skills_dir: Optional[str]) -> Any:
+    """Construct the `system` ACP server pilot ships itself. Kept in
+    pilot.py (not `lib.mcp_servers`) so the env — currently just
+    `PILOT_SKILLS_DIR` — is resolved from pilot's own argparse state
+    with no indirection through placeholder substitution."""
+    from acp.schema import EnvVariable, McpServerStdio
 
-    When SESSION_SUFFIX is set we propagate `--session <suffix>` onto
-    the child's argv so its early `_early_session_suffix()` parse
-    picks the matching MCP socket path — otherwise the child would
-    try to reach the default socket while our overlay is listening on
-    the suffixed one.
-
-    `auto_approve` / `auto_reject` lists get splatted onto the child
-    as repeated `--auto-approve X` / `--auto-reject Y` flags so the
-    subprocess's local auto-list sets are seeded at startup (matches
-    the overlay's Session state for this invocation). Runtime
-    mutations flow over the MCP bridge socket via the `auto-check`
-    command, so the child stays in sync without being restarted.
-
-    `agents_md` / `skills_dir` are likewise splatted so the
-    subprocess's early parser can wire up `McpCapability.RESOURCE`
-    (for AGENTS.md) and `McpCapability.SKILLS` (for the list/load
-    tools). Both are optional — skip either to leave that capability
-    out of the child's registered tool list.
-
-    `default_mcp` names are resolved against `lib.default_servers` and
-    mixed into the final config as peer servers alongside `pilot`. We
-    expand env-vars at this point so the spawned stdio binaries /
-    remote endpoints see the user's actual credentials; missing vars
-    collapse to empty string (the catalog's logging handles the
-    warning)."""
-    self_script = os.path.abspath(__file__)
-    child_args = ["-u", self_script, "mcp-server"]
-    if SESSION_SUFFIX:
-        child_args.extend(["--session", SESSION_SUFFIX])
-    for name in auto_approve or []:
-        child_args.extend(["--auto-approve", name])
-    for name in auto_reject or []:
-        child_args.extend(["--auto-reject", name])
-    if agents_md:
-        child_args.extend(["--agents-md", agents_md])
+    env: list[EnvVariable] = []
     if skills_dir:
-        child_args.extend(["--skills-dir", skills_dir])
-    # `--default-mcp` is splatted too so the subprocess COULD act on it
-    # in future, even though today it's only the parent claude adapter
-    # that consumes the expanded server specs. Keeps the flag surface
-    # symmetrical between the two halves.
-    for name in default_mcp or []:
-        child_args.extend(["--default-mcp", name])
-    config = McpConfig()
-    config.add("pilot", sys.executable, args=child_args)
-    # Layer in any requested default servers. Unknown names log a
-    # warning and skip — we don't want a typo on --default-mcp to
-    # prevent the overlay from opening.
-    for raw_name in default_mcp or []:
-        name = (raw_name or "").strip()
-        if not name:
+        env.append(EnvVariable(name="PILOT_SKILLS_DIR", value=skills_dir))
+    return McpServerStdio(
+        name=_PILOT_MCP_SERVER_NAME,
+        command=sys.executable,
+        args=["-u", _PILOT_MCP_SCRIPT],
+        env=env,
+    )
+
+def _acp_mcp_servers(
+    mcp: Optional[list[str]] = None,
+    *,
+    skills_dir: Optional[str] = None,
+) -> list:
+    """Build the `new_session.mcp_servers` payload for the ACP adapters.
+    Two sources are merged: pilot's built-in `system` server (config
+    assembled inline) and every mcphub-catalog name the user opted
+    into via `--mcp`. Unknown catalog names log and skip."""
+    from lib.converse import build_mcp_servers
+
+    names = [(raw or "").strip() for raw in mcp or []]
+    names = [n for n in names if n]
+
+    out: list = []
+    if _PILOT_MCP_SERVER_NAME in names:
+        out.append(_build_pilot_mcp_server(skills_dir))
+
+    external_specs: dict[str, dict] = {}
+    for name in names:
+        if name == _PILOT_MCP_SERVER_NAME or name in external_specs:
             continue
         try:
-            spec = _DEFAULT_SERVER_GET(name)
+            external_specs[name] = _DEFAULT_SERVER_GET(name)
         except KeyError as e:
-            log.warning("ignoring unknown --default-mcp %r: %s", name, e)
-            continue
-        config.add(
-            name,
-            command=spec.get("command"),
-            args=spec.get("args"),
-            env=spec.get("env"),
-            url=spec.get("url"),
-            type=spec.get("type"),
-            headers=spec.get("headers"),
-        )
-
-    return config
-
-def _merge_extra_body(blobs) -> dict:
-    """Deep-merge an ordered list of `--extra-body` JSON strings (or
-    pre-parsed dicts) into a single dict. Later entries win on leaf
-    keys; nested dicts merge recursively via `_deep_merge`. Empty
-    list → empty dict."""
-    out: dict = {}
-    for blob in blobs or []:
-        if isinstance(blob, dict):
-            parsed = blob
-        else:
-            try:
-                parsed = json.loads(blob)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"--extra-body: not valid JSON: {blob!r}: {e}") from e
-        if not isinstance(parsed, dict):
-            raise ValueError(
-                f"--extra-body: expected a JSON object, got {type(parsed).__name__}"
-            )
-        out = _deep_merge(out, parsed)
-
+            log.warning("ignoring unknown --mcp %r: %s", name, e)
+    out.extend(build_mcp_servers(external_specs))
+    log.info("ACP mcp_servers attached: %s", [s.name for s in out])
     return out
 
-def _resolve_default_mcp(args) -> list[str]:
-    """Collapse `--default-mcp` / `--all-default-mcp` into a de-duped
-    ordered list. `--all-default-mcp` wins when set — every catalog
-    entry is added in display order; individual `--default-mcp` names
-    are appended after (skipping dupes). Unknown names survive to
-    `_build_mcp_config` which logs and skips them; we don't validate
-    here so CLI typos don't crash toggle startup."""
+def _build_permission_handler(window):
+    """Adapt the overlay's `show_permission_for_acp` main-thread entry
+    point into the blocking `PermissionHandler` signature the ACP
+    worker thread expects. Returns a callable that:
+
+    1. Schedules the PermissionRow on the GTK thread via `idle_add`.
+    2. Blocks on a `threading.Event` until the user clicks.
+    3. Returns the chosen `option_id` (or `None` to send `cancelled`)."""
+
+    def handler(call, options):
+        from lib.converse import ToolCall as _ToolCall
+
+        # ACP gives us a ToolCallSummary; adapt to the ToolCall the
+        # PermissionRow already renders. Status=running signals
+        # "awaiting approval, tool hasn't executed yet".
+        tool_call = _ToolCall(
+            tool_id=call.tool_id,
+            name=call.name,
+            arguments=call.arguments,
+            status="running",
+            audit=False,
+        )
+        event = threading.Event()
+        result: dict[str, Optional[str]] = {"option_id": None}
+
+        def resolve(option_id: Optional[str]) -> None:
+            result["option_id"] = option_id
+            event.set()
+
+        GLib.idle_add(window.show_permission_for_acp, tool_call, options, resolve)
+        # 10-min ceiling keeps us consistent with the legacy MCP path.
+        if not event.wait(timeout=600):
+            log.warning("ACP permission prompt timed out")
+            return None
+        return result["option_id"]
+
+    return handler
+
+_MCP_SPLIT_RE = re.compile(r"[\s,]+")
+
+def _default_mcp_names() -> list[str]:
+    """Full MCP catalog used when `--mcp` is omitted. `system` first
+    (pilot's own server, always ships), then every external entry the
+    mcphub JSON produced."""
+    return [_PILOT_MCP_SERVER_NAME, *DEFAULT_SERVER_NAMES]
+
+def _resolve_mcp(args) -> list[str]:
+    """De-dupe `--mcp NAME` flags into an ordered list. Each flag
+    value may itself be a comma- or whitespace-separated list —
+    `--mcp git,memory` and `--mcp git --mcp memory` produce identical
+    output. Omitting the flag falls through to the full catalog;
+    `--mcp ""` disables everything. Unknown names survive to
+    `_acp_mcp_servers` which logs and skips."""
+    raw_values = getattr(args, "mcp", None)
+    if raw_values is None:
+        return _default_mcp_names()
     out: list[str] = []
     seen: set[str] = set()
-
-    def _push(name: str) -> None:
-        n = (name or "").strip()
-        if not n or n in seen:
-            return
-        seen.add(n)
-        out.append(n)
-
-    if getattr(args, "all_default_mcp", False):
-        for name in DEFAULT_SERVER_NAMES:
-            _push(name)
-    for name in getattr(args, "default_mcp", None) or []:
-        _push(name)
-
+    for raw in raw_values:
+        for piece in _MCP_SPLIT_RE.split(raw or ""):
+            name = piece.strip()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
     return out
-
 
 def _read_agents_md(path: Optional[str]) -> str:
     """Return the AGENTS.md contents (or empty string if missing / not
@@ -3029,7 +2362,6 @@ def _read_agents_md(path: Optional[str]) -> str:
         log.warning("--agents-md %s: read failed (%s); skipping injection", expanded, e)
         return ""
 
-
 def _compose_system_prompt(base: str, agents_md: str) -> str:
     """Prepend `agents_md` to `base`, separated by a blank line, iff
     `agents_md` has content. Otherwise return `base` unchanged so we
@@ -3039,76 +2371,33 @@ def _compose_system_prompt(base: str, agents_md: str) -> str:
 
     return f"{agents_md}\n\n{base}"
 
-
 def _build_adapter(args) -> ConversationAdapter:
-    # Callers pass argparse values through as-is. None / missing values
-    # collapse to per-adapter defaults (see `kwargs.get(name) or DEFAULT`
-    # in the adapter __init__s), so this function doesn't replicate them.
     provider = ConversationProvider(args.converse_provider)
-    extra_body = _merge_extra_body(getattr(args, "extra_body", None))
     cwd = getattr(args, "cwd", None)
-    config_suffix = SESSION_SUFFIX or None
-    auto_approve = list(getattr(args, "auto_approve", None) or [])
-    auto_reject = list(getattr(args, "auto_reject", None) or [])
     agents_md_path = getattr(args, "agents_md", None)
-    skills_dir = getattr(args, "skills_dir", None)
-    default_mcp = _resolve_default_mcp(args)
+    skills_dir = os.path.expanduser(getattr(args, "skills_dir", "") or "") or None
+    mcp_servers = _acp_mcp_servers(
+        mcp=_resolve_mcp(args),
+        skills_dir=skills_dir,
+    )
     system_prompt = _compose_system_prompt(
         AI_SYSTEM_PROMPT,
         _read_agents_md(agents_md_path),
     )
     match provider:
-        case ConversationProvider.HTTP:
-            return ConversationAdapterHttp(
-                system_prompt,
-                base_url=args.converse_base_url,
-                model=args.converse_model,
-                api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                temperature=args.converse_temperature,
-                top_p=args.converse_top_p,
-                thinking=args.converse_thinking,
-                num_ctx=args.converse_num_ctx,
-                extra_body=extra_body,
-                cwd=cwd,
-                user_agent="pilot/1.0",
-            )
         case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(
                 system_prompt,
                 model=args.converse_model,
-                mcp_config=_build_mcp_config(
-                    auto_approve=auto_approve,
-                    auto_reject=auto_reject,
-                    agents_md=agents_md_path,
-                    skills_dir=skills_dir,
-                    default_mcp=default_mcp,
-                ),
-                permission_tool="mcp__pilot__approve",
                 cwd=cwd,
-                config_suffix=config_suffix,
-            )
-        case ConversationProvider.CODEX:
-            return ConversationAdapterCodex(
-                system_prompt,
-                model=args.converse_model,
-                cwd=cwd,
+                mcp_servers=mcp_servers,
             )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
                 system_prompt,
                 model=args.converse_model,
-                # Same MCP config the claude branch uses — opencode
-                # supports MCP servers natively, we just splice ours
-                # into its config JSON.
-                mcp_config=_build_mcp_config(
-                    auto_approve=auto_approve,
-                    auto_reject=auto_reject,
-                    agents_md=agents_md_path,
-                    skills_dir=skills_dir,
-                    default_mcp=default_mcp,
-                ),
                 cwd=cwd,
-                config_suffix=config_suffix,
+                mcp_servers=mcp_servers,
             )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
@@ -3171,43 +2460,37 @@ def _cmd_toggle(args) -> None:
 
     adapter = _build_adapter(args)
 
-    app = Gtk.Application(application_id=APP_ID)
+    app = Gtk.Application(application_id=_PATHS.app_id)
     session: dict[str, Optional[Session]] = {"server": None}
 
-    auto_approve = list(getattr(args, "auto_approve", None) or [])
-    auto_reject = list(getattr(args, "auto_reject", None) or [])
-    skills_dir = getattr(args, "skills_dir", None)
-    # Resolve the MCP server names the adapter will actually talk to so
-    # the palette can surface them as `#{mcp/<name>}` references. We
-    # read the adapter's `mcp_config` when present (claude / opencode),
-    # falling back to the CLI-resolved default list for adapters that
-    # don't carry an mcp_config themselves.
-    raw_mcp_config = getattr(adapter, "mcp_config", None)
-    if raw_mcp_config is not None and hasattr(raw_mcp_config, "names"):
-        mcp_server_names = list(raw_mcp_config.names())
-    else:
-        mcp_server_names = list(_resolve_default_mcp(args))
+    # MCP server names for the palette's `#{mcp/<name>}` references.
+    mcp_server_names = [s.name for s in adapter._session.mcp_servers if s.name]
+    # Mirror mcphub's per-server `autoApprove` / `disabled_tools` lists
+    # into pilot's permission state so pre-sanctioned read-only tools
+    # auto-approve and known-dangerous ones auto-reject without popping
+    # a row. CLI `--auto-approve` / `--auto-reject` append on top.
+    seeded_approve, seeded_reject = get_permission_seeds(mcp_server_names)
+    auto_approve = seeded_approve + list(getattr(args, "auto_approve", None) or [])
+    auto_reject = seeded_reject + list(getattr(args, "auto_reject", None) or [])
+    # Expand `~` ONCE before handing it to the window — the MCP
+    # subprocess runs with its own `os.environ` and doesn't re-expand
+    # shell metachars, so passing a literal `~/…` yields zero skills.
+    skills_dir = os.path.expanduser(getattr(args, "skills_dir", "") or "") or None
 
     def on_activate(application):
         window = PilotWindow(
             application,
             adapter,
+            session_suffix=_PATHS.suffix,
             auto_approve=auto_approve,
             auto_reject=auto_reject,
             cwd=getattr(args, "cwd", None),
             skills_dir=skills_dir,
             mcp_server_names=mcp_server_names,
         )
-        server = Session(
-            window,
-            adapter.provider,
-            auto_approve=auto_approve,
-            auto_reject=auto_reject,
-        )
-        # The window needs a handle on the Session so permission-button
-        # handlers (e.g. the new ⛔ auto-reject button) can push list
-        # mutations straight into the authoritative Session state.
+        server = Session(window, adapter.provider)
         window.attach_session(server)
+        adapter.set_permission_handler(_build_permission_handler(window))
         server.start()
         session["server"] = server
 
@@ -3252,18 +2535,21 @@ def _cmd_status() -> None:
     provider = resp.get("provider", "")
     phase = resp.get("phase", "idle")
     queue = int(resp.get("queue", 0) or 0)
+    session = resp.get("session") or _PATHS.suffix
+    session_tag = f" ({session})" if session else ""
     icon = "󱍊"
     badge = f"<sup>{queue}</sup>" if queue > 0 else ""
-    text = f"{icon}{badge}"
+    text = f"{icon}{session_tag}{badge}"
+    label = f"Pilot{' ' + session_tag if session_tag else ''}"
     match phase:
         case "streaming":
-            tooltip = f"Pilot: streaming via {provider}"
+            tooltip = f"{label}: streaming via {provider}"
         case "pending":
-            tooltip = f"Pilot: waiting on first chunk from {provider}"
+            tooltip = f"{label}: waiting on first chunk from {provider}"
         case "awaiting":
-            tooltip = f"Pilot: waiting on user input ({provider})"
+            tooltip = f"{label}: waiting on user input ({provider})"
         case _:
-            tooltip = f"Pilot: {provider} idle"
+            tooltip = f"{label}: {provider} idle"
     if queue > 0:
         tooltip += f"  ({queue} queued)"
     print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
@@ -3281,12 +2567,10 @@ def _cmd_kill() -> None:
         # No live session answered — clear a stale socket file so the next
         # toggle starts clean.
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
     _signal_waybar_safe()
-
-_DEFAULT_EXTRA_BODY = '{"tool_ids": ["web_search", "memory"]}'
 
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
@@ -3325,29 +2609,11 @@ def main():
         choices=list(ConversationProvider),
         default=DEFAULT_CONVERSE_ADAPTER,
     )
-    toggle_parser.add_argument(
-        "--converse-base-url",
-        default="https://ai.kilic.dev/api/v1",
-    )
-    # Model default is provider-specific (see `_build_adapter`). A bare
-    # `--converse-model` stays None so each adapter picks its own baseline;
-    # an explicit value overrides for any provider.
+    # None → per-adapter default (`sonnet` for Claude, whatever
+    # opencode picks for OpenCode).
     toggle_parser.add_argument("--converse-model", default=None)
-    toggle_parser.add_argument("--converse-temperature", type=float)
-    toggle_parser.add_argument("--converse-top-p", type=float)
-    toggle_parser.add_argument(
-        "--converse-thinking",
-        nargs="?",
-        const="high",
-        default="none",
-        choices=["high", "medium", "low", "none"],
-    )
-    toggle_parser.add_argument("--converse-num-ctx", type=int)
-    # Working directory for the spawned AI agent (claude / codex /
-    # opencode subprocess). Default = a fresh `mkdtemp` so each
-    # session runs in a clean-room sandbox the user hasn't had to
-    # prepare. Override with `--cwd ~/notes` to point the agent at a
-    # real project.
+    # Working directory for the spawned ACP agent subprocess. Default
+    # = a fresh `mkdtemp` so each session runs in a clean-room sandbox.
     toggle_parser.add_argument(
         "--cwd",
         default=None,
@@ -3357,26 +2623,7 @@ def main():
             "fresh tempdir (tempfile.mkdtemp(prefix='pilot-'))."
         ),
     )
-    # Generic HTTP-body escape hatch. Replaces the older `--tool-id`
-    # flag: anything you want layered onto the OpenWebUI / OpenAI-
-    # compatible request body goes here as JSON. Multiple flags
-    # deep-merge (later wins on leaf keys, nested dicts merge).
-    # The default bundles the old `tool_ids=["web_search","memory"]`
-    # behaviour so existing users see zero change.
-    toggle_parser.add_argument(
-        "--extra-body",
-        action="append",
-        dest="extra_body",
-        default=[_DEFAULT_EXTRA_BODY],
-        metavar="JSON",
-        help=(
-            "JSON object deep-merged into the HTTP request body. "
-            "Repeatable; later values win on leaf keys, nested dicts "
-            "merge recursively. Default: "
-            f"{_DEFAULT_EXTRA_BODY}. OpenWebUI / OpenAI-compatible only."
-        ),
-    )
-    # Auto-approve: tool names whose MCP permission requests are
+    # Auto-approve: tool names whose ACP permission requests are
     # short-circuited to `allow` without surfacing a row in the
     # overlay. Repeatable, matches case-insensitively and treats
     # `-` / `_` as equivalent (so `Read`, `read`, `read-file`,
@@ -3444,36 +2691,24 @@ def main():
             "contain a SKILL.md with `---`-delimited YAML frontmatter "
             "(name + description). Empty string disables the skills "
             "MCP capability. "
-            "Default: ~/.config/nvim/utils/agents/skills"
         ),
     )
-    # Default MCP catalog. `--default-mcp NAME` is repeatable and
-    # references an entry in `lib.default_servers.DEFAULT_SERVERS`.
-    # Unknown names log + skip; missing env vars expand to "" rather
-    # than crashing. Leave empty (the default) to opt out.
+    # MCP servers to register alongside pilot. Repeatable; each value
+    # may itself be comma- or whitespace-separated so shell helpers
+    # can pass bulk lists (`--mcp git,memory`). Names resolve against
+    # `lib.mcp_servers.DEFAULT_SERVERS` (nvim form like `argocd/kilic`
+    # accepted too). Omitting the flag entirely picks the full
+    # catalog; pass `--mcp ""` explicitly to opt everything out.
     toggle_parser.add_argument(
-        "--default-mcp",
+        "--mcp",
         action="append",
-        dest="default_mcp",
-        default=[],
+        dest="mcp",
+        default=None,
         metavar="NAME",
-        choices=list(DEFAULT_SERVER_NAMES) + [""],
         help=(
-            "Name of a default MCP server to register alongside "
-            "`pilot`. Repeatable. Valid names: "
-            + ", ".join(DEFAULT_SERVER_NAMES)
-        ),
-    )
-    # Shortcut for "every catalog entry". Mutually compatible with
-    # `--default-mcp` — explicit names after the flag are de-duped.
-    toggle_parser.add_argument(
-        "--all-default-mcp",
-        dest="all_default_mcp",
-        action="store_true",
-        default=False,
-        help=(
-            "Register every server in lib.default_servers in display "
-            "order. Equivalent to passing each name via --default-mcp."
+            "MCP server to register. Repeatable; accepts comma / "
+            "whitespace-separated lists. Omit to enable the full "
+            "catalog; pass an empty value to disable."
         ),
     )
 
@@ -3491,7 +2726,8 @@ def main():
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
 
-    _apply_session_suffix(args.session or "")
+    global _PATHS
+    _PATHS = PilotPaths.from_suffix(args.session or "")
 
     # Expand `~` in user-supplied `--cwd`. The None → mkdtemp default is
     # deferred into `_cmd_toggle` so status / kill / forwarding turns

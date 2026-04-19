@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -15,20 +17,19 @@ from typing import Optional, Protocol
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
-    EnrichAdapterClaude,
-    OutputAdapterClipboard,
-    EnrichAdapterCodex,
     EnrichAdapter,
+    EnrichAdapterClaude,
+    EnrichAdapterHttp,
     EnrichAdapterOpenCode,
     EnrichProvider,
-    EnrichAdapterHttp,
     OutputAdapter,
-    OutputMode,
+    OutputAdapterClipboard,
+    OutputAdapterStdout,
     OutputAdapterType,
+    OutputMode,
     load_prompt,
     notify,
     signal_waybar,
-    OutputAdapterStdout,
 )
 
 class STTAdapter(Protocol):
@@ -166,20 +167,31 @@ class Response:
 log = logging.getLogger("speech")
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
-_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-# Main speech session socket. `_apply_session_suffix(...)` in main() may
-# overwrite this to `wayland-speech-<suffix>.sock` when `--session` is
-# passed, so multiple speech sessions can coexist without colliding on
-# the same path. Module-level so _send / Session.start / Session.stop
-# all observe the post-parse value.
-SOCKET_PATH = os.path.join(_RUNTIME, "wayland-speech.sock")
 
-def _apply_session_suffix(suffix: str) -> None:
-    """Rewrite `SOCKET_PATH` to include `-<suffix>` before `.sock`.
-    Empty suffix leaves the shipped default verbatim."""
-    global SOCKET_PATH
-    if suffix:
-        SOCKET_PATH = os.path.join(_RUNTIME, f"wayland-speech-{suffix}.sock")
+
+@dataclass(frozen=True)
+class SpeechPaths:
+    """Per-session filesystem coordinates. `--session <suffix>` derives
+    a parallel socket path so multiple speech sessions can coexist."""
+
+    socket_path: str
+    suffix: str = ""
+
+    @classmethod
+    def from_suffix(cls, suffix: str) -> SpeechPaths:
+        suffix = suffix or ""
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        stem = f"wayland-speech-{suffix}" if suffix else "wayland-speech"
+        return cls(
+            socket_path=os.path.join(runtime, f"{stem}.sock"),
+            suffix=suffix,
+        )
+
+
+# Populated in main() once `--session` has been parsed. Module-level
+# holder so `_send` and `Session` agree on the same socket without
+# threading a paths argument through every call-site.
+_PATHS: SpeechPaths = SpeechPaths.from_suffix("")
 
 AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
@@ -195,12 +207,12 @@ def _send(cmd: Command, **kwargs) -> Optional[Response]:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(2)
     try:
-        sock.connect(SOCKET_PATH)
+        sock.connect(_PATHS.socket_path)
     except (FileNotFoundError, ConnectionRefusedError):
         # Stale socket file from a crashed session — remove so the next
         # press 1 can bind fresh.
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
         return None
@@ -277,12 +289,12 @@ class Session:
             log.warning("setpgrp failed: %s; KILL may leak subprocesses", e)
 
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(SOCKET_PATH)
-        os.chmod(SOCKET_PATH, 0o600)
+        self._sock.bind(_PATHS.socket_path)
+        os.chmod(_PATHS.socket_path, 0o600)
         self._sock.listen(4)
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -361,12 +373,6 @@ class Session:
                                 AI_USER_PROMPT,
                                 **spec_model_kw,
                             )
-                        case EnrichProvider.CODEX:
-                            new_enricher = EnrichAdapterCodex(
-                                AI_SYSTEM_PROMPT,
-                                AI_USER_PROMPT,
-                                **spec_model_kw,
-                            )
                         case EnrichProvider.OPENCODE:
                             new_enricher = EnrichAdapterOpenCode(
                                 AI_SYSTEM_PROMPT,
@@ -419,7 +425,7 @@ class Session:
                 pass
             self._sock = None
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
         self._signal_waybar()
@@ -649,7 +655,7 @@ def main():
     )
     toggle_parser.add_argument(
         "--enrich-provider",
-        choices=["http", "claude", "codex"],
+        choices=list(EnrichProvider),
         default=DEFAULT_ENRICH_ADAPTER,
     )
     toggle_parser.add_argument(
@@ -688,7 +694,8 @@ def main():
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
 
-    _apply_session_suffix(args.session or "")
+    global _PATHS
+    _PATHS = SpeechPaths.from_suffix(args.session or "")
 
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
@@ -711,12 +718,6 @@ def main():
                 )
             case EnrichProvider.CLAUDE:
                 enricher = EnrichAdapterClaude(
-                    AI_SYSTEM_PROMPT,
-                    AI_USER_PROMPT,
-                    model=args.enrich_model,
-                )
-            case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(
                     AI_SYSTEM_PROMPT,
                     AI_USER_PROMPT,
                     model=args.enrich_model,

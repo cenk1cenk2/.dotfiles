@@ -18,7 +18,6 @@ from typing import Optional
 
 _LAYER_SHELL_SONAME = "libgtk4-layer-shell.so.0"
 
-
 def ensure_layer_shell_preload(script_path: Optional[str] = None) -> None:
     """Re-exec the current Python process with `libgtk4-layer-shell.so.0`
     on LD_PRELOAD if it isn't already loaded. No-op when the preload is
@@ -35,7 +34,3 @@ def ensure_layer_shell_preload(script_path: Optional[str] = None) -> None:
     )
     script = script_path or sys.argv[0]
     os.execvpe(sys.executable, [sys.executable, script, *sys.argv[1:]], env)
-
-
-# Back-compat alias for call-sites that predated the rename.
-_ensure_layer_shell_preload = ensure_layer_shell_preload
