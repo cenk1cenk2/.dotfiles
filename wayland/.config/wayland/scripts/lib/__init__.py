@@ -30,7 +30,13 @@ from .input import (
     InputMode,
     InputAdapterStdin,
 )
-from .mcp import McpConfig, McpServer, socket_approval, socket_question
+from .mcp import (
+    McpConfig,
+    McpServer,
+    question_route,
+    socket_approval,
+    socket_question,
+)
 from .notify import notify
 from .output import (
     OutputAdapterClipboard,
@@ -73,6 +79,7 @@ __all__ = [
     "load_prompt",
     "load_relative_file",
     "notify",
+    "question_route",
     "signal_waybar",
     "socket_approval",
     "socket_question",

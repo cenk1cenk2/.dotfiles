@@ -49,6 +49,79 @@ ApprovalCallback = Callable[[str, dict], "tuple[bool, str]"]
 # `enable_question`), we hand it off, get back a typed answer.
 QuestionCallback = Callable[[str], str]
 
+# Route signatures for `add_approval_route`. A matcher says "I handle
+# this invocation"; a handler returns the MCP allow/deny envelope
+# directly (so callers keep full control over behavior/message shape).
+ApprovalMatcher = Callable[[str, dict], bool]
+ApprovalRouteHandler = Callable[[str, dict], dict]
+
+DEFAULT_QUESTION_TOOL_NAMES: "tuple[str, ...]" = (
+    "AskUserQuestion",
+    "AskUser",
+    "ask_user_question",
+    "ask_user",
+    "user_question",
+    "UserQuestion",
+    "ask_question",
+    "ask",
+)
+
+def question_route(
+    callback: QuestionCallback,
+    tool_names: "tuple[str, ...]" = DEFAULT_QUESTION_TOOL_NAMES,
+) -> "tuple[ApprovalMatcher, ApprovalRouteHandler]":
+    """Convenience builder for `McpServer.add_approval_route`.
+
+    Returns the `(matcher, handler)` pair that pivots any of the
+    built-in "ask the user a question" tools (`AskUserQuestion`,
+    opencode's `ask`, …) onto the typed-answer `callback(question)`.
+    Comparisons are case-insensitive and ignore `-` vs `_` in the
+    tool name so claude's `AskUserQuestion`, opencode's `ask-user`,
+    and the generic `ask_question` all route the same way.
+
+    The handler pulls a readable question out of common input fields
+    (`question`, `prompt`, `message`, `text`, `user_message`) and
+    returns a `deny`-with-`User answered: …` envelope — the only
+    honest way to inject a reply through the permission-prompt
+    channel in `-p` mode, where the underlying tool can't actually
+    do interactive stdin. Skipped questions come back as a terse
+    deny so the model doesn't loop trying to re-ask."""
+    normalised = frozenset(n.lower().replace("-", "_") for n in tool_names)
+
+    def matcher(tool_name: str, _input: dict) -> bool:
+        return tool_name.lower().replace("-", "_") in normalised
+
+    def handler(_tool_name: str, tool_input: dict) -> dict:
+        question = ""
+        for key in ("question", "prompt", "message", "text", "user_message"):
+            v = tool_input.get(key)
+            if isinstance(v, str) and v.strip():
+                question = v.strip()
+                break
+        if not question:
+            try:
+                question = json.dumps(tool_input)
+            except (TypeError, ValueError):
+                question = str(tool_input)
+        try:
+            answer = callback(question)
+        except Exception as e:
+            log.exception("question callback raised")
+
+            return {
+                "behavior": "deny",
+                "message": f"question callback error: {e}",
+            }
+        if answer:
+            return {"behavior": "deny", "message": f"User answered: {answer}"}
+
+        return {
+            "behavior": "deny",
+            "message": "User skipped the question without answering.",
+        }
+
+    return matcher, handler
+
 class McpServer:
     """Minimal MCP JSON-RPC 2.0 stdio server.
 
@@ -63,6 +136,9 @@ class McpServer:
         self.name = name
         self.version = version
         self._tools: dict[str, dict] = {}
+        # Registered approval routes, tried in insertion order BEFORE
+        # the base approval callback. See `add_approval_route`.
+        self._approval_routes: list[tuple[ApprovalMatcher, ApprovalRouteHandler]] = []
 
     def register_tool(
         self,
@@ -81,7 +157,6 @@ class McpServer:
     def enable_approval(
         self,
         callback: ApprovalCallback,
-        question_callback: Optional[QuestionCallback] = None,
         tool_name: str = "approve",
         description: str = (
             "Ask an external approver whether a Claude tool invocation "
@@ -95,68 +170,38 @@ class McpServer:
         We handle the translation to Claude's allow/deny envelope and
         any plumbing around it — the callback just has to decide.
 
-        When `question_callback` is provided AND the inbound tool is
-        one of the model's built-in "ask the user a question" tools
-        (`AskUserQuestion`, opencode's `ask`, etc.) we route the
-        request through it instead of the approval UI. The user's
-        typed answer comes back to the model as a denial message of
-        the form `User answered: …` — the only honest way to inject a
-        reply through the permission-prompt channel in `-p` mode,
-        where the underlying tool can't actually do interactive
-        stdin. Skipped questions come back as a terse deny so the
-        model doesn't loop trying to re-ask."""
+        Callers can layer specialized routes on top via
+        `add_approval_route(matcher, handler)`; registered routes are
+        tried in order before the base callback. That's how we pivot
+        built-in `AskUserQuestion`-style tools over to the compose
+        question banner instead of the allow/deny row, without
+        baking that specific logic into the server."""
 
         def handler(args: dict) -> dict:
             caller_tool = args.get("tool_name", "") or ""
             caller_input = args.get("input") or {}
 
-            if question_callback is not None and caller_tool.lower().replace(
-                "-", "_"
-            ) in frozenset(
-                {
-                    "askuserquestion",
-                    "askuser",
-                    "ask_user_question",
-                    "ask_user",
-                    "user_question",
-                    "userquestion",
-                    "ask_question",
-                    "ask",
-                }
-            ):
-                # Pull a readable question out of whatever input
-                # shape the model produced. Falls back to the raw
-                # input so the banner always has *something* to show.
-                question = ""
-                for _key in ("question", "prompt", "message", "text", "user_message"):
-                    _v = caller_input.get(_key)
-                    if isinstance(_v, str) and _v.strip():
-                        question = _v.strip()
-                        break
-                if not question:
-                    try:
-                        question = json.dumps(caller_input)
-                    except (TypeError, ValueError):
-                        question = str(caller_input)
+            for matcher, route_handler in self._approval_routes:
                 try:
-                    answer = question_callback(question)
+                    matched = matcher(caller_tool, caller_input)
                 except Exception as e:
-                    log.exception("question callback raised in approval router")
+                    log.exception("approval matcher raised")
 
                     return {
                         "behavior": "deny",
-                        "message": f"question callback error: {e}",
+                        "message": f"matcher error: {e}",
                     }
-                if answer:
+                if not matched:
+                    continue
+                try:
+                    return route_handler(caller_tool, caller_input)
+                except Exception as e:
+                    log.exception("approval route handler raised")
+
                     return {
                         "behavior": "deny",
-                        "message": f"User answered: {answer}",
+                        "message": f"route handler error: {e}",
                     }
-
-                return {
-                    "behavior": "deny",
-                    "message": "User skipped the question without answering.",
-                }
 
             try:
                 approved, reason = callback(caller_tool, caller_input)
@@ -187,6 +232,26 @@ class McpServer:
             },
             handler,
         )
+
+    def add_approval_route(
+        self,
+        matcher: ApprovalMatcher,
+        handler: ApprovalRouteHandler,
+    ) -> None:
+        """Register a specialized approval route.
+
+        When the permission tool is invoked, routes are tried in
+        registration order; the first `matcher(tool_name, input)` that
+        returns True delegates to its `handler(tool_name, input)`,
+        which must return an MCP allow/deny envelope directly
+        (e.g. `{"behavior": "allow", "updatedInput": {...}}` or
+        `{"behavior": "deny", "message": "..."}`). No match falls
+        through to the base callback supplied to `enable_approval`.
+
+        Use `question_route()` for the common case of pivoting
+        built-in "ask the user a question" tools onto a typed-answer
+        callback; custom matchers/handlers cover anything else."""
+        self._approval_routes.append((matcher, handler))
 
     def enable_question(
         self,

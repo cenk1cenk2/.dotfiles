@@ -20,7 +20,7 @@ class ConversationProvider(StrEnum):
     CODEX = "codex"
     OPENCODE = "opencode"
 
-DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
+DEFAULT_CONVERSE_ADAPTER = ConversationProvider.OPENCODE
 
 @dataclass
 class ToolCall:
@@ -835,9 +835,9 @@ class ConversationAdapterOpenCode:
                 # Translate `{"mcpServers": {"ask": {command, args, env}}}`
                 # into OpenCode's `mcp` schema: `{type, command: [cmd, *args],
                 # environment, enabled}`.
-                for name, spec in self.mcp_config.to_dict().get(
-                    "mcpServers", {}
-                ).items():
+                for name, spec in (
+                    self.mcp_config.to_dict().get("mcpServers", {}).items()
+                ):
                     existing_mcp.setdefault(
                         name,
                         {

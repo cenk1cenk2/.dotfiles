@@ -68,22 +68,31 @@ if len(sys.argv) > 1 and sys.argv[1] == "toggle":
 # them), so we short-circuit to the MCP event loop here and exit.
 if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     # Late import so the normal ask.py paths still load gi below.
-    from lib.mcp import McpServer, socket_approval, socket_question  # noqa: E402
+    from lib.mcp import (  # noqa: E402
+        McpServer,
+        question_route,
+        socket_approval,
+        socket_question,
+    )
 
     _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     _mcp_sock = os.path.join(_runtime, "wayland-ask-mcp.sock")
     _server = McpServer("ask")
-    # Single question callback shared between the two hooks: the
-    # approval router forwards built-in `AskUserQuestion`-style tool
-    # invocations to it (so they pop the compose-banner question UI
-    # instead of the allow/deny row), AND the standalone
-    # `ask_question` tool we register uses the same callback when the
-    # model explicitly picks our MCP tool.
+    # Single question callback shared between two entry points: the
+    # generic approval router (registered below via
+    # `add_approval_route`) pivots the model's built-in
+    # `AskUserQuestion`-style tools onto it, AND the standalone
+    # `ask_question` MCP tool uses the same callback when the model
+    # explicitly picks our tool.
     _question_cb = socket_question(_mcp_sock)
-    _server.enable_approval(
-        socket_approval(_mcp_sock),
-        question_callback=_question_cb,
-    )
+    _server.enable_approval(socket_approval(_mcp_sock))
+    _server.add_approval_route(*question_route(_question_cb))
+    # Extra routes can be appended here — each is a (matcher, handler)
+    # pair that runs before the base approval callback:
+    #   _server.add_approval_route(
+    #       matcher=lambda tool, inp: tool == "ExitPlanMode",
+    #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
+    #   )
     _server.enable_question(_question_cb)
     _server.run()
     sys.exit(0)
