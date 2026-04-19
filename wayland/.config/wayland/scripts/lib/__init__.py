@@ -36,7 +36,7 @@ from .output import (
     OutputAdapterStdout,
     OutputAdapterType,
 )
-from .prompts import load_prompt
+from .prompts import load_prompt, load_relative_file
 from .waybar import signal_waybar
 
 __all__ = [
@@ -64,6 +64,7 @@ __all__ = [
     "OutputAdapterType",
     "OutputMode",
     "load_prompt",
+    "load_relative_file",
     "notify",
     "signal_waybar",
 ]

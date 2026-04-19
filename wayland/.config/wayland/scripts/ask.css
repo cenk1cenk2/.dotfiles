@@ -1,0 +1,294 @@
+/* Tokens — design decisions live here so the rest of the sheet reads
+ * as role applications, not hex noise. Adjust here, ripple everywhere. */
+@define-color ask_bg #14161c;
+@define-color ask_surface #1d2029;
+@define-color ask_surface_hi #262b37;
+@define-color ask_border rgba(255, 255, 255, 0.07);
+@define-color ask_border_hi rgba(255, 255, 255, 0.18);
+@define-color ask_border_focus rgba(110, 168, 254, 0.75);
+@define-color ask_fg #e8ecf1;
+@define-color ask_fg_dim #9aa0ad;
+@define-color ask_fg_muted #5c6170;
+@define-color ask_accent #6ea8fe;
+@define-color ask_user #82b5ff;
+@define-color ask_assistant #c5a7ff;
+@define-color ask_idle #7dcf7d;
+@define-color ask_stream #e6c07b;
+@define-color ask_pending #e06c75;
+
+/* System monospace, globally. Some GTK themes ship a `font` shorthand
+ * that beats a bare `font-family` on `*`, so apply it explicitly to the
+ * widgets we care about too. */
+*,
+window,
+box,
+label,
+button,
+entry,
+textview,
+row,
+list,
+window *,
+box *,
+textview *,
+entry * {
+  font-family: monospace, "Fira Code", "JetBrains Mono", "Cascadia Code";
+}
+
+/* Surface. Slightly translucent so compositor blur peeks through where
+ * enabled. */
+window {
+  background: rgba(20, 22, 28, 0.97);
+  color: @ask_fg;
+}
+
+/* ============================================================ Header */
+box.ask-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid @ask_border;
+  background: @ask_bg;
+}
+
+label.ask-provider {
+  font-size: 11pt;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: alpha(@ask_fg_dim, 0.15);
+  color: @ask_fg;
+  letter-spacing: 0.08em;
+}
+
+label.ask-provider.idle {
+  color: @ask_idle;
+  background: alpha(@ask_idle, 0.18);
+}
+
+label.ask-provider.streaming {
+  color: @ask_stream;
+  background: alpha(@ask_stream, 0.18);
+}
+
+label.ask-provider.pending {
+  color: @ask_pending;
+  background: alpha(@ask_pending, 0.18);
+}
+
+button.ask-close {
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 13pt;
+  border-radius: 6px;
+}
+
+button.ask-close:hover {
+  color: @ask_pending;
+  background: alpha(@ask_pending, 0.14);
+}
+
+/* ====================================================== Conversation */
+scrolledwindow.ask-conv-scroller {
+  background: transparent;
+}
+
+box.ask-conv {
+  padding: 12px 10px 6px 10px;
+}
+
+/* Each user / assistant turn is its own card. Colour + role label
+ * identify the speaker at a glance. */
+box.ask-card {
+  background: @ask_surface;
+  border: 1px solid @ask_border;
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 4px 2px;
+}
+
+box.ask-card-user {
+  border-left: 3px solid @ask_user;
+}
+
+box.ask-card-assistant {
+  border-left: 3px solid @ask_assistant;
+  background: @ask_surface_hi;
+}
+
+label.ask-card-role {
+  font-size: 8pt;
+  font-weight: 800;
+  color: @ask_fg_dim;
+  letter-spacing: 0.18em;
+  margin-bottom: 4px;
+}
+
+label.ask-card-role-user {
+  color: @ask_user;
+}
+
+label.ask-card-role-assistant {
+  color: @ask_assistant;
+}
+
+textview.ask-card-text,
+textview.ask-card-text text {
+  font-size: 11pt;
+  background: transparent;
+  color: @ask_fg;
+}
+
+/* ========================================================== Compose */
+box.ask-compose-wrap {
+  margin: 8px 12px 12px 12px;
+  background: @ask_surface;
+  border: 2px solid @ask_border_hi;
+  border-radius: 12px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+box.ask-compose-wrap:focus-within {
+  border-color: @ask_border_focus;
+  box-shadow: 0 0 0 3px alpha(@ask_accent, 0.25);
+}
+
+scrolledwindow.ask-compose {
+  background: transparent;
+}
+
+textview.ask-compose-text,
+textview.ask-compose-text text {
+  background: transparent;
+  color: @ask_fg;
+  font-size: 12pt;
+  caret-color: @ask_accent;
+}
+
+box.ask-compose-bar {
+  padding: 4px 8px 6px 10px;
+  border-top: 1px solid @ask_border;
+  background: alpha(black, 0.18);
+}
+
+label.ask-compose-hint {
+  font-size: 9pt;
+  color: @ask_fg_muted;
+  letter-spacing: 0.02em;
+}
+
+button.ask-compose-send {
+  background: alpha(@ask_accent, 0.22);
+  color: @ask_accent;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-size: 10pt;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  min-width: 0;
+}
+
+button.ask-compose-send:hover {
+  background: alpha(@ask_accent, 0.35);
+  color: @ask_fg;
+}
+
+button.ask-compose-send:disabled {
+  opacity: 0.4;
+}
+
+/* =========================================== Queue (full-text cards) */
+box.ask-queue {
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid @ask_border;
+  padding: 6px 10px 10px 10px;
+}
+
+label.ask-queue-header {
+  font-size: 9pt;
+  font-weight: 700;
+  color: @ask_fg_muted;
+  padding: 4px 2px 6px 2px;
+  letter-spacing: 0.14em;
+}
+
+list {
+  background: transparent;
+}
+
+row.ask-queue-row {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
+row.ask-queue-row:hover {
+  background: transparent;
+}
+
+box.ask-queue-card {
+  background: @ask_surface;
+  border: 1px solid @ask_border;
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin: 4px 0;
+  transition: border-color 120ms ease;
+}
+
+box.ask-queue-card:hover {
+  border-color: alpha(@ask_accent, 0.4);
+}
+
+label.ask-queue-text {
+  font-size: 11pt;
+  color: @ask_fg;
+}
+
+scrolledwindow.ask-queue-edit {
+  background: alpha(black, 0.25);
+  border: 1px solid @ask_border_focus;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+textview.ask-queue-edit-text,
+textview.ask-queue-edit-text text {
+  background: transparent;
+  color: @ask_fg;
+  font-size: 11pt;
+}
+
+box.ask-queue-actions {
+  margin-top: 6px;
+}
+
+button.ask-queue-edit,
+button.ask-queue-send,
+button.ask-queue-remove {
+  background: transparent;
+  border: none;
+  padding: 3px 10px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  border-radius: 6px;
+  font-size: 10pt;
+}
+
+button.ask-queue-edit:hover {
+  color: @ask_accent;
+  background: alpha(@ask_accent, 0.14);
+}
+
+button.ask-queue-send:hover {
+  color: @ask_idle;
+  background: alpha(@ask_idle, 0.14);
+}
+
+button.ask-queue-remove:hover {
+  color: @ask_pending;
+  background: alpha(@ask_pending, 0.14);
+}

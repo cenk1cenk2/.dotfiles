@@ -32,6 +32,7 @@ from lib import (
     InputAdapterStdin,
     InputMode,
     load_prompt,
+    load_relative_file,
     signal_waybar,
 )
 
@@ -89,10 +90,10 @@ def _signal_waybar_safe() -> None:
     except Exception as e:
         log.debug("waybar signal failed: %s", e)
 
-def _focused_monitor_width_logical() -> Optional[int]:
-    """Ask the running compositor for the focused output's logical width
-    (pixel width divided by applied scale). Tries Hyprland first, then
-    sway. Returns None if neither is available / answers cleanly."""
+def _focused_monitor_name() -> Optional[str]:
+    """Ask the compositor for the connector name of the focused output
+    (e.g., 'DP-1', 'HDMI-A-1'). Returns None if neither Hyprland nor
+    sway is available or neither answers cleanly."""
     try:
         out = subprocess.run(
             ["hyprctl", "monitors", "-j"],
@@ -103,10 +104,7 @@ def _focused_monitor_width_logical() -> Optional[int]:
         ).stdout
         for m in json.loads(out):
             if m.get("focused"):
-                w = m.get("width")
-                scale = m.get("scale") or 1
-                if w:
-                    return int(w / scale)
+                return m.get("name")
     except (
         FileNotFoundError,
         subprocess.CalledProcessError,
@@ -124,11 +122,7 @@ def _focused_monitor_width_logical() -> Optional[int]:
         ).stdout
         for o in json.loads(out):
             if o.get("focused"):
-                mode = o.get("current_mode") or {}
-                w = mode.get("width")
-                scale = o.get("scale") or 1
-                if w:
-                    return int(w / scale)
+                return o.get("name")
     except (
         FileNotFoundError,
         subprocess.CalledProcessError,
@@ -139,211 +133,21 @@ def _focused_monitor_width_logical() -> Optional[int]:
 
     return None
 
-BASE_CSS = """
-/* Tokens. Design decisions live here so the rest of the sheet reads as
- * role applications, not hex noise. */
-@define-color ask_bg          #14161c;
-@define-color ask_surface     #1d2029;
-@define-color ask_surface_hi  #262b37;
-@define-color ask_border      rgba(255, 255, 255, 0.07);
-@define-color ask_border_hi   rgba(255, 255, 255, 0.14);
-@define-color ask_border_focus rgba(110, 168, 254, 0.65);
-@define-color ask_fg          #e8ecf1;
-@define-color ask_fg_dim      #8a90a0;
-@define-color ask_fg_muted    #5c6170;
-@define-color ask_accent      #6ea8fe;
-@define-color ask_user        #82b5ff;
-@define-color ask_assistant   #c5a7ff;
-@define-color ask_idle        #7dcf7d;
-@define-color ask_stream      #e6c07b;
-@define-color ask_pending     #e06c75;
+def _focused_gdk_monitor():
+    """Resolve the compositor-focused output to a `GdkMonitor` by
+    matching connector names. Returns None on miss."""
+    name = _focused_monitor_name()
+    display = Gdk.Display.get_default()
+    if display is None or name is None:
+        return None
+    monitors = display.get_monitors()
+    for i in range(monitors.get_n_items()):
+        monitor = monitors.get_item(i)
+        if monitor.get_connector() == name:
+            return monitor
 
-/* Everything in this overlay uses the system monospace. The default
- * sans-serif makes code, prompts, and transcripts look out of place. */
-* {
-    font-family: monospace;
-}
+    return None
 
-/* Surface. Slightly translucent so compositor blur peeks through where
- * enabled. */
-window {
-    background: rgba(20, 22, 28, 0.97);
-    color: @ask_fg;
-}
-
-/* ------- Header ------- */
-box.ask-header {
-    padding: 10px 14px;
-    border-bottom: 1px solid @ask_border;
-    background: @ask_bg;
-}
-label.ask-provider {
-    font-size: 11pt;
-    font-weight: 700;
-    padding: 4px 12px;
-    border-radius: 999px;
-    background: alpha(@ask_fg_dim, 0.15);
-    color: @ask_fg;
-    letter-spacing: 0.08em;
-}
-label.ask-provider.idle      { color: @ask_idle;    background: alpha(@ask_idle, 0.18); }
-label.ask-provider.streaming { color: @ask_stream;  background: alpha(@ask_stream, 0.18); }
-label.ask-provider.pending   { color: @ask_pending; background: alpha(@ask_pending, 0.18); }
-button.ask-close {
-    background: transparent;
-    border: none;
-    padding: 4px 10px;
-    min-width: 0;
-    color: @ask_fg_dim;
-    font-size: 13pt;
-    border-radius: 6px;
-}
-button.ask-close:hover { color: @ask_pending; background: alpha(@ask_pending, 0.14); }
-
-/* ------- Conversation ------- */
-scrolledwindow.ask-conv-scroller { background: transparent; }
-box.ask-conv { padding: 12px 10px 6px 10px; }
-
-/* Turn card — each user/assistant turn is an independent block. Colour
- * + role label identify the speaker at a glance. */
-box.ask-card {
-    background: @ask_surface;
-    border: 1px solid @ask_border;
-    border-radius: 12px;
-    padding: 10px 14px;
-    margin: 4px 2px;
-}
-box.ask-card-user {
-    border-left: 3px solid @ask_user;
-}
-box.ask-card-assistant {
-    border-left: 3px solid @ask_assistant;
-    background: @ask_surface_hi;
-}
-label.ask-card-role {
-    font-size: 8pt;
-    font-weight: 800;
-    color: @ask_fg_dim;
-    letter-spacing: 0.18em;
-    margin-bottom: 4px;
-}
-label.ask-card-role-user      { color: @ask_user; }
-label.ask-card-role-assistant { color: @ask_assistant; }
-textview.ask-card-text,
-textview.ask-card-text text {
-    font-size: 11pt;
-    background: transparent;
-    color: @ask_fg;
-}
-
-/* ------- Compose ------- */
-box.ask-compose-wrap {
-    margin: 8px 12px 12px 12px;
-    background: @ask_surface;
-    border: 2px solid @ask_border_hi;
-    border-radius: 12px;
-    transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-box.ask-compose-wrap:focus-within {
-    border-color: @ask_border_focus;
-    box-shadow: 0 0 0 3px alpha(@ask_accent, 0.2);
-}
-scrolledwindow.ask-compose { background: transparent; }
-textview.ask-compose-text,
-textview.ask-compose-text text {
-    background: transparent;
-    color: @ask_fg;
-    font-size: 12pt;
-    caret-color: @ask_accent;
-}
-box.ask-compose-bar {
-    padding: 4px 8px 6px 10px;
-    border-top: 1px solid @ask_border;
-    background: alpha(black, 0.18);
-}
-label.ask-compose-hint {
-    font-size: 9pt;
-    color: @ask_fg_muted;
-    letter-spacing: 0.02em;
-}
-button.ask-compose-send {
-    background: alpha(@ask_accent, 0.22);
-    color: @ask_accent;
-    border: none;
-    border-radius: 6px;
-    padding: 4px 14px;
-    font-size: 10pt;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    min-width: 0;
-}
-button.ask-compose-send:hover {
-    background: alpha(@ask_accent, 0.35);
-    color: @ask_fg;
-}
-button.ask-compose-send:disabled { opacity: 0.4; }
-
-/* ------- Queue (full-text cards) ------- */
-box.ask-queue {
-    background: rgba(0, 0, 0, 0.3);
-    border-top: 1px solid @ask_border;
-    padding: 6px 10px 10px 10px;
-}
-label.ask-queue-header {
-    font-size: 9pt;
-    font-weight: 700;
-    color: @ask_fg_muted;
-    padding: 4px 2px 6px 2px;
-    letter-spacing: 0.14em;
-}
-list { background: transparent; }
-row.ask-queue-row {
-    background: transparent;
-    padding: 0;
-    margin: 0;
-}
-row.ask-queue-row:hover { background: transparent; }
-box.ask-queue-card {
-    background: @ask_surface;
-    border: 1px solid @ask_border;
-    border-radius: 10px;
-    padding: 8px 10px;
-    margin: 4px 0;
-    transition: border-color 120ms ease;
-}
-box.ask-queue-card:hover { border-color: alpha(@ask_accent, 0.4); }
-label.ask-queue-text {
-    font-size: 11pt;
-    color: @ask_fg;
-}
-scrolledwindow.ask-queue-edit {
-    background: alpha(black, 0.25);
-    border: 1px solid @ask_border_focus;
-    border-radius: 6px;
-    padding: 2px;
-}
-textview.ask-queue-edit-text,
-textview.ask-queue-edit-text text {
-    background: transparent;
-    color: @ask_fg;
-    font-size: 11pt;
-}
-box.ask-queue-actions { margin-top: 6px; }
-button.ask-queue-edit,
-button.ask-queue-send,
-button.ask-queue-remove {
-    background: transparent;
-    border: none;
-    padding: 3px 10px;
-    min-width: 0;
-    color: @ask_fg_dim;
-    border-radius: 6px;
-    font-size: 10pt;
-}
-button.ask-queue-edit:hover   { color: @ask_accent;  background: alpha(@ask_accent, 0.14); }
-button.ask-queue-send:hover   { color: @ask_idle;    background: alpha(@ask_idle, 0.14); }
-button.ask-queue-remove:hover { color: @ask_pending; background: alpha(@ask_pending, 0.14); }
-"""
 
 class MarkdownView:
     """Renders a full text buffer as CommonMark via `markdown-it-py`.
@@ -880,6 +684,10 @@ class AskWindow(Gtk.ApplicationWindow):
         if self.get_visible():
             self.set_visible(False)
         else:
+            # Only re-home when we're actually coming back from hidden:
+            # user may have moved to a different monitor, changed output
+            # scale, etc. between hides. No-op while we're already shown.
+            self._bind_to_focused_monitor()
             self.set_visible(True)
             self.present()
             self._compose.focus()
@@ -891,6 +699,9 @@ class AskWindow(Gtk.ApplicationWindow):
         if not message:
             return
         if not self.get_visible():
+            # Coming back from hidden — re-home to whichever output the
+            # user is looking at NOW, same policy as manual toggle.
+            self._bind_to_focused_monitor()
             self.set_visible(True)
             self.present()
         if self._streaming:
@@ -916,7 +727,9 @@ class AskWindow(Gtk.ApplicationWindow):
         self._append_user_card(message)
         self._active_assistant = self._append_assistant_card()
         self._streaming = True
-        self._compose.set_sensitive(False)
+        # Compose stays enabled: the queue system handles anything the
+        # user types while this turn is streaming — new submissions get
+        # pushed behind the current stream automatically.
         self._set_phase("pending")
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
@@ -974,7 +787,8 @@ class AskWindow(Gtk.ApplicationWindow):
         self._streaming = False
         self._active_assistant = None
         if self._alive:
-            self._compose.set_sensitive(True)
+            # Compose was never disabled; just reclaim focus so the user
+            # can continue typing without clicking.
             self._compose.focus()
             self._set_phase("idle")
             nxt = self._pop_queue_front()
@@ -1114,12 +928,16 @@ class AskWindow(Gtk.ApplicationWindow):
     # -- Statics --------------------------------------------------------
 
     @staticmethod
-    def _overlay_width(fraction: float = 0.4) -> int:
-        """Fraction of the *current* (focused) monitor's logical width.
-        Asks the compositor directly — Hyprland first, then sway — so the
-        overlay sizes to wherever the user is looking, not whatever GDK
-        happens to list as the default monitor."""
-        width = _focused_monitor_width_logical()
+    def _overlay_width(fraction: float = 0.4, monitor=None) -> int:
+        """Fraction of the focused monitor's logical width. Caller can
+        pass a specific `monitor` (already resolved); otherwise we query
+        the compositor live. Falls back to GDK's first monitor, then a
+        hardcoded default, when no info is available."""
+        width = None
+        if monitor is None:
+            monitor = _focused_gdk_monitor()
+        if monitor is not None:
+            width = monitor.get_geometry().width
         if width is None:
             display = Gdk.Display.get_default()
             if display is not None:
@@ -1131,10 +949,25 @@ class AskWindow(Gtk.ApplicationWindow):
 
         return max(320, int(width * fraction))
 
+    def _bind_to_focused_monitor(self) -> None:
+        """Pin the layer-shell surface to whichever output is currently
+        focused and resize width to its 40% fraction. Invoked on every
+        toggle-to-visible, so switching monitors between uses rehomes
+        the overlay to the new one."""
+        monitor = _focused_gdk_monitor()
+        if monitor is not None:
+            Gtk4LayerShell.set_monitor(self, monitor)
+        width = self._overlay_width(monitor=monitor)
+        # `set_default_size` only takes effect on first show; after that,
+        # a fresh width request is what actually resizes the surface.
+        self.set_size_request(width, -1)
+
     @staticmethod
     def _install_css() -> None:
+        """Load `ask.css` from alongside this script and register it as an
+        APPLICATION-priority style provider (beats theme, loses to user)."""
+        css = load_relative_file("ask.css", relative_to=__file__).encode("utf-8")
         provider = Gtk.CssProvider()
-        css = BASE_CSS.encode("utf-8")
         provider.load_from_data(css, len(css))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
