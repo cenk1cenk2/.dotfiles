@@ -2,14 +2,14 @@
 
 ### Recording Mode
 
-set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→pilot/hide | (w/W) copywriter/kill | (q/Q) stop speech/recording | <ESC>"
+set $mode_recording "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→pilot/hide | (p/P) plan/hide | (w/W) copywriter/kill | (q/Q) stop speech/recording | <ESC>"
 
 mode $mode_recording {
         # Toggle recording (start/stop)
         bindsym r exec $recorder toggle, mode "default"
 
-        # Toggle pause/resume
-        bindsym p exec $recorder pause, mode "default"
+        # Pause/resume recording — moved off `p` (now the plan-pilot session key)
+        bindsym Shift+r exec $recorder pause, mode "default"
 
         # Open OBS window
         bindsym o exec $recorder open, mode "default"
@@ -34,6 +34,14 @@ mode $mode_recording {
 
         # Toggle the pilot overlay (hides/shows without ending the session)
         bindsym Shift+a exec $pilot toggle, mode "default"
+
+        # Dedicated "plan" pilot overlay — opencode+glm-5.1:cloud, cwd=~/notes.
+        # Session suffix `plan` keeps sockets / app-id separate from the
+        # default overlay so both can be live at once.
+        bindsym p exec $pilot --session plan toggle --converse-provider opencode --converse-model glm-5.1:cloud --cwd ~/notes, mode "default"
+
+        # Hide/show the already-running plan pilot without touching its session.
+        bindsym Shift+p exec $pilot --session plan toggle, mode "default"
 
         # Copywriter: refine clipboard through AI
         bindsym w exec $copywriter run clipboard, mode "default"
