@@ -3076,21 +3076,14 @@ class Session:
             case "turn":
                 text = (obj.get("text") or "").strip()
                 if text:
-                    # If the overlay is on-screen, STAGE the new text
-                    # into the compose area so the user gets an Enter
-                    # confirmation before the turn goes out. This is
-                    # the right UX for speech press-2 / follow-up
-                    # forwards arriving against a live, visible pilot
-                    # — the user sees what was picked up and can edit
-                    # / discard before submitting. When the overlay is
-                    # hidden the old dispatch-immediately path fires
-                    # instead (fire-and-forget speech flow keeps
-                    # working, and `dispatch_turn` will re-show the
-                    # window before running the turn).
-                    if self._window.get_visible():
-                        GLib.idle_add(self._window.stage_turn, text)
-                    else:
-                        GLib.idle_add(self._window.dispatch_turn, text)
+                    # Always STAGE — never auto-dispatch external input.
+                    # The user presses Enter to send. `stage_turn` also
+                    # presents the overlay if it was hidden, so speech
+                    # press-2 forwards still surface the text to the
+                    # user; they just get to review before the turn
+                    # goes out. Match for fresh-spawn stdin too (see
+                    # `_cmd_toggle`'s `on_activate`).
+                    GLib.idle_add(self._window.stage_turn, text)
 
                 return {"ok": True}
             case "status":
@@ -3525,7 +3518,12 @@ def _cmd_toggle(args) -> None:
         window.focus_compose()
         _signal_waybar_safe()
         if initial:
-            window.dispatch_turn(initial)
+            # Stage rather than dispatch: spawn-time input lands in the
+            # compose box for user confirmation. Same rule as the live
+            # socket-turn path — external input NEVER auto-submits, it
+            # always waits for Enter so transcription errors / stray
+            # pastes can be corrected before the turn goes out.
+            window.stage_turn(initial)
 
     app.connect("activate", on_activate)
     try:
