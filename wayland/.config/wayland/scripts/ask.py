@@ -753,6 +753,14 @@ class AskWindow(Gtk.ApplicationWindow):
         # this overlay run". Both reset on window close.
         self._permissions: list[PermissionRow] = []
         self._trusted_tools: set[str] = set()
+        # `_permission_gate` blocks the worker thread when an untrusted
+        # tool event arrives. Main-thread button handlers call `set()`
+        # to resume; `_permission_denied` tells the worker whether to
+        # yield another chunk or bail out of the turn. Starts SET so a
+        # turn without tool events never waits.
+        self._permission_gate = threading.Event()
+        self._permission_gate.set()
+        self._permission_denied = False
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -964,15 +972,37 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _run_turn(self, user_message: str) -> None:
         first_text_chunk = True
+        # Reset the gate for this turn. Gate is set-by-default; we only
+        # clear it when we hit an untrusted tool event below.
+        self._permission_gate.set()
+        self._permission_denied = False
         try:
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
-                # Tool-use events route to the permission panel; they
-                # don't count as "streaming started" so the phase pill
-                # only flips when real text arrives.
                 if isinstance(chunk, ToolCall):
+                    name = (chunk.name or "").strip()
+                    # Trusted tools bypass the gate entirely — surface
+                    # them in the panel (useful audit trail) but don't
+                    # pause the stream. Check trust in this worker
+                    # thread; `set` membership is GIL-safe to read.
+                    if name and name in self._trusted_tools:
+                        GLib.idle_add(self._on_tool_call, chunk)
+                        continue
+                    # Clear the gate FIRST, then schedule the UI. The
+                    # main thread's button handlers will `set()` the
+                    # gate to resume us (allow/trust) or leave it set
+                    # AND flip `_permission_denied` to bail (deny).
+                    self._permission_gate.clear()
                     GLib.idle_add(self._on_tool_call, chunk)
+                    # Block with a coarse 60s timeout so a stalled UI
+                    # can't hang the turn forever. Poll `_alive` each
+                    # tick so a window close unblocks cleanly.
+                    while not self._permission_gate.wait(timeout=0.5):
+                        if not self._alive:
+                            return
+                    if self._permission_denied:
+                        return
                     continue
                 if first_text_chunk:
                     GLib.idle_add(self._set_phase, "streaming")
@@ -984,6 +1014,8 @@ class AskWindow(Gtk.ApplicationWindow):
             log.error("turn failed: %s", e)
             GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
         finally:
+            # Always unblock any lingering waiters on exit.
+            self._permission_gate.set()
             if self._alive:
                 GLib.idle_add(self._mark_idle)
 
@@ -1099,8 +1131,17 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             self._permissions_box.set_visible(False)
 
+    def _resume_if_clear(self) -> None:
+        """Unblock the worker thread's `_permission_gate` once no rows
+        are pending. Called from every allow/trust path so a user who
+        stacks multiple approvals has to clear them all before the
+        stream resumes."""
+        if not self._permissions:
+            self._permission_gate.set()
+
     def _on_permission_allow(self, row: PermissionRow) -> None:
         self._remove_permission_row(row)
+        self._resume_if_clear()
 
     def _on_permission_trust(self, row: PermissionRow) -> None:
         name = row.tool_name
@@ -1113,6 +1154,7 @@ class AskWindow(Gtk.ApplicationWindow):
         for existing in list(self._permissions):
             if existing.tool_name == name:
                 self._remove_permission_row(existing)
+        self._resume_if_clear()
 
     def _untrust_tool(self, name: str) -> None:
         """Remove `name` from the per-session trust set so future calls
@@ -1130,6 +1172,7 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _on_permission_deny(self, row: PermissionRow) -> None:
         tool_name = row.tool_name or "tool"
+        self._permission_denied = True
         try:
             self._adapter.cancel()
         except Exception as e:
@@ -1142,6 +1185,10 @@ class AskWindow(Gtk.ApplicationWindow):
         # don't want leftover prompts for calls that won't complete.
         for existing in list(self._permissions):
             self._remove_permission_row(existing)
+        # Unblock the worker so it can observe `_permission_denied` and
+        # exit cleanly instead of hanging on a gate that'll never be
+        # set by another button.
+        self._permission_gate.set()
 
     # -- Scroll / keys / links -----------------------------------------
 
@@ -1252,6 +1299,9 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False
+        # Unblock any gate-waiting worker thread so it can observe
+        # `_alive = False` and exit instead of hanging on `wait()`.
+        self._permission_gate.set()
         try:
             self._adapter.close()
         except Exception as e:
