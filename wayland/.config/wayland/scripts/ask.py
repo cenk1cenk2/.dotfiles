@@ -420,7 +420,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -1605,6 +1605,9 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_y:
             self._yank_last_assistant()
             return True
+        if ctrl and keyval == Gdk.KEY_g:
+            self._accept_first_permission()
+            return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
             return True
@@ -1666,6 +1669,16 @@ class AskWindow(Gtk.ApplicationWindow):
             return
         self._compose.focus()
         self._compose.append_text(text)
+
+    def _accept_first_permission(self) -> None:
+        """Ctrl+G: click the `✓ allow` button on the oldest pending
+        permission row. Keyboard-only accept for the row that grabbed
+        focus when it appeared — saves the user a Tab-to-allow + Enter
+        dance when they just want to approve and move on. Silent no-op
+        when the panel is empty."""
+        if not self._permissions:
+            return
+        self._permissions[0]._allow_btn.emit("clicked")
 
     def _yank_last_assistant(self) -> None:
         """Ctrl+Y: copy the most recent assistant reply to the Wayland
