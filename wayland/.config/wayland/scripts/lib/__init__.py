@@ -30,6 +30,11 @@ from .input import (
     InputMode,
     InputAdapterStdin,
 )
+from .default_servers import (
+    DEFAULT_SERVER_NAMES,
+    DEFAULT_SERVERS,
+    get_server,
+)
 from .mcp import (
     AutoCheckPassthrough,
     McpCapability,
@@ -61,6 +66,8 @@ __all__ = [
     "ConversationProvider",
     "DEFAULT_CONVERSE_ADAPTER",
     "DEFAULT_ENRICH_ADAPTER",
+    "DEFAULT_SERVER_NAMES",
+    "DEFAULT_SERVERS",
     "EnrichAdapter",
     "EnrichAdapterClaude",
     "EnrichAdapterCodex",
@@ -81,6 +88,7 @@ __all__ = [
     "OutputMode",
     "ThinkingChunk",
     "ToolCall",
+    "get_server",
     "load_prompt",
     "load_relative_file",
     "notify",
