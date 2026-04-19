@@ -29,7 +29,7 @@ _font() {
   mkdir -p "$conf_dir"
 
   local target="$conf_dir/50-${alias_name}.conf"
-  cat > "$target" <<EOF
+  cat >"$target" <<EOF
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
@@ -51,6 +51,9 @@ cmd="${1:?usage: gtk-config.sh <subcommand> [args]}"
 shift
 
 case "$cmd" in
-  font) _font "$@" ;;
-  *)    echo "gtk-config.sh: unknown subcommand: $cmd" >&2 ; exit 2 ;;
+font) _font "$@" ;;
+*)
+  echo "gtk-config.sh: unknown subcommand: $cmd" >&2
+  exit 2
+  ;;
 esac

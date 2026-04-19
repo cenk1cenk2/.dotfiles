@@ -160,8 +160,8 @@ class MarkdownView:
 
     HEADING_SCALES = {1: 1.4, 2: 1.2, 3: 1.1}
     LINK_COLOR = "#4676ac"
-    CODE_BG = "#1e1e1e"
-    INLINE_CODE_BG = "#2a2a2a"
+    CODE_BG = "#17191e"
+    INLINE_CODE_BG = "#2c333d"
 
     def __init__(self, buffer: Gtk.TextBuffer):
         self.buffer = buffer
