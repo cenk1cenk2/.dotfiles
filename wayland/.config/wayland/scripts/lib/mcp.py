@@ -152,6 +152,16 @@ class McpServer:
         # Registered approval routes, tried in insertion order BEFORE
         # the base approval callback. See `add_approval_route`.
         self._approval_routes: list[tuple[ApprovalMatcher, ApprovalRouteHandler]] = []
+        # Auto-approve / auto-reject sets — normalised tool names
+        # (case-insensitive, `-`/`_` unified). Checked by the built-in
+        # auto-list route installed at construction time, which runs
+        # BEFORE any caller-added routes so auto decisions always win.
+        # Mutable sets so callers can `add_auto_approve` / `remove_auto_reject`
+        # at runtime; the MCP subprocess keeps these live for the
+        # duration of its lifetime.
+        self._auto_approve: set[str] = set()
+        self._auto_reject: set[str] = set()
+        self._approval_routes.append(self._build_auto_list_route())
         # Dispatcher for `enable()`. Keyed by `McpCapability`, value is
         # a callable that installs the capability onto `self`. Using
         # bound methods keeps the handler signature uniform —
@@ -162,6 +172,75 @@ class McpServer:
             McpCapability.QUESTION: self._install_question,
             McpCapability.OPEN: self._install_open,
         }
+
+    @staticmethod
+    def _normalise_tool_name(name: str) -> str:
+        """Canonicalise a tool name for auto-list comparisons. Mirrors
+        the case-insensitive + `-`/`_` unified scheme used by
+        `question_route`, so `Read`, `read`, `read-file` and `read_file`
+        all compare equal when added to the same list."""
+        return (name or "").lower().replace("-", "_")
+
+    def _build_auto_list_route(self) -> "tuple[ApprovalMatcher, ApprovalRouteHandler]":
+        """Return the `(matcher, handler)` pair that short-circuits
+        approval decisions when the invoked tool is in either auto set.
+        Installed into `_approval_routes` at `__init__` so it runs
+        before any caller-added routes — auto decisions always win.
+
+        The matcher consults `_auto_reject` first (denies take priority)
+        then `_auto_approve`. The handler mirrors that order so the
+        MCP envelope matches the list the tool landed in."""
+
+        def matcher(tool_name: str, _input: dict) -> bool:
+            key = self._normalise_tool_name(tool_name)
+            return key in self._auto_reject or key in self._auto_approve
+
+        def handler(tool_name: str, tool_input: dict) -> dict:
+            key = self._normalise_tool_name(tool_name)
+            if key in self._auto_reject:
+                return {
+                    "behavior": "deny",
+                    "message": f"auto-rejected: {tool_name}",
+                }
+
+            return {"behavior": "allow", "updatedInput": tool_input or {}}
+
+        return matcher, handler
+
+    def add_auto_approve(self, *names: str) -> None:
+        """Add one or more tool names to the auto-approve set.
+        Names are normalised (case-insensitive, `-`/`_` unified).
+        No-op for names already present. Blank / non-string entries
+        are skipped silently so callers can splat argparse defaults
+        without filtering."""
+        for name in names:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            self._auto_approve.add(self._normalise_tool_name(name))
+
+    def add_auto_reject(self, *names: str) -> None:
+        """Add one or more tool names to the auto-reject set.
+        Same normalisation + skip rules as `add_auto_approve`."""
+        for name in names:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            self._auto_reject.add(self._normalise_tool_name(name))
+
+    def remove_auto_approve(self, *names: str) -> None:
+        """Drop names from the auto-approve set. Silent for
+        already-absent entries."""
+        for name in names:
+            if not isinstance(name, str):
+                continue
+            self._auto_approve.discard(self._normalise_tool_name(name))
+
+    def remove_auto_reject(self, *names: str) -> None:
+        """Drop names from the auto-reject set. Silent for
+        already-absent entries."""
+        for name in names:
+            if not isinstance(name, str):
+                continue
+            self._auto_reject.discard(self._normalise_tool_name(name))
 
     def enable(self, capability: "str | McpCapability", **kwargs) -> None:
         """Install a capability by its enum value OR a plain string
@@ -255,6 +334,12 @@ class McpServer:
                     continue
                 try:
                     return route_handler(caller_tool, caller_input)
+                except AutoCheckPassthrough:
+                    # Authority said "continue" (or was unreachable) —
+                    # skip this route and try the next. Lets socket-
+                    # backed routes opt out of a decision without
+                    # short-circuiting the whole dispatch.
+                    continue
                 except Exception as e:
                     log.exception("approval route handler raised")
 
@@ -312,6 +397,18 @@ class McpServer:
         built-in "ask the user a question" tools onto a typed-answer
         callback; custom matchers/handlers cover anything else."""
         self._approval_routes.append((matcher, handler))
+
+    def prepend_approval_route(
+        self,
+        matcher: ApprovalMatcher,
+        handler: ApprovalRouteHandler,
+    ) -> None:
+        """Register a route at the FRONT of the chain so it runs before
+        any existing routes — including the built-in auto-list route
+        seeded at construction. Use this for socket-backed auto-check
+        routes that need to consult a live authority before the local
+        fallback fires."""
+        self._approval_routes.insert(0, (matcher, handler))
 
     def _install_question(
         self,
@@ -629,6 +726,72 @@ def socket_approval(socket_path: str, timeout_s: float = 600.0) -> ApprovalCallb
         return bool(parsed.get("approved")), str(parsed.get("reason") or "")
 
     return callback
+
+def socket_auto_check(
+    socket_path: str,
+    timeout_s: float = 5.0,
+) -> "tuple[ApprovalMatcher, ApprovalRouteHandler]":
+    """Build an approval route that consults a live auto-approve /
+    auto-reject authority over a Unix socket. Returns the
+    `(matcher, handler)` pair for `McpServer.add_approval_route` —
+    install BEFORE any other routes so auto decisions win.
+
+    Wire shape:
+      request  →  {"cmd":"auto-check","tool_name":"…"}
+      response ←  {"decision": "approve" | "reject" | "continue",
+                   "message": "…"}
+
+    `continue` (or any transport error) falls through to the NEXT
+    registered route. That lets the socket authority stay the single
+    source of truth for auto lists even as the user mutates them
+    mid-session; if the bridge is unreachable we degrade gracefully
+    to whatever default route the server has configured.
+
+    The matcher always returns True so the handler gets a chance to
+    consult the authority for every tool — returning `continue`
+    (shaped as `None`) from the handler tells the runtime the route
+    didn't actually apply, and the dispatcher moves on. We signal
+    that via a sentinel because `McpServer._approval_routes` treats
+    matchers as commit-or-reject; the real fork lives in the
+    handler's response."""
+
+    def matcher(_tool_name: str, _input: dict) -> bool:
+        return True
+
+    def handler(tool_name: str, tool_input: dict) -> dict:
+        parsed = _socket_roundtrip(
+            socket_path,
+            {"cmd": "auto-check", "tool_name": tool_name},
+            timeout_s,
+        )
+        if "error" in parsed:
+            # Transport failure — return the sentinel so the
+            # dispatcher falls through. Done by raising
+            # `AutoCheckPassthrough`; the dispatcher catches it and
+            # moves on to the next route.
+            raise AutoCheckPassthrough()
+        decision = str(parsed.get("decision") or "").lower()
+        if decision == "approve":
+            return {"behavior": "allow", "updatedInput": tool_input or {}}
+        if decision == "reject":
+            return {
+                "behavior": "deny",
+                "message": (
+                    str(parsed.get("message") or "")
+                    or f"auto-rejected: {tool_name}"
+                ),
+            }
+
+        # "continue" or unknown: defer to downstream routes.
+        raise AutoCheckPassthrough()
+
+    return matcher, handler
+
+class AutoCheckPassthrough(Exception):
+    """Raised by the `socket_auto_check` handler to signal the
+    dispatcher that the authority returned `continue` / was
+    unreachable. Caught inside `McpServer._install_approval` so the
+    next route (and finally the base callback) gets a chance."""
 
 def socket_question(socket_path: str, timeout_s: float = 600.0) -> QuestionCallback:
     """Return a `QuestionCallback` that forwards the question to a Unix

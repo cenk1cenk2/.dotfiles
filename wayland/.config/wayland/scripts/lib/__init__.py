@@ -31,11 +31,13 @@ from .input import (
     InputAdapterStdin,
 )
 from .mcp import (
+    AutoCheckPassthrough,
     McpCapability,
     McpConfig,
     McpServer,
     question_route,
     socket_approval,
+    socket_auto_check,
     socket_question,
 )
 from .notify import notify
@@ -50,6 +52,7 @@ from .prompts import load_prompt, load_relative_file
 from .waybar import signal_waybar
 
 __all__ = [
+    "AutoCheckPassthrough",
     "ConversationAdapter",
     "ConversationAdapterClaude",
     "ConversationAdapterCodex",
@@ -84,5 +87,6 @@ __all__ = [
     "question_route",
     "signal_waybar",
     "socket_approval",
+    "socket_auto_check",
     "socket_question",
 ]
