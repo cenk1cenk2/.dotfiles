@@ -15,11 +15,11 @@
 @define-color ask_compose #38404b;
 @define-color ask_border #4b5263;
 @define-color ask_border_soft #2c333d;
-@define-color ask_border_focus #f1b862;
+@define-color ask_border_focus #6c778d;
 @define-color ask_fg #abb2bf;
 @define-color ask_fg_dim #7c8a9d;
 @define-color ask_fg_muted #5c6370;
-@define-color ask_accent #d19a66;
+@define-color ask_accent #abb2bf;
 @define-color ask_user #e5c07b;
 @define-color ask_assistant #98c379;
 @define-color ask_idle #98c379;
