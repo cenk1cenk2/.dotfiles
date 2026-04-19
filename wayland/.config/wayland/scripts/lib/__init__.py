@@ -11,6 +11,7 @@ from .converse import (
     ConversationAdapterCodex,
     ConversationAdapterHttp,
     ConversationProvider,
+    ToolCall,
 )
 from .enrich import (
     DEFAULT_ENRICH_ADAPTER,
@@ -59,6 +60,7 @@ __all__ = [
     "OutputAdapterStdout",
     "OutputAdapterType",
     "OutputMode",
+    "ToolCall",
     "load_prompt",
     "load_relative_file",
     "notify",

@@ -9,7 +9,8 @@ import logging
 import os
 import subprocess
 import threading
-from typing import Any, Iterator, Optional, Protocol
+from dataclasses import dataclass
+from typing import Any, Iterator, Optional, Protocol, Union
 from enum import StrEnum
 import requests
 
@@ -19,6 +20,28 @@ class ConversationProvider(StrEnum):
     CODEX = "codex"
 
 DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
+
+@dataclass
+class ToolCall:
+    """A tool-use event surfaced out of `turn()` alongside text chunks.
+
+    The adapter yields `ToolCall` whenever the upstream stream carries a
+    tool invocation (OpenAI `delta.tool_calls`, Claude `tool_use` blocks,
+    Codex tool_use/shell_command items). The UI treats these as
+    visibility-only: we cannot actually gate server-side / in-CLI tool
+    execution from the client, so the overlay surfaces a row and lets
+    the user dismiss / trust / cancel the turn. `tool_id` is whatever
+    stable id the backend gave us so follow-up deltas for the same call
+    can be coalesced; `arguments` is the raw JSON string (or shell
+    fragment for codex) — the UI does the pretty-printing."""
+
+    tool_id: str
+    name: str
+    arguments: str
+
+# Convenience alias for generator yield types — `str` for text chunks,
+# `ToolCall` for tool events.
+TurnChunk = Union[str, ToolCall]
 
 log = logging.getLogger(__name__)
 
@@ -97,9 +120,9 @@ class ConversationAdapter(Protocol):
     provider: ConversationProvider
     model: str
 
-    def turn(self, user_message: str) -> Iterator[str]:
-        """Yield assistant response chunks. Appends this turn to internal
-        session state."""
+    def turn(self, user_message: str) -> Iterator[TurnChunk]:
+        """Yield assistant response chunks — `str` for text, `ToolCall`
+        for tool-use events. Appends this turn to internal session state."""
         ...
 
     def cancel(self) -> None:
@@ -149,7 +172,7 @@ class ConversationAdapterHttp:
         self._resp: Optional[requests.Response] = None
         self._cancelled = False
 
-    def turn(self, user_message: str) -> Iterator[str]:
+    def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
         self.messages.append({"role": "user", "content": user_message})
         body: dict[str, Any] = {
@@ -201,6 +224,23 @@ class ConversationAdapterHttp:
         self._resp = resp
         collected: list[str] = []
         stream_ok = False
+        # tool_calls come in multiple deltas — OpenAI streams the name +
+        # id on the first chunk then appends `arguments` fragments on
+        # subsequent chunks, all keyed by the array `index`. We buffer
+        # per-index and flush to a `ToolCall` when `finish_reason ==
+        # "tool_calls"` or a new index starts.
+        pending_tools: dict[int, dict] = {}
+
+        def _flush_tools():
+            for idx in sorted(pending_tools):
+                t = pending_tools[idx]
+                yield ToolCall(
+                    tool_id=t.get("id") or f"idx-{idx}",
+                    name=t.get("name") or "",
+                    arguments=t.get("arguments") or "",
+                )
+            pending_tools.clear()
+
         try:
             for line in resp.iter_lines(decode_unicode=True):
                 if self._cancelled:
@@ -218,11 +258,32 @@ class ConversationAdapterHttp:
                 choices = event.get("choices") or []
                 if not choices:
                     continue
-                delta = choices[0].get("delta") or {}
+                choice = choices[0]
+                delta = choice.get("delta") or {}
                 chunk = delta.get("content")
                 if chunk:
                     collected.append(chunk)
                     yield chunk
+                # Accumulate tool-call deltas by index. The server sends
+                # {id, type, function:{name, arguments}} on the opening
+                # delta and {function:{arguments:"..."}} chunks after —
+                # we merge both into `pending_tools[idx]`.
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = pending_tools.setdefault(idx, {})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] = fn["name"]
+                    if fn.get("arguments") is not None:
+                        slot["arguments"] = (slot.get("arguments") or "") + fn["arguments"]
+                if choice.get("finish_reason") == "tool_calls":
+                    yield from _flush_tools()
+            # End of stream: flush any still-pending tool calls that
+            # didn't get an explicit `finish_reason: tool_calls` marker
+            # (some OpenAI-compatible servers skip it).
+            yield from _flush_tools()
             stream_ok = True
         except requests.RequestException as e:
             # cancel() closes the response mid-iteration, which surfaces
@@ -279,7 +340,7 @@ class ConversationAdapterClaude:
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
 
-    def turn(self, user_message: str) -> Iterator[str]:
+    def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
         # --bare isolates the session (no hooks, no CLAUDE.md) but forces
         # ANTHROPIC_API_KEY-only auth. Fall back to a non-bare spawn when the
@@ -317,6 +378,11 @@ class ConversationAdapterClaude:
 
         drain_thread, stderr_buf = _spawn_stderr_drain(proc)
         error_text: Optional[str] = None
+        # Buffer tool_use content blocks by their `index` — Claude
+        # streams `content_block_start` (name + id) then
+        # `input_json_delta` fragments then `content_block_stop`. We
+        # emit one `ToolCall` when the stop event arrives.
+        pending_tools: dict[int, dict] = {}
         try:
             for raw in proc.stdout:
                 if self._cancelled:
@@ -337,12 +403,38 @@ class ConversationAdapterClaude:
                             self._session_id = sid
                     case "stream_event":
                         inner = event.get("event") or {}
-                        if inner.get("type") == "content_block_delta":
+                        itype = inner.get("type")
+                        if itype == "content_block_delta":
                             delta = inner.get("delta") or {}
-                            if delta.get("type") == "text_delta":
+                            dtype = delta.get("type")
+                            if dtype == "text_delta":
                                 text = delta.get("text")
                                 if text:
                                     yield text
+                            elif dtype == "input_json_delta":
+                                idx = inner.get("index", 0)
+                                slot = pending_tools.setdefault(idx, {})
+                                slot["arguments"] = (
+                                    slot.get("arguments") or ""
+                                ) + (delta.get("partial_json") or "")
+                        elif itype == "content_block_start":
+                            block = inner.get("content_block") or {}
+                            if block.get("type") == "tool_use":
+                                idx = inner.get("index", 0)
+                                pending_tools[idx] = {
+                                    "id": block.get("id") or f"idx-{idx}",
+                                    "name": block.get("name") or "",
+                                    "arguments": "",
+                                }
+                        elif itype == "content_block_stop":
+                            idx = inner.get("index", 0)
+                            slot = pending_tools.pop(idx, None)
+                            if slot and slot.get("name"):
+                                yield ToolCall(
+                                    tool_id=slot["id"],
+                                    name=slot["name"],
+                                    arguments=slot.get("arguments") or "",
+                                )
                     case "result":
                         if event.get("is_error"):
                             error_text = event.get("result") or "claude reported error"
@@ -391,7 +483,7 @@ class ConversationAdapterCodex:
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
 
-    def turn(self, user_message: str) -> Iterator[str]:
+    def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
         if self._session_id is None:
             prompt = f"{self.system_prompt}\n\n{user_message}"
@@ -454,10 +546,29 @@ class ConversationAdapterCodex:
                             self._session_id = tid
                     case "item.completed":
                         item = event.get("item") or {}
-                        if item.get("type") == "agent_message":
+                        itype = item.get("type")
+                        if itype == "agent_message":
                             text = item.get("text")
                             if text:
                                 yield text
+                        elif itype in ("tool_use", "tool_call", "shell_command"):
+                            # Codex stringifies the invocation differently per
+                            # item type. Prefer structured fields, fall back
+                            # to whatever is in the item as JSON so the user
+                            # sees *something* useful in the permission row.
+                            args = (
+                                item.get("arguments")
+                                or item.get("input")
+                                or item.get("command")
+                                or ""
+                            )
+                            if isinstance(args, (dict, list)):
+                                args = json.dumps(args)
+                            yield ToolCall(
+                                tool_id=item.get("id") or itype,
+                                name=item.get("name") or itype,
+                                arguments=str(args),
+                            )
         finally:
             try:
                 rc = proc.wait()

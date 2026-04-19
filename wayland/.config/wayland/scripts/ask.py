@@ -30,6 +30,7 @@ from lib import (
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
+    ToolCall,
     load_prompt,
     load_relative_file,
     signal_waybar,
@@ -570,6 +571,94 @@ class TurnCard:
     def get_text(self) -> str:
         return self._text
 
+class PermissionRow(Gtk.ListBoxRow):
+    """A pending tool-use event rendered as a full-width card above the
+    queue. Mirrors `QueueRow`'s structure: a wrapping body + an action
+    strip with three buttons. Buttons are:
+
+    * `✓ allow`  — dismiss the row; the call already happened server-
+                   side / in-CLI, this just acknowledges it.
+    * `✓ trust`  — add this tool name to the session allowlist so
+                   future invocations skip the row entirely.
+    * `✕ deny`   — cancel the in-flight turn (same path as Ctrl+D) and
+                   stamp the assistant card with a cancelled marker.
+
+    The UI is visibility-only: we don't have a protocol for gating the
+    actual tool execution in any of our backends. Documented in the
+    plan; user-facing copy keeps the verbs honest."""
+
+    def __init__(self, call: ToolCall, on_allow, on_trust, on_deny):
+        super().__init__()
+        self._call = call
+        self._on_allow = on_allow
+        self._on_trust = on_trust
+        self._on_deny = on_deny
+        self.add_css_class("ask-permission-row")
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        card.add_css_class("ask-permission-card")
+
+        # Tool name — accent-coloured header so it reads as a fresh
+        # event rather than another turn card.
+        name_label = Gtk.Label(label=call.name or "(unnamed tool)", xalign=0.0)
+        name_label.add_css_class("ask-permission-tool-name")
+        card.append(name_label)
+
+        # Argument preview. Try to pretty-print JSON; fall back to the
+        # raw string for non-JSON payloads (codex shell_command etc.).
+        pretty = call.arguments or ""
+        try:
+            parsed = json.loads(pretty) if pretty.strip() else None
+            if parsed is not None:
+                pretty = json.dumps(parsed, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        args_label = Gtk.Label(label=pretty, xalign=0.0, hexpand=True)
+        args_label.set_wrap(True)
+        args_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        args_label.set_selectable(True)
+        args_label.add_css_class("ask-permission-args")
+        card.append(args_label)
+
+        actions = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
+            halign=Gtk.Align.END,
+        )
+        actions.add_css_class("ask-permission-actions")
+
+        allow_btn = Gtk.Button(label="✓ allow")
+        allow_btn.add_css_class("ask-permission-allow")
+        allow_btn.set_tooltip_text("Dismiss this tool-use notification")
+        allow_btn.connect("clicked", lambda _b: self._on_allow(self))
+        actions.append(allow_btn)
+
+        trust_btn = Gtk.Button(label="✓ trust")
+        trust_btn.add_css_class("ask-permission-trust")
+        trust_btn.set_tooltip_text(
+            "Trust this tool for the rest of the session — future calls "
+            "will be auto-dismissed without a prompt"
+        )
+        trust_btn.connect("clicked", lambda _b: self._on_trust(self))
+        actions.append(trust_btn)
+
+        deny_btn = Gtk.Button(label="✕ deny")
+        deny_btn.add_css_class("ask-permission-deny")
+        deny_btn.set_tooltip_text("Cancel the current turn")
+        deny_btn.connect("clicked", lambda _b: self._on_deny(self))
+        actions.append(deny_btn)
+
+        card.append(actions)
+        self.set_child(card)
+
+    @property
+    def tool_name(self) -> str:
+        return self._call.name or ""
+
+    @property
+    def call(self) -> ToolCall:
+        return self._call
+
 class AskWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
     widgets (one per user/assistant turn), queued turns are cards of
@@ -600,6 +689,11 @@ class AskWindow(Gtk.ApplicationWindow):
         self._phase: str = "idle"
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
+        # Tool permission rows live above the queue; trust set is
+        # per-session so approving once means "quiet for the rest of
+        # this overlay run". Both reset on window close.
+        self._permissions: list[PermissionRow] = []
+        self._trusted_tools: set[str] = set()
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -661,6 +755,21 @@ class AskWindow(Gtk.ApplicationWindow):
         vadj = self._conv_scroller.get_vadjustment()
         vadj.connect("value-changed", self._on_vadj_value_changed)
         vadj.connect("notify::upper", self._on_vadj_upper_changed)
+
+        # Permissions ---------------------------------------------------
+        # Sits above the queue so pending tool-use notifications take
+        # priority visually — they're transient and often need a
+        # response before the user cares about queued turns.
+        self._permissions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._permissions_box.add_css_class("ask-permissions")
+        permissions_header = Gtk.Label(label="TOOLS", xalign=0.0)
+        permissions_header.add_css_class("ask-permissions-header")
+        self._permissions_box.append(permissions_header)
+        self._permissions_listbox = Gtk.ListBox()
+        self._permissions_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._permissions_box.append(self._permissions_listbox)
+        self._permissions_box.set_visible(False)
+        root.append(self._permissions_box)
 
         # Queue ---------------------------------------------------------
         self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -795,16 +904,20 @@ class AskWindow(Gtk.ApplicationWindow):
         return False
 
     def _run_turn(self, user_message: str) -> None:
-        first_chunk = True
+        first_text_chunk = True
         try:
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
-                if first_chunk:
-                    # First delta arrived — leave red `pending`, go yellow
-                    # `streaming`.
+                # Tool-use events route to the permission panel; they
+                # don't count as "streaming started" so the phase pill
+                # only flips when real text arrives.
+                if isinstance(chunk, ToolCall):
+                    GLib.idle_add(self._on_tool_call, chunk)
+                    continue
+                if first_text_chunk:
                     GLib.idle_add(self._set_phase, "streaming")
-                    first_chunk = False
+                    first_text_chunk = False
                 GLib.idle_add(self._append_chunk, chunk)
         except Exception as e:
             if not self._alive:
@@ -896,6 +1009,65 @@ class AskWindow(Gtk.ApplicationWindow):
         # Row keeps its slot; the card shows the updated text. Nothing
         # else to do — dispatch_turn reads row.text() on drain / send.
         pass
+
+    # -- Permissions ---------------------------------------------------
+
+    def _on_tool_call(self, call: ToolCall) -> bool:
+        """Main-thread sink for `ToolCall` events from `adapter.turn()`.
+        Scheduled via `GLib.idle_add` from the worker thread — returns
+        False so it fires once and detaches."""
+        if call.name and call.name in self._trusted_tools:
+            log.debug("tool %r is trusted; skipping permission row", call.name)
+
+            return False
+        row = PermissionRow(
+            call,
+            on_allow=self._on_permission_allow,
+            on_trust=self._on_permission_trust,
+            on_deny=self._on_permission_deny,
+        )
+        self._permissions.append(row)
+        self._permissions_listbox.append(row)
+        self._permissions_box.set_visible(True)
+
+        return False
+
+    def _remove_permission_row(self, row: PermissionRow) -> None:
+        if row not in self._permissions:
+            return
+        self._permissions.remove(row)
+        self._permissions_listbox.remove(row)
+        if not self._permissions:
+            self._permissions_box.set_visible(False)
+
+    def _on_permission_allow(self, row: PermissionRow) -> None:
+        self._remove_permission_row(row)
+
+    def _on_permission_trust(self, row: PermissionRow) -> None:
+        name = row.tool_name
+        if name:
+            self._trusted_tools.add(name)
+        # Drop every pending row for the same tool while we're at it —
+        # the user just said they trust it, no point keeping duplicate
+        # prompts for concurrent calls on screen.
+        for existing in list(self._permissions):
+            if existing.tool_name == name:
+                self._remove_permission_row(existing)
+
+    def _on_permission_deny(self, row: PermissionRow) -> None:
+        tool_name = row.tool_name or "tool"
+        try:
+            self._adapter.cancel()
+        except Exception as e:
+            log.warning("adapter cancel raised during deny: %s", e)
+        if self._active_assistant is not None:
+            self._active_assistant.append(
+                f"\n\n*— cancelled (denied: {tool_name}) —*"
+            )
+        # Clear every pending row — the stream is stopping anyway, we
+        # don't want leftover prompts for calls that won't complete.
+        for existing in list(self._permissions):
+            self._remove_permission_row(existing)
 
     # -- Scroll / keys / links -----------------------------------------
 

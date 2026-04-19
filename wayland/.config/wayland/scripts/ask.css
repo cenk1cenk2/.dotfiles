@@ -403,3 +403,117 @@
     inset 0 1px 2px alpha(black, 0.4),
     0 0 0 transparent;
 }
+
+/* ========================================= Permissions (tool-use) */
+/* Sits between the conversation and the queue. Shape mirrors the
+ * queue panel so the two read as siblings; colour hints lean
+ * warning-ish (accent left stripe) because tool events are more
+ * attention-grabby than queued user messages. */
+.overlay box.ask-permissions {
+  background-color: alpha(black, 0.35);
+  background-image: none;
+  border-top: 1px solid @ask_border_soft;
+  padding: 6px 10px 10px 10px;
+}
+
+.overlay label.ask-permissions-header {
+  font-size: 0.8em;
+  font-weight: 700;
+  color: @ask_fg_muted;
+  padding: 4px 2px 6px 2px;
+  letter-spacing: 0.14em;
+}
+
+.overlay row.ask-permission-row {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  margin: 0;
+}
+
+.overlay row.ask-permission-row:hover {
+  background-color: transparent;
+}
+
+.overlay box.ask-permission-card {
+  background-color: @ask_card;
+  background-image: none;
+  border: 1px solid @ask_border_soft;
+  border-left: 3px solid @ask_accent;
+  padding: 10px 12px;
+  margin: 4px 0;
+  transition: border-color 120ms ease;
+}
+
+.overlay box.ask-permission-card:hover {
+  border-color: alpha(@ask_accent, 0.6);
+  border-left-color: @ask_accent;
+}
+
+.overlay label.ask-permission-tool-name {
+  font-size: 0.9em;
+  font-weight: 800;
+  color: @ask_accent;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.overlay label.ask-permission-args {
+  font-size: 0.9em;
+  color: @ask_fg_dim;
+}
+
+.overlay box.ask-permission-actions {
+  margin-top: 8px;
+}
+
+/* Button row: allow → green (idle), trust → accent, deny → red
+ * (pending). Same base shadow as the queue trio. */
+.overlay button.ask-permission-allow,
+.overlay button.ask-permission-trust,
+.overlay button.ask-permission-deny {
+  background-color: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 12px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 0.85em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.ask-permission-allow:hover {
+  color: @ask_idle;
+  background-color: alpha(@ask_idle, 0.18);
+  border-color: alpha(@ask_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-trust:hover {
+  color: @ask_accent;
+  background-color: alpha(@ask_accent, 0.18);
+  border-color: alpha(@ask_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-deny:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-permission-allow:active,
+.overlay button.ask-permission-trust:active,
+.overlay button.ask-permission-deny:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
