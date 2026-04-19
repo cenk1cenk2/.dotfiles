@@ -30,6 +30,7 @@ from lib import (
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
+    OutputAdapterClipboard,
     ToolCall,
     load_prompt,
     load_relative_file,
@@ -1259,6 +1260,9 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_f:
             self._compose.focus()
             return True
+        if ctrl and keyval == Gdk.KEY_y:
+            self._yank_last_assistant()
+            return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
             return True
@@ -1320,6 +1324,24 @@ class AskWindow(Gtk.ApplicationWindow):
             return
         self._compose.focus()
         self._compose.append_text(text)
+
+    def _yank_last_assistant(self) -> None:
+        """Ctrl+Y: copy the most recent assistant reply to the Wayland
+        clipboard via `wl-copy`. Walks `self._cards` backwards so the
+        most-recent completed assistant turn wins. Silent no-op when
+        no assistant has replied yet."""
+        for card in reversed(self._cards):
+            if card.role != "assistant":
+                continue
+            text = card.get_text()
+            if not text:
+                continue
+            try:
+                OutputAdapterClipboard().write(text)
+            except Exception as e:
+                log.warning("yank-to-clipboard failed: %s", e)
+
+            return
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False

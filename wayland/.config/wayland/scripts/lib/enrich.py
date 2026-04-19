@@ -57,6 +57,9 @@ class EnrichAdapterHttp:
         # servers.
         self.tool_ids = kwargs.get("tool_ids")
         self.files = kwargs.get("files")
+        # Accepted for API parity with the CLI adapters — no plan/edit
+        # distinction exists at the chat-completions layer.
+        self.mode = kwargs.get("mode") or "plan"
 
     def enrich(self, text: str) -> Optional[str]:
         body: dict[str, Any] = {
@@ -118,6 +121,9 @@ class EnrichAdapterClaude:
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.model = kwargs.get("model") or "haiku"
+        # Maps to `--permission-mode`. Default "plan" keeps enrich
+        # read-only — a rewrite task shouldn't be editing files anyway.
+        self.mode = kwargs.get("mode") or "plan"
 
     def enrich(self, text: str) -> Optional[str]:
         proc = subprocess.run(
@@ -126,6 +132,8 @@ class EnrichAdapterClaude:
                 "-p",
                 "--model",
                 self.model,
+                "--permission-mode",
+                self.mode,
                 "--system-prompt",
                 self.system_prompt,
                 self.user_prompt_template.format(text=text),
@@ -149,11 +157,16 @@ class EnrichAdapterCodex:
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.model = kwargs.get("model") or "gpt-5.4-mini"
+        # Codex has no literal plan flag — map "plan" to read-only
+        # sandbox. Any other string passes through verbatim (e.g.
+        # "workspace-write", "danger-full-access").
+        self.mode = kwargs.get("mode") or "plan"
 
     def enrich(self, text: str) -> Optional[str]:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
+        sandbox = "read-only" if self.mode == "plan" else self.mode
         proc = subprocess.run(
             [
                 "codex",
@@ -161,6 +174,8 @@ class EnrichAdapterCodex:
                 "-",
                 "--model",
                 self.model,
+                "--sandbox",
+                sandbox,
                 "--ephemeral",
                 "--skip-git-repo-check",
             ],

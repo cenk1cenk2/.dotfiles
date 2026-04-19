@@ -157,6 +157,12 @@ class ConversationAdapterHttp:
         self.top_p = kwargs.get("top_p")
         self.thinking = kwargs.get("thinking") or "none"
         self.num_ctx = kwargs.get("num_ctx")
+        # Operating mode. OpenAI-compatible endpoints don't distinguish
+        # plan vs edit (tools execute server-side unconditionally), so
+        # we accept the kwarg for API parity with the CLI adapters
+        # and expose it as an attribute for callers that want to
+        # reflect it in the UI.
+        self.mode = kwargs.get("mode") or "plan"
         # OpenWebUI extensions (silently ignored by generic OpenAI servers).
         # tool_ids: server-side tool UUIDs, also accepting the pseudo-ids
         # that represent built-ins (web_search, memory, code_interpreter,
@@ -345,6 +351,12 @@ class ConversationAdapterClaude:
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
         self.model = kwargs.get("model") or "sonnet"
+        # Maps directly to claude's `--permission-mode`
+        # (default | acceptEdits | bypassPermissions | plan). Default
+        # is `plan` so claude explores read-only and surfaces write
+        # intents through our permission hook instead of silently
+        # mutating the workspace.
+        self.mode = kwargs.get("mode") or "plan"
         self.permission_prompt_mcp: Optional[str] = kwargs.get("permission_prompt_mcp")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
@@ -407,6 +419,8 @@ class ConversationAdapterClaude:
             "-p",
             "--model",
             self.model,
+            "--permission-mode",
+            self.mode,
             "--output-format",
             "stream-json",
             "--include-partial-messages",
@@ -537,9 +551,20 @@ class ConversationAdapterCodex:
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
         self.model = kwargs.get("model") or "gpt-5.4"
+        # Codex has no literal "plan" flag — its closest equivalent is
+        # a read-only sandbox that blocks filesystem writes. We map
+        # mode "plan" → `--sandbox read-only` and leave any other mode
+        # string to pass through verbatim (so callers can pick
+        # `workspace-write` / `danger-full-access` if they want).
+        self.mode = kwargs.get("mode") or "plan"
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
+
+    def _sandbox_args(self) -> list[str]:
+        sandbox = "read-only" if self.mode == "plan" else self.mode
+
+        return ["--sandbox", sandbox]
 
     def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
@@ -550,6 +575,7 @@ class ConversationAdapterCodex:
                 "exec",
                 "--model",
                 self.model,
+                *self._sandbox_args(),
                 "--json",
                 "--skip-git-repo-check",
                 prompt,
@@ -562,6 +588,7 @@ class ConversationAdapterCodex:
                 self._session_id,
                 "--model",
                 self.model,
+                *self._sandbox_args(),
                 "--json",
                 "--skip-git-repo-check",
                 user_message,
