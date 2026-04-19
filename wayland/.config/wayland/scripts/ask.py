@@ -387,7 +387,7 @@ class ComposeView:
         hint.add_css_class("ask-compose-hint")
         bar.append(hint)
 
-        self._send_btn = Gtk.Button(label="SEND")
+        self._send_btn = Gtk.Button(label="⏎ send")
         self._send_btn.add_css_class("ask-compose-send")
         self._send_btn.set_tooltip_text("Send the current message (Enter)")
         self._send_btn.connect("clicked", lambda _b: self._submit())
@@ -700,9 +700,7 @@ class AskWindow(Gtk.ApplicationWindow):
         # making cards render as narrow slivers (sometimes invisible
         # entirely when the short role label was the only measurable
         # natural-width content).
-        self._conv_scroller.set_policy(
-            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
-        )
+        self._conv_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._conv_scroller.add_css_class("ask-conv-scroller")
         self._conv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self._conv_box.add_css_class("ask-conv")
