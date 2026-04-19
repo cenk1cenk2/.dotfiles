@@ -15,6 +15,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 from typing import Callable, Optional
 
@@ -40,6 +41,7 @@ from lib import (
     notify,
     signal_waybar,
 )
+from lib.converse import _deep_merge
 
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
@@ -67,6 +69,31 @@ if len(sys.argv) > 1 and sys.argv[1] == "toggle":
 # `mcp-server` as argv[1]. We don't want to drag gtk4-layer-shell /
 # GTK imports into that subprocess (it has no display + doesn't need
 # them), so we short-circuit to the MCP event loop here and exit.
+def _early_session_suffix() -> str:
+    """Extract `--session <value>` / `--session=<value>` from sys.argv
+    without running argparse. Needed for the early mcp-server branch at
+    the top of the file, which can't build a full parser (the GTK /
+    layer-shell imports below haven't run yet and the subparsers aren't
+    defined). Returns "" when the flag isn't present."""
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--session" and i + 1 < len(argv):
+            return argv[i + 1]
+        if token.startswith("--session="):
+            return token.split("=", 1)[1]
+        i += 1
+
+    return ""
+
+def _mcp_sock_name(suffix: str) -> str:
+    """Return the runtime-relative socket filename for the MCP bridge.
+    With no suffix that's `wayland-pilot-mcp.sock`; with suffix `plan`
+    it's `wayland-pilot-mcp-plan.sock`. Centralised so both the early
+    mcp-server branch and the main-path session plumbing agree."""
+    return f"wayland-pilot-mcp-{suffix}.sock" if suffix else "wayland-pilot-mcp.sock"
+
 if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     # Late import so the normal pilot.py paths still load gi below.
     from lib.mcp import (  # noqa: E402
@@ -78,7 +105,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     )
 
     _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    _mcp_sock = os.path.join(_runtime, "wayland-pilot-mcp.sock")
+    _mcp_sock = os.path.join(_runtime, _mcp_sock_name(_early_session_suffix()))
     _server = McpServer("pilot")
     # Single question callback shared between two entry points: the
     # generic approval router (registered below via
@@ -129,6 +156,25 @@ SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot.sock")
 # Split from the main socket so a user kill / stale-cleanup never trips the
 # MCP bridge (and vice-versa).
 MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot-mcp.sock")
+# Session suffix applied at startup via `_apply_session_suffix` when
+# `--session <name>` is passed. Empty string keeps the original paths /
+# app-id verbatim so no-flag behaviour matches exactly what shipped
+# before. We track the bare suffix separately (not baked into the
+# globals) so adapter-config files can reuse it.
+SESSION_SUFFIX: str = ""
+
+def _apply_session_suffix(suffix: str) -> None:
+    """Rewrite the module-level socket paths + app-id to include
+    `-<suffix>` before the extension. Called from `main()` after
+    parsing `--session`; with an empty suffix the globals keep the
+    shipped defaults exactly."""
+    global APP_ID, SOCKET_PATH, MCP_SOCKET_PATH, SESSION_SUFFIX
+    SESSION_SUFFIX = suffix or ""
+    if not suffix:
+        return
+    APP_ID = f"dev.kilic.wayland.pilot.{suffix}"
+    SOCKET_PATH = os.path.join(_RUNTIME, f"wayland-pilot-{suffix}.sock")
+    MCP_SOCKET_PATH = os.path.join(_RUNTIME, _mcp_sock_name(suffix))
 
 AI_SYSTEM_PROMPT = load_prompt("pilot.md", relative_to=__file__)
 
@@ -961,15 +1007,17 @@ class PilotWindow(Gtk.ApplicationWindow):
         self._active_assistant: Optional[TurnCard] = None
         # Tool permission rows live above the queue; trust set is
         # per-session. The trust set is ALSO the pre-flight gate: the
-        # adapter's `tool_ids` is rewritten from this set before every
-        # turn, so untrusted tools never reach the server. Rows in the
-        # panel are a live audit trail of tools the server DID run
-        # (trusted) plus anything surprising that slipped through.
-        # Seed from whatever the adapter was constructed with so CLI
-        # defaults (`--tool-id web_search memory`) pre-populate trust.
+        # adapter's `extra_body["tool_ids"]` is rewritten from this set
+        # before every turn, so untrusted tools never reach the server.
+        # Rows in the panel are a live audit trail of tools the server
+        # DID run (trusted) plus anything surprising that slipped
+        # through. Seed from whatever the adapter was constructed with
+        # so CLI defaults (`--extra-body '{"tool_ids": [...]}'`)
+        # pre-populate trust.
         self._permissions: list[PermissionRow] = []
-        initial_tool_ids = getattr(adapter, "tool_ids", None) or []
-        self._trusted_tools: set[str] = set(initial_tool_ids)
+        extra_body = getattr(adapter, "extra_body", None) or {}
+        initial_tool_ids = extra_body.get("tool_ids") if isinstance(extra_body, dict) else None
+        self._trusted_tools: set[str] = set(initial_tool_ids or [])
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -1204,8 +1252,9 @@ class PilotWindow(Gtk.ApplicationWindow):
                 # Tool events surface in the permission panel as an
                 # audit trail; they do NOT pause the stream. Real
                 # gating happens pre-flight via `_trusted_tools` ->
-                # `adapter.tool_ids` — an untrusted tool simply isn't
-                # advertised to the server, so the AI can't call it.
+                # `adapter.extra_body["tool_ids"]` — an untrusted tool
+                # simply isn't advertised to the server, so the AI
+                # can't call it.
                 # Mid-stream blocking would just desync us from the
                 # server's native-function-calling protocol (server
                 # ends the stream at `finish_reason: tool_calls`
@@ -1543,15 +1592,24 @@ class PilotWindow(Gtk.ApplicationWindow):
             self._sync_tool_gate()
 
     def _sync_tool_gate(self) -> None:
-        """Mirror `_trusted_tools` into the adapter's `tool_ids` so the
-        next turn sends exactly the trusted set to the server, and
-        refresh the compose-bar pills to match. This is the real gate —
-        untrusted tools aren't advertised, so the server can't invoke
-        them. Runs every time trust changes."""
-        if hasattr(self._adapter, "tool_ids"):
-            self._adapter.tool_ids = (
-                sorted(self._trusted_tools) if self._trusted_tools else None
-            )
+        """Mirror `_trusted_tools` into the adapter's
+        `extra_body["tool_ids"]` so the next turn sends exactly the
+        trusted set to the server, and refresh the compose-bar pills
+        to match. This is the real gate — untrusted tools aren't
+        advertised, so the server can't invoke them. Runs every time
+        trust changes. Only the HTTP adapter carries an `extra_body`
+        today; the CLI adapters don't advertise server-side tool ids
+        so the hasattr guard keeps them quietly untouched."""
+        extra_body = getattr(self._adapter, "extra_body", None)
+        if isinstance(extra_body, dict):
+            if self._trusted_tools:
+                extra_body["tool_ids"] = sorted(self._trusted_tools)
+            else:
+                # Leave no `tool_ids` key at all when nothing is trusted
+                # — the server then sees the request with zero advertised
+                # tools, matching the pre-refactor behaviour where
+                # tool_ids=None suppressed the field entirely.
+                extra_body.pop("tool_ids", None)
         self._compose.set_trusted_pills(
             sorted(self._trusted_tools),
             self._untrust_tool,
@@ -2080,18 +2138,52 @@ def _build_mcp_config() -> McpConfig:
     circuits to `lib.mcp.McpServer.run()` for that argv and exits
     without touching GTK, so the subprocess is a pure stdio server.
     Callers can layer additional servers (github, filesystem, …) by
-    mutating the returned `McpConfig` before it reaches the adapter."""
+    mutating the returned `McpConfig` before it reaches the adapter.
+
+    When SESSION_SUFFIX is set we propagate `--session <suffix>` onto
+    the child's argv so its early `_early_session_suffix()` parse
+    picks the matching MCP socket path — otherwise the child would
+    try to reach the default socket while our overlay is listening on
+    the suffixed one."""
     self_script = os.path.abspath(__file__)
+    child_args = ["-u", self_script, "mcp-server"]
+    if SESSION_SUFFIX:
+        child_args.extend(["--session", SESSION_SUFFIX])
     config = McpConfig()
-    config.add("pilot", sys.executable, args=["-u", self_script, "mcp-server"])
+    config.add("pilot", sys.executable, args=child_args)
 
     return config
+
+def _merge_extra_body(blobs) -> dict:
+    """Deep-merge an ordered list of `--extra-body` JSON strings (or
+    pre-parsed dicts) into a single dict. Later entries win on leaf
+    keys; nested dicts merge recursively via `_deep_merge`. Empty
+    list → empty dict."""
+    out: dict = {}
+    for blob in blobs or []:
+        if isinstance(blob, dict):
+            parsed = blob
+        else:
+            try:
+                parsed = json.loads(blob)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"--extra-body: not valid JSON: {blob!r}: {e}") from e
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"--extra-body: expected a JSON object, got {type(parsed).__name__}"
+            )
+        out = _deep_merge(out, parsed)
+
+    return out
 
 def _build_adapter(args) -> ConversationAdapter:
     # Callers pass argparse values through as-is. None / missing values
     # collapse to per-adapter defaults (see `kwargs.get(name) or DEFAULT`
     # in the adapter __init__s), so this function doesn't replicate them.
     provider = ConversationProvider(args.converse_provider)
+    extra_body = _merge_extra_body(getattr(args, "extra_body", None))
+    cwd = getattr(args, "cwd", None)
+    config_suffix = SESSION_SUFFIX or None
     match provider:
         case ConversationProvider.HTTP:
             return ConversationAdapterHttp(
@@ -2103,7 +2195,8 @@ def _build_adapter(args) -> ConversationAdapter:
                 top_p=args.converse_top_p,
                 thinking=args.converse_thinking,
                 num_ctx=args.converse_num_ctx,
-                tool_ids=args.tool_ids or None,
+                extra_body=extra_body,
+                cwd=cwd,
                 user_agent="pilot/1.0",
             )
         case ConversationProvider.CLAUDE:
@@ -2112,9 +2205,15 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 mcp_config=_build_mcp_config(),
                 permission_tool="mcp__pilot__approve",
+                cwd=cwd,
+                config_suffix=config_suffix,
             )
         case ConversationProvider.CODEX:
-            return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
+            return ConversationAdapterCodex(
+                AI_SYSTEM_PROMPT,
+                model=args.converse_model,
+                cwd=cwd,
+            )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
                 AI_SYSTEM_PROMPT,
@@ -2123,6 +2222,8 @@ def _build_adapter(args) -> ConversationAdapter:
                 # supports MCP servers natively, we just splice ours
                 # into its config JSON.
                 mcp_config=_build_mcp_config(),
+                cwd=cwd,
+                config_suffix=config_suffix,
             )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
@@ -2176,6 +2277,12 @@ def _cmd_toggle(args) -> None:
         _send("toggle-window")
 
         return
+
+    # Fresh session path. Fall back to an auto-created tempdir when
+    # `--cwd` wasn't provided — done here (not in main) so the path is
+    # only created on the branch that actually spawns an adapter.
+    if getattr(args, "cwd", None) is None:
+        args.cwd = tempfile.mkdtemp(prefix="pilot-")
 
     adapter = _build_adapter(args)
 
@@ -2263,9 +2370,27 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
+_DEFAULT_EXTRA_BODY = '{"tool_ids": ["web_search", "memory"]}'
+
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
     parser.add_argument("-v", "--verbose", action="store_true")
+    # Session suffix: when set, rewrites every user-visible runtime path
+    # (main socket, MCP socket, adapter config files) plus the GTK
+    # app-id to include `-<suffix>`. Lets multiple pilot overlays coexist
+    # (e.g. the default "ask" pilot and a dedicated "plan" pilot). Empty
+    # string keeps the shipped paths byte-for-byte identical, so no-flag
+    # behaviour is unchanged.
+    parser.add_argument(
+        "--session",
+        default="",
+        metavar="SUFFIX",
+        help=(
+            "session suffix — appended to socket / config-file / app-id "
+            "names so multiple pilot overlays can coexist. Empty (default) "
+            "keeps the original paths."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     toggle_parser = subparsers.add_parser(
@@ -2302,21 +2427,37 @@ def main():
         choices=["high", "medium", "low", "none"],
     )
     toggle_parser.add_argument("--converse-num-ctx", type=int)
-    # OpenWebUI extensions for --converse-provider=http. Ignored by other
-    # providers and by plain OpenAI endpoints. Default bundles the
-    # always-on built-ins (web_search + memory); pass extra `--tool-id`
-    # flags for custom tools or `server:mcp:<id>` for MCP servers.
+    # Working directory for the spawned AI agent (claude / codex /
+    # opencode subprocess). Default = a fresh `mkdtemp` so each
+    # session runs in a clean-room sandbox the user hasn't had to
+    # prepare. Override with `--cwd ~/notes` to point the agent at a
+    # real project.
     toggle_parser.add_argument(
-        "--tool-id",
-        action="append",
-        dest="tool_ids",
-        default=["web_search", "memory"],
-        metavar="ID",
+        "--cwd",
+        default=None,
+        metavar="PATH",
         help=(
-            "server-side tool UUID or built-in pseudo-id "
-            "(web_search/memory/code_interpreter/image_generation/voice). "
-            "Use 'server:mcp:<id>' for an MCP server. Repeatable. "
-            "OpenWebUI-only."
+            "working directory for the spawned AI CLI. Defaults to a "
+            "fresh tempdir (tempfile.mkdtemp(prefix='pilot-'))."
+        ),
+    )
+    # Generic HTTP-body escape hatch. Replaces the older `--tool-id`
+    # flag: anything you want layered onto the OpenWebUI / OpenAI-
+    # compatible request body goes here as JSON. Multiple flags
+    # deep-merge (later wins on leaf keys, nested dicts merge).
+    # The default bundles the old `tool_ids=["web_search","memory"]`
+    # behaviour so existing users see zero change.
+    toggle_parser.add_argument(
+        "--extra-body",
+        action="append",
+        dest="extra_body",
+        default=[_DEFAULT_EXTRA_BODY],
+        metavar="JSON",
+        help=(
+            "JSON object deep-merged into the HTTP request body. "
+            "Repeatable; later values win on leaf keys, nested dicts "
+            "merge recursively. Default: "
+            f"{_DEFAULT_EXTRA_BODY}. OpenWebUI / OpenAI-compatible only."
         ),
     )
 
@@ -2333,6 +2474,14 @@ def main():
         format="%(name)s: %(message)s",
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
+
+    _apply_session_suffix(args.session or "")
+
+    # Expand `~` in user-supplied `--cwd`. The None → mkdtemp default is
+    # deferred into `_cmd_toggle` so status / kill / forwarding turns
+    # never leak a stray tempdir.
+    if args.command == "toggle" and args.cwd:
+        args.cwd = os.path.expanduser(args.cwd)
 
     match args.command:
         case "toggle":
