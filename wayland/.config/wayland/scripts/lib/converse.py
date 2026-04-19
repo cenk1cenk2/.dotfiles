@@ -216,17 +216,14 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
             env["OPENCODE_MODEL"] = f"{self.provider_name}/{self.model}"
         kwargs["env"] = env
         kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
-        # yargs (opencode's CLI parser) requires top-level options BEFORE
-        # the subcommand, so `--model provider/model` is prepended to
-        # `acp`. opencode's env-var path is unreliable across releases
-        # (some ignore `OPENCODE_MODEL` entirely under the acp subcommand);
-        # passing the flag is the only path that consistently pins the
-        # model. We keep `OPENCODE_MODEL` in env too as a fallback.
-        base_args = list(kwargs.get("args") or self.DEFAULT_ARGS)
-        if self.model and "--model" not in base_args:
-            model_qualified = f"{self.provider_name}/{self.model}"
-            base_args = ["--model", model_qualified, *base_args]
-        kwargs["args"] = base_args
+        # DO NOT pass `--model` to `opencode acp` as a CLI flag. yargs
+        # bails out with the help text and never actually starts the
+        # ACP server when a top-level option appears alongside the
+        # `acp` subcommand (verified empirically with
+        # `opencode --model kilic/glm-5.1:cloud acp` → prints help).
+        # We rely on `OPENCODE_MODEL` env (set above) + the user's
+        # `opencode.json` default to pin the model instead.
+        kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-opencode"
         kwargs["agents_file"] = self.system_prompt
         log.info(

@@ -16,18 +16,17 @@ The full workstation `AGENTS.md` is prepended to your first turn inside a `<SYST
 
 ### Tools that do NOT exist in pilot
 
-The workstation AGENTS.md assumes the Claude Code desktop / web client. Pilot runs over the Agent Client Protocol (ACP) and the hosting CLI (Claude Agent or OpenCode) surfaces a smaller tool set. **Do not reference or attempt to call** any of these — they will fail:
+The workstation AGENTS.md assumes the Claude Code desktop / web client. Pilot runs over the Agent Client Protocol (ACP) and the hosting CLI (claude-agent-acp or `opencode acp`) surfaces a smaller tool set. **Do not reference or attempt to call** any of these — they will fail:
 
-- `EnterPlanMode` / `ExitPlanMode` — pilot has no plan-mode toggle. If you'd like to present a plan, write it inline as structured markdown; pilot renders `AgentPlanUpdate` events from the agent as a collapsible plan section you can reopen with `Ctrl+O`.
+- `EnterPlanMode` / `ExitPlanMode` — no plan-mode toggle. If you want to present a plan, write it inline as structured markdown; pilot renders `AgentPlanUpdate` events from the agent as a collapsible plan section, and `Ctrl+O` re-opens the last one.
 - `TodoWrite` — no todo list UI. Use a bulleted checklist in the reply if you need to enumerate steps.
 - `ReadMcpResourceTool` / `ListMcpResourcesTool` — pilot exposes MCP resources under its own `pilot://` scheme via a built-in `system` server (see below), but the hosting CLI typically does NOT forward a `ReadMcpResourceTool` to you. Treat skills as delivered via pills, not as resources you fetch on demand.
 - `Skill` (the Claude Code built-in skill tool) — not available. Skills the user wants you to follow are attached as inline content in the prompt; act on them directly.
-- The `~/.claude/projects/*.jsonl` transcript workflow — pilot conversations are not stored there. If the user references "last session", ask them to paste the part they want you to act on.
 - The tmux scratch-pane bootstrap, the Obsidian "Repositories/{path}/README" auto-read, and the `mcp__mcphub__memory__read_graph` session-initialisation dance. These require MCP servers pilot doesn't ship by default and a session lifecycle pilot doesn't have. Skip them — do NOT announce that you're skipping, just start answering.
 
 ### MCP surface in pilot
 
-Pilot's ACP session launches with a curated MCP catalog. The always-shipped one is the built-in `system` server, and the user opts into others via `--mcp` (or `Ctrl+M` in the overlay). You can tell which are available because the second header row shows the count; the session command line is the source of truth.
+Pilot's ACP session launches with a curated MCP catalog. The always-shipped one is the built-in `system` server, and the user opts into others via `--mcp` (or `Ctrl+M` in the overlay). You can tell which are available because the overlay header shows the count next to the cwd; the session command line is the source of truth.
 
 - **`system` server** — pilot's own, stdio-launched alongside the agent. Provides:
   - `open(path)` tool — shells out to `xdg-open`. Use for opening URLs, files, and `obsidian://` / `mailto:` URIs on the user's desktop.
@@ -40,7 +39,7 @@ The `mcp__mcphub__<server>__<tool>` / `mcp__<server>__<tool>` naming convention 
 
 ### Skills, attached via pills (not resources)
 
-The user picks skills with `Ctrl+Space`. The skills palette reads the same `system` MCP server, and when the user ticks a skill the overlay injects the full SKILL.md body into the prompt as a fenced `### kind/name` section BEFORE the user's prose. That delivery mechanism means:
+The user picks skills with `Ctrl+Space`. The skills palette reads the same `system` MCP server, and when the user ticks a skill the overlay prepends the full SKILL.md body to the prompt as a `### kind/name` heading section BEFORE the user's prose. That delivery mechanism means:
 
 - You already HAVE the skill's instructions in the current turn's text — no `ReadMcpResourceTool` call, no auto-invocation logic. Read the `### skill/<name>` section; follow it.
 - When a skill declares references in its frontmatter, they are NOT auto-inlined. If the skill's body tells you to read a reference and you need the content, ask the user to also tick the reference (or the skill's reference-bundle URI) via `Ctrl+Space`.
@@ -53,15 +52,16 @@ ACP agents that emit `AgentPlanUpdate` (claude-agent-acp and opencode-acp both d
 
 ### Tool permissions
 
-Every non-read tool call goes through an in-overlay `PermissionRow` — the user clicks Allow / Trust / Deny per call. Consequences:
+Every non-read tool call either resolves via pilot's permission state (seeded from mcphub's `autoApprove` / `disabled_tools` lists + any `--auto-approve` / `--auto-reject` CLI flags) OR surfaces an in-overlay `PermissionRow` the user has to click through (`✓ allow` / `✓ trust` / `✕ deny` / `⛔ auto-reject`). Consequences:
 
 - Do not batch destructive operations assuming they'll all pass through. Describe each step first when the blast radius is large.
 - Cancelled tools surface as `*— cancelled (denied: <tool>) —*` in the transcript. If you see that marker in the history, treat it as a hard stop: the user rejected that path on purpose.
-- Trusting a tool only persists for the current pilot process (unless the user also ran `Ctrl+K` to add it to the permanent allow list). Don't lean on earlier trust decisions as invariants of the session.
+- Trust is a per-process allow-list; it evaporates on pilot close. `Ctrl+K` opens a palette that LISTS current trusts + auto-approves + auto-rejects and lets the user drop entries — it does NOT add new ones. Adding happens via the `✓ trust` / `⛔ auto-reject` buttons on a pending permission row.
+- Don't lean on an earlier trust decision as an invariant for the rest of the session; a user can yank it via `Ctrl+K` at any time.
 
 ### Working directory & headers
 
-The second header row shows cwd, MCP count, and whether a skills directory is active. The agent's `cwd` on the ACP session is the cwd pilot was launched with (or `os.getcwd()` when `--cwd` is unset). Use that as the default "where files live" — the user can see the same value above and will correct you if it's wrong.
+The overlay has a single-line header: the provider / model pill on the left, a dim breadcrumb (`@ <cwd>  +N mcps  +skills`) in the middle, close button on the right. The agent's `cwd` on the ACP session is whatever pilot was launched with via `--cwd`; when that flag isn't passed, `_cmd_toggle` mints a fresh `tempfile.mkdtemp(prefix='pilot-')` sandbox per session (NOT the user's current shell cwd). Use the header's `@ …` as the authoritative "where files live" — the user sees the same value and will correct you if it's wrong.
 
 ### Session lifecycle
 
@@ -73,7 +73,7 @@ Two separate "session" concepts coexist in pilot; don't conflate them:
 **Persistence.** Pilot stores the last ACP `session_id` under `$XDG_STATE_HOME/pilot/sessions/<suffix>-<provider>-<model>-<cwd_hash>.session`. On every `toggle`, `AcpSession._ensure_started` tries this sequence:
 
 1. Read the stored id.
-2. If present, `conn.load_session(cwd, session_id, mcp_servers)`. On success, the conversation resumes exactly where it was — history, plans, trust state all intact.
+2. If present, `conn.load_session(cwd, session_id, mcp_servers)`. On success, the conversation resumes exactly where it was — full message history + any plan the agent was maintaining. Pilot's per-process trust allow-list does NOT travel with the resume (it rebuilds from CLI flags + mcphub seeds on every launch); only the agent-side conversation is persistent.
 3. On any failure (agent GC'd the session, id is for a different provider / model, first launch), fall through to `conn.new_session(...)` and overwrite the stored id.
 
 **What makes a session unique.** The store key includes `(suffix, provider, model, cwd_hash)`. Changing any of those in the next `toggle` spawns a FRESH session — which is why swapping `--converse-model glm-5.1:cloud` for `--converse-model sonnet` doesn't accidentally reuse a Sonnet conversation as GLM (or vice-versa). Opencode / claude-agent-acp do NOT reapply `--model` to a `load_session` call, so model-scoped keys are the only portable way to honour the flag.
@@ -89,6 +89,7 @@ pilot.py --session plan forget --converse-provider opencode --converse-model glm
 The forget flags must match the slot you want to clear (same provider/model/cwd the matching `toggle` uses). It only removes pilot's pointer file — the agent's own record is left alone.
 
 **Inspecting state.** `pilot.py --session plan session-info` prints a JSON snapshot with:
+
 - `live.*` — current socket response (phase, provider, model, session_id, session_resumed, session_store_path, queue) when a pilot is running.
 - `stored[]` — every `<suffix>-*.session` file on disk for that suffix, with its resolved session_id payload. Useful for confirming that `forget` cleared the right file, or that a restart actually resumed.
 

@@ -49,7 +49,7 @@ from .output import (
 )
 from .permissions import PermissionKind, PermissionState, normalise_tool_name
 from .prompts import load_prompt, load_relative_file
-from .tool_format import format_tool_args
+from .tool_format import format_tool_args, format_tool_args_md
 from .waybar import signal_waybar
 
 _OVERLAY_EXPORTS = frozenset(
@@ -119,6 +119,7 @@ __all__ = [
     "focused_gdk_monitor",
     "focused_monitor_name",
     "format_tool_args",
+    "format_tool_args_md",
     "get_permission_seeds",
     "get_server",
     "highlight_code",

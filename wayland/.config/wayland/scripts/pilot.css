@@ -774,8 +774,14 @@
 }
 
 .overlay label.pilot-permission-args {
-  font-size: 0.9em;
+  font-size: 0.85em;
   color: @pilot_fg_dim;
+  /* Long command + diff previews get wrapped — min-width:0 lets the
+   * Pango label shrink below its natural width so the card stays
+   * within the sidebar for multi-kilo-char Bash one-liners. The
+   * markdown renderer inlines its own code-block styling (monospace
+   * span + bg tint), so no extra <tt> rules are needed. */
+  min-width: 0;
 }
 
 .overlay box.pilot-permission-actions {

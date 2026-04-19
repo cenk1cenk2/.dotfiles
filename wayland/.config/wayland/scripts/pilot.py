@@ -46,7 +46,7 @@ from lib import (
     PromptAttachment,
     ThinkingChunk,
     ToolCall,
-    format_tool_args,
+    format_tool_args_md,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
     load_prompt,
@@ -240,7 +240,7 @@ class ComposeView:
         bar.add_css_class("pilot-compose-bar")
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+Space skills · Ctrl+K permissions · Ctrl+M mcp · Ctrl+S sessions · Ctrl+O plan · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+T thinking · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+P paste · Ctrl+Y yank · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -280,6 +280,28 @@ class ComposeView:
         existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
         joiner = "" if (not existing or existing.endswith((" ", "\n"))) else " "
         buf.insert(buf.get_end_iter(), f"{joiner}{text}")
+
+    def stage_text(self, text: str) -> None:
+        """Drop `text` into the compose buffer without dispatching. Used
+        when a new turn arrives while the overlay is already visible
+        (socket-forwarded speech transcript, second invocation, etc.) —
+        the user gets a chance to edit + Enter instead of having the
+        payload auto-submitted. Existing compose content is preserved
+        and the new text is appended on a FRESH LINE so it reads as a
+        second paragraph rather than getting glued to whatever the user
+        was mid-typing."""
+        if not text:
+            return
+        buf = self._textview.get_buffer()
+        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+        if existing:
+            sep = "" if existing.endswith("\n") else "\n"
+            buf.insert(buf.get_end_iter(), f"{sep}{text}")
+        else:
+            buf.set_text(text)
+        # Cursor to the end so Enter submits everything that's now
+        # in the buffer, not wherever the caret last sat.
+        buf.place_cursor(buf.get_end_iter())
 
     def clear(self) -> None:
         self.set_text("")
@@ -651,7 +673,15 @@ class TurnCard:
         """Append a reasoning chunk to the card's thinking section,
         creating the collapsible expander on first arrival. While
         streaming, the expander is open so the user sees reasoning
-        land live; `append()` closes it once the real reply starts."""
+        land live; `append()` closes it once the real reply starts.
+
+        If thinking arrives AFTER text has begun (mid-turn reasoning:
+        some models emit thinking between tool calls or after a
+        partial answer), we re-open the expander + flip its label
+        back to STREAMING so the new reasoning is visible instead of
+        hidden behind a `DONE` fold. The card's `_thinking_collapsed`
+        flag is reset so the next text chunk will re-collapse cleanly
+        once this reasoning batch ends."""
         if self._thinking_expander is None:
             self._thinking_label = Gtk.Label(
                 xalign=0.0,
@@ -674,6 +704,13 @@ class TurnCard:
             # Slot the expander between the role label and the reply
             # label so the visual order is: role → thinking → reply.
             self.widget.insert_child_after(self._thinking_expander, self._role_label)
+        else:
+            # Mid-turn reasoning: force the fold open + restore the
+            # live label so new thinking doesn't disappear behind a
+            # previously-auto-collapsed expander.
+            self._thinking_expander.set_expanded(True)
+            self._thinking_expander.set_label(self.THINKING_LABEL_STREAMING)
+            self._thinking_collapsed = False
         self._thinking_text += chunk
         assert self._thinking_label is not None
         self._thinking_label.set_markup(self._md.render(self._thinking_text))
@@ -721,7 +758,11 @@ class TurnCard:
         self._plan_items = list(items)
         assert self._plan_label is not None
         self._plan_label.set_markup(self._render_plan_markup(self._plan_items))
-        # Auto-collapse once every item is done; otherwise leave open.
+        # Auto-collapse once every item is done; otherwise force the
+        # fold OPEN so new in-progress items never hide behind a
+        # previously-auto-collapsed plan. Agents that emit plans in
+        # waves (complete batch 1 → close, then add batch 2 items →
+        # need the section visible again) benefit from the re-expand.
         all_done = all(
             getattr(it, "status", "") == "completed" for it in self._plan_items
         )
@@ -730,6 +771,7 @@ class TurnCard:
                 self._plan_expander.set_expanded(False)
                 self._plan_expander.set_label(self.PLAN_LABEL_DONE)
             else:
+                self._plan_expander.set_expanded(True)
                 self._plan_expander.set_label(self.PLAN_LABEL_STREAMING)
 
     @staticmethod
@@ -749,12 +791,8 @@ class TurnCard:
         }
         out: list[str] = []
         for item in items:
-            glyph = glyph_for_status.get(
-                getattr(item, "status", ""), "•"
-            )
-            colour = tint_for_priority.get(
-                getattr(item, "priority", ""), "#abb2bf"
-            )
+            glyph = glyph_for_status.get(getattr(item, "status", ""), "•")
+            colour = tint_for_priority.get(getattr(item, "priority", ""), "#abb2bf")
             body = GLib.markup_escape_text(getattr(item, "content", "") or "")
             out.append(
                 f'<span foreground="{colour}" weight="bold">{glyph}</span> {body}'
@@ -835,7 +873,7 @@ class TurnCard:
         # always on screen; the full identifier still lives in the
         # button's tooltip + the expanded detail panel.
         if len(label) > self._BUBBLE_LABEL_MAX_CHARS:
-            label = "…" + label[-(self._BUBBLE_LABEL_MAX_CHARS - 1):]
+            label = "…" + label[-(self._BUBBLE_LABEL_MAX_CHARS - 1) :]
         return f"{label} {glyph}"
 
     def _update_bubble_widget(self, slot: dict) -> None:
@@ -854,19 +892,32 @@ class TurnCard:
         """Write the args preview + result text into the slot's
         detail label. Called lazily when the panel becomes visible
         (initial toggle) and on every subsequent status/result
-        update so the panel stays in sync."""
+        update so the panel stays in sync.
+
+        Args render through `format_tool_args_md` + the shared
+        markdown-to-Pango pipeline so Bash commands, file diffs,
+        and JSON payloads land in proper fenced code blocks instead
+        of a single escaped `<tt>` line."""
         label: Gtk.Label = slot["details_label"]
         name = slot.get("name") or ""
         args = slot.get("arguments") or ""
-        args_pretty = format_tool_args(name, args)
-        parts = [f"<b>{GLib.markup_escape_text(name)}</b>"]
-        if args_pretty:
-            parts.append(f"<tt>{GLib.markup_escape_text(args_pretty)}</tt>")
+        md_body = format_tool_args_md(name, args)
+        header = f"<b>{GLib.markup_escape_text(name)}</b>"
+        try:
+            args_markup = self._md.render(md_body) if md_body else ""
+        except Exception as e:
+            log.warning("bubble markdown render failed: %s", e)
+            args_markup = GLib.markup_escape_text(md_body)
+        parts = [header]
+        if args_markup:
+            parts.append(args_markup)
         result = slot.get("result")
         if result:
-            parts.append(
-                f"<i>result:</i>\n<tt>{GLib.markup_escape_text(str(result))}</tt>"
-            )
+            try:
+                result_markup = self._md.render(str(result))
+            except Exception:
+                result_markup = GLib.markup_escape_text(str(result))
+            parts.append(f"<i>result:</i>\n{result_markup}")
         label.set_markup("\n\n".join(parts))
 
     def _on_bubble_clicked(self, _button, tool_id: str) -> None:
@@ -984,6 +1035,8 @@ class TurnCard:
         if self._tool_bubbles_container is not None:
             self._tool_bubbles_container.add_css_class("frozen")
 
+_PERMISSION_MD = MarkdownMarkup()
+
 class PermissionRow(Gtk.ListBoxRow):
     """A pending tool-use event rendered as a full-width card above the
     queue. Mirrors `QueueRow`'s structure: a wrapping body + an action
@@ -1034,20 +1087,35 @@ class PermissionRow(Gtk.ListBoxRow):
         name_label.set_tooltip_text(full_name)
         card.append(name_label)
 
-        # Argument preview. Routes through `format_tool_args` so
-        # common tool names (Bash / Read / Edit / …) render as a
-        # short readable summary. Long values (multi-line jq / python
-        # one-liners, huge diffs) collapse to a single ellipsized
-        # line so the row stays scannable; the full text lives in the
-        # tooltip for hover-inspection.
-        pretty = format_tool_args(call.name or "", call.arguments or "")
-        single_line = " ".join(pretty.split())
-        args_label = Gtk.Label(label=single_line, xalign=0.0, hexpand=True)
-        args_label.set_ellipsize(Pango.EllipsizeMode.END)
-        args_label.set_max_width_chars(80)
-        args_label.set_selectable(True)
-        args_label.set_tooltip_text(pretty)
+        # Argument preview. Routes through `format_tool_args_md` so
+        # common tools (Bash / Read / Edit / …) land in fenced code
+        # blocks with appropriate language tags — the full command or
+        # diff is visible, word-wrapped, not truncated. The label
+        # width is capped via Pango's wrap-width so even a long Bash
+        # command fits cleanly inside the sidebar instead of pushing
+        # the row past the overlay bounds.
+        md_body = format_tool_args_md(call.name or "", call.arguments or "")
+        try:
+            markup = _PERMISSION_MD.render(md_body)
+        except Exception as e:
+            log.warning("permission markdown render failed: %s", e)
+            markup = GLib.markup_escape_text(md_body)
+        args_label = Gtk.Label(
+            xalign=0.0,
+            yalign=0.0,
+            hexpand=True,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+            use_markup=True,
+            selectable=True,
+        )
+        args_label.set_markup(markup)
         args_label.add_css_class("pilot-permission-args")
+        # Tooltip keeps the raw (non-rendered) markdown — handy for
+        # copy / paste when the user wants to round-trip the exact
+        # argument payload elsewhere.
+        args_label.set_tooltip_text(md_body)
         card.append(args_label)
 
         actions = Gtk.Box(
@@ -1495,6 +1563,37 @@ class PilotWindow(LayerOverlayWindow):
             return read_reference(self._skills_dir, name)
         return None
 
+    def stage_turn(self, user_message: str) -> bool:
+        """Drop `user_message` into the compose TextView instead of
+        dispatching it. Called by the socket handler when a new turn
+        arrives while the overlay is already visible — the user reads
+        the inserted text, edits if needed, then presses Enter to send.
+
+        Existing compose content is preserved + the new text lands on
+        a fresh line (appended paragraph-style); the cursor moves to
+        the end so Enter submits everything.
+
+        Also force-presents the overlay — useful when the overlay was
+        visible on another workspace or was momentarily unfocused by
+        another client at the moment the input arrived. Returns False
+        so `GLib.idle_add` fires the scheduled call exactly once."""
+        if not user_message:
+            return False
+        self._compose.stage_text(user_message)
+        # Mirror `dispatch_turn`'s "ensure visible" block so stage works
+        # even if the caller scheduled us during a visibility flicker.
+        if not self.get_visible():
+            self._bind_to_focused_monitor()
+            self.set_visible(True)
+        self.present()
+        self._compose.focus()
+        log.info(
+            "stage_turn: chars=%d existing=%s",
+            len(user_message),
+            bool(self._compose.get_text()),
+        )
+        return False
+
     def dispatch_turn(self, user_message: str) -> None:
         # Two views of the turn:
         #   - `display`: the user's clean typed prose. Shown in the
@@ -1645,7 +1744,7 @@ class PilotWindow(LayerOverlayWindow):
         raw = self._cwd or os.getcwd()
         home = os.path.expanduser("~")
         if raw.startswith(home):
-            raw = "~" + raw[len(home):]
+            raw = "~" + raw[len(home) :]
         if len(raw) <= 48:
             return raw
         parts = raw.split(os.sep)
@@ -1829,17 +1928,30 @@ class PilotWindow(LayerOverlayWindow):
         on-demand only), so visibility alone is the right gate."""
         return not self.get_visible()
 
+    def _notify_title(self, base: str) -> str:
+        """Prefix desktop-toast titles with the session suffix in parens
+        when one is configured (e.g. `Pilot (plan)`). Makes it obvious
+        which of several concurrent pilot overlays raised the toast."""
+        if self._session_suffix:
+            return f"{base} ({self._session_suffix})"
+        return base
+
     def _notify_finished(self) -> None:
         if not self._should_notify():
             return
-        notify("Pilot", "Response finished", self._NOTIFY_ICON_FINISHED, timeout=3000)
+        notify(
+            self._notify_title("Pilot"),
+            "Response finished",
+            self._NOTIFY_ICON_FINISHED,
+            timeout=3000,
+        )
 
     def _notify_approval(self, tool_name: str) -> None:
         if not self._should_notify():
             return
         label = tool_name or "tool"
         notify(
-            "Pilot — approval needed",
+            self._notify_title("Pilot — approval needed"),
             f"Waiting on approval: {label}",
             self._NOTIFY_ICON_APPROVAL,
             timeout=8000,
@@ -2298,8 +2410,7 @@ class PilotWindow(LayerOverlayWindow):
         )
         mcp_open = self._mcp_palette is not None and self._mcp_palette.is_open()
         sessions_open = (
-            self._sessions_palette is not None
-            and self._sessions_palette.is_open()
+            self._sessions_palette is not None and self._sessions_palette.is_open()
         )
         if ctrl and keyval == Gdk.KEY_space:
             if resource_open:
@@ -2431,9 +2542,7 @@ class PilotWindow(LayerOverlayWindow):
         if chosen_mime is not None:
             data = InputAdapterClipboard.read_binary(chosen_mime)
             if data:
-                log.info(
-                    "paste: attaching %s (%d bytes)", chosen_mime, len(data)
-                )
+                log.info("paste: attaching %s (%d bytes)", chosen_mime, len(data))
                 self._pending_attachments.append(
                     PromptAttachment(mime_type=chosen_mime, data=data)
                 )
@@ -2517,9 +2626,7 @@ class PilotWindow(LayerOverlayWindow):
         resources = self._collect_resources()
         # Preseed from the already-attached pills so re-opening the
         # palette shows which resources are currently queued.
-        self._palette.preseed_active(
-            {(k, n) for (k, n, _d) in self._pending_resources}
-        )
+        self._palette.preseed_active({(k, n) for (k, n, _d) in self._pending_resources})
         self._palette.open(resources)
 
     def _commit_resources_as_pills(
@@ -2530,9 +2637,7 @@ class PilotWindow(LayerOverlayWindow):
         bar pill strip. No tokens get inserted into the compose text;
         the expansion happens inside `dispatch_turn` right before the
         message is handed to the adapter."""
-        self._pending_resources = [
-            (k, n, d) for (k, n, d, _p) in active_entries
-        ]
+        self._pending_resources = [(k, n, d) for (k, n, d, _p) in active_entries]
         self._refresh_resource_pills()
         self._compose.focus()
 
@@ -2644,9 +2749,7 @@ class PilotWindow(LayerOverlayWindow):
                 host_overlay=self._compose_overlay,
                 on_commit=self._commit_session_restore,
                 on_cancel=self._compose.focus,
-                placeholder=(
-                    "Switch session — Enter restores · Esc cancels"
-                ),
+                placeholder=("Switch session — Enter restores · Esc cancels"),
             )
         self._size_palette(self._sessions_palette)
         self._sessions_palette.preseed_active(set())
@@ -2973,7 +3076,21 @@ class Session:
             case "turn":
                 text = (obj.get("text") or "").strip()
                 if text:
-                    GLib.idle_add(self._window.dispatch_turn, text)
+                    # If the overlay is on-screen, STAGE the new text
+                    # into the compose area so the user gets an Enter
+                    # confirmation before the turn goes out. This is
+                    # the right UX for speech press-2 / follow-up
+                    # forwards arriving against a live, visible pilot
+                    # — the user sees what was picked up and can edit
+                    # / discard before submitting. When the overlay is
+                    # hidden the old dispatch-immediately path fires
+                    # instead (fire-and-forget speech flow keeps
+                    # working, and `dispatch_turn` will re-show the
+                    # window before running the turn).
+                    if self._window.get_visible():
+                        GLib.idle_add(self._window.stage_turn, text)
+                    else:
+                        GLib.idle_add(self._window.dispatch_turn, text)
 
                 return {"ok": True}
             case "status":
@@ -2986,9 +3103,7 @@ class Session:
                     "queue": self._window.queue_size(),
                     "session": _PATHS.suffix,
                     "session_id": getattr(adapter, "session_id", None) or "",
-                    "session_resumed": bool(
-                        getattr(adapter, "session_resumed", False)
-                    ),
+                    "session_resumed": bool(getattr(adapter, "session_resumed", False)),
                     "session_store_path": (
                         getattr(adapter, "session_store_path", None) or ""
                     ),
@@ -3249,9 +3364,7 @@ def _build_adapter(args) -> ConversationAdapter:
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
 
-
 _MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
-
 
 def _model_tag(model: Optional[str]) -> str:
     """Slugify `--converse-model` into a filesystem-safe token so it can
@@ -3262,7 +3375,6 @@ def _model_tag(model: Optional[str]) -> str:
         return "default"
     slug = _MODEL_TAG_RE.sub("-", model.lower()).strip("-")
     return slug or "default"
-
 
 def _session_store_path(
     *,
@@ -3303,9 +3415,7 @@ def _session_store_path(
     suffix_tag = suffix or "default"
     cwd_key = cwd or os.getcwd()
     cwd_hash = hashlib.sha1(cwd_key.encode("utf-8")).hexdigest()[:10]
-    filename = (
-        f"{suffix_tag}-{provider.value}-{_model_tag(model)}-{cwd_hash}.session"
-    )
+    filename = f"{suffix_tag}-{provider.value}-{_model_tag(model)}-{cwd_hash}.session"
     return os.path.join(root, filename)
 
 def _read_input(mode: InputMode) -> str:
@@ -3478,7 +3588,6 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
-
 def _cmd_forget(args) -> None:
     """Delete the stored ACP session_id for the (suffix, provider, model,
     cwd) slot so the next `toggle` creates a fresh conversation. This only
@@ -3507,7 +3616,6 @@ def _cmd_forget(args) -> None:
         print(f"forget failed ({path}): {e}", file=sys.stderr)
         sys.exit(1)
 
-
 def _cmd_session_info() -> None:
     """Emit a JSON snapshot of the session slot on stdout. Includes the
     live session's `status` response when a pilot is running AND the
@@ -3531,9 +3639,7 @@ def _cmd_session_info() -> None:
     except FileNotFoundError:
         entries = []
     for entry in entries:
-        if not entry.startswith(f"{suffix_tag}-") or not entry.endswith(
-            ".session"
-        ):
+        if not entry.startswith(f"{suffix_tag}-") or not entry.endswith(".session"):
             continue
         full = os.path.join(sessions_dir, entry)
         try:
