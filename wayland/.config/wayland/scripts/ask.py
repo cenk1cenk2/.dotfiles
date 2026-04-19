@@ -140,166 +140,209 @@ def _focused_monitor_width_logical() -> Optional[int]:
     return None
 
 BASE_CSS = """
-/* Tokens — keep design decisions centralised via @define-color so the
- * rest of the sheet reads like semantic role applications, not hex
- * noise. Adjust here, ripple everywhere. */
-@define-color ask_bg        #1a1c23;
-@define-color ask_bg_soft   rgba(255, 255, 255, 0.04);
-@define-color ask_bg_softer rgba(255, 255, 255, 0.025);
-@define-color ask_border    rgba(255, 255, 255, 0.08);
-@define-color ask_border_hi rgba(255, 255, 255, 0.14);
-@define-color ask_fg        #e5e9f0;
-@define-color ask_fg_dim    #9aa0a6;
-@define-color ask_accent    #6ea8fe;
-@define-color ask_idle      #8fbf7a;
-@define-color ask_stream    #e6c07b;
-@define-color ask_pending   #e06c75;
+/* Tokens. Design decisions live here so the rest of the sheet reads as
+ * role applications, not hex noise. */
+@define-color ask_bg          #14161c;
+@define-color ask_surface     #1d2029;
+@define-color ask_surface_hi  #262b37;
+@define-color ask_border      rgba(255, 255, 255, 0.07);
+@define-color ask_border_hi   rgba(255, 255, 255, 0.14);
+@define-color ask_border_focus rgba(110, 168, 254, 0.65);
+@define-color ask_fg          #e8ecf1;
+@define-color ask_fg_dim      #8a90a0;
+@define-color ask_fg_muted    #5c6170;
+@define-color ask_accent      #6ea8fe;
+@define-color ask_user        #82b5ff;
+@define-color ask_assistant   #c5a7ff;
+@define-color ask_idle        #7dcf7d;
+@define-color ask_stream      #e6c07b;
+@define-color ask_pending     #e06c75;
 
-/* Overall surface. Slightly warmer than pure black, with a hint of
- * translucency so compositor blur can peek through when enabled. */
+/* Everything in this overlay uses the system monospace. The default
+ * sans-serif makes code, prompts, and transcripts look out of place. */
+* {
+    font-family: monospace;
+}
+
+/* Surface. Slightly translucent so compositor blur peeks through where
+ * enabled. */
 window {
-    background: rgba(26, 28, 35, 0.97);
+    background: rgba(20, 22, 28, 0.97);
     color: @ask_fg;
 }
 
-/* Header bar — compact, a subtle divider. No background colour of its
- * own so the provider pill reads as the one emphasized element. */
+/* ------- Header ------- */
 box.ask-header {
-    padding: 10px 14px 10px 16px;
+    padding: 10px 14px;
     border-bottom: 1px solid @ask_border;
+    background: @ask_bg;
 }
-
-/* Provider pill: rounded background, coloured text + tinted fill per
- * phase. The colour contract is the same as the waybar module — green
- * when idle, yellow when streaming, red when pending first chunk. */
 label.ask-provider {
     font-size: 11pt;
-    font-weight: 600;
-    padding: 4px 10px;
-    margin-right: 6px;
+    font-weight: 700;
+    padding: 4px 12px;
     border-radius: 999px;
-    background: @ask_bg_soft;
+    background: alpha(@ask_fg_dim, 0.15);
     color: @ask_fg;
+    letter-spacing: 0.08em;
 }
-label.ask-provider.idle {
-    color: @ask_idle;
-    background: alpha(@ask_idle, 0.14);
-}
-label.ask-provider.streaming {
-    color: @ask_stream;
-    background: alpha(@ask_stream, 0.14);
-}
-label.ask-provider.pending {
-    color: @ask_pending;
-    background: alpha(@ask_pending, 0.14);
-}
-
-/* Header close button. Minimal, goes red on hover so there's a clear
- * "this ends things" hint without being shouty at rest. */
+label.ask-provider.idle      { color: @ask_idle;    background: alpha(@ask_idle, 0.18); }
+label.ask-provider.streaming { color: @ask_stream;  background: alpha(@ask_stream, 0.18); }
+label.ask-provider.pending   { color: @ask_pending; background: alpha(@ask_pending, 0.18); }
 button.ask-close {
     background: transparent;
     border: none;
     padding: 4px 10px;
     min-width: 0;
     color: @ask_fg_dim;
-    font-size: 12pt;
+    font-size: 13pt;
     border-radius: 6px;
 }
-button.ask-close:hover {
-    color: @ask_pending;
-    background: alpha(@ask_pending, 0.12);
-}
+button.ask-close:hover { color: @ask_pending; background: alpha(@ask_pending, 0.14); }
 
-/* Conversation scroller — textview is transparent so the window colour
- * shows through; content padding via margins on the TextView itself. */
-scrolledwindow {
-    background: transparent;
-}
-textview {
-    font-size: 14pt;
-    background: transparent;
-    color: @ask_fg;
-}
-textview text {
-    background: transparent;
-    color: @ask_fg;
-}
+/* ------- Conversation ------- */
+scrolledwindow.ask-conv-scroller { background: transparent; }
+box.ask-conv { padding: 12px 10px 6px 10px; }
 
-/* Compose — framed box with a focus ring, same rounding as the pill so
- * the surface feels coherent. Box grows up to max_lines thanks to the
- * ScrolledWindow cap set in Python. */
-scrolledwindow.ask-compose {
-    margin: 10px 12px 12px 12px;
+/* Turn card — each user/assistant turn is an independent block. Colour
+ * + role label identify the speaker at a glance. */
+box.ask-card {
+    background: @ask_surface;
     border: 1px solid @ask_border;
-    border-radius: 10px;
-    background: @ask_bg_soft;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin: 4px 2px;
 }
-scrolledwindow.ask-compose:focus-within {
-    border-color: alpha(@ask_accent, 0.6);
-    background: @ask_bg_soft;
-    box-shadow: 0 0 0 2px alpha(@ask_accent, 0.18);
+box.ask-card-user {
+    border-left: 3px solid @ask_user;
 }
+box.ask-card-assistant {
+    border-left: 3px solid @ask_assistant;
+    background: @ask_surface_hi;
+}
+label.ask-card-role {
+    font-size: 8pt;
+    font-weight: 800;
+    color: @ask_fg_dim;
+    letter-spacing: 0.18em;
+    margin-bottom: 4px;
+}
+label.ask-card-role-user      { color: @ask_user; }
+label.ask-card-role-assistant { color: @ask_assistant; }
+textview.ask-card-text,
+textview.ask-card-text text {
+    font-size: 11pt;
+    background: transparent;
+    color: @ask_fg;
+}
+
+/* ------- Compose ------- */
+box.ask-compose-wrap {
+    margin: 8px 12px 12px 12px;
+    background: @ask_surface;
+    border: 2px solid @ask_border_hi;
+    border-radius: 12px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+box.ask-compose-wrap:focus-within {
+    border-color: @ask_border_focus;
+    box-shadow: 0 0 0 3px alpha(@ask_accent, 0.2);
+}
+scrolledwindow.ask-compose { background: transparent; }
 textview.ask-compose-text,
 textview.ask-compose-text text {
-    font-family: monospace;
     background: transparent;
+    color: @ask_fg;
     font-size: 12pt;
+    caret-color: @ask_accent;
+}
+box.ask-compose-bar {
+    padding: 4px 8px 6px 10px;
+    border-top: 1px solid @ask_border;
+    background: alpha(black, 0.18);
+}
+label.ask-compose-hint {
+    font-size: 9pt;
+    color: @ask_fg_muted;
+    letter-spacing: 0.02em;
+}
+button.ask-compose-send {
+    background: alpha(@ask_accent, 0.22);
+    color: @ask_accent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    min-width: 0;
+}
+button.ask-compose-send:hover {
+    background: alpha(@ask_accent, 0.35);
     color: @ask_fg;
 }
+button.ask-compose-send:disabled { opacity: 0.4; }
 
-/* Queue panel — treated as a stacked card strip above the compose. */
+/* ------- Queue (full-text cards) ------- */
 box.ask-queue {
-    background: @ask_bg_softer;
+    background: rgba(0, 0, 0, 0.3);
     border-top: 1px solid @ask_border;
-    padding: 6px 0 2px 0;
+    padding: 6px 10px 10px 10px;
 }
 label.ask-queue-header {
     font-size: 9pt;
     font-weight: 700;
-    color: @ask_fg_dim;
-    padding: 0 14px 4px 14px;
-    letter-spacing: 0.08em;
+    color: @ask_fg_muted;
+    padding: 4px 2px 6px 2px;
+    letter-spacing: 0.14em;
 }
-
-/* Each row is its own card. Listbox gets no background — rows own it. */
-list {
-    background: transparent;
-}
+list { background: transparent; }
 row.ask-queue-row {
-    margin: 2px 8px;
-    border-radius: 8px;
-    background: @ask_bg_soft;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+row.ask-queue-row:hover { background: transparent; }
+box.ask-queue-card {
+    background: @ask_surface;
     border: 1px solid @ask_border;
-    transition: background 120ms ease, border-color 120ms ease;
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin: 4px 0;
+    transition: border-color 120ms ease;
 }
-row.ask-queue-row:hover {
-    background: alpha(@ask_accent, 0.08);
-    border-color: alpha(@ask_accent, 0.4);
-}
-label.ask-queue-preview {
+box.ask-queue-card:hover { border-color: alpha(@ask_accent, 0.4); }
+label.ask-queue-text {
     font-size: 11pt;
     color: @ask_fg;
 }
-
-/* Row buttons — ghost by default, tint on hover so they don't compete
- * with the preview label for attention until the user reaches for them. */
+scrolledwindow.ask-queue-edit {
+    background: alpha(black, 0.25);
+    border: 1px solid @ask_border_focus;
+    border-radius: 6px;
+    padding: 2px;
+}
+textview.ask-queue-edit-text,
+textview.ask-queue-edit-text text {
+    background: transparent;
+    color: @ask_fg;
+    font-size: 11pt;
+}
+box.ask-queue-actions { margin-top: 6px; }
+button.ask-queue-edit,
 button.ask-queue-send,
 button.ask-queue-remove {
     background: transparent;
     border: none;
-    padding: 4px 10px;
+    padding: 3px 10px;
     min-width: 0;
     color: @ask_fg_dim;
     border-radius: 6px;
+    font-size: 10pt;
 }
-button.ask-queue-send:hover {
-    color: @ask_idle;
-    background: alpha(@ask_idle, 0.14);
-}
-button.ask-queue-remove:hover {
-    color: @ask_pending;
-    background: alpha(@ask_pending, 0.14);
-}
+button.ask-queue-edit:hover   { color: @ask_accent;  background: alpha(@ask_accent, 0.14); }
+button.ask-queue-send:hover   { color: @ask_idle;    background: alpha(@ask_idle, 0.14); }
+button.ask-queue-remove:hover { color: @ask_pending; background: alpha(@ask_pending, 0.14); }
 """
 
 class MarkdownView:
@@ -463,35 +506,58 @@ class MarkdownView:
             self.buffer.insert(end, text)
 
 class ComposeView:
-    """Multi-line compose area with Enter-to-submit, Shift+Enter for a
-    newline, auto-growing up to `max_lines` before scrolling. Ctrl+P
-    is wired from the window and reaches text in through `append_text`."""
+    """Multi-line compose with an obvious visual box, hint line, and a
+    clickable SEND button. Enter submits, Shift+Enter inserts a newline,
+    Ctrl+P paste is wired from the window via `append_text`. Auto-grows
+    up to `max_lines` before it starts scrolling."""
 
     def __init__(self, max_lines: int = 6, on_submit=None):
         self._on_submit = on_submit
-        self.scroller = Gtk.ScrolledWindow()
-        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroller.set_propagate_natural_height(True)
-        self.scroller.add_css_class("ask-compose")
+
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.widget.add_css_class("ask-compose-wrap")
+
+        self._scroller = Gtk.ScrolledWindow()
+        self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._scroller.set_propagate_natural_height(True)
+        self._scroller.add_css_class("ask-compose")
 
         self._textview = Gtk.TextView(
             wrap_mode=Gtk.WrapMode.WORD_CHAR,
-            top_margin=8,
-            bottom_margin=8,
-            left_margin=10,
-            right_margin=10,
+            top_margin=10,
+            bottom_margin=10,
+            left_margin=12,
+            right_margin=12,
             accepts_tab=False,
         )
         self._textview.add_css_class("ask-compose-text")
-        self.scroller.set_child(self._textview)
+        self._scroller.set_child(self._textview)
+        self.widget.append(self._scroller)
 
         # Cap natural height at ~max_lines. Pango metrics come back in Pango
         # units (PANGO_SCALE == 1024); convert to pixels for GTK size props.
         metrics = self._textview.get_pango_context().get_metrics(None)
         line_px = (metrics.get_ascent() + metrics.get_descent()) / Pango.SCALE
-        pad = 16
-        self.scroller.set_max_content_height(int(line_px * max_lines) + pad)
-        self.scroller.set_min_content_height(int(line_px) + pad)
+        pad = 22
+        self._scroller.set_max_content_height(int(line_px * max_lines) + pad)
+        self._scroller.set_min_content_height(int(line_px * 2) + pad)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        bar.add_css_class("ask-compose-bar")
+        hint = Gtk.Label(
+            label="Enter to send  ·  Shift+Enter newline  ·  Ctrl+P paste",
+            xalign=0.0,
+            hexpand=True,
+        )
+        hint.add_css_class("ask-compose-hint")
+        bar.append(hint)
+
+        self._send_btn = Gtk.Button(label="SEND")
+        self._send_btn.add_css_class("ask-compose-send")
+        self._send_btn.set_tooltip_text("Send the current message (Enter)")
+        self._send_btn.connect("clicked", lambda _b: self._submit())
+        bar.append(self._send_btn)
+        self.widget.append(bar)
 
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
@@ -519,6 +585,13 @@ class ComposeView:
 
     def set_sensitive(self, sensitive: bool) -> None:
         self._textview.set_sensitive(sensitive)
+        self._send_btn.set_sensitive(sensitive)
+
+    def _submit(self) -> None:
+        text = self.get_text().strip()
+        if text and self._on_submit:
+            self.clear()
+            self._on_submit(text)
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
@@ -526,17 +599,17 @@ class ComposeView:
         if state & Gdk.ModifierType.SHIFT_MASK:
             # Shift+Enter: default handler inserts a newline, grow the box.
             return False
-        text = self.get_text().strip()
-        if text and self._on_submit:
-            self.clear()
-            self._on_submit(text)
+        self._submit()
 
         return True
 
 class QueueRow(Gtk.ListBoxRow):
-    """A pending turn waiting for its slot. Preview label + send (⏎) +
-    remove (✕) buttons. Double-click the preview to edit in place — an
-    `Entry` replaces the label, Enter commits, focus-out also commits."""
+    """A queued turn rendered as a full-width card. The message wraps
+    freely (no truncation preview) and three labelled buttons live in
+    an action strip at the bottom: `✎ edit` toggles an inline multi-line
+    editor, `⏎ send` promotes the message to the next slot, `✕ drop`
+    removes it. In edit mode, Ctrl+Enter commits; the edit button
+    relabels to `✓ save` while editing."""
 
     def __init__(self, text: str, on_send, on_remove, on_edit_commit):
         super().__init__()
@@ -545,159 +618,243 @@ class QueueRow(Gtk.ListBoxRow):
         self._on_remove = on_remove
         self._on_edit_commit = on_edit_commit
         self._editing = False
-        self._entry: Optional[Gtk.Entry] = None
+        self._edit_scroller: Optional[Gtk.ScrolledWindow] = None
+        self._edit_textview: Optional[Gtk.TextView] = None
         self.add_css_class("ask-queue-row")
 
-        self._row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self._row.set_margin_top(4)
-        self._row.set_margin_bottom(4)
-        self._row.set_margin_start(8)
-        self._row.set_margin_end(8)
+        self._card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self._card.add_css_class("ask-queue-card")
 
-        self._label = Gtk.Label(label=self._preview(text), xalign=0.0, hexpand=True)
-        self._label.set_ellipsize(Pango.EllipsizeMode.END)
-        self._label.add_css_class("ask-queue-preview")
-        self._row.append(self._label)
+        self._label = Gtk.Label(label=text, xalign=0.0, hexpand=True)
+        self._label.set_wrap(True)
+        self._label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self._label.set_selectable(True)
+        self._label.add_css_class("ask-queue-text")
+        self._card.append(self._label)
 
-        send_btn = Gtk.Button(label="⏎")
+        actions = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
+            halign=Gtk.Align.END,
+        )
+        actions.add_css_class("ask-queue-actions")
+
+        self._edit_btn = Gtk.Button(label="✎ edit")
+        self._edit_btn.add_css_class("ask-queue-edit")
+        self._edit_btn.set_tooltip_text("Edit this message")
+        self._edit_btn.connect("clicked", lambda _b: self._toggle_edit())
+        actions.append(self._edit_btn)
+
+        send_btn = Gtk.Button(label="⏎ send")
         send_btn.add_css_class("ask-queue-send")
-        send_btn.set_tooltip_text("Send this now")
+        send_btn.set_tooltip_text("Promote and dispatch this message now")
         send_btn.connect("clicked", lambda _b: self._on_send(self))
-        self._row.append(send_btn)
+        actions.append(send_btn)
 
-        remove_btn = Gtk.Button(label="✕")
+        remove_btn = Gtk.Button(label="✕ drop")
         remove_btn.add_css_class("ask-queue-remove")
-        remove_btn.set_tooltip_text("Drop from queue")
+        remove_btn.set_tooltip_text("Remove this message from the queue")
         remove_btn.connect("clicked", lambda _b: self._on_remove(self))
-        self._row.append(remove_btn)
+        actions.append(remove_btn)
 
-        self.set_child(self._row)
-
-        click = Gtk.GestureClick()
-        click.set_button(Gdk.BUTTON_PRIMARY)
-        click.connect("pressed", self._on_click)
-        self.add_controller(click)
+        self._card.append(actions)
+        self.set_child(self._card)
 
     def text(self) -> str:
         return self._text
 
-    @staticmethod
-    def _preview(text: str) -> str:
-        compact = " ".join(text.split())
-        if len(compact) > 140:
-            compact = compact[:137] + "…"
-
-        return compact
-
-    def _on_click(self, _gesture, n_press, _x, _y) -> None:
-        if n_press == 2 and not self._editing:
+    def _toggle_edit(self) -> None:
+        if self._editing:
+            self._commit_edit()
+        else:
             self._enter_edit_mode()
 
     def _enter_edit_mode(self) -> None:
         self._editing = True
-        self._row.remove(self._label)
-        entry = Gtk.Entry(hexpand=True)
-        entry.set_text(self._text)
-        entry.connect("activate", lambda _e: self._commit_edit())
-        focus = Gtk.EventControllerFocus()
-        focus.connect("leave", lambda _f: self._commit_edit())
-        entry.add_controller(focus)
-        self._row.prepend(entry)
-        entry.grab_focus()
-        entry.set_position(-1)
-        self._entry = entry
+        self._card.remove(self._label)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_max_content_height(160)
+        scroller.add_css_class("ask-queue-edit")
+
+        textview = Gtk.TextView(
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=6,
+            bottom_margin=6,
+            left_margin=8,
+            right_margin=8,
+        )
+        textview.add_css_class("ask-queue-edit-text")
+        textview.get_buffer().set_text(self._text)
+        scroller.set_child(textview)
+
+        key = Gtk.EventControllerKey()
+        key.connect("key-pressed", self._on_edit_key)
+        textview.add_controller(key)
+
+        self._card.prepend(scroller)
+        textview.grab_focus()
+        self._edit_scroller = scroller
+        self._edit_textview = textview
+        self._edit_btn.set_label("✓ save")
+
+    def _on_edit_key(self, _controller, keyval, _keycode, state) -> bool:
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and (
+            state & Gdk.ModifierType.CONTROL_MASK
+        ):
+            self._commit_edit()
+            return True
+
+        return False
 
     def _commit_edit(self) -> None:
-        if not self._editing or self._entry is None:
+        if not self._editing or self._edit_textview is None:
             return
-        new_text = self._entry.get_text().strip()
+        buf = self._edit_textview.get_buffer()
+        new_text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         self._editing = False
-        self._row.remove(self._entry)
-        self._entry = None
+        if self._edit_scroller is not None:
+            self._card.remove(self._edit_scroller)
+        self._edit_scroller = None
+        self._edit_textview = None
         if new_text:
             self._text = new_text
-        self._label.set_label(self._preview(self._text))
-        self._row.prepend(self._label)
+        self._label.set_label(self._text)
+        self._card.prepend(self._label)
+        self._edit_btn.set_label("✎ edit")
         self._on_edit_commit(self, self._text)
 
-class AskWindow(Gtk.ApplicationWindow):
-    """Layer-shell sidebar anchored to the right edge, full-height.
+class TurnCard:
+    """One turn in the conversation. `role` is 'user' or 'assistant'.
+    User cards get populated once via `set_text`; assistant cards are
+    streamed in chunk-by-chunk via `append`. Each card owns its own
+    `Gtk.TextBuffer` + `MarkdownView`, so per-link tag trees are scoped
+    to the card that rendered them."""
 
-    Public API: `dispatch_turn(user_message)` — append a user turn and
-    stream the adapter's response into the markdown view. Safe to call
-    from the GTK thread; the adapter runs in a worker. Turns submitted
-    while a stream is in flight are pushed onto a visible queue and
-    drained one at a time as each stream finishes."""
+    def __init__(self, role: str, on_link):
+        self.role = role
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.widget.add_css_class("ask-card")
+        self.widget.add_css_class(f"ask-card-{role}")
+
+        role_label = Gtk.Label(label=role.upper(), xalign=0.0)
+        role_label.add_css_class("ask-card-role")
+        role_label.add_css_class(f"ask-card-role-{role}")
+        self.widget.append(role_label)
+
+        self._textview = Gtk.TextView(
+            editable=False,
+            cursor_visible=False,
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+            top_margin=2,
+            bottom_margin=2,
+            left_margin=0,
+            right_margin=0,
+        )
+        self._textview.add_css_class("ask-card-text")
+        self.widget.append(self._textview)
+
+        self._md = MarkdownView(self._textview.get_buffer())
+        self._text = ""
+        self._on_link = on_link
+
+        click = Gtk.GestureClick()
+        click.set_button(Gdk.BUTTON_PRIMARY)
+        click.connect("released", self._on_click)
+        self._textview.add_controller(click)
+
+    def append(self, chunk: str) -> None:
+        self._text += chunk
+        self._md.render(self._text)
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._md.render(text)
+
+    def get_text(self) -> str:
+        return self._text
+
+    def _on_click(self, _gesture, _n_press, x, y) -> None:
+        tv = self._textview
+        bx, by = tv.window_to_buffer_coords(
+            Gtk.TextWindowType.WIDGET, int(x), int(y)
+        )
+        found, iter_ = tv.get_iter_at_location(bx, by)
+        if not found:
+            return
+        for tag in iter_.get_tags():
+            url = getattr(tag, "url", None)
+            if url:
+                self._on_link(url)
+                return
+
+class AskWindow(Gtk.ApplicationWindow):
+    """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
+    widgets (one per user/assistant turn), queued turns are cards of
+    their own above the compose, and compose is a multi-line TextView
+    with a visible SEND button. Phases (idle/pending/streaming) surface
+    in both the header pill and the waybar module."""
 
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
         super().__init__(application=app, title="Ask")
         self._adapter = adapter
-        self._text = ""
         self._streaming = False
         self._alive = True
         self._queue: list[QueueRow] = []
-        # idle: ready for a turn; pending: user turn sent, no chunk received
-        # yet; streaming: first chunk arrived, adapter still yielding. Both
-        # the overlay header and the waybar module read this to pick colour.
         self._phase: str = "idle"
+        self._cards: list[TurnCard] = []
+        self._active_assistant: Optional[TurnCard] = None
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
-        # Explicit namespace so compositors can target us with a stable
-        # layerrule (`layer = namespace:^(ask)$`) regardless of the
-        # application_id GDK would otherwise advertise as the namespace.
+        # Explicit namespace so compositor layerrules can target us
+        # (`layerrule = blur, ask`) without regex-escaping the app-id.
         Gtk4LayerShell.set_namespace(self, "ask")
         Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, True)
-        # EXCLUSIVE so `toggle-window` / `present()` actually land keyboard
-        # focus on the compose entry the moment we map. ON_DEMAND requires a
-        # click before the surface is allowed to receive keys, which breaks
-        # the "Shift+a and start typing" flow. Escape hides → grab releases.
+        # EXCLUSIVE so toggle-window / present() grab keyboard focus the
+        # moment we map. Escape hides → grab releases automatically.
         Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.EXCLUSIVE)
         self.set_default_size(self._overlay_width(), -1)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.add_css_class("ask-root")
 
+        # Header --------------------------------------------------------
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("ask-header")
         self._provider_label = Gtk.Label(
-            label=f"󱍊 {adapter.provider.value}",
+            label=f"󱍊  {adapter.provider.value.upper()}",
             xalign=0.0,
             hexpand=True,
         )
         self._provider_label.add_css_class("ask-provider")
         self._provider_label.add_css_class("idle")
-        close_button = Gtk.Button(label="✕")
-        close_button.add_css_class("ask-close")
-        close_button.connect("clicked", lambda _b: self.close())
+        close_btn = Gtk.Button(label="✕")
+        close_btn.add_css_class("ask-close")
+        close_btn.connect("clicked", lambda _b: self.close())
         header.append(self._provider_label)
-        header.append(close_button)
+        header.append(close_btn)
         root.append(header)
 
-        self._scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
-        self._textview = Gtk.TextView(
-            editable=False,
-            cursor_visible=False,
-            wrap_mode=Gtk.WrapMode.WORD_CHAR,
-            left_margin=14,
-            right_margin=14,
-            top_margin=14,
-            bottom_margin=14,
-        )
-        self._scroller.set_child(self._textview)
-        root.append(self._scroller)
+        # Conversation: a vertical box of TurnCard widgets inside a
+        # scroller. Each card is its own markdown-rendered surface.
+        self._conv_scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        self._conv_scroller.add_css_class("ask-conv-scroller")
+        self._conv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._conv_box.add_css_class("ask-conv")
+        self._conv_scroller.set_child(self._conv_box)
+        root.append(self._conv_scroller)
 
-        # Queue panel — hidden until a turn is enqueued.
+        # Queue ---------------------------------------------------------
         self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._queue_box.add_css_class("ask-queue")
-        queue_header = Gtk.Label(label="queued", xalign=0.0)
+        queue_header = Gtk.Label(label="QUEUED", xalign=0.0)
         queue_header.add_css_class("ask-queue-header")
-        queue_header.set_margin_top(4)
-        queue_header.set_margin_bottom(2)
-        queue_header.set_margin_start(10)
         self._queue_box.append(queue_header)
         self._queue_listbox = Gtk.ListBox()
         self._queue_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -705,52 +862,21 @@ class AskWindow(Gtk.ApplicationWindow):
         self._queue_box.set_visible(False)
         root.append(self._queue_box)
 
+        # Compose -------------------------------------------------------
         self._compose = ComposeView(max_lines=6, on_submit=self.dispatch_turn)
-        root.append(self._compose.scroller)
+        root.append(self._compose.widget)
 
         self.set_child(root)
 
-        self._md = MarkdownView(self._textview.get_buffer())
-
-        self._wire_link_clicks()
         self._wire_keys()
         self.connect("close-request", self._on_close_request)
 
-    @staticmethod
-    def _overlay_width(fraction: float = 0.4) -> int:
-        """Fraction of the *current* (focused) monitor's logical width.
-        Asks the compositor directly — Hyprland first, then sway — so the
-        overlay sizes to wherever the user is looking, not whatever GDK
-        happens to list as the default monitor. Falls back to a reasonable
-        default when nobody answers."""
-        width = _focused_monitor_width_logical()
-        if width is None:
-            # Last resort: GDK's first-monitor geometry. Better than hard-
-            # coding 520 if we have any display info at all.
-            display = Gdk.Display.get_default()
-            if display is not None:
-                monitors = display.get_monitors()
-                if monitors.get_n_items() > 0:
-                    width = monitors.get_item(0).get_geometry().width
-        if not width:
-            return 520
-
-        return max(320, int(width * fraction))
-
-    def append(self, chunk: str) -> None:
-        pin_to_bottom = self._at_bottom()
-        self._text += chunk
-        self._md.render(self._text)
-        if pin_to_bottom:
-            GLib.idle_add(self._scroll_to_end)
+    # -- Public API -----------------------------------------------------
 
     def focus_compose(self) -> None:
         self._compose.focus()
 
     def toggle_visibility(self) -> bool:
-        """Flip overlay visibility without tearing down the session. Safe to
-        call from the GTK main thread; returns False so it can be passed
-        straight to `GLib.idle_add`."""
         if self.get_visible():
             self.set_visible(False)
         else:
@@ -765,28 +891,101 @@ class AskWindow(Gtk.ApplicationWindow):
         if not message:
             return
         if not self.get_visible():
-            # Escape hid the overlay; a new turn brings it back. present()
-            # (after set_visible) re-grabs focus and raises.
             self.set_visible(True)
             self.present()
         if self._streaming:
             # Previous turn still in flight — queue this one. It'll drain
-            # automatically when `_mark_idle` fires, and the send/edit
+            # automatically when _mark_idle fires, and the send/edit
             # controls let the user reorder or skip ahead manually.
             self._enqueue(message)
             return
         self._start_turn(message)
 
+    def phase(self) -> str:
+        return self._phase
+
+    def is_streaming(self) -> bool:
+        return self._streaming
+
+    def queue_size(self) -> int:
+        return len(self._queue)
+
+    # -- Turn lifecycle -------------------------------------------------
+
     def _start_turn(self, message: str) -> None:
-        self._append_user_turn(message)
+        self._append_user_card(message)
+        self._active_assistant = self._append_assistant_card()
         self._streaming = True
         self._compose.set_sensitive(False)
         self._set_phase("pending")
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
+    def _append_user_card(self, text: str) -> TurnCard:
+        card = TurnCard(role="user", on_link=self._open_link)
+        card.set_text(text)
+        self._cards.append(card)
+        self._conv_box.append(card.widget)
+        GLib.idle_add(self._scroll_to_end)
+
+        return card
+
+    def _append_assistant_card(self) -> TurnCard:
+        card = TurnCard(role="assistant", on_link=self._open_link)
+        self._cards.append(card)
+        self._conv_box.append(card.widget)
+        GLib.idle_add(self._scroll_to_end)
+
+        return card
+
+    def _append_chunk(self, chunk: str) -> bool:
+        """Main-thread-safe sink for adapter chunks. Appends to whichever
+        assistant card is currently streaming. Returns False so it
+        composes with `GLib.idle_add`."""
+        if self._active_assistant is not None:
+            pin = self._at_bottom()
+            self._active_assistant.append(chunk)
+            if pin:
+                GLib.idle_add(self._scroll_to_end)
+
+        return False
+
+    def _run_turn(self, user_message: str) -> None:
+        first_chunk = True
+        try:
+            for chunk in self._adapter.turn(user_message):
+                if not self._alive:
+                    return
+                if first_chunk:
+                    # First delta arrived — leave red `pending`, go yellow
+                    # `streaming`.
+                    GLib.idle_add(self._set_phase, "streaming")
+                    first_chunk = False
+                GLib.idle_add(self._append_chunk, chunk)
+        except Exception as e:
+            if not self._alive:
+                return
+            log.error("turn failed: %s", e)
+            GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
+        finally:
+            if self._alive:
+                GLib.idle_add(self._mark_idle)
+
+    def _mark_idle(self) -> bool:
+        self._streaming = False
+        self._active_assistant = None
+        if self._alive:
+            self._compose.set_sensitive(True)
+            self._compose.focus()
+            self._set_phase("idle")
+            nxt = self._pop_queue_front()
+            if nxt:
+                GLib.idle_add(self._start_turn, nxt)
+
+        return False
+
+    # -- Phase colouring -----------------------------------------------
+
     def _set_phase(self, phase: str) -> bool:
-        """Central place to mutate phase state, swap the provider-label CSS
-        class, and poke waybar. Returns False so it composes with idle_add."""
         self._phase = phase
         for cls in ("idle", "pending", "streaming"):
             if cls == phase:
@@ -797,8 +996,7 @@ class AskWindow(Gtk.ApplicationWindow):
 
         return False
 
-    def phase(self) -> str:
-        return self._phase
+    # -- Queue ----------------------------------------------------------
 
     def _enqueue(self, message: str) -> None:
         row = QueueRow(
@@ -839,18 +1037,16 @@ class AskWindow(Gtk.ApplicationWindow):
         if not text:
             return
         if self._streaming:
-            # Promote to head of the queue rather than stepping on the
-            # in-flight stream. `_mark_idle` will drain it next.
-            self._queue.insert(
-                0,
-                QueueRow(
-                    text=text,
-                    on_send=self._on_queue_send,
-                    on_remove=self._on_queue_remove,
-                    on_edit_commit=self._on_queue_edit,
-                ),
+            # Promote to the head of the queue — next to drain when
+            # _mark_idle fires.
+            promoted = QueueRow(
+                text=text,
+                on_send=self._on_queue_send,
+                on_remove=self._on_queue_remove,
+                on_edit_commit=self._on_queue_edit,
             )
-            self._queue_listbox.prepend(self._queue[0])
+            self._queue.insert(0, promoted)
+            self._queue_listbox.prepend(promoted)
             self._queue_box.set_visible(True)
             return
         self._start_turn(text)
@@ -858,108 +1054,31 @@ class AskWindow(Gtk.ApplicationWindow):
     def _on_queue_remove(self, row: QueueRow) -> None:
         self._remove_queue_row(row)
 
-    def _on_queue_edit(self, row: QueueRow, new_text: str) -> None:
-        # Row keeps its slot; the user-visible label already shows the new
-        # preview. Nothing else to do here — dispatch_turn will read
-        # row.text() when the queue drains or the send button is hit.
+    def _on_queue_edit(self, _row: QueueRow, _new_text: str) -> None:
+        # Row keeps its slot; the card shows the updated text. Nothing
+        # else to do — dispatch_turn reads row.text() on drain / send.
         pass
 
-    def _append_user_turn(self, user_message: str) -> None:
-        prefix = "\n\n---\n\n" if self._text else ""
-        block = f"{prefix}### You:\n\n{user_message}\n\n### Assistant:\n\n"
-        self.append(block)
-
-    def _run_turn(self, user_message: str) -> None:
-        first_chunk = True
-        try:
-            for chunk in self._adapter.turn(user_message):
-                if not self._alive:
-                    return
-                if first_chunk:
-                    # First delta has arrived — leave the red `pending` state
-                    # and go yellow `streaming`. Scheduled before the append
-                    # so the colour flip and the first assistant text render
-                    # in the same UI tick.
-                    GLib.idle_add(self._set_phase, "streaming")
-                    first_chunk = False
-                GLib.idle_add(self.append, chunk)
-        except Exception as e:
-            if not self._alive:
-                # Window was closed mid-stream; adapter.close() terminated
-                # the backend and the resulting error is expected. Swallow.
-                return
-            log.error("turn failed: %s", e)
-            GLib.idle_add(self.append, f"\n\n*error: {e}*\n")
-        finally:
-            if self._alive:
-                GLib.idle_add(self._mark_idle)
-
-    def _mark_idle(self) -> bool:
-        self._streaming = False
-        if self._alive:
-            self._compose.set_sensitive(True)
-            self._compose.focus()
-            self._set_phase("idle")
-        # Drain the next queued turn, if any. Schedule via idle_add so the
-        # UI rerenders the current assistant block before the next `You:`
-        # block arrives — keeps the streaming transition visible.
-        if self._alive:
-            nxt = self._pop_queue_front()
-            if nxt:
-                GLib.idle_add(self._start_turn, nxt)
-
-        return False
-
-    def is_streaming(self) -> bool:
-        return self._streaming
-
-    def queue_size(self) -> int:
-        return len(self._queue)
+    # -- Scroll / keys / links -----------------------------------------
 
     def _at_bottom(self) -> bool:
-        adj = self._scroller.get_vadjustment()
+        adj = self._conv_scroller.get_vadjustment()
 
-        return adj.get_value() + adj.get_page_size() >= adj.get_upper() - 10
+        return adj.get_value() + adj.get_page_size() >= adj.get_upper() - 20
 
     def _scroll_to_end(self) -> bool:
-        end_iter = self._textview.get_buffer().get_end_iter()
-        self._textview.scroll_to_iter(end_iter, 0.0, False, 0.0, 0.0)
+        adj = self._conv_scroller.get_vadjustment()
+        adj.set_value(max(0, adj.get_upper() - adj.get_page_size()))
 
         return False
 
-    def _wire_link_clicks(self) -> None:
-        click = Gtk.GestureClick()
-        click.set_button(Gdk.BUTTON_PRIMARY)
-        click.connect("released", self._on_click)
-        self._textview.add_controller(click)
-
-    def _on_click(self, _gesture, _n_press, x, y) -> None:
-        tv = self._textview
-        bx, by = tv.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
-        found, iter_ = tv.get_iter_at_location(bx, by)
-        if not found:
-            return
-        for tag in iter_.get_tags():
-            url = getattr(tag, "url", None)
-            if url:
-                Gio.AppInfo.launch_default_for_uri(url, None)
-                return
+    def _open_link(self, url: str) -> None:
+        Gio.AppInfo.launch_default_for_uri(url, None)
 
     def _wire_keys(self) -> None:
         key = Gtk.EventControllerKey()
         key.connect("key-pressed", self._on_key)
         self.add_controller(key)
-
-    @staticmethod
-    def _install_css() -> None:
-        provider = Gtk.CssProvider()
-        css = BASE_CSS.encode("utf-8")
-        provider.load_from_data(css, len(css))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
@@ -967,16 +1086,9 @@ class AskWindow(Gtk.ApplicationWindow):
             self.close()
             return True
         if ctrl and keyval == Gdk.KEY_p:
-            # Ctrl+P: explicit clipboard paste into the compose entry so
-            # the user can slurp the current selection without having to
-            # click the field first.
             self._paste_clipboard_into_compose()
             return True
         if keyval == Gdk.KEY_Escape:
-            # Hide-not-close: session + socket stay alive so the next
-            # forwarder invocation (or a new speech turn) re-shows the
-            # overlay and continues the conversation. Ctrl+Q / header ✕
-            # remain the hard-close path.
             self.set_visible(False)
             return True
 
@@ -999,7 +1111,38 @@ class AskWindow(Gtk.ApplicationWindow):
 
         return False
 
-def _socket_is_live() -> bool:
+    # -- Statics --------------------------------------------------------
+
+    @staticmethod
+    def _overlay_width(fraction: float = 0.4) -> int:
+        """Fraction of the *current* (focused) monitor's logical width.
+        Asks the compositor directly — Hyprland first, then sway — so the
+        overlay sizes to wherever the user is looking, not whatever GDK
+        happens to list as the default monitor."""
+        width = _focused_monitor_width_logical()
+        if width is None:
+            display = Gdk.Display.get_default()
+            if display is not None:
+                monitors = display.get_monitors()
+                if monitors.get_n_items() > 0:
+                    width = monitors.get_item(0).get_geometry().width
+        if not width:
+            return 520
+
+        return max(320, int(width * fraction))
+
+    @staticmethod
+    def _install_css() -> None:
+        provider = Gtk.CssProvider()
+        css = BASE_CSS.encode("utf-8")
+        provider.load_from_data(css, len(css))
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+def _is_live() -> bool:
     """Probe the session socket without sending a command. Returns True if
     a server accepted our connect, False if the file is stale / absent."""
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1080,7 +1223,7 @@ class Session:
             # a live owner answers connect; a stale file gives ECONNREFUSED.
             # Only unlink after confirming stale, so we don't race another
             # starting owner into a two-windows-one-path state.
-            if _socket_is_live():
+            if _is_live():
                 sock.close()
                 raise RuntimeError(
                     f"another ask session is already running at {SOCKET_PATH}"
@@ -1286,7 +1429,7 @@ def _cmd_status() -> None:
 def _cmd_is_running() -> None:
     """Waybar `exec-if` gate. Exit 0 when a session socket is live so the
     custom module shows, otherwise exit 1 and stay hidden."""
-    sys.exit(0 if _socket_is_live() else 1)
+    sys.exit(0 if _is_live() else 1)
 
 def _cmd_kill() -> None:
     """End the running ask session (if any) and return immediately. Matches
@@ -1363,10 +1506,7 @@ def main():
         metavar="KEY",
         choices=[
             "web_search",
-            "code_interpreter",
-            "image_generation",
             "memory",
-            "voice",
         ],
         help="enable a built-in feature (repeatable). OpenWebUI-only.",
     )
