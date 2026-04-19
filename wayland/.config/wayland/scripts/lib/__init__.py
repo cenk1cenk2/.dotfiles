@@ -28,6 +28,7 @@ from .input import (
     InputMode,
     InputAdapterStdin,
 )
+from .mcp import McpConfig, McpServer, socket_approval
 from .notify import notify
 from .output import (
     OutputAdapterClipboard,
@@ -56,6 +57,8 @@ __all__ = [
     "InputAdapterClipboard",
     "InputAdapterStdin",
     "InputMode",
+    "McpConfig",
+    "McpServer",
     "OutputAdapter",
     "OutputAdapterClipboard",
     "OutputAdapterStdout",
@@ -67,4 +70,5 @@ __all__ = [
     "load_relative_file",
     "notify",
     "signal_waybar",
+    "socket_approval",
 ]

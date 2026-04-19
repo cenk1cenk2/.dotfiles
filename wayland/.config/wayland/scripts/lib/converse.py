@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import threading
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional, Protocol, Union
@@ -366,13 +365,24 @@ class ConversationAdapterHttp:
 class ConversationAdapterClaude:
     """Claude CLI wrapper using `stream-json` with partial messages.
 
-    When `permission_prompt_mcp` is set (path to an MCP stdio server
-    script), each tool invocation inside claude is gated through that
-    server — see `ask-mcp.py` next to `ask.py`. The overlay's
-    permission panel blocks the MCP server's socket round-trip, so
-    the tool physically can't run until the user approves. Without
-    the path, claude falls back to its default permission mode
-    (usually "allow every tool" in `-p --bare` mode)."""
+    Optional MCP wiring:
+
+    - `mcp_config` (`McpConfig` from `lib.mcp`) — aggregates the set
+      of MCP servers advertised to claude via `--mcp-config`. Written
+      to `$XDG_RUNTIME_DIR/wayland-ask.mcp.json` on first turn and
+      reused thereafter. Any server defined here becomes available;
+      callers pre-seed what they want (ask.py adds its own approval
+      stub, callers can layer github / filesystem / etc. alongside).
+    - `permission_tool` — the `mcp__<server>__<tool>` string that
+      claude should route permission prompts through. Usually the
+      approval tool one of the registered servers exposes. When set
+      together with `mcp_config`, claude blocks on that tool before
+      running any other tool.
+
+    We deliberately do NOT pass `--strict-mcp-config`: user-level
+    config (`~/.claude.json`) and project `.mcp.json` merge with
+    ours, so claude's default tool permissions keep working for
+    anything we didn't override."""
 
     provider = ConversationProvider.CLAUDE
 
@@ -385,7 +395,8 @@ class ConversationAdapterClaude:
         # intents through our permission hook instead of silently
         # mutating the workspace.
         self.mode = kwargs.get("mode") or "plan"
-        self.permission_prompt_mcp: Optional[str] = kwargs.get("permission_prompt_mcp")
+        self.mcp_config = kwargs.get("mcp_config")
+        self.permission_tool: Optional[str] = kwargs.get("permission_tool")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -395,46 +406,27 @@ class ConversationAdapterClaude:
 
     def _mcp_args(self) -> list[str]:
         """Build the `--mcp-config` + `--permission-prompt-tool` flag
-        pair. Writes the MCP config JSON to
-        `$XDG_RUNTIME_DIR/wayland-ask.mcp.json` on first call so
-        follow-up turns reuse the same file."""
-        if not self.permission_prompt_mcp:
-            return []
-        if not os.path.exists(self.permission_prompt_mcp):
-            log.warning(
-                "permission MCP script missing at %s — falling back to "
-                "claude's default permission policy",
-                self.permission_prompt_mcp,
-            )
+        pair from the attached `McpConfig`. Writes the config JSON to
+        `$XDG_RUNTIME_DIR/wayland-ask.mcp.json` on first call and
+        reuses the same path for follow-up turns."""
+        if self.mcp_config is None:
             return []
         if self._mcp_config_path is None:
             runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
             self._mcp_config_path = os.path.join(runtime, "wayland-ask.mcp.json")
-            config = {
-                "mcpServers": {
-                    "ask": {
-                        "command": sys.executable,
-                        "args": ["-u", self.permission_prompt_mcp],
-                        "env": {},
-                    },
-                },
-            }
             try:
-                with open(self._mcp_config_path, "w", encoding="utf-8") as f:
-                    json.dump(config, f)
+                self.mcp_config.write(self._mcp_config_path)
             except OSError as e:
                 log.warning("could not write MCP config: %s", e)
                 self._mcp_config_path = None
 
                 return []
 
-        return [
-            "--mcp-config",
-            self._mcp_config_path,
-            "--strict-mcp-config",
-            "--permission-prompt-tool",
-            "mcp__ask__approve",
-        ]
+        args = ["--mcp-config", self._mcp_config_path]
+        if self.permission_tool:
+            args.extend(["--permission-prompt-tool", self.permission_tool])
+
+        return args
 
     def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False

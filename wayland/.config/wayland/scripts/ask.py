@@ -30,6 +30,7 @@ from lib import (
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
+    McpConfig,
     OutputAdapterClipboard,
     ThinkingChunk,
     ToolCall,
@@ -1729,6 +1730,23 @@ class Session:
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
+def _build_mcp_config() -> McpConfig:
+    """Compose the `McpConfig` we hand to the Claude adapter.
+
+    Pre-seeds one entry — the `ask` server, which is `ask-mcp.py`
+    wrapping `lib.mcp.McpServer.run()` with the socket-backed
+    approval callback. Callers can add more servers (github,
+    filesystem, …) either by extending this function or by mutating
+    the returned `McpConfig` before it's passed along."""
+    mcp_stub = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "ask-mcp.py",
+    )
+    config = McpConfig()
+    config.add("ask", sys.executable, args=["-u", mcp_stub])
+
+    return config
+
 def _build_adapter(args) -> ConversationAdapter:
     # Callers pass argparse values through as-is. None / missing values
     # collapse to per-adapter defaults (see `kwargs.get(name) or DEFAULT`
@@ -1749,20 +1767,11 @@ def _build_adapter(args) -> ConversationAdapter:
                 user_agent="ask/1.0",
             )
         case ConversationProvider.CLAUDE:
-            # The MCP stdio server next to this script handles per-tool
-            # approval prompts — claude's subprocess blocks on our
-            # overlay for each tool invocation. Pass an absolute path
-            # so claude doesn't have to resolve anything relative to
-            # its own cwd.
-            mcp_script = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "ask-mcp.py",
-            )
-
             return ConversationAdapterClaude(
                 AI_SYSTEM_PROMPT,
                 model=args.converse_model,
-                permission_prompt_mcp=mcp_script,
+                mcp_config=_build_mcp_config(),
+                permission_tool="mcp__ask__approve",
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
