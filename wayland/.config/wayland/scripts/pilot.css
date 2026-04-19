@@ -361,6 +361,43 @@
     0 0 0 transparent;
 }
 
+/* Auto-approved pill — green tint so the user can tell at a glance
+ * that the tool runs without prompting. Hover flips the colour to
+ * accent red-ish to signal "click to drop from the list", same recipe
+ * as the plain trusted pill. */
+.overlay button.pilot-compose-pill.auto-approve {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border-color: alpha(@pilot_idle, 0.45);
+}
+
+.overlay button.pilot-compose-pill.auto-approve:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+  border-color: alpha(@pilot_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+/* Auto-rejected pill — red tint so it reads as a standing deny. Hover
+ * flips to accent so the click-to-drop affordance stays consistent
+ * with the other pills (hover = "clicking removes"). */
+.overlay button.pilot-compose-pill.auto-reject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+}
+
+.overlay button.pilot-compose-pill.auto-reject:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.22);
+  border-color: alpha(@pilot_accent, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
 /* Primary action — SEND. Stronger shadow than secondary buttons; the
  * pressed state flips the shadow inwards for tactile feedback. */
 .overlay button.pilot-compose-send {
@@ -586,10 +623,13 @@
 }
 
 /* Button row: allow → green (idle), trust → accent, deny → red
- * (pending). Same base shadow as the queue trio. */
+ * (pending), auto-reject → darker red with a pre-tinted idle so it
+ * reads as a standing action, not a momentary dismiss. Same base
+ * shadow as the queue trio. */
 .overlay button.pilot-permission-allow,
 .overlay button.pilot-permission-trust,
-.overlay button.pilot-permission-deny {
+.overlay button.pilot-permission-deny,
+.overlay button.pilot-permission-autoreject {
   background-color: alpha(@pilot_fg_dim, 0.08);
   border: 1px solid @pilot_border_soft;
   padding: 3px 12px;
@@ -628,9 +668,29 @@
     0 2px 4px alpha(black, 0.45);
 }
 
+/* Auto-reject: idle state is pre-tinted red so the "standing deny"
+ * intent reads even before hover — this is a heavier action than
+ * plain deny (it also affects future calls). Hover deepens the red
+ * so the click target is obvious. */
+.overlay button.pilot-permission-autoreject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.14);
+  border-color: alpha(@pilot_pending, 0.4);
+}
+
+.overlay button.pilot-permission-autoreject:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.28);
+  border-color: alpha(@pilot_pending, 0.65);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.5);
+}
+
 .overlay button.pilot-permission-allow:active,
 .overlay button.pilot-permission-trust:active,
-.overlay button.pilot-permission-deny:active {
+.overlay button.pilot-permission-deny:active,
+.overlay button.pilot-permission-autoreject:active {
   box-shadow:
     inset 0 1px 2px alpha(black, 0.4),
     0 0 0 transparent;
