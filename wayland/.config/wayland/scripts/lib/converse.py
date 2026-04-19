@@ -19,7 +19,6 @@ class ConversationProvider(StrEnum):
     CODEX = "codex"
 
 DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
-DEFAULT_CONVERSE_BASE_URL = "https://ai.kilic.dev/api/v1"
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +125,7 @@ class ConversationAdapterHttp:
 
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.base_url = kwargs.get("base_url") or DEFAULT_CONVERSE_BASE_URL
+        self.base_url = kwargs.get("base_url") or "https://ai.kilic.dev/api/v1"
         self.model = kwargs.get("model") or "glm-5.1:cloud"
         self.api_key = kwargs.get("api_key") or ""
         self.user_agent = kwargs.get("user_agent") or "converse/1.0"
@@ -275,7 +274,7 @@ class ConversationAdapterClaude:
 
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.model = kwargs.get("model") or "opus"
+        self.model = kwargs.get("model") or "sonnet"
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -387,7 +386,7 @@ class ConversationAdapterCodex:
 
     def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.model = kwargs.get("model") or "gpt-5"
+        self.model = kwargs.get("model") or "gpt-5.4"
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False

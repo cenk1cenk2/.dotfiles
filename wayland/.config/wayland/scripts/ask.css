@@ -10,7 +10,9 @@
 @define-color ask_window #1e2127;
 @define-color ask_card #2c333d;
 @define-color ask_card_hi #22282f;
-@define-color ask_compose #2c333d;
+/* One step lighter than the cards (#2c333d) so the compose area
+ * stands apart visually — clearer "this is where I type" affordance. */
+@define-color ask_compose #38404b;
 @define-color ask_border #4b5263;
 @define-color ask_border_soft #2c333d;
 @define-color ask_border_focus #f1b862;

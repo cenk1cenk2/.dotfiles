@@ -281,9 +281,14 @@ class ComposeView:
     """Multi-line compose with an obvious visual box, hint line, and a
     clickable SEND button. Enter submits, Shift+Enter inserts a newline,
     Ctrl+P paste is wired from the window via `append_text`. Auto-grows
-    up to `max_lines` before it starts scrolling."""
+    up to `set_max_content_fraction` of the window height before
+    scrolling kicks in."""
 
-    def __init__(self, max_lines: int = 6, on_submit=None):
+    # Minimum rows of compose height so the surface stays usable even
+    # on tiny screens where 25% of the height wouldn't be enough.
+    MIN_ROWS = 2
+
+    def __init__(self, on_submit=None):
         self._on_submit = on_submit
 
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -306,13 +311,27 @@ class ComposeView:
         self._scroller.set_child(self._textview)
         self.widget.append(self._scroller)
 
-        # Cap natural height at ~max_lines. Pango metrics come back in Pango
-        # units (PANGO_SCALE == 1024); convert to pixels for GTK size props.
+        # Cache line-height in pixels (Pango metrics unit → pixels).
+        # `set_max_content_fraction` later converts a monitor height into
+        # a usable row count using this.
         metrics = self._textview.get_pango_context().get_metrics(None)
-        line_px = (metrics.get_ascent() + metrics.get_descent()) / Pango.SCALE
-        pad = 22
-        self._scroller.set_max_content_height(int(line_px * max_lines) + pad)
-        self._scroller.set_min_content_height(int(line_px * 2) + pad)
+        self._line_px = (metrics.get_ascent() + metrics.get_descent()) / Pango.SCALE
+        self._pad_px = 22
+        self._scroller.set_min_content_height(
+            int(self._line_px * self.MIN_ROWS) + self._pad_px
+        )
+        # Fallback cap until the first monitor-bind call fires.
+        self._scroller.set_max_content_height(
+            int(self._line_px * 6) + self._pad_px
+        )
+
+    def set_max_content_fraction(self, window_height_px: int, fraction: float) -> None:
+        """Cap the compose scroller at `fraction` of the overlay's total
+        height. The overlay is anchored top+bottom so its height equals
+        the monitor's geometry height; callers pass that in."""
+        cap = int(window_height_px * fraction)
+        floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
+        self._scroller.set_max_content_height(max(floor, cap))
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("ask-compose-bar")
@@ -660,7 +679,7 @@ class AskWindow(Gtk.ApplicationWindow):
         root.append(self._queue_box)
 
         # Compose -------------------------------------------------------
-        self._compose = ComposeView(max_lines=6, on_submit=self.dispatch_turn)
+        self._compose = ComposeView(on_submit=self.dispatch_turn)
         root.append(self._compose.widget)
 
         self.set_child(root)
@@ -904,7 +923,12 @@ class AskWindow(Gtk.ApplicationWindow):
         Gio.AppInfo.launch_default_for_uri(url, None)
 
     def _wire_keys(self) -> None:
+        # CAPTURE phase so the window sees keys before any focused child
+        # controller. Without it, Home/End/PgUp/PgDn would be consumed by
+        # the compose TextView's built-in key handling (cursor moves)
+        # before the conversation scroller ever got a chance to react.
         key = Gtk.EventControllerKey()
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._on_key)
         self.add_controller(key)
 
@@ -919,11 +943,46 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_d:
             self._cancel_current_turn()
             return True
+        if ctrl and keyval == Gdk.KEY_f:
+            self._compose.focus()
+            return True
+        if keyval == Gdk.KEY_Home:
+            self._scroll_to(0.0)
+            return True
+        if keyval == Gdk.KEY_End:
+            self._scroll_to(1.0)
+            return True
+        if keyval == Gdk.KEY_Page_Up:
+            self._scroll_page(-1)
+            return True
+        if keyval == Gdk.KEY_Page_Down:
+            self._scroll_page(1)
+            return True
         if keyval == Gdk.KEY_Escape:
             self.set_visible(False)
             return True
 
         return False
+
+    def _scroll_to(self, fraction: float) -> None:
+        """Jump to `fraction` of the scroll range. 0.0 = top, 1.0 = bottom.
+        Updates `_pinned` so the auto-follow state matches the landing
+        position."""
+        adj = self._conv_scroller.get_vadjustment()
+        bottom = max(0.0, adj.get_upper() - adj.get_page_size())
+        target = adj.get_lower() + (bottom - adj.get_lower()) * max(0.0, min(1.0, fraction))
+        adj.set_value(target)
+        self._pinned = target >= bottom - self._PIN_THRESHOLD_PX
+
+    def _scroll_page(self, direction: int) -> None:
+        """direction = -1 for PgUp, +1 for PgDn. Steps by one page-size;
+        refreshes `_pinned` based on where we landed."""
+        adj = self._conv_scroller.get_vadjustment()
+        step = adj.get_page_size() * direction
+        bottom = max(0.0, adj.get_upper() - adj.get_page_size())
+        target = max(adj.get_lower(), min(bottom, adj.get_value() + step))
+        adj.set_value(target)
+        self._pinned = target >= bottom - self._PIN_THRESHOLD_PX
 
     def _cancel_current_turn(self) -> None:
         """Ctrl+D: abort the in-flight adapter turn so the user can say
@@ -983,16 +1042,35 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _bind_to_focused_monitor(self) -> None:
         """Pin the layer-shell surface to whichever output is currently
-        focused and resize width to its 40% fraction. Invoked on every
-        toggle-to-visible, so switching monitors between uses rehomes
-        the overlay to the new one."""
+        focused, resize width to 40% of that output, and recompute the
+        compose-scroller cap to 25% of that output's height. Called on
+        every toggle-to-visible so monitor switches rehome the overlay.
+
+        The layer-shell surface size follows the widget's requested size.
+        GTK caches allocations aggressively, so on a monitor switch we
+        have to force a full reconfigure — `set_default_size` + a fresh
+        `set_size_request` + `queue_resize`, and if we're currently
+        mapped we unmap/remap so the compositor assigns a new layer
+        surface with the new dimensions. Without the unmap/remap the
+        first width sticks forever."""
         monitor = _focused_gdk_monitor()
         if monitor is not None:
             Gtk4LayerShell.set_monitor(self, monitor)
         width = self._overlay_width(monitor=monitor)
-        # `set_default_size` only takes effect on first show; after that,
-        # a fresh width request is what actually resizes the surface.
+        self.set_default_size(width, -1)
         self.set_size_request(width, -1)
+        self.queue_resize()
+        if monitor is not None:
+            self._compose.set_max_content_fraction(
+                monitor.get_geometry().height, 0.25
+            )
+        if self.get_mapped():
+            # Remap to commit a new layer surface with the updated size.
+            # Layer-shell only reads the surface dimensions during the
+            # initial configure; subsequent widget allocations don't
+            # propagate to the compositor.
+            self.unmap()
+            self.map()
 
     @staticmethod
     def _install_css() -> None:
@@ -1292,6 +1370,10 @@ def _cmd_toggle(args) -> None:
             return False
 
         window.connect("close-request", on_close)
+        # Pick the focused monitor BEFORE present() so the first
+        # layer-surface configure uses the right output width. The same
+        # helper runs on every subsequent toggle-to-visible.
+        window._bind_to_focused_monitor()
         window.present()
         window.focus_compose()
         _signal_waybar_safe()
