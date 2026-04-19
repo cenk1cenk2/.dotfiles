@@ -11,12 +11,12 @@ import urllib.request
 from typing import Any, Optional, Protocol
 from enum import StrEnum
 
-DEFAULT_MODEL = "gemma4:e2b"
-
 class EnrichProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
     CODEX = "codex"
+
+DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 
 log = logging.getLogger(__name__)
 
@@ -30,33 +30,33 @@ class EnrichAdapter(Protocol):
         ...
 
 class EnrichAdapterHttp:
-    """OpenAI-compatible chat-completions endpoint."""
+    """OpenAI-compatible chat-completions endpoint.
+
+    Positional args: `system_prompt`, `user_prompt_template`. Everything
+    else via `**kwargs`, resolved with `kwargs.get(name) or DEFAULT` so
+    None-valued caller args (e.g. argparse) collapse to the baseline."""
 
     provider = EnrichProvider.HTTP
 
-    def __init__(
-        self,
-        system_prompt: str,
-        user_prompt_template: str,
-        base_url: str,
-        model: str,
-        api_key: str,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        thinking: str = "none",
-        num_ctx: Optional[int] = None,
-        user_agent: str = "common/1.0",
-    ):
+    def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
-        self.base_url = base_url
-        self.model = model
-        self.api_key = api_key
-        self.temperature = temperature
-        self.top_p = top_p
-        self.thinking = thinking
-        self.num_ctx = num_ctx
-        self.user_agent = user_agent
+        self.base_url = kwargs.get("base_url") or "https://ai.kilic.dev/api/v1"
+        self.model = kwargs.get("model") or "gemma4:e2b"
+        self.api_key = kwargs.get("api_key") or ""
+        self.temperature = kwargs.get("temperature")
+        self.top_p = kwargs.get("top_p")
+        self.thinking = kwargs.get("thinking") or "none"
+        self.num_ctx = kwargs.get("num_ctx")
+        self.user_agent = kwargs.get("user_agent") or "enrich/1.0"
+        # OpenWebUI extensions: server-side tool UUIDs (and the pseudo-ids
+        # "web_search", "memory", "code_interpreter", "image_generation",
+        # "voice" for built-ins, plus "server:mcp:<id>" for MCP). `files`
+        # attaches [{"type": "file"|"folder"|"collection", "id": "..."}]
+        # for RAG context. Both are silently ignored by non-OpenWebUI
+        # servers.
+        self.tool_ids = kwargs.get("tool_ids")
+        self.files = kwargs.get("files")
 
     def enrich(self, text: str) -> Optional[str]:
         body: dict[str, Any] = {
@@ -76,6 +76,10 @@ class EnrichAdapterHttp:
             body["top_p"] = self.top_p
         if self.num_ctx:
             body["options"] = {"num_ctx": self.num_ctx}
+        if self.tool_ids:
+            body["tool_ids"] = self.tool_ids
+        if self.files:
+            body["files"] = self.files
 
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
@@ -106,13 +110,14 @@ class EnrichAdapterHttp:
         return result
 
 class EnrichAdapterClaude:
-    """Claude CLI (haiku model)."""
+    """Claude CLI wrapper. Defaults to haiku for fast one-shot rewrites."""
 
     provider = EnrichProvider.CLAUDE
 
-    def __init__(self, system_prompt: str, user_prompt_template: str):
+    def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
+        self.model = kwargs.get("model") or "haiku"
 
     def enrich(self, text: str) -> Optional[str]:
         proc = subprocess.run(
@@ -120,7 +125,7 @@ class EnrichAdapterClaude:
                 "claude",
                 "-p",
                 "--model",
-                "haiku",
+                self.model,
                 "--system-prompt",
                 self.system_prompt,
                 self.user_prompt_template.format(text=text),
@@ -140,16 +145,25 @@ class EnrichAdapterCodex:
 
     provider = EnrichProvider.CODEX
 
-    def __init__(self, system_prompt: str, user_prompt_template: str):
+    def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
+        self.model = kwargs.get("model") or "gpt-5.4-mini"
 
     def enrich(self, text: str) -> Optional[str]:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
         proc = subprocess.run(
-            ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
+            [
+                "codex",
+                "exec",
+                "-",
+                "--model",
+                self.model,
+                "--ephemeral",
+                "--skip-git-repo-check",
+            ],
             input=prompt,
             capture_output=True,
             text=True,

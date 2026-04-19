@@ -4,8 +4,16 @@ Import via `from lib import …` — this __init__ re-exports everything the
 scripts need so callers never reach for a submodule directly.
 """
 
+from .converse import (
+    DEFAULT_CONVERSE_ADAPTER,
+    ConversationAdapter,
+    ConversationAdapterClaude,
+    ConversationAdapterCodex,
+    ConversationAdapterHttp,
+    ConversationProvider,
+)
 from .enrich import (
-    DEFAULT_MODEL,
+    DEFAULT_ENRICH_ADAPTER,
     EnrichAdapterClaude,
     EnrichAdapterCodex,
     EnrichAdapter,
@@ -26,11 +34,17 @@ from .output import (
     OutputAdapterStdout,
     OutputAdapterType,
 )
-from .prompts import load_prompt
+from .prompts import load_prompt, load_relative_file
 from .waybar import signal_waybar
 
 __all__ = [
-    "DEFAULT_MODEL",
+    "ConversationAdapter",
+    "ConversationAdapterClaude",
+    "ConversationAdapterCodex",
+    "ConversationAdapterHttp",
+    "ConversationProvider",
+    "DEFAULT_CONVERSE_ADAPTER",
+    "DEFAULT_ENRICH_ADAPTER",
     "EnrichAdapter",
     "EnrichAdapterClaude",
     "EnrichAdapterCodex",
@@ -46,6 +60,7 @@ __all__ = [
     "OutputAdapterType",
     "OutputMode",
     "load_prompt",
+    "load_relative_file",
     "notify",
     "signal_waybar",
 ]

@@ -1,0 +1,405 @@
+/* ============================================================ Tokens
+ * Pulled from ~/.config/nvim/lua/onedarker/colors.lua.
+ *
+ * Elevation (onedarker: higher = lighter):
+ *   bg[200] = #1e2127   window surface (starting point)
+ *   bg[300] = #22282f   assistant / edit surface
+ *   bg[400] = #2c333d   user card, compose surface
+ *   bg[500] = #4b5263   strong borders
+ */
+/* Card containers keep their distinct elevations so user/assistant
+ * turns read at a glance. The TEXT SURFACE inside each card + the
+ * compose input both drop to @ask_window (bg[200]) so the reply body
+ * reads as a quiet panel inside the coloured card chrome. */
+@define-color ask_window #1e2127;
+@define-color ask_card #2c333d;
+@define-color ask_card_hi #22282f;
+@define-color ask_compose #2c333d;
+/* bg[200] — applied to the text-carrying surface of cards + compose,
+ * not the card frame itself. */
+@define-color ask_text_surface #1e2127;
+@define-color ask_border #4b5263;
+@define-color ask_border_soft #2c333d;
+@define-color ask_border_focus #6c778d;
+@define-color ask_fg #abb2bf;
+@define-color ask_fg_dim #7c8a9d;
+@define-color ask_fg_muted #5c6370;
+@define-color ask_accent #abb2bf;
+@define-color ask_user #e5c07b;
+@define-color ask_assistant #98c379;
+@define-color ask_idle #98c379;
+@define-color ask_stream #e5c07b;
+@define-color ask_pending #e06c75;
+@define-color ask_edge #d3b051;
+
+/* Base font for the overlay. Every other `font-size` is an `em` multiplier
+ * so bumping this one declaration scales the whole UI. Scoped to
+ * `.overlay *` so we don't touch widgets outside our window tree. */
+.overlay,
+.overlay * {
+  font-family: monospace;
+  font-size: 14pt;
+}
+
+/* ============================================================ Root
+ * The window surface itself stays transparent; the `.ask-root` Box
+ * child paints the real background. That's the swaync recipe — some
+ * themes/compositors leave a `window { background-color: … }` painted
+ * under us, so we sidestep the whole fight by not styling the window
+ * and painting on a child Box instead. All other rules still namespace
+ * under `.overlay` so they outspecificity any generic theme selector.
+ *
+ * NOTE on backgrounds: use `background-color` + `background-image: none`
+ * explicitly rather than the `background` shorthand. The shorthand
+ * clears every image layer too, which can wipe the default background
+ * image on `.view`/`text` subnodes and paint them opaque over parents. */
+.overlay {
+  background-color: transparent;
+  background-image: none;
+  color: @ask_fg;
+}
+
+.overlay box.ask-root {
+  background-color: @ask_window;
+  background-image: none;
+  border-left: 2px solid @ask_edge;
+}
+
+.overlay > * {
+  color: @ask_fg;
+}
+
+/* ============================================================ Header */
+.overlay box.ask-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid @ask_border_soft;
+  background-color: @ask_window;
+  background-image: none;
+}
+
+.overlay label.ask-provider {
+  font-size: 0.9em;
+  font-weight: 700;
+  padding: 4px 12px;
+  background-color: alpha(@ask_fg_dim, 0.15);
+  color: @ask_fg;
+  letter-spacing: 0.04em;
+}
+
+.overlay label.ask-provider.idle {
+  color: @ask_idle;
+  background-color: alpha(@ask_idle, 0.22);
+}
+
+.overlay label.ask-provider.streaming {
+  color: @ask_stream;
+  background-color: alpha(@ask_stream, 0.22);
+}
+
+.overlay label.ask-provider.pending {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.22);
+}
+
+/* Button shadows. Depth comes from a hairline top-highlight and a soft
+ * drop below — presses invert the pair so the button reads "sunken". */
+.overlay button.ask-close {
+  background-color: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 10px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 1.1em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.4);
+}
+
+.overlay button.ask-close:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.5);
+}
+
+.overlay button.ask-close:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
+/* ====================================================== Conversation */
+.overlay scrolledwindow.ask-conv-scroller {
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay box.ask-conv {
+  padding: 10px 10px 4px 10px;
+}
+
+.overlay box.ask-card {
+  background-color: @ask_card;
+  background-image: none;
+  border: 1px solid @ask_border_soft;
+  padding: 8px 14px;
+  margin: 4px 2px;
+}
+
+.overlay box.ask-card-user {
+  border-left: 3px solid @ask_user;
+}
+
+.overlay box.ask-card-assistant {
+  border-left: 3px solid @ask_assistant;
+  background-color: @ask_card_hi;
+  background-image: none;
+}
+
+.overlay label.ask-card-role {
+  font-size: 0.8em;
+  font-weight: 800;
+  color: @ask_fg_dim;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.overlay label.ask-card-role-user {
+  color: @ask_user;
+}
+
+.overlay label.ask-card-role-assistant {
+  color: @ask_assistant;
+}
+
+/* Card body (the Gtk.Label rendering the markdown). Drops to bg[200]
+ * so the reply text reads as an inset panel inside the coloured card
+ * chrome. Small padding so the text isn't flush against the edge. */
+.overlay label.ask-card-text {
+  background-color: @ask_text_surface;
+  background-image: none;
+  color: @ask_fg;
+  font-size: 1em;
+  padding: 8px 12px;
+}
+
+/* Legacy TextView selectors kept in case a future card variant wants
+ * to revert to TextView — harmless no-ops on the Label-based cards. */
+.overlay textview.ask-card-text,
+.overlay textview.ask-card-text > text {
+  background-color: @ask_text_surface;
+  background-image: none;
+  color: @ask_fg;
+  font-size: 1em;
+}
+
+.overlay textview.ask-card-text > text {
+  min-height: 2em;
+}
+
+/* ========================================================== Compose */
+.overlay box.ask-compose-wrap {
+  margin: 8px 12px 12px 12px;
+  background-color: @ask_compose;
+  background-image: none;
+  border: 2px solid @ask_border;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.overlay box.ask-compose-wrap:focus-within {
+  border-color: @ask_border_focus;
+  box-shadow: 0 0 0 2px alpha(@ask_accent, 0.3);
+}
+
+.overlay scrolledwindow.ask-compose {
+  background-color: @ask_text_surface;
+  background-image: none;
+}
+
+/* Compose input surface — bg[200], matching the card body so typing
+ * and replies share the same inset look. */
+.overlay textview.ask-compose-text,
+.overlay textview.ask-compose-text > text {
+  background-color: @ask_text_surface;
+  background-image: none;
+  color: @ask_fg;
+  font-size: 1em;
+  caret-color: @ask_accent;
+}
+
+.overlay box.ask-compose-bar {
+  padding: 6px 10px 6px 12px;
+  border-top: 1px solid @ask_border_soft;
+  background-color: alpha(black, 0.25);
+  background-image: none;
+}
+
+.overlay label.ask-compose-hint {
+  font-size: 0.8em;
+  color: @ask_fg_muted;
+}
+
+/* Primary action — SEND. Stronger shadow than secondary buttons; the
+ * pressed state flips the shadow inwards for tactile feedback. */
+.overlay button.ask-compose-send {
+  background-color: alpha(@ask_accent, 0.28);
+  color: @ask_accent;
+  border: 1px solid alpha(@ask_accent, 0.55);
+  padding: 4px 16px;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  min-width: 0;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.1),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-compose-send:hover {
+  background-color: alpha(@ask_accent, 0.42);
+  color: @ask_fg;
+  border-color: @ask_accent;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.14),
+    0 3px 6px alpha(black, 0.55);
+}
+
+.overlay button.ask-compose-send:active {
+  background-color: alpha(@ask_accent, 0.4);
+  box-shadow:
+    inset 0 2px 3px alpha(black, 0.5),
+    0 0 0 transparent;
+}
+
+.overlay button.ask-compose-send:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+}
+
+/* =========================================== Queue (full-text cards) */
+.overlay box.ask-queue {
+  background-color: alpha(black, 0.35);
+  background-image: none;
+  border-top: 1px solid @ask_border_soft;
+  padding: 6px 10px 10px 10px;
+}
+
+.overlay label.ask-queue-header {
+  font-size: 0.8em;
+  font-weight: 700;
+  color: @ask_fg_muted;
+  padding: 4px 2px 6px 2px;
+  letter-spacing: 0.14em;
+}
+
+.overlay list {
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay row.ask-queue-row {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  margin: 0;
+}
+
+.overlay row.ask-queue-row:hover {
+  background-color: transparent;
+}
+
+.overlay box.ask-queue-card {
+  background-color: @ask_card;
+  background-image: none;
+  border: 1px solid @ask_border_soft;
+  padding: 10px 12px;
+  margin: 4px 0;
+  transition: border-color 120ms ease;
+}
+
+.overlay box.ask-queue-card:hover {
+  border-color: alpha(@ask_accent, 0.4);
+}
+
+.overlay label.ask-queue-text {
+  font-size: 1em;
+  color: @ask_fg;
+}
+
+.overlay scrolledwindow.ask-queue-edit {
+  background-color: @ask_card_hi;
+  background-image: none;
+  border: 1px solid @ask_border_focus;
+  padding: 2px;
+}
+
+.overlay textview.ask-queue-edit-text,
+.overlay textview.ask-queue-edit-text > text {
+  background-color: transparent;
+  background-image: none;
+  color: @ask_fg;
+  font-size: 1em;
+}
+
+.overlay textview.ask-queue-edit-text > text {
+  min-height: 2em;
+}
+
+.overlay box.ask-queue-actions {
+  margin-top: 8px;
+}
+
+/* Secondary buttons share a base shadow treatment; the hover tint
+ * swaps the accent colour so intent is legible per-button. */
+.overlay button.ask-queue-edit,
+.overlay button.ask-queue-send,
+.overlay button.ask-queue-remove {
+  background-color: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 12px;
+  min-width: 0;
+  color: @ask_fg_dim;
+  font-size: 0.85em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.ask-queue-edit:hover {
+  color: @ask_accent;
+  background-color: alpha(@ask_accent, 0.18);
+  border-color: alpha(@ask_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-queue-send:hover {
+  color: @ask_idle;
+  background-color: alpha(@ask_idle, 0.18);
+  border-color: alpha(@ask_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-queue-remove:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.ask-queue-edit:active,
+.overlay button.ask-queue-send:active,
+.overlay button.ask-queue-remove:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}

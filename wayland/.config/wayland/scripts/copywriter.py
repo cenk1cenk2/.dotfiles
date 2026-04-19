@@ -11,10 +11,10 @@ from typing import Optional
 import psutil
 
 from lib import (
-    DEFAULT_MODEL,
-    EnrichAdapterClaude,
+    DEFAULT_ENRICH_ADAPTER,
     InputAdapterClipboard,
     OutputAdapterClipboard,
+    EnrichAdapterClaude,
     EnrichAdapterCodex,
     EnrichAdapter,
     EnrichProvider,
@@ -208,10 +208,11 @@ def main():
         "--provider",
         type=EnrichProvider,
         choices=list(EnrichProvider),
-        default=EnrichProvider.HTTP,
+        default=DEFAULT_ENRICH_ADAPTER,
     )
     run_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
-    run_parser.add_argument("--model", default=DEFAULT_MODEL)
+    # Per-provider default — each adapter picks its own when unset.
+    run_parser.add_argument("--model", default=None)
     run_parser.add_argument("--temperature", type=float)
     run_parser.add_argument("--top-p", type=float)
     run_parser.add_argument(
@@ -246,11 +247,14 @@ def main():
             case _:
                 raise ValueError(f"unknown input mode: {args.input!r}")
 
+        # Adapters collapse None → per-provider default via
+        # `kwargs.get(name) or DEFAULT` internally, so we pass args straight
+        # through.
         match args.provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
-                    system_prompt=SYSTEM_PROMPT,
-                    user_prompt_template=USER_PROMPT,
+                    SYSTEM_PROMPT,
+                    USER_PROMPT,
                     base_url=args.base_url,
                     model=args.model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
@@ -261,9 +265,9 @@ def main():
                     user_agent="copywriter/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case _:
                 raise ValueError(f"unknown enrich provider: {args.provider!r}")
 

@@ -1,5 +1,7 @@
 """Desktop notification helper."""
 
+import sys
+
 import subprocess
 from typing import Optional
 
@@ -13,4 +15,9 @@ def notify(
     cmd = ["notify-send", title, message, "-i", icon]
     if timeout:
         cmd.extend(["-t", str(timeout)])
-    subprocess.run(cmd, check=False)
+    subprocess.run(
+        cmd,
+        check=False,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )

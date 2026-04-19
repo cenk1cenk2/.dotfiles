@@ -83,6 +83,16 @@
     "signal": 11,
   },
 
+  "custom/ask": {
+    "interval": 3,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/wayland/scripts/ask.py status",
+    "exec-if": "~/.config/wayland/scripts/ask.py is-running",
+    "on-click": "~/.config/wayland/scripts/ask.py kill",
+    "signal": 12,
+  },
+
   "group/extras": {
     "orientation": "horizontal",
     "modules": [
@@ -156,6 +166,7 @@
     "custom/recorder",
     "custom/speech",
     "custom/copywriter",
+    "custom/ask",
     "sway/mode",
     "sway/window",
   ],

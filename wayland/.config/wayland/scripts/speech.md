@@ -63,17 +63,17 @@ Do not apply to general technical terms used conversationally (e.g., 'the API is
 
 The following spoken words are formatting commands — never output them literally. Apply the formatting and strip the cue word.
 
-| Cue | Effect | Scope |
-|-----|--------|-------|
-| `codeblock ... codeblock` | Wrap in backticks: `` `...` `` | Inline |
-| `codeblock <language>` | Open fenced code block in that language | Until `end cue` |
-| `list` / `bullet list` | Unordered list (`- item`) | Until `end cue` or topic change |
-| `numbered list` | Ordered list (`1. item`) | Until `end cue` or topic change |
-| `quote` / `blockquote` | Blockquote (`> text`) | Until `end cue` or topic change |
-| `heading` / `title` | Markdown heading (`##`) | Next phrase only |
-| `bold` | **bold** | Next phrase only |
-| `italic` | _italic_ | Next phrase only |
-| `end cue` | Closes current block cue | — |
+| Cue                       | Effect                                  | Scope                           |
+| ------------------------- | --------------------------------------- | ------------------------------- |
+| `codeblock ... codeblock` | Wrap in backticks: `` `...` ``          | Inline                          |
+| `codeblock <language>`    | Open fenced code block in that language | Until `end cue`                 |
+| `list` / `bullet list`    | Unordered list (`- item`)               | Until `end cue` or topic change |
+| `numbered list`           | Ordered list (`1. item`)                | Until `end cue` or topic change |
+| `quote` / `blockquote`    | Blockquote (`> text`)                   | Until `end cue` or topic change |
+| `heading` / `title`       | Markdown heading (`##`)                 | Next phrase only                |
+| `bold`                    | **bold**                                | Next phrase only                |
+| `italic`                  | _italic_                                | Next phrase only                |
+| `end cue`                 | Closes current block cue                | —                               |
 
 Examples:
 

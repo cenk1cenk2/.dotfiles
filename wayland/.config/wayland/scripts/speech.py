@@ -14,7 +14,7 @@ from enum import StrEnum
 from typing import Optional, Protocol
 
 from lib import (
-    DEFAULT_MODEL,
+    DEFAULT_ENRICH_ADAPTER,
     EnrichAdapterClaude,
     OutputAdapterClipboard,
     EnrichAdapterCodex,
@@ -27,6 +27,7 @@ from lib import (
     load_prompt,
     notify,
     signal_waybar,
+    OutputAdapterStdout,
 )
 
 class STTAdapter(Protocol):
@@ -172,7 +173,7 @@ SOCKET_PATH = os.path.join(
 AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
 
-def _send(cmd: Command, **extra) -> Optional[Response]:
+def _send(cmd: Command, **kwargs) -> Optional[Response]:
     """Deliver a command to the running session over the Unix socket.
 
     Extra kwargs become top-level fields in the JSON payload. The server
@@ -197,7 +198,7 @@ def _send(cmd: Command, **extra) -> Optional[Response]:
         return None
 
     try:
-        payload = json.dumps({"cmd": cmd.value, **extra}) + "\n"
+        payload = json.dumps({"cmd": cmd.value, **kwargs}) + "\n"
         sock.sendall(payload.encode())
         chunks = []
         while True:
@@ -324,29 +325,36 @@ class Session:
                 new_enricher: Optional[EnrichAdapter] = None
                 if spec_dict:
                     spec = EnrichSpec.from_dict(spec_dict)
+                    # Per-provider model default: HTTP wants the OpenWebUI
+                    # shape, Claude/Codex want their CLI aliases. Only pass
+                    # `model=` when the spec set one; otherwise the adapter
+                    # picks its own baseline.
+                    spec_model_kw = {"model": spec.model} if spec.model else {}
                     match spec.provider:
                         case EnrichProvider.HTTP:
                             new_enricher = EnrichAdapterHttp(
-                                system_prompt=AI_SYSTEM_PROMPT,
-                                user_prompt_template=AI_USER_PROMPT,
+                                AI_SYSTEM_PROMPT,
+                                AI_USER_PROMPT,
                                 base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
-                                model=spec.model or DEFAULT_MODEL,
                                 api_key=spec.api_key or "",
                                 temperature=spec.temperature,
                                 top_p=spec.top_p,
                                 thinking=spec.thinking,
                                 num_ctx=spec.num_ctx,
                                 user_agent="speech/1.0",
+                                **spec_model_kw,
                             )
                         case EnrichProvider.CLAUDE:
                             new_enricher = EnrichAdapterClaude(
                                 AI_SYSTEM_PROMPT,
                                 AI_USER_PROMPT,
+                                **spec_model_kw,
                             )
                         case EnrichProvider.CODEX:
                             new_enricher = EnrichAdapterCodex(
                                 AI_SYSTEM_PROMPT,
                                 AI_USER_PROMPT,
+                                **spec_model_kw,
                             )
                         case _:
                             raise ValueError(
@@ -358,13 +366,14 @@ class Session:
             # before the daemon transcribes, so press-1's output write goes
             # to the new destination.
             if obj.get("output"):
-                # speech.py only supports the two interactive sinks.
                 mode = OutputMode(obj["output"])
                 match mode:
                     case OutputMode.CLIPBOARD:
                         self.set_output(OutputAdapterClipboard())
                     case OutputMode.TYPE:
                         self.set_output(OutputAdapterType())
+                    case OutputMode.STDOUT:
+                        self.set_output(OutputAdapterStdout())
                     case _:
                         raise ValueError(
                             f"unsupported output mode for speech: {mode!r}",
@@ -548,8 +557,16 @@ class Speech:
                 {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
             )
 
-        icons = {OutputMode.CLIPBOARD: "󰅇", OutputMode.TYPE: "󰌌"}
-        labels = {OutputMode.CLIPBOARD: "clipboard", OutputMode.TYPE: "typing"}
+        icons = {
+            OutputMode.CLIPBOARD: "󰅇",
+            OutputMode.TYPE: "󰌌",
+            OutputMode.STDOUT: "󰼭",
+        }
+        labels = {
+            OutputMode.CLIPBOARD: "clipboard",
+            OutputMode.TYPE: "typing",
+            OutputMode.STDOUT: "stdout",
+        }
         icon = icons[state.output]
         label = labels[state.output]
 
@@ -590,7 +607,7 @@ def main():
     toggle_parser.add_argument(
         "--output",
         type=OutputMode,
-        choices=[OutputMode.CLIPBOARD, OutputMode.TYPE],
+        choices=list(OutputMode),
         default=OutputMode.CLIPBOARD,
         help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
     )
@@ -602,13 +619,15 @@ def main():
     toggle_parser.add_argument(
         "--enrich-provider",
         choices=["http", "claude", "codex"],
-        default="http",
+        default=DEFAULT_ENRICH_ADAPTER,
     )
     toggle_parser.add_argument(
         "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    toggle_parser.add_argument("--enrich-model", default=DEFAULT_MODEL)
+    # Model default is provider-specific — see the enrich-adapter branches
+    # below. Unset here so each backend falls back to its own baseline.
+    toggle_parser.add_argument("--enrich-model", default=None)
     toggle_parser.add_argument("--enrich-temperature", type=float)
     toggle_parser.add_argument("--enrich-top-p", type=float)
     toggle_parser.add_argument(
@@ -641,11 +660,13 @@ def main():
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
         provider = EnrichProvider(args.enrich_provider)
+        # None values (no --enrich-model, etc.) collapse to each adapter's
+        # default via the `kwargs.get(name) or DEFAULT` pattern inside.
         match provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
-                    system_prompt=AI_SYSTEM_PROMPT,
-                    user_prompt_template=AI_USER_PROMPT,
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
                     base_url=args.enrich_base_url,
                     model=args.enrich_model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
@@ -656,9 +677,17 @@ def main():
                     user_agent="speech/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterClaude(
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
+                    model=args.enrich_model,
+                )
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterCodex(
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
+                    model=args.enrich_model,
+                )
             case _:
                 raise ValueError(f"unknown enrich provider: {provider!r}")
 
@@ -669,6 +698,8 @@ def main():
                 output = OutputAdapterClipboard()
             case OutputMode.TYPE:
                 output = OutputAdapterType()
+            case OutputMode.STDOUT:
+                output = OutputAdapterStdout()
             case _:
                 raise ValueError(
                     f"unsupported output mode for speech: {args.output!r}",
