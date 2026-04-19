@@ -562,7 +562,11 @@ class AskWindow(Gtk.ApplicationWindow):
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, True)
-        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
+        # EXCLUSIVE so `toggle-window` / `present()` actually land keyboard
+        # focus on the compose entry the moment we map. ON_DEMAND requires a
+        # click before the surface is allowed to receive keys, which breaks
+        # the "Shift+a and start typing" flow. Escape hides → grab releases.
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.EXCLUSIVE)
         self.set_default_size(self._overlay_width(), -1)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -717,6 +721,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._queue.append(row)
         self._queue_listbox.append(row)
         self._queue_box.set_visible(True)
+        _signal_waybar_safe()
 
     def _pop_queue_front(self) -> Optional[str]:
         if not self._queue:
@@ -725,6 +730,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._queue_listbox.remove(row)
         if not self._queue:
             self._queue_box.set_visible(False)
+        _signal_waybar_safe()
 
         return row.text()
 
@@ -735,6 +741,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self._queue_listbox.remove(row)
         if not self._queue:
             self._queue_box.set_visible(False)
+        _signal_waybar_safe()
 
         return row.text()
 
@@ -816,6 +823,9 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def is_streaming(self) -> bool:
         return self._streaming
+
+    def queue_size(self) -> int:
+        return len(self._queue)
 
     def _at_bottom(self) -> bool:
         adj = self._scroller.get_vadjustment()
@@ -1051,6 +1061,7 @@ class Session:
                     "ok": True,
                     "phase": self._window.phase(),
                     "provider": self._provider.value,
+                    "queue": self._window.queue_size(),
                 }
             case "kill":
                 # Tear down from the GTK main thread so close-request handlers
@@ -1155,9 +1166,10 @@ def _cmd_toggle(args) -> None:
         _signal_waybar_safe()
 
 def _cmd_status() -> None:
-    """Waybar custom-module payload. Emits a compact JSON describing whether
-    a session is live, which provider owns it, and which phase it's in
-    (idle -> green, pending -> red, streaming -> yellow)."""
+    """Waybar custom-module payload. Compact icon-only text (provider lives
+    in the tooltip); class picks the state colour (idle green / pending red
+    / streaming yellow); queue depth renders as a Pango superscript badge
+    so N pending turns show as `󱍊³` without stealing horizontal space."""
     resp = _send("status")
     if not resp or not resp.get("ok"):
         print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
@@ -1166,17 +1178,19 @@ def _cmd_status() -> None:
 
     provider = resp.get("provider", "")
     phase = resp.get("phase", "idle")
+    queue = int(resp.get("queue", 0) or 0)
     icon = "󱍊"
+    badge = f"<sup>{queue}</sup>" if queue > 0 else ""
+    text = f"{icon}{badge}"
     match phase:
         case "streaming":
-            text = f"{icon} {provider} …"
             tooltip = f"Ask: streaming via {provider}"
         case "pending":
-            text = f"{icon} {provider} ?"
             tooltip = f"Ask: waiting on first chunk from {provider}"
         case _:
-            text = f"{icon} {provider}"
             tooltip = f"Ask: {provider} idle"
+    if queue > 0:
+        tooltip += f"  ({queue} queued)"
     print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
 
 def _cmd_is_running() -> None:
