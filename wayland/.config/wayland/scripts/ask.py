@@ -269,11 +269,7 @@ class MarkdownMarkup:
             case "blockquote_close":
                 out.append("</i>")
             case "hr":
-                out.append(
-                    '<span foreground="#4b5263">'
-                    + ("─" * 40)
-                    + "</span>\n\n"
-                )
+                out.append('<span foreground="#4b5263">' + ("─" * 40) + "</span>\n\n")
             case _:
                 log.debug("unhandled token: %s", tok.type)
 
@@ -288,7 +284,7 @@ class ComposeView:
     # feels like a proper compose box, not a single-line entry, and
     # stays usable on short screens where 25% of the height would be
     # even less.
-    MIN_ROWS = 3
+    MIN_ROWS = 5
 
     def __init__(self, on_submit=None):
         self._on_submit = on_submit
@@ -323,9 +319,7 @@ class ComposeView:
             int(self._line_px * self.MIN_ROWS) + self._pad_px
         )
         # Fallback cap until the first monitor-bind call fires.
-        self._scroller.set_max_content_height(
-            int(self._line_px * 6) + self._pad_px
-        )
+        self._scroller.set_max_content_height(int(self._line_px * 6) + self._pad_px)
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("ask-compose-bar")
@@ -972,7 +966,9 @@ class AskWindow(Gtk.ApplicationWindow):
         position."""
         adj = self._conv_scroller.get_vadjustment()
         bottom = max(0.0, adj.get_upper() - adj.get_page_size())
-        target = adj.get_lower() + (bottom - adj.get_lower()) * max(0.0, min(1.0, fraction))
+        target = adj.get_lower() + (bottom - adj.get_lower()) * max(
+            0.0, min(1.0, fraction)
+        )
         adj.set_value(target)
         self._pinned = target >= bottom - self._PIN_THRESHOLD_PX
 
@@ -1064,9 +1060,7 @@ class AskWindow(Gtk.ApplicationWindow):
         self.set_size_request(width, -1)
         self.queue_resize()
         if monitor is not None:
-            self._compose.set_max_content_fraction(
-                monitor.get_geometry().height, 0.25
-            )
+            self._compose.set_max_content_fraction(monitor.get_geometry().height, 0.25)
 
     @staticmethod
     def _install_css() -> None:
@@ -1301,7 +1295,9 @@ def _build_adapter(args) -> ConversationAdapter:
                 user_agent="ask/1.0",
             )
         case ConversationProvider.CLAUDE:
-            return ConversationAdapterClaude(AI_SYSTEM_PROMPT, model=args.converse_model)
+            return ConversationAdapterClaude(
+                AI_SYSTEM_PROMPT, model=args.converse_model
+            )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
         case _:
@@ -1329,12 +1325,12 @@ def _read_input(mode: InputMode) -> str:
 def _cmd_toggle(args) -> None:
     """Unified toggle. Three behaviours, chosen from context:
 
-      1. No session + any input     -> open a new session.
-      2. Session + non-empty input  -> forward the input as a turn.
-      3. Session + empty input      -> flip overlay visibility,
-         *unless* the empty input came from a closed pipe (press-2 of
-         a speech toggle pair dumping nothing into us) — in that case
-         leave the session alone.
+    1. No session + any input     -> open a new session.
+    2. Session + non-empty input  -> forward the input as a turn.
+    3. Session + empty input      -> flip overlay visibility,
+       *unless* the empty input came from a closed pipe (press-2 of
+       a speech toggle pair dumping nothing into us) — in that case
+       leave the session alone.
     """
     initial = _read_input(args.input)
     # stdin being a TTY means the user invoked ask.py from a terminal
