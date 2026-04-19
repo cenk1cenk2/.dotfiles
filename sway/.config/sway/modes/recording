@@ -33,7 +33,7 @@ mode $mode_recording {
         bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/ask.py toggle --input stdin', mode "default"
 
         # Toggle the ask overlay (hides/shows without ending the session)
-        bindsym Shift+a exec $ask toggle-window, mode "default"
+        bindsym Shift+a exec $ask toggle, mode "default"
 
         # Copywriter: refine clipboard through AI
         bindsym w exec $copywriter run clipboard, mode "default"

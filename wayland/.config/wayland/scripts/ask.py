@@ -1290,17 +1290,33 @@ def _read_input(mode: InputMode) -> str:
     return (text or "").strip()
 
 def _cmd_toggle(args) -> None:
-    """Read input (stdin/clipboard) and either forward it to a live session
-    or become the session owner and open the overlay."""
-    initial = _read_input(args.input)
+    """Unified toggle. Three behaviours, chosen from context:
 
-    # Forwarder path: if a session already owns the socket, ship the
-    # initial text as a turn and exit. Empty input (common for press-2 of
-    # a speech toggle pair) exits silently without disturbing the session.
+      1. No session + any input     -> open a new session.
+      2. Session + non-empty input  -> forward the input as a turn.
+      3. Session + empty input      -> flip overlay visibility,
+         *unless* the empty input came from a closed pipe (press-2 of
+         a speech toggle pair dumping nothing into us) — in that case
+         leave the session alone.
+    """
+    initial = _read_input(args.input)
+    # stdin being a TTY means the user invoked ask.py from a terminal
+    # or a compositor bind with nothing piped in; a closed/empty pipe
+    # means the upstream process exited without writing (common with
+    # press-2 of `speech.py toggle --output stdout | ask.py toggle`).
+    piped_empty = args.input == InputMode.STDIN and not sys.stdin.isatty()
+
     status = _send("status")
     if status and status.get("ok"):
         if initial:
             _send("turn", text=initial)
+            return
+        if piped_empty:
+            # Fire-and-forget callers (speech press-2) — don't touch
+            # the visibility; the payload-bearing sibling pipe will
+            # reach the session on its own.
+            return
+        _send("toggle-window")
 
         return
 
@@ -1383,11 +1399,6 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
-def _cmd_toggle_window() -> None:
-    """Flip overlay visibility on the running session. No-op (silent) when
-    no session is alive — the keybind can't do anything useful there."""
-    _send("toggle-window")
-
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -1452,10 +1463,6 @@ def main():
         help="exit 0 if a session is live, non-zero otherwise",
     )
     subparsers.add_parser("kill", help="terminate the running session (if any)")
-    subparsers.add_parser(
-        "toggle-window",
-        help="show or hide the overlay without ending the session",
-    )
 
     args = parser.parse_args()
 
@@ -1473,8 +1480,6 @@ def main():
             _cmd_is_running()
         case "kill":
             _cmd_kill()
-        case "toggle-window":
-            _cmd_toggle_window()
 
 if __name__ == "__main__":
     main()
