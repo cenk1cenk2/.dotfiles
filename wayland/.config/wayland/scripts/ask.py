@@ -637,7 +637,7 @@ class PermissionRow(Gtk.ListBoxRow):
 
     * `✓ allow`  — dismiss the row; the call already happened server-
                    side / in-CLI, this just acknowledges it.
-    * `✓ trust`  — add this tool name to the session allowlist so
+    * ` trust`  — add this tool name to the session allowlist so
                    future invocations skip the row entirely.
     * `✕ deny`   — cancel the in-flight turn (same path as Ctrl+D) and
                    stamp the assistant card with a cancelled marker.
@@ -692,7 +692,7 @@ class PermissionRow(Gtk.ListBoxRow):
         allow_btn.connect("clicked", lambda _b: self._on_allow(self))
         actions.append(allow_btn)
 
-        trust_btn = Gtk.Button(label="✓ trust")
+        trust_btn = Gtk.Button(label=" trust")
         trust_btn.add_css_class("ask-permission-trust")
         trust_btn.set_tooltip_text(
             "Trust this tool for the rest of the session — future calls "
@@ -749,18 +749,16 @@ class AskWindow(Gtk.ApplicationWindow):
         self._cards: list[TurnCard] = []
         self._active_assistant: Optional[TurnCard] = None
         # Tool permission rows live above the queue; trust set is
-        # per-session so approving once means "quiet for the rest of
-        # this overlay run". Both reset on window close.
+        # per-session. The trust set is ALSO the pre-flight gate: the
+        # adapter's `tool_ids` is rewritten from this set before every
+        # turn, so untrusted tools never reach the server. Rows in the
+        # panel are a live audit trail of tools the server DID run
+        # (trusted) plus anything surprising that slipped through.
+        # Seed from whatever the adapter was constructed with so CLI
+        # defaults (`--tool-id web_search memory`) pre-populate trust.
         self._permissions: list[PermissionRow] = []
-        self._trusted_tools: set[str] = set()
-        # `_permission_gate` blocks the worker thread when an untrusted
-        # tool event arrives. Main-thread button handlers call `set()`
-        # to resume; `_permission_denied` tells the worker whether to
-        # yield another chunk or bail out of the turn. Starts SET so a
-        # turn without tool events never waits.
-        self._permission_gate = threading.Event()
-        self._permission_gate.set()
-        self._permission_denied = False
+        initial_tool_ids = getattr(adapter, "tool_ids", None) or []
+        self._trusted_tools: set[str] = set(initial_tool_ids)
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -855,6 +853,11 @@ class AskWindow(Gtk.ApplicationWindow):
         root.append(self._compose.widget)
 
         self.set_child(root)
+
+        # Render pills for the seeded trust set (from CLI defaults) so
+        # the user sees which tools are pre-authorised for this session
+        # from the moment the window opens.
+        self._sync_tool_gate()
 
         self._wire_keys()
         self.connect("close-request", self._on_close_request)
@@ -972,37 +975,23 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _run_turn(self, user_message: str) -> None:
         first_text_chunk = True
-        # Reset the gate for this turn. Gate is set-by-default; we only
-        # clear it when we hit an untrusted tool event below.
-        self._permission_gate.set()
-        self._permission_denied = False
         try:
             for chunk in self._adapter.turn(user_message):
                 if not self._alive:
                     return
+                # Tool events surface in the permission panel as an
+                # audit trail; they do NOT pause the stream. Real
+                # gating happens pre-flight via `_trusted_tools` ->
+                # `adapter.tool_ids` — an untrusted tool simply isn't
+                # advertised to the server, so the AI can't call it.
+                # Mid-stream blocking would just desync us from the
+                # server's native-function-calling protocol (server
+                # ends the stream at `finish_reason: tool_calls`
+                # expecting us to send tool results; blocking reads
+                # doesn't help because by the time we see the event
+                # the turn is already done).
                 if isinstance(chunk, ToolCall):
-                    name = (chunk.name or "").strip()
-                    # Trusted tools bypass the gate entirely — surface
-                    # them in the panel (useful audit trail) but don't
-                    # pause the stream. Check trust in this worker
-                    # thread; `set` membership is GIL-safe to read.
-                    if name and name in self._trusted_tools:
-                        GLib.idle_add(self._on_tool_call, chunk)
-                        continue
-                    # Clear the gate FIRST, then schedule the UI. The
-                    # main thread's button handlers will `set()` the
-                    # gate to resume us (allow/trust) or leave it set
-                    # AND flip `_permission_denied` to bail (deny).
-                    self._permission_gate.clear()
                     GLib.idle_add(self._on_tool_call, chunk)
-                    # Block with a coarse 60s timeout so a stalled UI
-                    # can't hang the turn forever. Poll `_alive` each
-                    # tick so a window close unblocks cleanly.
-                    while not self._permission_gate.wait(timeout=0.5):
-                        if not self._alive:
-                            return
-                    if self._permission_denied:
-                        return
                     continue
                 if first_text_chunk:
                     GLib.idle_add(self._set_phase, "streaming")
@@ -1014,8 +1003,6 @@ class AskWindow(Gtk.ApplicationWindow):
             log.error("turn failed: %s", e)
             GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
         finally:
-            # Always unblock any lingering waiters on exit.
-            self._permission_gate.set()
             if self._alive:
                 GLib.idle_add(self._mark_idle)
 
@@ -1131,64 +1118,62 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             self._permissions_box.set_visible(False)
 
-    def _resume_if_clear(self) -> None:
-        """Unblock the worker thread's `_permission_gate` once no rows
-        are pending. Called from every allow/trust path so a user who
-        stacks multiple approvals has to clear them all before the
-        stream resumes."""
-        if not self._permissions:
-            self._permission_gate.set()
-
     def _on_permission_allow(self, row: PermissionRow) -> None:
         self._remove_permission_row(row)
-        self._resume_if_clear()
 
     def _on_permission_trust(self, row: PermissionRow) -> None:
         name = row.tool_name
         if name:
             self._trusted_tools.add(name)
-            self._refresh_trust_pills()
+            self._sync_tool_gate()
         # Drop every pending row for the same tool while we're at it —
         # the user just said they trust it, no point keeping duplicate
         # prompts for concurrent calls on screen.
         for existing in list(self._permissions):
             if existing.tool_name == name:
                 self._remove_permission_row(existing)
-        self._resume_if_clear()
 
     def _untrust_tool(self, name: str) -> None:
-        """Remove `name` from the per-session trust set so future calls
-        surface a permission row again. Wired to the compose-bar pill
-        click handler."""
+        """Remove `name` from the per-session trust set so future turns
+        stop advertising it to the server. Wired to the compose-bar
+        pill click handler."""
         if name in self._trusted_tools:
             self._trusted_tools.discard(name)
-            self._refresh_trust_pills()
+            self._sync_tool_gate()
 
-    def _refresh_trust_pills(self) -> None:
+    def _sync_tool_gate(self) -> None:
+        """Mirror `_trusted_tools` into the adapter's `tool_ids` so the
+        next turn sends exactly the trusted set to the server, and
+        refresh the compose-bar pills to match. This is the real gate —
+        untrusted tools aren't advertised, so the server can't invoke
+        them. Runs every time trust changes."""
+        if hasattr(self._adapter, "tool_ids"):
+            self._adapter.tool_ids = (
+                sorted(self._trusted_tools) if self._trusted_tools else None
+            )
         self._compose.set_trusted_pills(
             sorted(self._trusted_tools),
             self._untrust_tool,
         )
 
     def _on_permission_deny(self, row: PermissionRow) -> None:
+        """Cancel the in-flight stream and revoke trust for this tool.
+        Server-side tools have usually run by the time we see the event
+        (we're reading the record, not predicting it); this is a
+        best-effort cancel of the remaining response plus a trust
+        revoke so the next turn can't re-trigger the same tool."""
         tool_name = row.tool_name or "tool"
-        self._permission_denied = True
         try:
             self._adapter.cancel()
         except Exception as e:
             log.warning("adapter cancel raised during deny: %s", e)
         if self._active_assistant is not None:
-            self._active_assistant.append(
-                f"\n\n*— cancelled (denied: {tool_name}) —*"
-            )
-        # Clear every pending row — the stream is stopping anyway, we
-        # don't want leftover prompts for calls that won't complete.
+            self._active_assistant.append(f"\n\n*— cancelled (denied: {tool_name}) —*")
+        if tool_name in self._trusted_tools:
+            self._trusted_tools.discard(tool_name)
+            self._sync_tool_gate()
         for existing in list(self._permissions):
             self._remove_permission_row(existing)
-        # Unblock the worker so it can observe `_permission_denied` and
-        # exit cleanly instead of hanging on a gate that'll never be
-        # set by another button.
-        self._permission_gate.set()
 
     # -- Scroll / keys / links -----------------------------------------
 
@@ -1299,9 +1284,6 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _on_close_request(self, _window) -> bool:
         self._alive = False
-        # Unblock any gate-waiting worker thread so it can observe
-        # `_alive = False` and exit instead of hanging on `wait()`.
-        self._permission_gate.set()
         try:
             self._adapter.close()
         except Exception as e:
