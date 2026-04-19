@@ -1074,8 +1074,17 @@ class AskWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _install_css() -> None:
-        """Load `ask.css` from alongside this script and register it as an
-        APPLICATION-priority style provider (beats theme, loses to user).
+        """Load `ask.css` from alongside this script and register it at
+        USER+1 priority.
+
+        A USER-priority `~/.config/gtk-4.0/gtk.css` beats
+        APPLICATION-priority rules regardless of selector specificity —
+        Graphite-style themes installed there ship `textview text {
+        background-color: #0F0F0F }` which paints opaque black behind
+        every TextView's text subnode in the overlay. `USER + 1` is the
+        smallest bump that beats `~/.config/gtk-4.0/gtk.css` without
+        stomping on anything the user might layer on top intentionally.
+
         Parsing errors are routed to our logger so missing selectors /
         bad rule bodies surface in `-v` runs instead of vanishing."""
         css = load_relative_file("ask.css", relative_to=__file__).encode("utf-8")
@@ -1095,7 +1104,7 @@ class AskWindow(Gtk.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
             provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER + 1,
         )
 
 def _is_live() -> bool:
