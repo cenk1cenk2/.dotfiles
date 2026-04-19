@@ -113,6 +113,22 @@ def _terminate_proc(proc: Optional[subprocess.Popen]) -> None:
             pass
     _close_pipes(proc)
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge `overlay` into `base`, returning a new dict.
+    Nested dicts merge key-by-key; leaf values (and lists) from
+    `overlay` win. Neither input is mutated. Intended for layering a
+    user-supplied `extra_body` dict onto a pre-built HTTP request
+    body without clobbering sibling keys."""
+    out: dict = dict(base)
+    for key, value in overlay.items():
+        existing = out.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            out[key] = _deep_merge(existing, value)
+        else:
+            out[key] = value
+
+    return out
+
 def _cleanup_session_files(root: str, patterns: list[str]) -> None:
     """Best-effort delete of any transcript/session files matching the given
     glob patterns under `root`. Silent on errors — session cleanup must
@@ -180,13 +196,17 @@ class ConversationAdapterHttp:
         # and expose it as an attribute for callers that want to
         # reflect it in the UI.
         self.mode = kwargs.get("mode")
-        # OpenWebUI extensions (silently ignored by generic OpenAI servers).
-        # tool_ids: server-side tool UUIDs, also accepting the pseudo-ids
-        # that represent built-ins (web_search, memory, code_interpreter,
-        # image_generation, voice) plus "server:mcp:<id>" for MCP servers.
-        # files: [{"type": "file"|"folder"|"collection", "id": "..."}] for RAG context.
-        self.tool_ids = kwargs.get("tool_ids")
-        self.files = kwargs.get("files")
+        # `cwd` is accepted for parity with the CLI-backed adapters.
+        # HTTP adapter runs fully in-process so it ignores the value;
+        # the attribute exists so callers can pass it uniformly.
+        self.cwd = kwargs.get("cwd")
+        # Extra-body blob deep-merged into the HTTP request body right
+        # before POSTing. This is the generic escape hatch for
+        # OpenWebUI extensions (`tool_ids`, `files`, ...) and anything
+        # else server-specific the caller wants to set. `tool_ids` is
+        # the only key pilot.py mutates live — the trust-pill gate
+        # rewrites extra_body["tool_ids"] between turns.
+        self.extra_body: dict = dict(kwargs.get("extra_body") or {})
         self.messages: list[dict] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -211,10 +231,11 @@ class ConversationAdapterHttp:
             body["top_p"] = self.top_p
         if self.num_ctx:
             body["options"] = {"num_ctx": self.num_ctx}
-        if self.tool_ids:
-            body["tool_ids"] = self.tool_ids
-        if self.files:
-            body["files"] = self.files
+        # Deep-merge the caller-supplied extra_body last so pilot.py's
+        # trust-pill sync (which mutates self.extra_body["tool_ids"])
+        # always wins over any accidental duplicate key we set above.
+        if self.extra_body:
+            body = _deep_merge(body, self.extra_body)
 
         # Debug-level body log so `pilot.py -v` can show exactly what we
         # sent — useful when a server-side feature (web_search, tools)
@@ -400,6 +421,15 @@ class ConversationAdapterClaude:
         self.mode = kwargs.get("mode")
         self.mcp_config = kwargs.get("mcp_config")
         self.permission_tool: Optional[str] = kwargs.get("permission_tool")
+        # Working directory for the spawned `claude` CLI. None → inherit
+        # our own cwd (pilot.py caller typically hands us a mkdtemp path
+        # for a clean-room sandbox, but any existing directory works).
+        self.cwd: Optional[str] = kwargs.get("cwd")
+        # Optional filename suffix for the MCP config we write. When set,
+        # the cached config lives at `wayland-pilot-<suffix>.mcp.json`
+        # instead of `wayland-pilot.mcp.json` — lets multiple concurrent
+        # pilot sessions write distinct config files without colliding.
+        self.config_suffix: Optional[str] = kwargs.get("config_suffix")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -416,7 +446,10 @@ class ConversationAdapterClaude:
             return []
         if self._mcp_config_path is None:
             runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-            self._mcp_config_path = os.path.join(runtime, "wayland-pilot.mcp.json")
+            stem = "wayland-pilot"
+            if self.config_suffix:
+                stem = f"{stem}-{self.config_suffix}"
+            self._mcp_config_path = os.path.join(runtime, f"{stem}.mcp.json")
             try:
                 self.mcp_config.write(self._mcp_config_path)
             except OSError as e:
@@ -475,6 +508,7 @@ class ConversationAdapterClaude:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                cwd=self.cwd,
             )
         except FileNotFoundError as e:
             log.error("claude CLI not found: %s", e)
@@ -611,6 +645,8 @@ class ConversationAdapterCodex:
         # string to pass through verbatim (so callers can pick
         # `workspace-write` / `danger-full-access` if they want).
         self.mode = kwargs.get("mode")
+        # Working directory for the spawned `codex` CLI; None inherits ours.
+        self.cwd: Optional[str] = kwargs.get("cwd")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -656,6 +692,7 @@ class ConversationAdapterCodex:
                 stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
+                cwd=self.cwd,
             )
         except FileNotFoundError as e:
             log.error("codex CLI not found: %s", e)
@@ -783,6 +820,12 @@ class ConversationAdapterOpenCode:
         )
         self.provider_name = kwargs.get("provider_name") or "kilic"
         self.mcp_config = kwargs.get("mcp_config")
+        # Working directory for the spawned `opencode` CLI; None inherits ours.
+        self.cwd: Optional[str] = kwargs.get("cwd")
+        # Suffix for the merged config file path we write on first turn.
+        # Multiple concurrent pilot sessions otherwise race on the same
+        # `wayland-pilot.opencode.json`. None → no suffix.
+        self.config_suffix: Optional[str] = kwargs.get("config_suffix")
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -853,8 +896,11 @@ class ConversationAdapterOpenCode:
                     )
                 merged["mcp"] = existing_mcp
                 runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+                stem = "wayland-pilot"
+                if self.config_suffix:
+                    stem = f"{stem}-{self.config_suffix}"
                 self._effective_config_path = os.path.join(
-                    runtime, "wayland-pilot.opencode.json"
+                    runtime, f"{stem}.opencode.json"
                 )
                 with open(self._effective_config_path, "w", encoding="utf-8") as f:
                     json.dump(merged, f)
@@ -878,6 +924,7 @@ class ConversationAdapterOpenCode:
                 env=env,
                 text=True,
                 bufsize=1,
+                cwd=self.cwd,
             )
         except FileNotFoundError as e:
             log.error("opencode CLI not found: %s", e)
