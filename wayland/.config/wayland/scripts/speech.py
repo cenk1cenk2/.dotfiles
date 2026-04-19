@@ -15,7 +15,6 @@ from typing import Optional, Protocol
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_ENRICH_MODEL,
     EnrichAdapterClaude,
     OutputAdapterClipboard,
     EnrichAdapterCodex,
@@ -326,29 +325,36 @@ class Session:
                 new_enricher: Optional[EnrichAdapter] = None
                 if spec_dict:
                     spec = EnrichSpec.from_dict(spec_dict)
+                    # Per-provider model default: HTTP wants the OpenWebUI
+                    # shape, Claude/Codex want their CLI aliases. Only pass
+                    # `model=` when the spec set one; otherwise the adapter
+                    # picks its own baseline.
+                    spec_model_kw = {"model": spec.model} if spec.model else {}
                     match spec.provider:
                         case EnrichProvider.HTTP:
                             new_enricher = EnrichAdapterHttp(
-                                system_prompt=AI_SYSTEM_PROMPT,
-                                user_prompt_template=AI_USER_PROMPT,
+                                AI_SYSTEM_PROMPT,
+                                AI_USER_PROMPT,
                                 base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
-                                model=spec.model or DEFAULT_ENRICH_MODEL,
                                 api_key=spec.api_key or "",
                                 temperature=spec.temperature,
                                 top_p=spec.top_p,
                                 thinking=spec.thinking,
                                 num_ctx=spec.num_ctx,
                                 user_agent="speech/1.0",
+                                **spec_model_kw,
                             )
                         case EnrichProvider.CLAUDE:
                             new_enricher = EnrichAdapterClaude(
                                 AI_SYSTEM_PROMPT,
                                 AI_USER_PROMPT,
+                                **spec_model_kw,
                             )
                         case EnrichProvider.CODEX:
                             new_enricher = EnrichAdapterCodex(
                                 AI_SYSTEM_PROMPT,
                                 AI_USER_PROMPT,
+                                **spec_model_kw,
                             )
                         case _:
                             raise ValueError(
@@ -619,7 +625,9 @@ def main():
         "--enrich-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    toggle_parser.add_argument("--enrich-model", default=DEFAULT_ENRICH_MODEL)
+    # Model default is provider-specific — see the enrich-adapter branches
+    # below. Unset here so each backend falls back to its own baseline.
+    toggle_parser.add_argument("--enrich-model", default=None)
     toggle_parser.add_argument("--enrich-temperature", type=float)
     toggle_parser.add_argument("--enrich-top-p", type=float)
     toggle_parser.add_argument(
@@ -652,24 +660,25 @@ def main():
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
         provider = EnrichProvider(args.enrich_provider)
+        model_kw = {"model": args.enrich_model} if args.enrich_model else {}
         match provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
-                    system_prompt=AI_SYSTEM_PROMPT,
-                    user_prompt_template=AI_USER_PROMPT,
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
                     base_url=args.enrich_base_url,
-                    model=args.enrich_model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                     temperature=args.enrich_temperature,
                     top_p=args.enrich_top_p,
                     thinking=args.enrich_thinking,
                     num_ctx=args.enrich_num_ctx,
                     user_agent="speech/1.0",
+                    **model_kw,
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterClaude(AI_SYSTEM_PROMPT, AI_USER_PROMPT, **model_kw)
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(AI_SYSTEM_PROMPT, AI_USER_PROMPT)
+                enricher = EnrichAdapterCodex(AI_SYSTEM_PROMPT, AI_USER_PROMPT, **model_kw)
             case _:
                 raise ValueError(f"unknown enrich provider: {provider!r}")
 

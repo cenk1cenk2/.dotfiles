@@ -12,7 +12,6 @@ import psutil
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_ENRICH_MODEL,
     EnrichAdapterClaude,
     InputAdapterClipboard,
     OutputAdapterClipboard,
@@ -212,7 +211,8 @@ def main():
         default=DEFAULT_ENRICH_ADAPTER,
     )
     run_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
-    run_parser.add_argument("--model", default=DEFAULT_ENRICH_MODEL)
+    # Per-provider default — each adapter picks its own when unset.
+    run_parser.add_argument("--model", default=None)
     run_parser.add_argument("--temperature", type=float)
     run_parser.add_argument("--top-p", type=float)
     run_parser.add_argument(
@@ -247,24 +247,25 @@ def main():
             case _:
                 raise ValueError(f"unknown input mode: {args.input!r}")
 
+        model_kw = {"model": args.model} if args.model else {}
         match args.provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
-                    system_prompt=SYSTEM_PROMPT,
-                    user_prompt_template=USER_PROMPT,
+                    SYSTEM_PROMPT,
+                    USER_PROMPT,
                     base_url=args.base_url,
-                    model=args.model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                     temperature=args.temperature,
                     top_p=args.top_p,
                     thinking=args.thinking,
                     num_ctx=args.num_ctx,
                     user_agent="copywriter/1.0",
+                    **model_kw,
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, **model_kw)
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT)
+                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, **model_kw)
             case _:
                 raise ValueError(f"unknown enrich provider: {args.provider!r}")
 

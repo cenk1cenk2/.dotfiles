@@ -22,7 +22,6 @@ from markdown_it import MarkdownIt
 
 from lib import (
     DEFAULT_CONVERSE_ADAPTER,
-    DEFAULT_CONVERSE_MODEL,
     ConversationAdapter,
     ConversationAdapterClaude,
     ConversationAdapterCodex,
@@ -604,16 +603,46 @@ class TurnCard:
     def append(self, chunk: str) -> None:
         self._text += chunk
         self._md.render(self._text)
-        # Nudge the allocator — TextView's content-height changed, so the
-        # parent Box / scroller need to re-measure. Without this, cards
-        # can stay at their initial (tiny) allocation and later chunks
-        # render into an already-exhausted size.
-        self._textview.queue_resize()
+        self._remeasure()
 
     def set_text(self, text: str) -> None:
         self._text = text
         self._md.render(text)
+        self._remeasure()
+
+    def _remeasure(self) -> None:
+        """Force the card, textview, and every ancestor to re-run their
+        size negotiation.
+
+        TextView's natural-height depends on Pango laying out the buffer,
+        which happens AFTER the current layout pass. Calling queue_resize
+        on the textview alone marks it dirty but the parent Box has
+        already cached its child's "natural height = 0" measurement from
+        before the text arrived, so the card stays collapsed until some
+        OTHER event (a sibling assistant card streaming chunks) forces a
+        full re-layout of the conversation.
+
+        Fix: queue_resize on the textview AND the card Box immediately,
+        then schedule a second pass via idle_add so GTK re-measures once
+        Pango has actually laid the glyphs out. The double-tap is why
+        user cards finally render at full height as soon as they appear
+        instead of popping only when the assistant streams its reply."""
         self._textview.queue_resize()
+        self.widget.queue_resize()
+        GLib.idle_add(self._deferred_remeasure, priority=GLib.PRIORITY_HIGH)
+
+    def _deferred_remeasure(self) -> bool:
+        self._textview.queue_resize()
+        self.widget.queue_resize()
+        # Walk up to the conversation Box / scroller so they reconsider
+        # their child's new natural height. Without this, the conv_box
+        # keeps its old allocation and the card renders clipped.
+        parent = self.widget.get_parent()
+        while parent is not None:
+            parent.queue_resize()
+            parent = parent.get_parent()
+
+        return False
 
     def get_text(self) -> str:
         return self._text
@@ -645,6 +674,11 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
         super().__init__(application=app, title="Ask")
+        # Custom root class — the theme's `window` selector tries to paint
+        # its own solid background on every toplevel; adding `.ask-overlay`
+        # lets our rules outspecificity the theme without resorting to a
+        # universal `*` that clobbers every subnode.
+        self.add_css_class("ask-overlay")
         self._adapter = adapter
         # HTTP adapter carries a model; claude/codex wrap CLIs that pick
         # their own. Model string can be empty → treat as absent.
@@ -978,11 +1012,29 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_p:
             self._paste_clipboard_into_compose()
             return True
+        if ctrl and keyval == Gdk.KEY_d:
+            self._cancel_current_turn()
+            return True
         if keyval == Gdk.KEY_Escape:
             self.set_visible(False)
             return True
 
         return False
+
+    def _cancel_current_turn(self) -> None:
+        """Ctrl+D: abort the in-flight adapter turn so the user can say
+        something else without waiting for the reply to finish. Marks the
+        active assistant card with a `(cancelled)` footer so the
+        conversation transcript stays honest about what happened."""
+        if not self._streaming:
+            log.debug("cancel requested with no turn in flight")
+            return
+        try:
+            self._adapter.cancel()
+        except Exception as e:
+            log.warning("adapter cancel raised: %s", e)
+        if self._active_assistant is not None:
+            self._active_assistant.append("\n\n*— cancelled —*")
 
     def _paste_clipboard_into_compose(self) -> None:
         text = InputAdapterClipboard().read() or ""
@@ -1244,14 +1296,19 @@ class Session:
 
 def _build_adapter(args) -> ConversationAdapter:
     provider = ConversationProvider(args.converse_provider)
+    # Only pass `model` through when the user set one. Each adapter has its
+    # own sensible default (HTTP → "opus:4.7" via OpenWebUI, Claude → "opus",
+    # Codex → "gpt-5") that varies by provider, so `None` means "let the
+    # adapter decide". Shared kwargs are built once and extended per branch.
+    model_kw = {"model": args.converse_model} if args.converse_model else {}
+
     match provider:
         case ConversationProvider.HTTP:
             features = {k: True for k in args.features} if args.features else None
 
             return ConversationAdapterHttp(
-                system_prompt=AI_SYSTEM_PROMPT,
+                AI_SYSTEM_PROMPT,
                 base_url=args.converse_base_url,
-                model=args.converse_model,
                 api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                 temperature=args.converse_temperature,
                 top_p=args.converse_top_p,
@@ -1260,11 +1317,12 @@ def _build_adapter(args) -> ConversationAdapter:
                 tool_ids=args.tool_ids or None,
                 features=features,
                 user_agent="ask/1.0",
+                **model_kw,
             )
         case ConversationProvider.CLAUDE:
-            return ConversationAdapterClaude(AI_SYSTEM_PROMPT)
+            return ConversationAdapterClaude(AI_SYSTEM_PROMPT, **model_kw)
         case ConversationProvider.CODEX:
-            return ConversationAdapterCodex(AI_SYSTEM_PROMPT)
+            return ConversationAdapterCodex(AI_SYSTEM_PROMPT, **model_kw)
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
 
@@ -1422,7 +1480,10 @@ def main():
         "--converse-base-url",
         default="https://ai.kilic.dev/api/v1",
     )
-    toggle_parser.add_argument("--converse-model", default=DEFAULT_CONVERSE_MODEL)
+    # Model default is provider-specific (see `_build_adapter`). A bare
+    # `--converse-model` stays None so each adapter picks its own baseline;
+    # an explicit value overrides for any provider.
+    toggle_parser.add_argument("--converse-model", default=None)
     toggle_parser.add_argument("--converse-temperature", type=float)
     toggle_parser.add_argument("--converse-top-p", type=float)
     toggle_parser.add_argument(

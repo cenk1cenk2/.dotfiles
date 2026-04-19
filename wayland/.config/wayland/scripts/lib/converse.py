@@ -18,8 +18,11 @@ class ConversationProvider(StrEnum):
     CLAUDE = "claude"
     CODEX = "codex"
 
-DEFAULT_CONVERSE_ADAPTER = ConversationProvider.HTTP
-DEFAULT_CONVERSE_MODEL = "glm-5.1:cloud"
+DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
+DEFAULT_CONVERSE_MODEL = "opus:4.7"
+DEFAULT_CONVERSE_MODEL_CLAUDE = "opus"
+DEFAULT_CONVERSE_MODEL_CODEX = "gpt-5"
+DEFAULT_CONVERSE_BASE_URL = "https://ai.kilic.dev/api/v1"
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +61,21 @@ def _close_pipes(proc: subprocess.Popen) -> None:
             except OSError:
                 pass
 
+def _terminate_proc(proc: Optional[subprocess.Popen]) -> None:
+    """Send SIGTERM, escalate to SIGKILL after a short grace period. Used
+    by `cancel()` / `close()` on the CLI-backed adapters."""
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=2)
+    except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+    _close_pipes(proc)
+
 def _cleanup_session_files(root: str, patterns: list[str]) -> None:
     """Best-effort delete of any transcript/session files matching the given
     glob patterns under `root`. Silent on errors — session cleanup must
@@ -81,10 +99,17 @@ class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
 
     provider: ConversationProvider
+    model: str
 
     def turn(self, user_message: str) -> Iterator[str]:
         """Yield assistant response chunks. Appends this turn to internal
         session state."""
+        ...
+
+    def cancel(self) -> None:
+        """Abort the in-flight turn (if any). Safe to call while no turn
+        is active. The generator returned by `turn()` will stop yielding
+        and return normally."""
         ...
 
     def close(self) -> None:
@@ -99,10 +124,11 @@ class ConversationAdapterHttp:
     def __init__(
         self,
         system_prompt: str,
-        base_url: str,
-        model: str,
-        api_key: str,
-        user_agent: str = "ask/1.0",
+        *,
+        base_url: str = DEFAULT_CONVERSE_BASE_URL,
+        model: str = DEFAULT_CONVERSE_MODEL,
+        api_key: str = "",
+        user_agent: str = "converse/1.0",
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         thinking: str = "none",
@@ -130,8 +156,14 @@ class ConversationAdapterHttp:
         self.messages: list[dict] = [
             {"role": "system", "content": system_prompt},
         ]
+        # Holds the active requests.Response while a turn is streaming.
+        # `cancel()` closes it, which makes iter_lines raise and the
+        # generator exits through the finally block.
+        self._resp: Optional[requests.Response] = None
+        self._cancelled = False
 
     def turn(self, user_message: str) -> Iterator[str]:
+        self._cancelled = False
         self.messages.append({"role": "user", "content": user_message})
         body: dict[str, Any] = {
             "model": self.model,
@@ -187,9 +219,13 @@ class ConversationAdapterHttp:
             log.error("http %d: %s", resp.status_code, detail)
             raise RuntimeError(f"http {resp.status_code}: {detail}")
 
+        self._resp = resp
         collected: list[str] = []
+        stream_ok = False
         try:
             for line in resp.iter_lines(decode_unicode=True):
+                if self._cancelled:
+                    break
                 if not line or not line.startswith("data:"):
                     continue
                 payload = line[5:].strip()
@@ -209,9 +245,26 @@ class ConversationAdapterHttp:
                     collected.append(chunk)
                     yield chunk
             stream_ok = True
+        except requests.RequestException as e:
+            # cancel() closes the response mid-iteration, which surfaces
+            # here as a connection error. Swallow it if we asked for the
+            # cancel; otherwise re-raise so callers see the real failure.
+            if not self._cancelled:
+                raise
+            log.debug("http stream cancelled: %s", e)
         finally:
-            resp.close()
-            if stream_ok:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            self._resp = None
+            if stream_ok and collected:
+                self.messages.append(
+                    {"role": "assistant", "content": "".join(collected)},
+                )
+            elif self._cancelled and collected:
+                # Preserve whatever we streamed before the cancel so the
+                # next turn has the partial response in context.
                 self.messages.append(
                     {"role": "assistant", "content": "".join(collected)},
                 )
@@ -222,7 +275,17 @@ class ConversationAdapterHttp:
                 if self.messages and self.messages[-1].get("role") == "user":
                     self.messages.pop()
 
+    def cancel(self) -> None:
+        self._cancelled = True
+        resp = self._resp
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
     def close(self) -> None:
+        self.cancel()
         self.messages = [{"role": "system", "content": self.system_prompt}]
 
 class ConversationAdapterClaude:
@@ -230,12 +293,20 @@ class ConversationAdapterClaude:
 
     provider = ConversationProvider.CLAUDE
 
-    def __init__(self, system_prompt: str):
+    def __init__(
+        self,
+        system_prompt: str,
+        *,
+        model: str = DEFAULT_CONVERSE_MODEL_CLAUDE,
+    ):
         self.system_prompt = system_prompt
+        self.model = model
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
+        self._cancelled = False
 
     def turn(self, user_message: str) -> Iterator[str]:
+        self._cancelled = False
         # --bare isolates the session (no hooks, no CLAUDE.md) but forces
         # ANTHROPIC_API_KEY-only auth. Fall back to a non-bare spawn when the
         # key isn't set so keychain auth keeps working.
@@ -243,6 +314,8 @@ class ConversationAdapterClaude:
         common = [
             "claude",
             "-p",
+            "--model",
+            self.model,
             "--output-format",
             "stream-json",
             "--include-partial-messages",
@@ -272,6 +345,8 @@ class ConversationAdapterClaude:
         error_text: Optional[str] = None
         try:
             for raw in proc.stdout:
+                if self._cancelled:
+                    break
                 line = raw.strip()
                 if not line:
                     continue
@@ -306,6 +381,8 @@ class ConversationAdapterClaude:
             _close_pipes(proc)
             self._proc = None
 
+        if self._cancelled:
+            return
         stderr = "".join(stderr_buf)
         if error_text is not None:
             log.error("claude error: %s", error_text)
@@ -314,19 +391,13 @@ class ConversationAdapterClaude:
             log.error("claude exited %s: %s", rc, stderr[:500])
             raise RuntimeError(f"claude exited {rc}: {stderr[:200]}")
 
+    def cancel(self) -> None:
+        self._cancelled = True
+        _terminate_proc(self._proc)
+
     def close(self) -> None:
-        proc = self._proc
-        if proc is not None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                try:
-                    proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-            _close_pipes(proc)
-            self._proc = None
+        self.cancel()
+        self._proc = None
         session_id = self._session_id
         self._session_id = None
         if session_id:
@@ -339,17 +410,27 @@ class ConversationAdapterCodex:
 
     provider = ConversationProvider.CODEX
 
-    def __init__(self, system_prompt: str):
+    def __init__(
+        self,
+        system_prompt: str,
+        *,
+        model: str = DEFAULT_CONVERSE_MODEL_CODEX,
+    ):
         self.system_prompt = system_prompt
+        self.model = model
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
+        self._cancelled = False
 
     def turn(self, user_message: str) -> Iterator[str]:
+        self._cancelled = False
         if self._session_id is None:
             prompt = f"{self.system_prompt}\n\n{user_message}"
             argv = [
                 "codex",
                 "exec",
+                "--model",
+                self.model,
                 "--json",
                 "--skip-git-repo-check",
                 prompt,
@@ -360,6 +441,8 @@ class ConversationAdapterCodex:
                 "exec",
                 "resume",
                 self._session_id,
+                "--model",
+                self.model,
                 "--json",
                 "--skip-git-repo-check",
                 user_message,
@@ -384,6 +467,8 @@ class ConversationAdapterCodex:
         drain_thread, stderr_buf = _spawn_stderr_drain(proc)
         try:
             for raw in proc.stdout:
+                if self._cancelled:
+                    break
                 line = raw.strip()
                 if not line:
                     continue
@@ -413,24 +498,20 @@ class ConversationAdapterCodex:
             _close_pipes(proc)
             self._proc = None
 
+        if self._cancelled:
+            return
         stderr = "".join(stderr_buf)
         if rc != 0:
             log.error("codex exited %s: %s", rc, stderr[:500])
             raise RuntimeError(f"codex exited {rc}: {stderr[:200]}")
 
+    def cancel(self) -> None:
+        self._cancelled = True
+        _terminate_proc(self._proc)
+
     def close(self) -> None:
-        proc = self._proc
-        if proc is not None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-                try:
-                    proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
-            _close_pipes(proc)
-            self._proc = None
+        self.cancel()
+        self._proc = None
         thread_id = self._session_id
         self._session_id = None
         if thread_id:

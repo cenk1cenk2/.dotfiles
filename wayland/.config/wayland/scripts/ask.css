@@ -35,16 +35,23 @@
 /* Square surfaces everywhere — no rounding. Borders stay so surface
  * transitions are still readable.
  *
- * NOTE on backgrounds: do NOT use a universal `* { background: ... }`
- * rule. The `background` shorthand resets `background-image` (GTK
- * themes use image layers on textview/text subnodes for the normal
- * background), and painting `@ask_window` on every node makes the
- * textview's `text` subnode render opaque instead of letting the
- * parent card colour show through. Set `background-color` only on
- * the specific container that needs it. */
+ * NOTE on backgrounds: we anchor the palette to `.ask-overlay` (set on
+ * the ApplicationWindow) rather than the bare `window` selector. Themes
+ * ship `window { background-color: … }` of their own, and our
+ * un-classed selector has the same specificity, so source order decides
+ * — which is fragile. `window.ask-overlay` beats any theme's `window`.
+ * Do NOT reintroduce a universal `* { background: … }`: the `background`
+ * shorthand resets `background-image` on every subnode (including the
+ * `text` subnode inside TextView), which paints the window colour
+ * behind text that should show the parent card through. */
 
-window {
+window.ask-overlay {
   background-color: @ask_window;
+  background-image: none;
+  color: @ask_fg;
+}
+
+window.ask-overlay > * {
   color: @ask_fg;
 }
 
@@ -53,6 +60,7 @@ box.ask-header {
   padding: 10px 14px;
   border-bottom: 1px solid @ask_border_soft;
   background-color: @ask_window;
+  background-image: none;
 }
 
 label.ask-provider {
@@ -120,6 +128,7 @@ box.ask-conv {
 
 box.ask-card {
   background-color: @ask_card;
+  background-image: none;
   border: 1px solid @ask_border_soft;
   padding: 8px 14px;
   margin: 4px 2px;
@@ -132,6 +141,7 @@ box.ask-card-user {
 box.ask-card-assistant {
   border-left: 3px solid @ask_assistant;
   background-color: @ask_card_hi;
+  background-image: none;
 }
 
 label.ask-card-role {
@@ -170,6 +180,7 @@ textview.ask-card-text > text {
 box.ask-compose-wrap {
   margin: 8px 12px 12px 12px;
   background-color: @ask_compose;
+  background-image: none;
   border: 2px solid @ask_border;
   transition:
     border-color 120ms ease,
@@ -199,6 +210,7 @@ box.ask-compose-bar {
   padding: 6px 10px 6px 12px;
   border-top: 1px solid @ask_border_soft;
   background-color: alpha(black, 0.25);
+  background-image: none;
 }
 
 label.ask-compose-hint {
@@ -246,6 +258,7 @@ button.ask-compose-send:disabled {
 /* =========================================== Queue (full-text cards) */
 box.ask-queue {
   background-color: alpha(black, 0.35);
+  background-image: none;
   border-top: 1px solid @ask_border_soft;
   padding: 6px 10px 10px 10px;
 }
@@ -276,6 +289,7 @@ row.ask-queue-row:hover {
 
 box.ask-queue-card {
   background-color: @ask_card;
+  background-image: none;
   border: 1px solid @ask_border_soft;
   padding: 10px 12px;
   margin: 4px 0;
@@ -293,6 +307,7 @@ label.ask-queue-text {
 
 scrolledwindow.ask-queue-edit {
   background-color: @ask_card_hi;
+  background-image: none;
   border: 1px solid @ask_border_focus;
   padding: 2px;
 }

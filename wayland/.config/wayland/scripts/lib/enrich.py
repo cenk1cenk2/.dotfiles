@@ -18,6 +18,9 @@ class EnrichProvider(StrEnum):
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 DEFAULT_ENRICH_MODEL = "gemma4:e2b"
+DEFAULT_ENRICH_MODEL_CLAUDE = "haiku"
+DEFAULT_ENRICH_MODEL_CODEX = "gpt-5-mini"
+DEFAULT_ENRICH_BASE_URL = "https://ai.kilic.dev/api/v1"
 
 log = logging.getLogger(__name__)
 
@@ -39,14 +42,15 @@ class EnrichAdapterHttp:
         self,
         system_prompt: str,
         user_prompt_template: str,
-        base_url: str,
-        model: str,
-        api_key: str,
+        *,
+        base_url: str = DEFAULT_ENRICH_BASE_URL,
+        model: str = DEFAULT_ENRICH_MODEL,
+        api_key: str = "",
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         thinking: str = "none",
         num_ctx: Optional[int] = None,
-        user_agent: str = "common/1.0",
+        user_agent: str = "enrich/1.0",
     ):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
@@ -107,13 +111,20 @@ class EnrichAdapterHttp:
         return result
 
 class EnrichAdapterClaude:
-    """Claude CLI (haiku model)."""
+    """Claude CLI wrapper. Defaults to haiku for fast one-shot rewrites."""
 
     provider = EnrichProvider.CLAUDE
 
-    def __init__(self, system_prompt: str, user_prompt_template: str):
+    def __init__(
+        self,
+        system_prompt: str,
+        user_prompt_template: str,
+        *,
+        model: str = DEFAULT_ENRICH_MODEL_CLAUDE,
+    ):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
+        self.model = model
 
     def enrich(self, text: str) -> Optional[str]:
         proc = subprocess.run(
@@ -121,7 +132,7 @@ class EnrichAdapterClaude:
                 "claude",
                 "-p",
                 "--model",
-                "haiku",
+                self.model,
                 "--system-prompt",
                 self.system_prompt,
                 self.user_prompt_template.format(text=text),
@@ -141,16 +152,31 @@ class EnrichAdapterCodex:
 
     provider = EnrichProvider.CODEX
 
-    def __init__(self, system_prompt: str, user_prompt_template: str):
+    def __init__(
+        self,
+        system_prompt: str,
+        user_prompt_template: str,
+        *,
+        model: str = DEFAULT_ENRICH_MODEL_CODEX,
+    ):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
+        self.model = model
 
     def enrich(self, text: str) -> Optional[str]:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
         proc = subprocess.run(
-            ["codex", "exec", "-", "--ephemeral", "--skip-git-repo-check"],
+            [
+                "codex",
+                "exec",
+                "-",
+                "--model",
+                self.model,
+                "--ephemeral",
+                "--skip-git-repo-check",
+            ],
             input=prompt,
             capture_output=True,
             text=True,
