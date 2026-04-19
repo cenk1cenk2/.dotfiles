@@ -1,0 +1,328 @@
+/* ============================================================ Tokens
+ * Shared palette for every layer-shell overlay that imports
+ * `lib.overlay`. Pulled from ~/.config/nvim/lua/onedarker/colors.lua.
+ *
+ * Elevation (onedarker: higher = lighter):
+ *   bg[200] = #1e2127   window surface (starting point)
+ *   bg[300] = #22282f   assistant / edit surface
+ *   bg[400] = #2c333d   user card, compose surface
+ *   bg[500] = #4b5263   strong borders
+ *
+ * Loaded FIRST (via `lib.overlay.load_overlay_css`) at priority
+ * USER+1. Script-specific CSS (e.g. pilot.css) layers on top at the
+ * same priority so per-script rules win on ties. Keep everything here
+ * scoped under `.overlay` so this never leaks outside an overlay
+ * window's tree.
+ */
+@define-color pilot_window #1e2127;
+@define-color pilot_card #2c333d;
+@define-color pilot_card_hi #22282f;
+@define-color pilot_compose #2c333d;
+/* bg[200] — applied to the text-carrying surface of cards + compose,
+ * not the card frame itself. */
+@define-color pilot_text_surface #1e2127;
+@define-color pilot_border #4b5263;
+@define-color pilot_border_soft #2c333d;
+@define-color pilot_border_focus #6c778d;
+@define-color pilot_fg #abb2bf;
+@define-color pilot_fg_dim #7c8a9d;
+@define-color pilot_fg_muted #5c6370;
+@define-color pilot_accent #abb2bf;
+@define-color pilot_user #e5c07b;
+@define-color pilot_assistant #98c379;
+@define-color pilot_idle #98c379;
+@define-color pilot_stream #e5c07b;
+@define-color pilot_pending #e06c75;
+@define-color pilot_awaiting #d19a66;
+@define-color pilot_edge #d3b051;
+
+/* Base font for the overlay. Every other `font-size` is an `em` multiplier
+ * so bumping this one declaration scales the whole UI. Scoped to
+ * `.overlay *` so we don't touch widgets outside our overlay tree. */
+.overlay,
+.overlay * {
+  font-family: monospace;
+  font-size: 14pt;
+}
+
+/* ============================================================ Root
+ * The window surface itself stays transparent; the overlay's root
+ * Box child paints the real background. That's the swaync recipe —
+ * some themes/compositors leave a `window { background-color: … }`
+ * painted under us, so we sidestep the whole fight by not styling
+ * the window and painting on a child Box instead. All other rules
+ * still namespace under `.overlay` so they outspecificity any
+ * generic theme selector.
+ *
+ * NOTE on backgrounds: use `background-color` + `background-image: none`
+ * explicitly rather than the `background` shorthand. The shorthand
+ * clears every image layer too, which can wipe the default background
+ * image on `.view`/`text` subnodes and paint them opaque over parents. */
+.overlay {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_fg;
+}
+
+.overlay > * {
+  color: @pilot_fg;
+}
+
+/* Accent stripe on the root Box. Script-specific CSS picks the class
+ * (e.g. `box.pilot-root`) and inherits the stripe from here. */
+.overlay box.overlay-root {
+  background-color: @pilot_window;
+  background-image: none;
+  border-left: 2px solid @pilot_edge;
+}
+
+/* ============================================================ Header
+ * Shared provider-pill + close-button row used by every overlay that
+ * composes a `Header` from `lib.overlay`. Script-specific CSS may
+ * add extra classes (e.g. `pilot-header`) on top — these rules cover
+ * the base `.overlay-header` shape. */
+.overlay box.overlay-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid @pilot_border_soft;
+  background-color: @pilot_window;
+  background-image: none;
+}
+
+.overlay label.overlay-provider {
+  font-size: 0.9em;
+  font-weight: 700;
+  padding: 4px 12px;
+  background-color: alpha(@pilot_fg_dim, 0.15);
+  color: @pilot_fg;
+  letter-spacing: 0.04em;
+}
+
+.overlay label.overlay-provider.idle {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.22);
+}
+
+.overlay label.overlay-provider.streaming {
+  color: @pilot_stream;
+  background-color: alpha(@pilot_stream, 0.22);
+}
+
+.overlay label.overlay-provider.pending {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+}
+
+.overlay label.overlay-provider.awaiting {
+  color: @pilot_awaiting;
+  background-color: alpha(@pilot_awaiting, 0.22);
+}
+
+/* Close button shared by every overlay Header. Depth comes from a
+ * hairline top-highlight and a soft drop below — presses invert the
+ * pair so the button reads "sunken". */
+.overlay button.overlay-close {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 3px 10px;
+  min-width: 0;
+  color: @pilot_fg_dim;
+  font-size: 1.1em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.4);
+}
+
+.overlay button.overlay-close:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.5);
+}
+
+.overlay button.overlay-close:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
+/* ============================================================ Cards
+ * `make_card(role, title)` emits a Box with the `.overlay-card` base
+ * class plus `.overlay-card-<role>`. Scripts can layer on role-
+ * specific accents (e.g. pilot uses user=yellow, assistant=green);
+ * the base rule here is the structural frame. */
+.overlay box.overlay-card {
+  background-color: @pilot_card;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  padding: 8px 14px;
+  margin: 4px 2px;
+}
+
+.overlay label.overlay-card-role {
+  font-size: 0.8em;
+  font-weight: 800;
+  color: @pilot_fg_dim;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+/* ==================================================== Collapsible
+ * `make_collapsible(label, child)` returns a Gtk.Expander styled
+ * as a dim, italicised fold — matches pilot's thinking block look. */
+.overlay expander.overlay-collapsible {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_fg_dim;
+  margin: 2px 0 4px 0;
+}
+
+.overlay expander.overlay-collapsible > title {
+  color: @pilot_fg_dim;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+}
+
+/* ============================================================ Pills
+ * `make_pill(label, variant)` emits a compact button with one of
+ * the variant classes below. Shared shadow recipe — script CSS can
+ * layer extra hover states on top without restating the base. */
+.overlay button.overlay-pill {
+  padding: 2px 10px;
+  min-width: 0;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.overlay-pill:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
+.overlay button.overlay-pill.accent {
+  background-color: alpha(@pilot_accent, 0.18);
+  border: 1px solid alpha(@pilot_accent, 0.45);
+  color: @pilot_accent;
+}
+
+.overlay button.overlay-pill.accent:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+  border-color: alpha(@pilot_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.overlay-pill.approve {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border: 1px solid alpha(@pilot_idle, 0.45);
+}
+
+.overlay button.overlay-pill.approve:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+  border-color: alpha(@pilot_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.overlay-pill.reject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border: 1px solid alpha(@pilot_pending, 0.45);
+}
+
+.overlay button.overlay-pill.reject:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.22);
+  border-color: alpha(@pilot_accent, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+/* ========================================================== Buttons
+ * `make_button(label, variant)` emits a secondary button with the
+ * shared shadow recipe; variant picks the hover tint. Used for
+ * allow/trust/deny/auto-reject strips and queue action rows. */
+.overlay button.overlay-button {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 3px 12px;
+  min-width: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.85em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.overlay-button:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+.overlay button.overlay-button.allow:hover {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border-color: alpha(@pilot_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.overlay-button.trust:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.18);
+  border-color: alpha(@pilot_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.overlay-button.deny:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+/* Auto-reject: idle state is pre-tinted red so the "standing deny"
+ * intent reads even before hover — this is a heavier action than
+ * plain deny (it also affects future calls). Hover deepens the red
+ * so the click target is obvious. */
+.overlay button.overlay-button.autoreject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.14);
+  border-color: alpha(@pilot_pending, 0.4);
+}
+
+.overlay button.overlay-button.autoreject:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.28);
+  border-color: alpha(@pilot_pending, 0.65);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.5);
+}
+
+/* ========================================================== Frozen
+ * Strips / containers that entered a read-only / historical state
+ * pick up `.frozen`. Shared so every future script can dim frozen
+ * audit strips without restating the opacity recipe. */
+.overlay .frozen {
+  opacity: 0.75;
+}
+
