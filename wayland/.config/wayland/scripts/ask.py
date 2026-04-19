@@ -865,11 +865,11 @@ class PermissionRow(Gtk.ListBoxRow):
         )
         actions.add_css_class("ask-permission-actions")
 
-        allow_btn = Gtk.Button(label="✓ allow")
-        allow_btn.add_css_class("ask-permission-allow")
-        allow_btn.set_tooltip_text("Dismiss this tool-use notification")
-        allow_btn.connect("clicked", lambda _b: self._on_allow(self))
-        actions.append(allow_btn)
+        self._allow_btn = Gtk.Button(label="✓ allow")
+        self._allow_btn.add_css_class("ask-permission-allow")
+        self._allow_btn.set_tooltip_text("Dismiss this tool-use notification")
+        self._allow_btn.connect("clicked", lambda _b: self._on_allow(self))
+        actions.append(self._allow_btn)
 
         trust_btn = Gtk.Button(label=" trust")
         trust_btn.add_css_class("ask-permission-trust")
@@ -888,6 +888,12 @@ class PermissionRow(Gtk.ListBoxRow):
 
         card.append(actions)
         self.set_child(card)
+
+    def focus_allow(self) -> None:
+        """Grab focus on the `✓ allow` button so keyboard users can
+        accept without mousing. Tab cycles to trust / deny peers via
+        GTK's default focus chain (all three buttons are focusable)."""
+        self._allow_btn.grab_focus()
 
     @property
     def tool_name(self) -> str:
@@ -1336,10 +1342,18 @@ class AskWindow(Gtk.ApplicationWindow):
             on_trust=self._on_permission_trust,
             on_deny=self._on_permission_deny,
         )
+        was_empty = not self._permissions
         self._permissions.append(row)
         self._permissions_listbox.append(row)
         self._permissions_box.set_visible(True)
         self._update_phase()
+        # Only grab focus when this is the first pending row — otherwise
+        # we'd yank keyboard focus away from whichever row the user is
+        # already answering.
+        if was_empty:
+            # Deferred so focus lands after GTK has allocated the new
+            # widget; grab_focus on a freshly-added button is a no-op.
+            GLib.idle_add(row.focus_allow)
 
         return False
 
@@ -1348,7 +1362,11 @@ class AskWindow(Gtk.ApplicationWindow):
             return
         self._permissions.remove(row)
         self._permissions_listbox.remove(row)
-        if not self._permissions:
+        if self._permissions:
+            # Pull focus onto the new oldest row so the user can keep
+            # tabbing without hunting for the next prompt.
+            GLib.idle_add(self._permissions[0].focus_allow)
+        else:
             self._permissions_box.set_visible(False)
         self._update_phase()
 
@@ -1375,7 +1393,13 @@ class AskWindow(Gtk.ApplicationWindow):
                 self._update_phase()
 
         self._compose.set_question_mode(question, on_answer=resolved)
+        # Always focus the compose textview when a question lands,
+        # even if focus is currently on an approval row or elsewhere.
+        # The `idle_add` defer ensures the grab fires after the
+        # banner's size-allocate, otherwise grab_focus on a freshly-
+        # laid-out widget can no-op.
         self._compose.focus()
+        GLib.idle_add(self._compose.focus)
         self._update_phase()
 
         return False
@@ -1413,10 +1437,13 @@ class AskWindow(Gtk.ApplicationWindow):
             on_trust=on_trust,
             on_deny=on_deny,
         )
+        was_empty = not self._permissions
         self._permissions.append(row)
         self._permissions_listbox.append(row)
         self._permissions_box.set_visible(True)
         self._update_phase()
+        if was_empty:
+            GLib.idle_add(row.focus_allow)
 
         return False
 
