@@ -148,7 +148,6 @@ def _focused_gdk_monitor():
 
     return None
 
-
 class MarkdownView:
     """Renders a full text buffer as CommonMark via `markdown-it-py`.
 
@@ -160,7 +159,7 @@ class MarkdownView:
     resolve them."""
 
     HEADING_SCALES = {1: 1.4, 2: 1.2, 3: 1.1}
-    LINK_COLOR = "#6ea8fe"
+    LINK_COLOR = "#4676ac"
     CODE_BG = "#1e1e1e"
     INLINE_CODE_BG = "#2a2a2a"
 
@@ -599,9 +598,7 @@ class TurnCard:
 
     def _on_click(self, _gesture, _n_press, x, y) -> None:
         tv = self._textview
-        bx, by = tv.window_to_buffer_coords(
-            Gtk.TextWindowType.WIDGET, int(x), int(y)
-        )
+        bx, by = tv.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
         found, iter_ = tv.get_iter_at_location(bx, by)
         if not found:
             return
@@ -1010,9 +1007,22 @@ class AskWindow(Gtk.ApplicationWindow):
     @staticmethod
     def _install_css() -> None:
         """Load `ask.css` from alongside this script and register it as an
-        APPLICATION-priority style provider (beats theme, loses to user)."""
+        APPLICATION-priority style provider (beats theme, loses to user).
+        Parsing errors are routed to our logger so missing selectors /
+        bad rule bodies surface in `-v` runs instead of vanishing."""
         css = load_relative_file("ask.css", relative_to=__file__).encode("utf-8")
         provider = Gtk.CssProvider()
+
+        def _on_error(_prov, section, err):
+            start = section.get_start_location()
+            log.warning(
+                "ask.css parse error at line %d col %d: %s",
+                start.lines + 1,
+                start.line_chars + 1,
+                err.message,
+            )
+
+        provider.connect("parsing-error", _on_error)
         provider.load_from_data(css, len(css))
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
