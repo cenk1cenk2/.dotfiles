@@ -26,7 +26,7 @@
 /* Surface. Slightly translucent so compositor blur peeks through where
  * enabled. */
 window {
-  background: rgba(18, 18, 18, 0.96);
+  background: #1e2127cc;
   color: @ask_fg;
 }
 
