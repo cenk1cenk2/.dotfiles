@@ -128,16 +128,15 @@ class EnrichAdapterClaude:
         self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
-        # `--permission-mode` is optional; skip the flag pair when
-        # `self.mode` is None so claude uses its default policy.
-        permission_mode = ["--permission-mode", self.mode] if self.mode else []
         proc = subprocess.run(
             [
                 "claude",
                 "-p",
                 "--model",
                 self.model,
-                *permission_mode,
+                # `--permission-mode` is optional; skip the pair when
+                # unset so claude uses its user-level default.
+                *(["--permission-mode", self.mode] if self.mode else []),
                 "--system-prompt",
                 self.system_prompt,
                 self.user_prompt_template.format(text=text),
@@ -170,11 +169,6 @@ class EnrichAdapterCodex:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
-        # Skip `--sandbox` entirely when no mode is set — codex picks
-        # up its configured default policy. When set, the value is
-        # forwarded verbatim (`read-only` / `workspace-write` /
-        # `danger-full-access`).
-        sandbox_args = ["--sandbox", self.mode] if self.mode else []
         proc = subprocess.run(
             [
                 "codex",
@@ -182,7 +176,10 @@ class EnrichAdapterCodex:
                 "-",
                 "--model",
                 self.model,
-                *sandbox_args,
+                # `--sandbox` is optional; passthrough when set
+                # (`read-only` / `workspace-write` / `danger-full-
+                # access`), codex's configured default when unset.
+                *(["--sandbox", self.mode] if self.mode else []),
                 "--ephemeral",
                 "--skip-git-repo-check",
             ],

@@ -447,16 +447,15 @@ class ConversationAdapterClaude:
         # ANTHROPIC_API_KEY-only auth. Fall back to a non-bare spawn when the
         # key isn't set so keychain auth keeps working.
         bare = ["--bare"] if os.environ.get("ANTHROPIC_API_KEY") else []
-        # `--permission-mode` is optional — without it claude falls
-        # back to its user-level default. Only add the flag pair when
-        # the caller actually specified a mode.
-        permission_mode = ["--permission-mode", self.mode] if self.mode else []
         common = [
             "claude",
             "-p",
             "--model",
             self.model,
-            *permission_mode,
+            # `--permission-mode` is optional; skip the flag pair
+            # entirely when self.mode is unset so claude uses its
+            # user-level default.
+            *(["--permission-mode", self.mode] if self.mode else []),
             "--output-format",
             "stream-json",
             "--include-partial-messages",
@@ -616,19 +615,13 @@ class ConversationAdapterCodex:
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
 
-    def _sandbox_args(self) -> list[str]:
-        # Mode unset → no `--sandbox` flag at all; codex picks up
-        # whatever its config / default policy prescribes. When set,
-        # the value passes through verbatim so callers pick the exact
-        # codex sandbox (`read-only` / `workspace-write` /
-        # `danger-full-access` / anything else).
-        if not self.mode:
-            return []
-
-        return ["--sandbox", self.mode]
-
     def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
+        # `--sandbox` is optional; pass through verbatim when set
+        # (`read-only` / `workspace-write` / `danger-full-access` /
+        # any codex-recognised value), skip the flag otherwise so
+        # codex uses its configured default.
+        sandbox = ["--sandbox", self.mode] if self.mode else []
         if self._session_id is None:
             prompt = f"{self.system_prompt}\n\n{user_message}"
             argv = [
@@ -636,7 +629,7 @@ class ConversationAdapterCodex:
                 "exec",
                 "--model",
                 self.model,
-                *self._sandbox_args(),
+                *sandbox,
                 "--json",
                 "--skip-git-repo-check",
                 prompt,
@@ -649,7 +642,7 @@ class ConversationAdapterCodex:
                 self._session_id,
                 "--model",
                 self.model,
-                *self._sandbox_args(),
+                *sandbox,
                 "--json",
                 "--skip-git-repo-check",
                 user_message,
