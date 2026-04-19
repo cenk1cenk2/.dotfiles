@@ -426,7 +426,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+G accept · Ctrl+R reject · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -887,11 +887,11 @@ class PermissionRow(Gtk.ListBoxRow):
         trust_btn.connect("clicked", lambda _b: self._on_trust(self))
         actions.append(trust_btn)
 
-        deny_btn = Gtk.Button(label="✕ deny")
-        deny_btn.add_css_class("ask-permission-deny")
-        deny_btn.set_tooltip_text("Cancel the current turn")
-        deny_btn.connect("clicked", lambda _b: self._on_deny(self))
-        actions.append(deny_btn)
+        self._deny_btn = Gtk.Button(label="✕ deny")
+        self._deny_btn.add_css_class("ask-permission-deny")
+        self._deny_btn.set_tooltip_text("Cancel the current turn")
+        self._deny_btn.connect("clicked", lambda _b: self._on_deny(self))
+        actions.append(self._deny_btn)
 
         card.append(actions)
         self.set_child(card)
@@ -1614,6 +1614,9 @@ class AskWindow(Gtk.ApplicationWindow):
         if ctrl and keyval == Gdk.KEY_g:
             self._accept_first_permission()
             return True
+        if ctrl and keyval == Gdk.KEY_r:
+            self._reject_first_permission()
+            return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
             return True
@@ -1685,6 +1688,15 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             return
         self._permissions[0]._allow_btn.emit("clicked")
+
+    def _reject_first_permission(self) -> None:
+        """Ctrl+R: click the `✕ deny` button on the oldest pending
+        permission row — symmetric to Ctrl+G. Cancels the current
+        turn and drops the tool from trust if it was there. Silent
+        no-op when the panel is empty."""
+        if not self._permissions:
+            return
+        self._permissions[0]._deny_btn.emit("clicked")
 
     def _yank_last_assistant(self) -> None:
         """Ctrl+Y: copy the most recent assistant reply to the Wayland
