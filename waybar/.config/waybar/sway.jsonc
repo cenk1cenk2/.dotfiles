@@ -83,13 +83,13 @@
     "signal": 11,
   },
 
-  "custom/ask": {
+  "custom/pilot": {
     "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/ask.py status",
-    "exec-if": "~/.config/wayland/scripts/ask.py is-running",
-    "on-click": "~/.config/wayland/scripts/ask.py kill",
+    "exec": "~/.config/wayland/scripts/pilot.py status",
+    "exec-if": "~/.config/wayland/scripts/pilot.py is-running",
+    "on-click": "~/.config/wayland/scripts/pilot.py kill",
     "signal": 12,
   },
 
@@ -166,7 +166,7 @@
     "custom/recorder",
     "custom/speech",
     "custom/copywriter",
-    "custom/ask",
+    "custom/pilot",
     "sway/mode",
     "sway/window",
   ],

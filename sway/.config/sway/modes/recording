@@ -2,7 +2,7 @@
 
 ### Recording Mode
 
-set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→ask/hide | (w/W) copywriter/kill | (q/Q) stop speech/recording | <ESC>"
+set $mode_recording "󰕧 Recording: (r) toggle | (p) pause | (o) OBS | (s/S) speech→type | (c/C) speech→clipboard | (a/A) speech→pilot/hide | (w/W) copywriter/kill | (q/Q) stop speech/recording | <ESC>"
 
 mode $mode_recording {
         # Toggle recording (start/stop)
@@ -29,11 +29,11 @@ mode $mode_recording {
         # Speech-to-text to clipboard (raw, no enrichment)
         bindsym Shift+c exec $speech toggle --output clipboard, mode "default"
 
-        # Speech-to-text piped into the ask overlay (new session or live-forward)
-        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/ask.py toggle --input stdin', mode "default"
+        # Speech-to-text piped into the pilot overlay (new session or live-forward)
+        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py toggle --input stdin', mode "default"
 
-        # Toggle the ask overlay (hides/shows without ending the session)
-        bindsym Shift+a exec $ask toggle, mode "default"
+        # Toggle the pilot overlay (hides/shows without ending the session)
+        bindsym Shift+a exec $pilot toggle, mode "default"
 
         # Copywriter: refine clipboard through AI
         bindsym w exec $copywriter run clipboard, mode "default"

@@ -11,7 +11,7 @@ Two concerns, two classes, one helper:
 - `socket_approval()` — callback factory for the specific case where
                  approval decisions live in another process reachable
                  over a Unix socket. `enable_approval()` + this helper
-                 is the ask overlay's pattern; any other transport can
+                 is the pilot overlay's pattern; any other transport can
                  be plugged in by writing its own callback with the
                  `(tool_name, input) -> (approved, reason)` signature.
 
@@ -21,9 +21,9 @@ Design constraints the caller drove:
   is a bare tool host.
 - McpConfig seeds default servers (init + post-init .add), so callers
   can layer extra MCP binaries (github, filesystem, …) alongside the
-  ask approval server.
+  pilot approval server.
 - The server class doesn't know how the approval transport works. The
-  callback encapsulates that — ask happens to pass a socket-backed
+  callback encapsulates that — pilot happens to pass a socket-backed
   one, but a web-UI caller could pass something that talks to an HTTP
   endpoint and it would work just the same.
 """

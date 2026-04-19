@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ask — GTK4 layer-shell sidebar that streams a conversational AI response.
+"""pilot — GTK4 layer-shell sidebar that streams a conversational AI response.
 
 Right-side full-height overlay with a markdown scroller and a compose entry
 at the bottom. Reads initial text from stdin or clipboard, sends it as the
@@ -68,7 +68,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "toggle":
 # GTK imports into that subprocess (it has no display + doesn't need
 # them), so we short-circuit to the MCP event loop here and exit.
 if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
-    # Late import so the normal ask.py paths still load gi below.
+    # Late import so the normal pilot.py paths still load gi below.
     from lib.mcp import (  # noqa: E402
         McpCapability,
         McpServer,
@@ -78,8 +78,8 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     )
 
     _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    _mcp_sock = os.path.join(_runtime, "wayland-ask-mcp.sock")
-    _server = McpServer("ask")
+    _mcp_sock = os.path.join(_runtime, "wayland-pilot-mcp.sock")
+    _server = McpServer("pilot")
     # Single question callback shared between two entry points: the
     # generic approval router (registered below via
     # `add_approval_route`) pivots the model's built-in
@@ -96,7 +96,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
     #   )
     _server.enable(McpCapability.QUESTION, callback=_question_cb)
-    # `mcp__ask__open` hands URIs / file paths to `xdg-open` — lets the
+    # `mcp__pilot__open` hands URIs / file paths to `xdg-open` — lets the
     # AI ask to open things in the browser, obsidian, etc. The call
     # still goes through the approval router first, so the user sees a
     # row before anything spawns.
@@ -118,26 +118,26 @@ from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
     Pango,
 )
 
-log = logging.getLogger("ask")
+log = logging.getLogger("pilot")
 
-APP_ID = "dev.kilic.wayland.ask"
+APP_ID = "dev.kilic.wayland.pilot"
 _RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 # Main CLI socket — toggle/status/kill/turn from user-facing invocations.
-SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask.sock")
-# Dedicated MCP permission-prompt socket. `ask-mcp.py` connects here and
-# blocks on overlay approval before returning allow/deny to claude. Split
-# from the main socket so a user kill / stale-cleanup never trips the
+SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot.sock")
+# Dedicated MCP permission-prompt socket. The pilot MCP subprocess connects
+# here and blocks on overlay approval before returning allow/deny to claude.
+# Split from the main socket so a user kill / stale-cleanup never trips the
 # MCP bridge (and vice-versa).
-MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask-mcp.sock")
+MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-pilot-mcp.sock")
 
-AI_SYSTEM_PROMPT = load_prompt("ask.md", relative_to=__file__)
+AI_SYSTEM_PROMPT = load_prompt("pilot.md", relative_to=__file__)
 
 def _signal_waybar_safe() -> None:
-    """Nudge waybar's `custom/ask` module to re-read status. Non-fatal —
+    """Nudge waybar's `custom/pilot` module to re-read status. Non-fatal —
     waybar-signal.sh silently ignores unknown modules, and we shouldn't
     let waybar being unavailable take down the overlay."""
     try:
-        signal_waybar("ask")
+        signal_waybar("pilot")
     except Exception as e:
         log.debug("waybar signal failed: %s", e)
 
@@ -342,7 +342,7 @@ class ComposeView:
         self._on_submit = on_submit
 
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.widget.add_css_class("ask-compose-wrap")
+        self.widget.add_css_class("pilot-compose-wrap")
 
         # Question banner. Hidden until `set_question_mode` is called
         # by a claude `ask_question` MCP forward; shows the question
@@ -354,7 +354,7 @@ class ComposeView:
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=8,
         )
-        self._question_banner.add_css_class("ask-question-banner")
+        self._question_banner.add_css_class("pilot-question-banner")
         self._question_label = Gtk.Label(
             xalign=0.0,
             hexpand=True,
@@ -362,10 +362,10 @@ class ComposeView:
             wrap_mode=Pango.WrapMode.WORD_CHAR,
             selectable=True,
         )
-        self._question_label.add_css_class("ask-question-text")
+        self._question_label.add_css_class("pilot-question-text")
         self._question_banner.append(self._question_label)
         skip_btn = Gtk.Button(label="✕ skip")
-        skip_btn.add_css_class("ask-question-skip")
+        skip_btn.add_css_class("pilot-question-skip")
         skip_btn.set_tooltip_text("Skip this question — return an empty answer")
         skip_btn.connect("clicked", lambda _b: self._on_question_skip())
         self._question_banner.append(skip_btn)
@@ -376,7 +376,7 @@ class ComposeView:
         self._scroller = Gtk.ScrolledWindow()
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._scroller.set_propagate_natural_height(True)
-        self._scroller.add_css_class("ask-compose")
+        self._scroller.add_css_class("pilot-compose")
 
         self._textview = Gtk.TextView(
             wrap_mode=Gtk.WrapMode.WORD_CHAR,
@@ -386,7 +386,7 @@ class ComposeView:
             right_margin=12,
             accepts_tab=False,
         )
-        self._textview.add_css_class("ask-compose-text")
+        self._textview.add_css_class("pilot-compose-text")
         self._scroller.set_child(self._textview)
         self.widget.append(self._scroller)
 
@@ -403,11 +403,11 @@ class ComposeView:
         self._scroller.set_max_content_height(int(self._line_px * 6) + self._pad_px)
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        bar.add_css_class("ask-compose-bar")
+        bar.add_css_class("pilot-compose-bar")
 
         # Trusted-tool pills live on the left of the submit bar. Each
         # pill is a single button labelled `name ✕`; clicking invokes
-        # the registered remove callback (set from AskWindow). Hidden
+        # the registered remove callback (set from PilotWindow). Hidden
         # until at least one tool is trusted. Using a FlowBox so we
         # wrap gracefully if the user has trusted a lot of tools.
         self._pills_flow = Gtk.FlowBox(
@@ -420,7 +420,7 @@ class ComposeView:
         self._pills_flow.set_selection_mode(Gtk.SelectionMode.NONE)
         self._pills_flow.set_max_children_per_line(64)
         self._pills_flow.set_homogeneous(False)
-        self._pills_flow.add_css_class("ask-compose-pills")
+        self._pills_flow.add_css_class("pilot-compose-pills")
         self._pills_flow.set_visible(False)
         bar.append(self._pills_flow)
         self._pill_remove_cb = None
@@ -430,12 +430,12 @@ class ComposeView:
             xalign=0.0,
             hexpand=True,
         )
-        hint.add_css_class("ask-compose-hint")
+        hint.add_css_class("pilot-compose-hint")
         self._hint_label = hint
         bar.append(hint)
 
         self._send_btn = Gtk.Button(label="⏎ send")
-        self._send_btn.add_css_class("ask-compose-send")
+        self._send_btn.add_css_class("pilot-compose-send")
         self._send_btn.set_tooltip_text("Send the current message (Enter)")
         self._send_btn.connect("clicked", lambda _b: self._submit())
         bar.append(self._send_btn)
@@ -476,7 +476,7 @@ class ComposeView:
 
         for name in names:
             btn = Gtk.Button(label=f"{name} ✕")
-            btn.add_css_class("ask-compose-pill")
+            btn.add_css_class("pilot-compose-pill")
             btn.set_tooltip_text(f"Click to untrust {name} (re-enables prompts)")
             btn.connect("clicked", lambda _b, n=name: self._on_pill_click(n))
             self._pills_flow.append(btn)
@@ -603,16 +603,16 @@ class QueueRow(Gtk.ListBoxRow):
         self._editing = False
         self._edit_scroller: Optional[Gtk.ScrolledWindow] = None
         self._edit_textview: Optional[Gtk.TextView] = None
-        self.add_css_class("ask-queue-row")
+        self.add_css_class("pilot-queue-row")
 
         self._card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self._card.add_css_class("ask-queue-card")
+        self._card.add_css_class("pilot-queue-card")
 
         self._label = Gtk.Label(label=text, xalign=0.0, hexpand=True)
         self._label.set_wrap(True)
         self._label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         self._label.set_selectable(True)
-        self._label.add_css_class("ask-queue-text")
+        self._label.add_css_class("pilot-queue-text")
         self._card.append(self._label)
 
         actions = Gtk.Box(
@@ -620,22 +620,22 @@ class QueueRow(Gtk.ListBoxRow):
             spacing=4,
             halign=Gtk.Align.END,
         )
-        actions.add_css_class("ask-queue-actions")
+        actions.add_css_class("pilot-queue-actions")
 
         self._edit_btn = Gtk.Button(label="✎ edit")
-        self._edit_btn.add_css_class("ask-queue-edit")
+        self._edit_btn.add_css_class("pilot-queue-edit")
         self._edit_btn.set_tooltip_text("Edit this message")
         self._edit_btn.connect("clicked", lambda _b: self._toggle_edit())
         actions.append(self._edit_btn)
 
         send_btn = Gtk.Button(label="⏎ send")
-        send_btn.add_css_class("ask-queue-send")
+        send_btn.add_css_class("pilot-queue-send")
         send_btn.set_tooltip_text("Promote and dispatch this message now")
         send_btn.connect("clicked", lambda _b: self._on_send(self))
         actions.append(send_btn)
 
         remove_btn = Gtk.Button(label="✕ drop")
-        remove_btn.add_css_class("ask-queue-remove")
+        remove_btn.add_css_class("pilot-queue-remove")
         remove_btn.set_tooltip_text("Remove this message from the queue")
         remove_btn.connect("clicked", lambda _b: self._on_remove(self))
         actions.append(remove_btn)
@@ -660,7 +660,7 @@ class QueueRow(Gtk.ListBoxRow):
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_propagate_natural_height(True)
         scroller.set_max_content_height(160)
-        scroller.add_css_class("ask-queue-edit")
+        scroller.add_css_class("pilot-queue-edit")
 
         textview = Gtk.TextView(
             wrap_mode=Gtk.WrapMode.WORD_CHAR,
@@ -669,7 +669,7 @@ class QueueRow(Gtk.ListBoxRow):
             left_margin=8,
             right_margin=8,
         )
-        textview.add_css_class("ask-queue-edit-text")
+        textview.add_css_class("pilot-queue-edit-text")
         textview.get_buffer().set_text(self._text)
         scroller.set_child(textview)
 
@@ -723,12 +723,12 @@ class TurnCard:
     def __init__(self, role: str, title: str, on_link):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        self.widget.add_css_class("ask-card")
-        self.widget.add_css_class(f"ask-card-{role}")
+        self.widget.add_css_class("pilot-card")
+        self.widget.add_css_class(f"pilot-card-{role}")
 
         self._role_label = Gtk.Label(label=title, xalign=0.0)
-        self._role_label.add_css_class("ask-card-role")
-        self._role_label.add_css_class(f"ask-card-role-{role}")
+        self._role_label.add_css_class("pilot-card-role")
+        self._role_label.add_css_class(f"pilot-card-role-{role}")
         self.widget.append(self._role_label)
 
         self._md = MarkdownMarkup()
@@ -752,7 +752,7 @@ class TurnCard:
             selectable=True,
             natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
         )
-        self._label.add_css_class("ask-card-text")
+        self._label.add_css_class("pilot-card-text")
         # Fire the window's link handler when the user clicks a rendered
         # `<a href="…">`. Return True to tell GTK "we handled it" — we
         # don't want the default xdg-open path because the handler may
@@ -798,13 +798,13 @@ class TurnCard:
                 selectable=True,
                 natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
             )
-            self._thinking_label.add_css_class("ask-card-text")
-            self._thinking_label.add_css_class("ask-thinking-text")
+            self._thinking_label.add_css_class("pilot-card-text")
+            self._thinking_label.add_css_class("pilot-thinking-text")
             self._thinking_expander = Gtk.Expander(
                 label=self.THINKING_LABEL_STREAMING,
                 expanded=True,
             )
-            self._thinking_expander.add_css_class("ask-thinking-expander")
+            self._thinking_expander.add_css_class("pilot-thinking-expander")
             self._thinking_expander.set_child(self._thinking_label)
             # Slot the expander between the role label and the reply
             # label so the visual order is: role → thinking → reply.
@@ -851,15 +851,15 @@ class PermissionRow(Gtk.ListBoxRow):
         self._on_allow = on_allow
         self._on_trust = on_trust
         self._on_deny = on_deny
-        self.add_css_class("ask-permission-row")
+        self.add_css_class("pilot-permission-row")
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        card.add_css_class("ask-permission-card")
+        card.add_css_class("pilot-permission-card")
 
         # Tool name — accent-coloured header so it reads as a fresh
         # event rather than another turn card.
         name_label = Gtk.Label(label=call.name or "(unnamed tool)", xalign=0.0)
-        name_label.add_css_class("ask-permission-tool-name")
+        name_label.add_css_class("pilot-permission-tool-name")
         card.append(name_label)
 
         # Argument preview. Try to pretty-print JSON; fall back to the
@@ -875,7 +875,7 @@ class PermissionRow(Gtk.ListBoxRow):
         args_label.set_wrap(True)
         args_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         args_label.set_selectable(True)
-        args_label.add_css_class("ask-permission-args")
+        args_label.add_css_class("pilot-permission-args")
         card.append(args_label)
 
         actions = Gtk.Box(
@@ -883,16 +883,16 @@ class PermissionRow(Gtk.ListBoxRow):
             spacing=4,
             halign=Gtk.Align.END,
         )
-        actions.add_css_class("ask-permission-actions")
+        actions.add_css_class("pilot-permission-actions")
 
         self._allow_btn = Gtk.Button(label="✓ allow")
-        self._allow_btn.add_css_class("ask-permission-allow")
+        self._allow_btn.add_css_class("pilot-permission-allow")
         self._allow_btn.set_tooltip_text("Dismiss this tool-use notification")
         self._allow_btn.connect("clicked", lambda _b: self._on_allow(self))
         actions.append(self._allow_btn)
 
         trust_btn = Gtk.Button(label=" trust")
-        trust_btn.add_css_class("ask-permission-trust")
+        trust_btn.add_css_class("pilot-permission-trust")
         trust_btn.set_tooltip_text(
             "Trust this tool for the rest of the session — future calls "
             "will be auto-dismissed without a prompt"
@@ -901,7 +901,7 @@ class PermissionRow(Gtk.ListBoxRow):
         actions.append(trust_btn)
 
         self._deny_btn = Gtk.Button(label="✕ deny")
-        self._deny_btn.add_css_class("ask-permission-deny")
+        self._deny_btn.add_css_class("pilot-permission-deny")
         self._deny_btn.set_tooltip_text("Cancel the current turn")
         self._deny_btn.connect("clicked", lambda _b: self._on_deny(self))
         actions.append(self._deny_btn)
@@ -923,7 +923,7 @@ class PermissionRow(Gtk.ListBoxRow):
     def call(self) -> ToolCall:
         return self._call
 
-class AskWindow(Gtk.ApplicationWindow):
+class PilotWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
     widgets (one per user/assistant turn), queued turns are cards of
     their own above the compose, and compose is a multi-line TextView
@@ -933,11 +933,11 @@ class AskWindow(Gtk.ApplicationWindow):
     USER_TITLE = "Retarded Peasant"
     ASSISTANT_TITLE_FMT = "AI Overlord - {provider}"
     ASSISTANT_TITLE_WITH_MODEL_FMT = "AI Overlord - {provider} ({model})"
-    HEADER_FMT = "Ask - {provider}"
-    HEADER_WITH_MODEL_FMT = "Ask - {provider} ({model})"
+    HEADER_FMT = "Pilot - {provider}"
+    HEADER_WITH_MODEL_FMT = "Pilot - {provider} ({model})"
 
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
-        super().__init__(application=app, title="Ask")
+        super().__init__(application=app, title="Pilot")
         # `.overlay` is our root scope — every CSS rule is namespaced under
         # it so theme selectors like `window { background: … }` can't win.
         self.add_css_class("overlay")
@@ -974,8 +974,8 @@ class AskWindow(Gtk.ApplicationWindow):
 
         Gtk4LayerShell.init_for_window(self)
         # Explicit namespace so compositor layerrules can target us
-        # (`layerrule = blur, ask`) without regex-escaping the app-id.
-        Gtk4LayerShell.set_namespace(self, "ask")
+        # (`layerrule = blur, pilot`) without regex-escaping the app-id.
+        Gtk4LayerShell.set_namespace(self, "pilot")
         Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
@@ -986,20 +986,20 @@ class AskWindow(Gtk.ApplicationWindow):
         self.set_default_size(self._overlay_width(), -1)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.add_css_class("ask-root")
+        root.add_css_class("pilot-root")
 
         # Header --------------------------------------------------------
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        header.add_css_class("ask-header")
+        header.add_css_class("pilot-header")
         self._provider_label = Gtk.Label(
             label=self._header_title(),
             xalign=0.0,
             hexpand=True,
         )
-        self._provider_label.add_css_class("ask-provider")
+        self._provider_label.add_css_class("pilot-provider")
         self._provider_label.add_css_class("idle")
         close_btn = Gtk.Button(label="✕")
-        close_btn.add_css_class("ask-close")
+        close_btn.add_css_class("pilot-close")
         close_btn.connect("clicked", lambda _b: self.close())
         header.append(self._provider_label)
         header.append(close_btn)
@@ -1014,9 +1014,9 @@ class AskWindow(Gtk.ApplicationWindow):
         # entirely when the short role label was the only measurable
         # natural-width content).
         self._conv_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._conv_scroller.add_css_class("ask-conv-scroller")
+        self._conv_scroller.add_css_class("pilot-conv-scroller")
         self._conv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        self._conv_box.add_css_class("ask-conv")
+        self._conv_box.add_css_class("pilot-conv")
         self._conv_scroller.set_child(self._conv_box)
         root.append(self._conv_scroller)
 
@@ -1037,9 +1037,9 @@ class AskWindow(Gtk.ApplicationWindow):
         # priority visually — they're transient and often need a
         # response before the user cares about queued turns.
         self._permissions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._permissions_box.add_css_class("ask-permissions")
+        self._permissions_box.add_css_class("pilot-permissions")
         permissions_header = Gtk.Label(label="TOOLS", xalign=0.0)
-        permissions_header.add_css_class("ask-permissions-header")
+        permissions_header.add_css_class("pilot-permissions-header")
         self._permissions_box.append(permissions_header)
         self._permissions_listbox = Gtk.ListBox()
         self._permissions_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -1049,9 +1049,9 @@ class AskWindow(Gtk.ApplicationWindow):
 
         # Queue ---------------------------------------------------------
         self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._queue_box.add_css_class("ask-queue")
+        self._queue_box.add_css_class("pilot-queue")
         queue_header = Gtk.Label(label="QUEUED", xalign=0.0)
-        queue_header.add_css_class("ask-queue-header")
+        queue_header.add_css_class("pilot-queue-header")
         self._queue_box.append(queue_header)
         self._queue_listbox = Gtk.ListBox()
         self._queue_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -1282,14 +1282,14 @@ class AskWindow(Gtk.ApplicationWindow):
     def _notify_finished(self) -> None:
         if not self._should_notify():
             return
-        notify("Ask", "Response finished", self._NOTIFY_ICON_FINISHED, timeout=3000)
+        notify("Pilot", "Response finished", self._NOTIFY_ICON_FINISHED, timeout=3000)
 
     def _notify_approval(self, tool_name: str) -> None:
         if not self._should_notify():
             return
         label = tool_name or "tool"
         notify(
-            "Ask — approval needed",
+            "Pilot — approval needed",
             f"Waiting on approval: {label}",
             self._NOTIFY_ICON_APPROVAL,
             timeout=8000,
@@ -1300,7 +1300,7 @@ class AskWindow(Gtk.ApplicationWindow):
             return
         preview = question if len(question) <= 140 else question[:137] + "…"
         notify(
-            "Ask — question",
+            "Pilot — question",
             preview or "The AI is waiting for your answer",
             self._NOTIFY_ICON_QUESTION,
             timeout=10000,
@@ -1479,7 +1479,7 @@ class AskWindow(Gtk.ApplicationWindow):
         """Render a permission row for a Claude MCP permission-prompt
         request and invoke `resolve(approved: bool, reason: str)` when
         the user clicks. This is the REAL gate for `--converse-provider
-        claude` — the ask-mcp.py server is blocked on a socket round-
+        claude` — the pilot MCP subprocess is blocked on a socket round-
         trip here, so claude's subprocess won't run the tool until we
         return. Returns False so `GLib.idle_add` fires once."""
 
@@ -1801,7 +1801,7 @@ class AskWindow(Gtk.ApplicationWindow):
 
     @staticmethod
     def _install_css() -> None:
-        """Load `ask.css` from alongside this script and register it at
+        """Load `pilot.css` from alongside this script and register it at
         USER+1 priority.
 
         A USER-priority `~/.config/gtk-4.0/gtk.css` beats
@@ -1814,13 +1814,13 @@ class AskWindow(Gtk.ApplicationWindow):
 
         Parsing errors are routed to our logger so missing selectors /
         bad rule bodies surface in `-v` runs instead of vanishing."""
-        css = load_relative_file("ask.css", relative_to=__file__).encode("utf-8")
+        css = load_relative_file("pilot.css", relative_to=__file__).encode("utf-8")
         provider = Gtk.CssProvider()
 
         def _on_error(_prov, section, err):
             start = section.get_start_location()
             log.warning(
-                "ask.css parse error at line %d col %d: %s",
+                "pilot.css parse error at line %d col %d: %s",
                 start.lines + 1,
                 start.line_chars + 1,
                 err.message,
@@ -1893,11 +1893,11 @@ def _send(cmd: str, **kwargs) -> Optional[dict]:
         sock.close()
 
 class Session:
-    """Owns the Unix socket for a live ask window. A background thread
+    """Owns the Unix socket for a live pilot window. A background thread
     accepts connections from forwarder invocations and dispatches their
     `turn` / `status` commands back onto the GTK main thread."""
 
-    def __init__(self, window: AskWindow, provider: ConversationProvider):
+    def __init__(self, window: PilotWindow, provider: ConversationProvider):
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
@@ -1920,7 +1920,7 @@ class Session:
                 raise
             if live_check and _is_live():
                 sock.close()
-                raise RuntimeError(f"another ask session is already running at {path}")
+                raise RuntimeError(f"another pilot session is already running at {path}")
             try:
                 os.unlink(path)
             except FileNotFoundError:
@@ -2075,15 +2075,15 @@ class Session:
 def _build_mcp_config() -> McpConfig:
     """Compose the `McpConfig` we hand to the Claude adapter.
 
-    Pre-seeds one entry — the `ask` server, which re-execs THIS SAME
-    script with `mcp-server` as argv[1]. The top of ask.py short-
+    Pre-seeds one entry — the `pilot` server, which re-execs THIS SAME
+    script with `mcp-server` as argv[1]. The top of pilot.py short-
     circuits to `lib.mcp.McpServer.run()` for that argv and exits
     without touching GTK, so the subprocess is a pure stdio server.
     Callers can layer additional servers (github, filesystem, …) by
     mutating the returned `McpConfig` before it reaches the adapter."""
     self_script = os.path.abspath(__file__)
     config = McpConfig()
-    config.add("ask", sys.executable, args=["-u", self_script, "mcp-server"])
+    config.add("pilot", sys.executable, args=["-u", self_script, "mcp-server"])
 
     return config
 
@@ -2104,14 +2104,14 @@ def _build_adapter(args) -> ConversationAdapter:
                 thinking=args.converse_thinking,
                 num_ctx=args.converse_num_ctx,
                 tool_ids=args.tool_ids or None,
-                user_agent="ask/1.0",
+                user_agent="pilot/1.0",
             )
         case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(
                 AI_SYSTEM_PROMPT,
                 model=args.converse_model,
                 mcp_config=_build_mcp_config(),
-                permission_tool="mcp__ask__approve",
+                permission_tool="mcp__pilot__approve",
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
@@ -2131,7 +2131,7 @@ def _read_input(mode: InputMode) -> str:
     match mode:
         case InputMode.STDIN:
             # Only block on stdin when it's actually a pipe. Running
-            # `ask.py toggle` from a TTY (or via a compositor bind
+            # `pilot.py toggle` from a TTY (or via a compositor bind
             # with no piped input) returns empty so the window opens
             # ready-to-type instead of hanging on `sys.stdin.read()`
             # waiting for EOF that never comes.
@@ -2157,10 +2157,10 @@ def _cmd_toggle(args) -> None:
        leave the session alone.
     """
     initial = _read_input(args.input)
-    # stdin being a TTY means the user invoked ask.py from a terminal
+    # stdin being a TTY means the user invoked pilot.py from a terminal
     # or a compositor bind with nothing piped in; a closed/empty pipe
     # means the upstream process exited without writing (common with
-    # press-2 of `speech.py toggle --output stdout | ask.py toggle`).
+    # press-2 of `speech.py toggle --output stdout | pilot.py toggle`).
     piped_empty = args.input == InputMode.STDIN and not sys.stdin.isatty()
 
     status = _send("status")
@@ -2183,7 +2183,7 @@ def _cmd_toggle(args) -> None:
     session: dict[str, Optional[Session]] = {"server": None}
 
     def on_activate(application):
-        window = AskWindow(application, adapter)
+        window = PilotWindow(application, adapter)
         server = Session(window, adapter.provider)
         server.start()
         session["server"] = server
@@ -2222,7 +2222,7 @@ def _cmd_status() -> None:
     horizontal space."""
     resp = _send("status")
     if not resp or not resp.get("ok"):
-        print(json.dumps({"class": "idle", "text": "", "tooltip": "Ask idle"}))
+        print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
 
         return
 
@@ -2234,13 +2234,13 @@ def _cmd_status() -> None:
     text = f"{icon}{badge}"
     match phase:
         case "streaming":
-            tooltip = f"Ask: streaming via {provider}"
+            tooltip = f"Pilot: streaming via {provider}"
         case "pending":
-            tooltip = f"Ask: waiting on first chunk from {provider}"
+            tooltip = f"Pilot: waiting on first chunk from {provider}"
         case "awaiting":
-            tooltip = f"Ask: waiting on user input ({provider})"
+            tooltip = f"Pilot: waiting on user input ({provider})"
         case _:
-            tooltip = f"Ask: {provider} idle"
+            tooltip = f"Pilot: {provider} idle"
     if queue > 0:
         tooltip += f"  ({queue} queued)"
     print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
@@ -2251,7 +2251,7 @@ def _cmd_is_running() -> None:
     sys.exit(0 if _is_live() else 1)
 
 def _cmd_kill() -> None:
-    """End the running ask session (if any) and return immediately. Matches
+    """End the running pilot session (if any) and return immediately. Matches
     `speech.py kill` so recording-mode bindings can terminate either."""
     resp = _send("kill")
     if not resp:

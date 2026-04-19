@@ -2,7 +2,7 @@
 
 Sibling of `EnrichAdapter`: where enrichment is a one-shot text rewrite,
 these adapters hold a multi-turn session and yield response chunks as they
-arrive. `ask.py` drives them from a socket/compose loop."""
+arrive. `pilot.py` drives them from a socket/compose loop."""
 
 import json
 import logging
@@ -216,7 +216,7 @@ class ConversationAdapterHttp:
         if self.files:
             body["files"] = self.files
 
-        # Debug-level body log so `ask.py -v` can show exactly what we
+        # Debug-level body log so `pilot.py -v` can show exactly what we
         # sent — useful when a server-side feature (web_search, tools)
         # isn't responding the way we expected.
         log.debug(
@@ -372,9 +372,9 @@ class ConversationAdapterClaude:
 
     - `mcp_config` (`McpConfig` from `lib.mcp`) — aggregates the set
       of MCP servers advertised to claude via `--mcp-config`. Written
-      to `$XDG_RUNTIME_DIR/wayland-ask.mcp.json` on first turn and
+      to `$XDG_RUNTIME_DIR/wayland-pilot.mcp.json` on first turn and
       reused thereafter. Any server defined here becomes available;
-      callers pre-seed what they want (ask.py adds its own approval
+      callers pre-seed what they want (pilot.py adds its own approval
       stub, callers can layer github / filesystem / etc. alongside).
     - `permission_tool` — the `mcp__<server>__<tool>` string that
       claude should route permission prompts through. Usually the
@@ -410,13 +410,13 @@ class ConversationAdapterClaude:
     def _mcp_args(self) -> list[str]:
         """Build the `--mcp-config` + `--permission-prompt-tool` flag
         pair from the attached `McpConfig`. Writes the config JSON to
-        `$XDG_RUNTIME_DIR/wayland-ask.mcp.json` on first call and
+        `$XDG_RUNTIME_DIR/wayland-pilot.mcp.json` on first call and
         reuses the same path for follow-up turns."""
         if self.mcp_config is None:
             return []
         if self._mcp_config_path is None:
             runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-            self._mcp_config_path = os.path.join(runtime, "wayland-ask.mcp.json")
+            self._mcp_config_path = os.path.join(runtime, "wayland-pilot.mcp.json")
             try:
                 self.mcp_config.write(self._mcp_config_path)
             except OSError as e:
@@ -430,7 +430,7 @@ class ConversationAdapterClaude:
         # (`~/.claude.json`) and project (`.mcp.json`) configs merge
         # in and drown us out — the permission-prompt-tool lookup
         # then can't find the tool we registered. Strict mode is the
-        # only way to guarantee `mcp__ask__approve` resolves.
+        # only way to guarantee `mcp__pilot__approve` resolves.
         args = [
             "--mcp-config",
             self._mcp_config_path,
@@ -762,7 +762,7 @@ class ConversationAdapterOpenCode:
     MCP merging: when an `mcp_config` (the lib.mcp `McpConfig` we use
     for claude) is supplied, we translate its server definitions into
     OpenCode's `mcp` schema and splice them into a temp config file
-    that extends the base config. That way the ask overlay's MCP
+    that extends the base config. That way the pilot overlay's MCP
     approve/question tools are available to OpenCode too."""
 
     provider = ConversationProvider.OPENCODE
@@ -835,7 +835,7 @@ class ConversationAdapterOpenCode:
                     base = json.load(f)
                 merged = dict(base)
                 existing_mcp = dict(merged.get("mcp") or {})
-                # Translate `{"mcpServers": {"ask": {command, args, env}}}`
+                # Translate `{"mcpServers": {"pilot": {command, args, env}}}`
                 # into OpenCode's `mcp` schema: `{type, command: [cmd, *args],
                 # environment, enabled}`.
                 for name, spec in (
@@ -854,7 +854,7 @@ class ConversationAdapterOpenCode:
                 merged["mcp"] = existing_mcp
                 runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
                 self._effective_config_path = os.path.join(
-                    runtime, "wayland-ask.opencode.json"
+                    runtime, "wayland-pilot.opencode.json"
                 )
                 with open(self._effective_config_path, "w", encoding="utf-8") as f:
                     json.dump(merged, f)
