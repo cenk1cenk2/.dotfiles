@@ -554,7 +554,7 @@ class Speech:
         icons = {
             OutputMode.CLIPBOARD: "󰅇",
             OutputMode.TYPE: "󰌌",
-            OutputMode.STDOUT: "󰸾",
+            OutputMode.STDOUT: "󰼭",
         }
         labels = {
             OutputMode.CLIPBOARD: "clipboard",

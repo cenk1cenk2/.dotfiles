@@ -715,10 +715,11 @@ class AskWindow(Gtk.ApplicationWindow):
             self._bind_to_focused_monitor()
             self.set_visible(True)
             self.present()
-        if self._streaming:
-            # Previous turn still in flight — queue this one. It'll drain
-            # automatically when _mark_idle fires, and the send/edit
-            # controls let the user reorder or skip ahead manually.
+        if self._streaming or self._queue:
+            # Manual-drain queue semantics: anything pending stays put
+            # until the user hits a card's ⏎. If there's already a
+            # stream in flight OR the queue is non-empty, new incoming
+            # turns join the tail instead of jumping ahead.
             self._enqueue(message)
             return
         self._start_turn(message)
@@ -823,12 +824,10 @@ class AskWindow(Gtk.ApplicationWindow):
         self._active_assistant = None
         if self._alive:
             # Compose was never disabled; just reclaim focus so the user
-            # can continue typing without clicking.
+            # can continue typing without clicking. Queued items stay
+            # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
             self._set_phase("idle")
-            nxt = self._pop_queue_front()
-            if nxt:
-                GLib.idle_add(self._start_turn, nxt)
 
         return False
 
