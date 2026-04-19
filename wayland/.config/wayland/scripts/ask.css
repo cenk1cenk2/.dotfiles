@@ -13,13 +13,13 @@
 @define-color ask_compose #2c333d;
 @define-color ask_border #4b5263;
 @define-color ask_border_soft #2c333d;
-@define-color ask_border_focus #f1b862;
+@define-color ask_border_focus #61afef;
 @define-color ask_fg #abb2bf;
 @define-color ask_fg_dim #7c8a9d;
 @define-color ask_fg_muted #5c6370;
-@define-color ask_accent #d19a66;
-@define-color ask_user #e5c07b;
-@define-color ask_assistant #98c379;
+@define-color ask_accent #61afef;
+@define-color ask_user #61afef;
+@define-color ask_assistant #c678dd;
 @define-color ask_idle #98c379;
 @define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
@@ -32,7 +32,8 @@
   font-size: 14pt;
 }
 
-/* Window surface. bg[200] is the starting tone — cards lift from here. */
+/* Square surfaces everywhere — no rounding. Borders stay so surface
+ * transitions are still readable. */
 window {
   background: @ask_window;
   color: @ask_fg;
@@ -49,64 +50,52 @@ label.ask-provider {
   font-size: 0.9em;
   font-weight: 700;
   padding: 4px 12px;
-  border-radius: 12px;
   background: alpha(@ask_fg_dim, 0.15);
   color: @ask_fg;
   letter-spacing: 0.04em;
 }
+label.ask-provider.idle      { color: @ask_idle;    background: alpha(@ask_idle, 0.22); }
+label.ask-provider.streaming { color: @ask_stream;  background: alpha(@ask_stream, 0.22); }
+label.ask-provider.pending   { color: @ask_pending; background: alpha(@ask_pending, 0.22); }
 
-label.ask-provider.idle {
-  color: @ask_idle;
-  background: alpha(@ask_idle, 0.22);
-}
-
-label.ask-provider.streaming {
-  color: @ask_stream;
-  background: alpha(@ask_stream, 0.22);
-}
-
-label.ask-provider.pending {
-  color: @ask_pending;
-  background: alpha(@ask_pending, 0.22);
-}
-
+/* Button shadows. Depth comes from a hairline top-highlight and a soft
+ * drop below — presses invert the pair so the button reads "sunken". */
 button.ask-close {
-  background: transparent;
-  border: none;
-  padding: 4px 10px;
+  background: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 10px;
   min-width: 0;
   color: @ask_fg_dim;
   font-size: 1.1em;
-  border-radius: 6px;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.4);
 }
-
 button.ask-close:hover {
   color: @ask_pending;
-  background: alpha(@ask_pending, 0.16);
+  background: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.5);
+}
+button.ask-close:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
 }
 
 /* ====================================================== Conversation */
-scrolledwindow.ask-conv-scroller {
-  background: transparent;
-}
+scrolledwindow.ask-conv-scroller { background: transparent; }
+box.ask-conv { padding: 10px 10px 4px 10px; }
 
-box.ask-conv {
-  padding: 10px 10px 4px 10px;
-}
-
-/* Turn card. bg[400] for user, bg[300] for assistant. */
 box.ask-card {
   background: @ask_card;
   border: 1px solid @ask_border_soft;
-  border-radius: 10px;
   padding: 8px 14px;
   margin: 4px 2px;
 }
-
-box.ask-card-user {
-  border-left: 3px solid @ask_user;
-}
-
+box.ask-card-user      { border-left: 3px solid @ask_user; }
 box.ask-card-assistant {
   border-left: 3px solid @ask_assistant;
   background: @ask_card_hi;
@@ -119,19 +108,9 @@ label.ask-card-role {
   letter-spacing: 0.04em;
   margin-bottom: 4px;
 }
+label.ask-card-role-user      { color: @ask_user; }
+label.ask-card-role-assistant { color: @ask_assistant; }
 
-label.ask-card-role-user {
-  color: @ask_user;
-}
-
-label.ask-card-role-assistant {
-  color: @ask_assistant;
-}
-
-/* TextView colour: body text also carries an explicit `foreground`
- * TextTag from MarkdownView (definitive source); CSS is the fallback.
- * `window` ancestor + `> text` child form beats theme rules that
- * target `text` sub-nodes on specificity. */
 window textview.ask-card-text,
 window textview.ask-card-text > text,
 window textview.ask-card-text text {
@@ -139,8 +118,6 @@ window textview.ask-card-text text {
   background-color: transparent;
   background: transparent;
   color: @ask_fg;
-  /* Keep at least one line of vertical presence so a fresh assistant
-   * card (awaiting the first chunk) doesn't collapse to zero height. */
   min-height: 1.4em;
 }
 
@@ -149,20 +126,13 @@ box.ask-compose-wrap {
   margin: 8px 12px 12px 12px;
   background: @ask_compose;
   border: 2px solid @ask_border;
-  border-radius: 12px;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-
 box.ask-compose-wrap:focus-within {
   border-color: @ask_border_focus;
-  box-shadow: 0 0 0 3px alpha(@ask_accent, 0.25);
+  box-shadow: 0 0 0 2px alpha(@ask_accent, 0.3);
 }
-
-scrolledwindow.ask-compose {
-  background: transparent;
-}
+scrolledwindow.ask-compose { background: transparent; }
 
 window textview.ask-compose-text,
 window textview.ask-compose-text > text,
@@ -175,36 +145,45 @@ window textview.ask-compose-text text {
 }
 
 box.ask-compose-bar {
-  padding: 6px 10px 8px 12px;
+  padding: 6px 10px 6px 12px;
   border-top: 1px solid @ask_border_soft;
   background: alpha(black, 0.25);
 }
-
 label.ask-compose-hint {
   font-size: 0.8em;
   color: @ask_fg_muted;
 }
 
+/* Primary action — SEND. Stronger shadow than secondary buttons; the
+ * pressed state flips the shadow inwards for tactile feedback. */
 button.ask-compose-send {
-  background: alpha(@ask_accent, 0.25);
+  background: alpha(@ask_accent, 0.28);
   color: @ask_accent;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 16px;
+  border: 1px solid alpha(@ask_accent, 0.55);
+  padding: 4px 16px;
   font-size: 0.85em;
   font-weight: 700;
   letter-spacing: 0.08em;
   min-width: 0;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.1),
+    0 2px 4px alpha(black, 0.45);
 }
-
 button.ask-compose-send:hover {
-  background: alpha(@ask_accent, 0.4);
+  background: alpha(@ask_accent, 0.42);
   color: @ask_fg;
+  border-color: @ask_accent;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.14),
+    0 3px 6px alpha(black, 0.55);
 }
-
-button.ask-compose-send:disabled {
-  opacity: 0.4;
+button.ask-compose-send:active {
+  background: alpha(@ask_accent, 0.4);
+  box-shadow:
+    inset 0 2px 3px alpha(black, 0.5),
+    0 0 0 transparent;
 }
+button.ask-compose-send:disabled { opacity: 0.4; box-shadow: none; }
 
 /* =========================================== Queue (full-text cards) */
 box.ask-queue {
@@ -212,7 +191,6 @@ box.ask-queue {
   border-top: 1px solid @ask_border_soft;
   padding: 6px 10px 10px 10px;
 }
-
 label.ask-queue-header {
   font-size: 0.8em;
   font-weight: 700;
@@ -220,43 +198,26 @@ label.ask-queue-header {
   padding: 4px 2px 6px 2px;
   letter-spacing: 0.14em;
 }
-
-list {
-  background: transparent;
-}
-
-row.ask-queue-row {
-  background: transparent;
-  padding: 0;
-  margin: 0;
-}
-
-row.ask-queue-row:hover {
-  background: transparent;
-}
+list { background: transparent; }
+row.ask-queue-row { background: transparent; padding: 0; margin: 0; }
+row.ask-queue-row:hover { background: transparent; }
 
 box.ask-queue-card {
   background: @ask_card;
   border: 1px solid @ask_border_soft;
-  border-radius: 12px;
   padding: 10px 12px;
   margin: 4px 0;
   transition: border-color 120ms ease;
 }
-
-box.ask-queue-card:hover {
-  border-color: alpha(@ask_accent, 0.4);
-}
+box.ask-queue-card:hover { border-color: alpha(@ask_accent, 0.4); }
 
 label.ask-queue-text {
   font-size: 1em;
   color: @ask_fg;
 }
-
 scrolledwindow.ask-queue-edit {
   background: @ask_card_hi;
   border: 1px solid @ask_border_focus;
-  border-radius: 6px;
   padding: 2px;
 }
 
@@ -267,35 +228,54 @@ window textview.ask-queue-edit-text text {
   background: transparent;
   color: @ask_fg;
   font-size: 1em;
+  min-height: 1.4em;
 }
 
-box.ask-queue-actions {
-  margin-top: 8px;
-}
+box.ask-queue-actions { margin-top: 8px; }
 
+/* Secondary buttons share a base shadow treatment; the hover tint
+ * swaps the accent colour so intent is legible per-button. */
 button.ask-queue-edit,
 button.ask-queue-send,
 button.ask-queue-remove {
-  background: transparent;
-  border: none;
-  padding: 4px 12px;
+  background: alpha(@ask_fg_dim, 0.08);
+  border: 1px solid @ask_border_soft;
+  padding: 3px 12px;
   min-width: 0;
   color: @ask_fg_dim;
-  border-radius: 6px;
   font-size: 0.85em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
 }
-
 button.ask-queue-edit:hover {
   color: @ask_accent;
-  background: alpha(@ask_accent, 0.16);
+  background: alpha(@ask_accent, 0.18);
+  border-color: alpha(@ask_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
 }
-
 button.ask-queue-send:hover {
   color: @ask_idle;
-  background: alpha(@ask_idle, 0.16);
+  background: alpha(@ask_idle, 0.18);
+  border-color: alpha(@ask_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
 }
-
 button.ask-queue-remove:hover {
   color: @ask_pending;
-  background: alpha(@ask_pending, 0.16);
+  background: alpha(@ask_pending, 0.18);
+  border-color: alpha(@ask_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+button.ask-queue-edit:active,
+button.ask-queue-send:active,
+button.ask-queue-remove:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
 }
