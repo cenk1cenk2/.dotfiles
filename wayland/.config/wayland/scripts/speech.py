@@ -166,10 +166,20 @@ class Response:
 log = logging.getLogger("speech")
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
-SOCKET_PATH = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
-    "wayland-speech.sock",
-)
+_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+# Main speech session socket. `_apply_session_suffix(...)` in main() may
+# overwrite this to `wayland-speech-<suffix>.sock` when `--session` is
+# passed, so multiple speech sessions can coexist without colliding on
+# the same path. Module-level so _send / Session.start / Session.stop
+# all observe the post-parse value.
+SOCKET_PATH = os.path.join(_RUNTIME, "wayland-speech.sock")
+
+def _apply_session_suffix(suffix: str) -> None:
+    """Rewrite `SOCKET_PATH` to include `-<suffix>` before `.sock`.
+    Empty suffix leaves the shipped default verbatim."""
+    global SOCKET_PATH
+    if suffix:
+        SOCKET_PATH = os.path.join(_RUNTIME, f"wayland-speech-{suffix}.sock")
 
 AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
 AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
@@ -607,6 +617,20 @@ def main():
         description="Control speech-to-text via an STT adapter"
     )
     parser.add_argument("-v", "--verbose", action="store_true")
+    # Session suffix plumbed through to the Unix-socket path so multiple
+    # speech sessions can coexist (e.g. one tied to a normal overlay,
+    # another to a `plan` pilot). Empty (default) keeps the original
+    # `wayland-speech.sock` path byte-for-byte.
+    parser.add_argument(
+        "--session",
+        default="",
+        metavar="SUFFIX",
+        help=(
+            "session suffix — appended to the socket filename so "
+            "multiple speech sessions can coexist. Empty keeps the "
+            "original path."
+        ),
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -663,6 +687,8 @@ def main():
         format="%(name)s: %(message)s",
         level=logging.DEBUG if args.verbose else logging.WARNING,
     )
+
+    _apply_session_suffix(args.session or "")
 
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
