@@ -660,25 +660,34 @@ def main():
     enricher: Optional[EnrichAdapter] = None
     if getattr(args, "enrich", False):
         provider = EnrichProvider(args.enrich_provider)
-        model_kw = {"model": args.enrich_model} if args.enrich_model else {}
+        # None values (no --enrich-model, etc.) collapse to each adapter's
+        # default via the `kwargs.get(name) or DEFAULT` pattern inside.
         match provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
                     AI_SYSTEM_PROMPT,
                     AI_USER_PROMPT,
                     base_url=args.enrich_base_url,
+                    model=args.enrich_model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                     temperature=args.enrich_temperature,
                     top_p=args.enrich_top_p,
                     thinking=args.enrich_thinking,
                     num_ctx=args.enrich_num_ctx,
                     user_agent="speech/1.0",
-                    **model_kw,
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(AI_SYSTEM_PROMPT, AI_USER_PROMPT, **model_kw)
+                enricher = EnrichAdapterClaude(
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
+                    model=args.enrich_model,
+                )
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(AI_SYSTEM_PROMPT, AI_USER_PROMPT, **model_kw)
+                enricher = EnrichAdapterCodex(
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
+                    model=args.enrich_model,
+                )
             case _:
                 raise ValueError(f"unknown enrich provider: {provider!r}")
 

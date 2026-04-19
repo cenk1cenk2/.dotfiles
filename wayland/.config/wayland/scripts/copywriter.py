@@ -12,9 +12,9 @@ import psutil
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
-    EnrichAdapterClaude,
     InputAdapterClipboard,
     OutputAdapterClipboard,
+    EnrichAdapterClaude,
     EnrichAdapterCodex,
     EnrichAdapter,
     EnrichProvider,
@@ -247,25 +247,27 @@ def main():
             case _:
                 raise ValueError(f"unknown input mode: {args.input!r}")
 
-        model_kw = {"model": args.model} if args.model else {}
+        # Adapters collapse None → per-provider default via
+        # `kwargs.get(name) or DEFAULT` internally, so we pass args straight
+        # through.
         match args.provider:
             case EnrichProvider.HTTP:
                 enricher = EnrichAdapterHttp(
                     SYSTEM_PROMPT,
                     USER_PROMPT,
                     base_url=args.base_url,
+                    model=args.model,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                     temperature=args.temperature,
                     top_p=args.top_p,
                     thinking=args.thinking,
                     num_ctx=args.num_ctx,
                     user_agent="copywriter/1.0",
-                    **model_kw,
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, **model_kw)
+                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, **model_kw)
+                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case _:
                 raise ValueError(f"unknown enrich provider: {args.provider!r}")
 

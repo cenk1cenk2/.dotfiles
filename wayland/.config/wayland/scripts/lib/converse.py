@@ -19,9 +19,6 @@ class ConversationProvider(StrEnum):
     CODEX = "codex"
 
 DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
-DEFAULT_CONVERSE_MODEL = "opus:4.7"
-DEFAULT_CONVERSE_MODEL_CLAUDE = "opus"
-DEFAULT_CONVERSE_MODEL_CODEX = "gpt-5"
 DEFAULT_CONVERSE_BASE_URL = "https://ai.kilic.dev/api/v1"
 
 log = logging.getLogger(__name__)
@@ -117,41 +114,33 @@ class ConversationAdapter(Protocol):
         ...
 
 class ConversationAdapterHttp:
-    """OpenAI-compatible `/chat/completions` with `stream=true`."""
+    """OpenAI-compatible `/chat/completions` with `stream=true`.
+
+    Only `system_prompt` is positional. Everything else arrives via
+    `**kwargs` and collapses to the per-field default through the
+    `kwargs.get(name) or DEFAULT` idiom — so callers can pass argparse
+    values (which are `None` when unset) without replicating defaults at
+    every call-site."""
 
     provider = ConversationProvider.HTTP
 
-    def __init__(
-        self,
-        system_prompt: str,
-        *,
-        base_url: str = DEFAULT_CONVERSE_BASE_URL,
-        model: str = DEFAULT_CONVERSE_MODEL,
-        api_key: str = "",
-        user_agent: str = "converse/1.0",
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        thinking: str = "none",
-        num_ctx: Optional[int] = None,
-        tool_ids: Optional[list[str]] = None,
-        files: Optional[list[dict]] = None,
-    ):
+    def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.base_url = base_url
-        self.model = model
-        self.api_key = api_key
-        self.user_agent = user_agent
-        self.temperature = temperature
-        self.top_p = top_p
-        self.thinking = thinking
-        self.num_ctx = num_ctx
+        self.base_url = kwargs.get("base_url") or DEFAULT_CONVERSE_BASE_URL
+        self.model = kwargs.get("model") or "glm-5.1:cloud"
+        self.api_key = kwargs.get("api_key") or ""
+        self.user_agent = kwargs.get("user_agent") or "converse/1.0"
+        self.temperature = kwargs.get("temperature")
+        self.top_p = kwargs.get("top_p")
+        self.thinking = kwargs.get("thinking") or "none"
+        self.num_ctx = kwargs.get("num_ctx")
         # OpenWebUI extensions (silently ignored by generic OpenAI servers).
         # tool_ids: server-side tool UUIDs, also accepting the pseudo-ids
         # that represent built-ins (web_search, memory, code_interpreter,
         # image_generation, voice) plus "server:mcp:<id>" for MCP servers.
         # files: [{"type": "file"|"folder"|"collection", "id": "..."}] for RAG context.
-        self.tool_ids = tool_ids
-        self.files = files
+        self.tool_ids = kwargs.get("tool_ids")
+        self.files = kwargs.get("files")
         self.messages: list[dict] = [
             {"role": "system", "content": system_prompt},
         ]
@@ -284,14 +273,9 @@ class ConversationAdapterClaude:
 
     provider = ConversationProvider.CLAUDE
 
-    def __init__(
-        self,
-        system_prompt: str,
-        *,
-        model: str = DEFAULT_CONVERSE_MODEL_CLAUDE,
-    ):
+    def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.model = model
+        self.model = kwargs.get("model") or "opus"
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False
@@ -401,14 +385,9 @@ class ConversationAdapterCodex:
 
     provider = ConversationProvider.CODEX
 
-    def __init__(
-        self,
-        system_prompt: str,
-        *,
-        model: str = DEFAULT_CONVERSE_MODEL_CODEX,
-    ):
+    def __init__(self, system_prompt: str, **kwargs):
         self.system_prompt = system_prompt
-        self.model = model
+        self.model = kwargs.get("model") or "gpt-5"
         self._session_id: Optional[str] = None
         self._proc: Optional[subprocess.Popen] = None
         self._cancelled = False

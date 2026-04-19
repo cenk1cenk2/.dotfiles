@@ -147,164 +147,105 @@ def _focused_gdk_monitor():
 
     return None
 
-class MarkdownView:
-    """Renders a full text buffer as CommonMark via `markdown-it-py`.
+class MarkdownMarkup:
+    """Render CommonMark to a Pango markup string for Gtk.Label.
 
-    Streaming callers call `render(full_text)` each time new chunks
-    arrive; we re-parse from scratch (cheap for typical AI-response
-    sizes). Token walking maintains a stack of active TextTags that is
-    pushed/popped on `*_open`/`*_close` tokens. Per-link TextTags carry
-    the target URL on a `.url` attribute so the click handler can
-    resolve them."""
+    We swapped from a TextView+TextBuffer+TextTags pipeline to emitting a
+    Pango markup string that feeds `Gtk.Label.set_markup()`. Reasons:
 
-    HEADING_SCALES = {1: 1.4, 2: 1.2, 3: 1.1}
-    LINK_COLOR = "#4676ac"
+    * `Gtk.Label` lays out synchronously during `measure()`, so a freshly
+      populated card reports its true natural-height on the first layout
+      pass. TextView defers validation and returns a single-line natural
+      height until the buffer has been walked post-realize, which is
+      what made user cards render collapsed until the assistant reply
+      forced a re-layout.
+    * `<a href="…">` inside Pango markup drives the Label's native
+      `activate-link` signal, so link clicks no longer need
+      buffer-coordinate math or a custom GestureClick.
+    * Streaming stays cheap: each chunk we re-parse + re-emit markup and
+      call `label.set_markup()`. Markdown-it runs in microseconds at the
+      sizes AI responses produce."""
+
+    HEADING_SIZES = {1: "x-large", 2: "large", 3: "medium"}
+    LINK_COLOR = "#61afef"
     CODE_BG = "#17191e"
     INLINE_CODE_BG = "#2c333d"
-    # Stamped on every inserted run so text is legible regardless of
-    # what the active GTK theme does to `textview text { color: … }`.
-    # CSS alone can lose to theme `.background` cascades depending on
-    # priority; a TextTag with an explicit foreground is definitive.
     FG_COLOR = "#abb2bf"
 
-    def __init__(self, buffer: Gtk.TextBuffer):
-        self.buffer = buffer
-        self._tags = self._build_static_tags()
-        self._fg_tag = buffer.create_tag("ask-fg", foreground=self.FG_COLOR)
+    def __init__(self):
         self._md = MarkdownIt("commonmark")
 
-    def _build_static_tags(self) -> dict:
-        b = self.buffer
+    def render(self, text: str) -> str:
+        """Parse `text` as CommonMark and return Pango markup. Safe to
+        feed straight to `Gtk.Label.set_markup()`."""
+        tokens = self._md.parse(text)
+        out: list[str] = []
+        self._walk(tokens, out, list_stack=[])
+        markup = "".join(out).rstrip(" \n\t")
 
-        return {
-            "h1": b.create_tag(
-                "h1",
-                weight=Pango.Weight.BOLD,
-                scale=self.HEADING_SCALES[1],
-                pixels_above_lines=8,
-                pixels_below_lines=4,
-            ),
-            "h2": b.create_tag(
-                "h2",
-                weight=Pango.Weight.BOLD,
-                scale=self.HEADING_SCALES[2],
-                pixels_above_lines=6,
-                pixels_below_lines=3,
-            ),
-            "h3": b.create_tag(
-                "h3",
-                weight=Pango.Weight.BOLD,
-                scale=self.HEADING_SCALES[3],
-                pixels_above_lines=4,
-                pixels_below_lines=2,
-            ),
-            "bold": b.create_tag("bold", weight=Pango.Weight.BOLD),
-            "italic": b.create_tag("italic", style=Pango.Style.ITALIC),
-            "code": b.create_tag(
-                "code",
-                family="monospace",
-                background=self.INLINE_CODE_BG,
-            ),
-            "code_block": b.create_tag(
-                "code_block",
-                family="monospace",
-                paragraph_background=self.CODE_BG,
-                left_margin=16,
-                right_margin=16,
-                pixels_above_lines=4,
-                pixels_below_lines=4,
-            ),
-            "blockquote": b.create_tag(
-                "blockquote",
-                style=Pango.Style.ITALIC,
-                left_margin=16,
-            ),
-        }
+        return markup
 
-    def render(self, text: str) -> None:
-        # Batch the clear + walk inside a single user-action so GTK
-        # coalesces signals and only fires the layout update at the end.
-        # Without this, the intermediate empty-buffer state can collapse
-        # the TextView's allocation and never re-expand as content arrives.
-        buf = self.buffer
-        buf.begin_user_action()
-        try:
-            buf.set_text("")
-            tokens = self._md.parse(text)
-            self._walk(tokens, tag_stack=[], list_stack=[])
-            self._trim_trailing_whitespace()
-        finally:
-            buf.end_user_action()
+    def _esc(self, text: str) -> str:
+        # Pango markup is XML-flavoured; escape every `&`, `<`, `>` in
+        # user-supplied content. Quotes only matter inside attribute
+        # values but escape_text handles them anyway.
+        return GLib.markup_escape_text(text)
 
-    def _trim_trailing_whitespace(self) -> None:
-        """Paragraph/heading/list closers emit trailing newlines so blocks
-        are separated mid-buffer. The very last closer leaves a couple of
-        orphan newlines at the end — invisible in a single-buffer view but
-        read as empty lines of padding inside a per-turn card. Walk back
-        and delete them so the card hugs its content."""
-        buf = self.buffer
-        end = buf.get_end_iter()
-        start = end.copy()
-        while start.backward_char():
-            if start.get_char() not in (" ", "\n", "\t"):
-                start.forward_char()
-                break
-        if not start.equal(end):
-            buf.delete(start, end)
-
-    def _walk(self, tokens, tag_stack, list_stack) -> None:
+    def _walk(self, tokens, out, list_stack) -> None:
         for tok in tokens:
-            self._handle(tok, tag_stack, list_stack)
+            self._handle(tok, out, list_stack)
 
-    def _handle(self, tok, tag_stack, list_stack) -> None:  # noqa: C901
-        tags = self._tags
+    def _handle(self, tok, out, list_stack) -> None:  # noqa: C901
         match tok.type:
             case "heading_open":
-                tag_stack.append(tags[tok.tag])
+                level = int(tok.tag[1])
+                size = self.HEADING_SIZES.get(level, "medium")
+                out.append(f'<span size="{size}" weight="bold">')
             case "heading_close":
-                tag_stack.pop()
-                self._insert("\n", tag_stack)
+                out.append("</span>\n\n")
             case "paragraph_open":
                 pass
             case "paragraph_close":
-                # Tight lists reuse paragraphs for item bodies — emit just
-                # a single break so we don't double-space list items.
-                self._insert("\n" if list_stack else "\n\n", tag_stack)
+                # Tight lists use paragraphs for item bodies; emit one
+                # break instead of two so list items don't double-space.
+                out.append("\n" if list_stack else "\n\n")
             case "inline":
-                self._walk(tok.children or [], tag_stack, list_stack)
+                self._walk(tok.children or [], out, list_stack)
             case "text":
-                self._insert(tok.content, tag_stack)
+                out.append(self._esc(tok.content))
             case "softbreak":
-                self._insert(" ", tag_stack)
+                out.append(" ")
             case "hardbreak":
-                self._insert("\n", tag_stack)
+                out.append("\n")
             case "strong_open":
-                tag_stack.append(tags["bold"])
+                out.append("<b>")
             case "strong_close":
-                tag_stack.pop()
+                out.append("</b>")
             case "em_open":
-                tag_stack.append(tags["italic"])
+                out.append("<i>")
             case "em_close":
-                tag_stack.pop()
+                out.append("</i>")
             case "code_inline":
-                self._insert(tok.content, tag_stack + [tags["code"]])
+                out.append(
+                    f'<span font_family="monospace" '
+                    f'background="{self.INLINE_CODE_BG}">'
+                    f"{self._esc(tok.content)}</span>"
+                )
             case "link_open":
-                href = tok.attrGet("href") or ""
-                link_tag = self.buffer.create_tag(
-                    None,
-                    foreground=self.LINK_COLOR,
-                    underline=Pango.Underline.SINGLE,
+                href = self._esc(tok.attrGet("href") or "")
+                out.append(
+                    f'<a href="{href}">'
+                    f'<span foreground="{self.LINK_COLOR}" underline="single">'
                 )
-                link_tag.url = href
-                tag_stack.append(link_tag)
             case "link_close":
-                tag_stack.pop()
+                out.append("</span></a>")
             case "fence" | "code_block":
-                content = (
-                    tok.content if tok.content.endswith("\n") else tok.content + "\n"
+                content = tok.content.rstrip("\n")
+                out.append(
+                    f'<span font_family="monospace" '
+                    f'background="{self.CODE_BG}">'
+                    f"{self._esc(content)}</span>\n\n"
                 )
-                self._insert(content, [tags["code_block"]])
-                self._insert("\n", tag_stack)
             case "bullet_list_open":
                 list_stack.append(["bullet", 0])
             case "ordered_list_open":
@@ -312,32 +253,29 @@ class MarkdownView:
             case "bullet_list_close" | "ordered_list_close":
                 list_stack.pop()
                 if not list_stack:
-                    self._insert("\n", tag_stack)
+                    out.append("\n")
             case "list_item_open":
                 ctx = list_stack[-1] if list_stack else None
                 indent = "  " * max(0, len(list_stack) - 1)
                 if ctx and ctx[0] == "ordered":
-                    self._insert(f"{indent}{ctx[1]}. ", tag_stack)
+                    out.append(f"{indent}{ctx[1]}. ")
                     ctx[1] += 1
                 else:
-                    self._insert(f"{indent}• ", tag_stack)
+                    out.append(f"{indent}• ")
             case "list_item_close":
                 pass
             case "blockquote_open":
-                tag_stack.append(tags["blockquote"])
+                out.append("<i>")
             case "blockquote_close":
-                tag_stack.pop()
+                out.append("</i>")
             case "hr":
-                self._insert("─" * 40 + "\n\n", tag_stack)
+                out.append(
+                    '<span foreground="#4b5263">'
+                    + ("─" * 40)
+                    + "</span>\n\n"
+                )
             case _:
                 log.debug("unhandled token: %s", tok.type)
-
-    def _insert(self, text: str, tags: list) -> None:
-        end = self.buffer.get_end_iter()
-        # Always carry the foreground tag so text renders in our palette
-        # regardless of theme. Other tags (bold, italic, code, link) stack
-        # on top without needing to repeat the colour.
-        self.buffer.insert_with_tags(end, text, self._fg_tag, *tags)
 
 class ComposeView:
     """Multi-line compose with an obvious visual box, hint line, and a
@@ -562,10 +500,11 @@ class QueueRow(Gtk.ListBoxRow):
 
 class TurnCard:
     """One turn in the conversation. `role` is 'user' or 'assistant'.
-    User cards get populated once via `set_text`; assistant cards are
-    streamed in chunk-by-chunk via `append`. Each card owns its own
-    `Gtk.TextBuffer` + `MarkdownView`, so per-link tag trees are scoped
-    to the card that rendered them."""
+    User cards get populated once via `set_text`; assistant cards stream
+    chunk-by-chunk via `append`. Backed by `Gtk.Label` with Pango markup
+    — labels measure synchronously so cards size correctly on the first
+    layout pass (TextView doesn't, which used to leave user cards
+    collapsed until the assistant reply forced a re-layout)."""
 
     def __init__(self, role: str, title: str, on_link):
         self.role = role
@@ -578,86 +517,43 @@ class TurnCard:
         role_label.add_css_class(f"ask-card-role-{role}")
         self.widget.append(role_label)
 
-        self._textview = Gtk.TextView(
-            editable=False,
-            cursor_visible=False,
-            wrap_mode=Gtk.WrapMode.WORD_CHAR,
-            top_margin=2,
-            bottom_margin=2,
-            left_margin=0,
-            right_margin=0,
+        self._label = Gtk.Label(
+            xalign=0.0,
+            yalign=0.0,
             hexpand=True,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            use_markup=True,
+            selectable=True,
+            # Prefer wrapping at word boundaries where possible, fall
+            # back to inline when a single long token would overflow.
+            natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
         )
-        self._textview.add_css_class("ask-card-text")
-        self.widget.append(self._textview)
+        self._label.add_css_class("ask-card-text")
+        # Fire the window's link handler when the user clicks a rendered
+        # `<a href="…">`. Return True to tell GTK "we handled it" — we
+        # don't want the default xdg-open path because the handler may
+        # want to route through a compositor-specific opener.
+        self._label.connect(
+            "activate-link",
+            lambda _lbl, uri: (on_link(uri), True)[1],
+        )
+        self.widget.append(self._label)
 
-        self._md = MarkdownView(self._textview.get_buffer())
+        self._md = MarkdownMarkup()
         self._text = ""
         self._on_link = on_link
 
-        click = Gtk.GestureClick()
-        click.set_button(Gdk.BUTTON_PRIMARY)
-        click.connect("released", self._on_click)
-        self._textview.add_controller(click)
-
     def append(self, chunk: str) -> None:
         self._text += chunk
-        self._md.render(self._text)
-        self._remeasure()
+        self._label.set_markup(self._md.render(self._text))
 
     def set_text(self, text: str) -> None:
         self._text = text
-        self._md.render(text)
-        self._remeasure()
-
-    def _remeasure(self) -> None:
-        """Force the card, textview, and every ancestor to re-run their
-        size negotiation.
-
-        TextView's natural-height depends on Pango laying out the buffer,
-        which happens AFTER the current layout pass. Calling queue_resize
-        on the textview alone marks it dirty but the parent Box has
-        already cached its child's "natural height = 0" measurement from
-        before the text arrived, so the card stays collapsed until some
-        OTHER event (a sibling assistant card streaming chunks) forces a
-        full re-layout of the conversation.
-
-        Fix: queue_resize on the textview AND the card Box immediately,
-        then schedule a second pass via idle_add so GTK re-measures once
-        Pango has actually laid the glyphs out. The double-tap is why
-        user cards finally render at full height as soon as they appear
-        instead of popping only when the assistant streams its reply."""
-        self._textview.queue_resize()
-        self.widget.queue_resize()
-        GLib.idle_add(self._deferred_remeasure, priority=GLib.PRIORITY_HIGH)
-
-    def _deferred_remeasure(self) -> bool:
-        self._textview.queue_resize()
-        self.widget.queue_resize()
-        # Walk up to the conversation Box / scroller so they reconsider
-        # their child's new natural height. Without this, the conv_box
-        # keeps its old allocation and the card renders clipped.
-        parent = self.widget.get_parent()
-        while parent is not None:
-            parent.queue_resize()
-            parent = parent.get_parent()
-
-        return False
+        self._label.set_markup(self._md.render(text))
 
     def get_text(self) -> str:
         return self._text
-
-    def _on_click(self, _gesture, _n_press, x, y) -> None:
-        tv = self._textview
-        bx, by = tv.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
-        found, iter_ = tv.get_iter_at_location(bx, by)
-        if not found:
-            return
-        for tag in iter_.get_tags():
-            url = getattr(tag, "url", None)
-            if url:
-                self._on_link(url)
-                return
 
 class AskWindow(Gtk.ApplicationWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
@@ -738,6 +634,18 @@ class AskWindow(Gtk.ApplicationWindow):
         self._conv_box.add_css_class("ask-conv")
         self._conv_scroller.set_child(self._conv_box)
         root.append(self._conv_scroller)
+
+        # Auto-scroll-when-pinned. We track whether the vadjustment is at
+        # the bottom whenever the user actively scrolls (`value-changed`).
+        # When content grows (`upper` increases — a new card was appended
+        # or a streaming chunk landed), if we were pinned we jump to the
+        # new bottom. This keeps streams in view without stealing the
+        # scroll position from a user who's scrolled up to read earlier
+        # turns.
+        self._pinned = True
+        vadj = self._conv_scroller.get_vadjustment()
+        vadj.connect("value-changed", self._on_vadj_value_changed)
+        vadj.connect("notify::upper", self._on_vadj_upper_changed)
 
         # Queue ---------------------------------------------------------
         self._queue_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -826,14 +734,11 @@ class AskWindow(Gtk.ApplicationWindow):
             on_link=self._open_link,
         )
         self._cards.append(card)
-        # Parent the widget BEFORE setting its content so GTK's allocate
-        # pass catches the child in the tree on the first layout cycle.
-        # Otherwise the first card sometimes doesn't render until a
-        # later turn forces a re-layout of the conversation box.
+        # Explicit user action → always pin-to-bottom and scroll, even
+        # if the user had scrolled up before clicking send.
+        self._pinned = True
         self._conv_box.append(card.widget)
         card.set_text(text)
-        self._conv_box.queue_resize()
-        GLib.idle_add(self._scroll_to_end)
 
         return card
 
@@ -845,8 +750,6 @@ class AskWindow(Gtk.ApplicationWindow):
         )
         self._cards.append(card)
         self._conv_box.append(card.widget)
-        self._conv_box.queue_resize()
-        GLib.idle_add(self._scroll_to_end)
 
         return card
 
@@ -867,14 +770,12 @@ class AskWindow(Gtk.ApplicationWindow):
         return self.ASSISTANT_TITLE_FMT.format(provider=self._provider_name)
 
     def _append_chunk(self, chunk: str) -> bool:
-        """Main-thread-safe sink for adapter chunks. Appends to whichever
-        assistant card is currently streaming. Returns False so it
-        composes with `GLib.idle_add`."""
+        """Main-thread-safe sink for adapter chunks. Appends to the
+        currently-streaming assistant card; the `notify::upper` hook on
+        the vadjustment keeps us scrolled to bottom whenever we're
+        pinned. Returns False so it composes with `GLib.idle_add`."""
         if self._active_assistant is not None:
-            pin = self._at_bottom()
             self._active_assistant.append(chunk)
-            if pin:
-                GLib.idle_add(self._scroll_to_end)
 
         return False
 
@@ -983,16 +884,21 @@ class AskWindow(Gtk.ApplicationWindow):
 
     # -- Scroll / keys / links -----------------------------------------
 
-    def _at_bottom(self) -> bool:
-        adj = self._conv_scroller.get_vadjustment()
+    _PIN_THRESHOLD_PX = 24
 
-        return adj.get_value() + adj.get_page_size() >= adj.get_upper() - 20
+    def _on_vadj_value_changed(self, adj) -> None:
+        """User-initiated scroll updates the pinned flag. If they scroll
+        to within `_PIN_THRESHOLD_PX` of the bottom we consider them
+        pinned; scrolling up beyond that unpins so subsequent content
+        arrivals don't fight the reader."""
+        bottom = adj.get_upper() - adj.get_page_size()
+        self._pinned = adj.get_value() >= bottom - self._PIN_THRESHOLD_PX
 
-    def _scroll_to_end(self) -> bool:
-        adj = self._conv_scroller.get_vadjustment()
-        adj.set_value(max(0, adj.get_upper() - adj.get_page_size()))
-
-        return False
+    def _on_vadj_upper_changed(self, adj, _pspec) -> None:
+        """Content grew (card appended or streaming chunk landed). If
+        we were pinned, stick to the new bottom."""
+        if self._pinned:
+            adj.set_value(max(0, adj.get_upper() - adj.get_page_size()))
 
     def _open_link(self, url: str) -> None:
         Gio.AppInfo.launch_default_for_uri(url, None)
@@ -1293,18 +1199,16 @@ class Session:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
 def _build_adapter(args) -> ConversationAdapter:
+    # Callers pass argparse values through as-is. None / missing values
+    # collapse to per-adapter defaults (see `kwargs.get(name) or DEFAULT`
+    # in the adapter __init__s), so this function doesn't replicate them.
     provider = ConversationProvider(args.converse_provider)
-    # Only pass `model` through when the user set one. Each adapter has its
-    # own sensible default (HTTP → "opus:4.7" via OpenWebUI, Claude → "opus",
-    # Codex → "gpt-5") that varies by provider, so `None` means "let the
-    # adapter decide". Shared kwargs are built once and extended per branch.
-    model_kw = {"model": args.converse_model} if args.converse_model else {}
-
     match provider:
         case ConversationProvider.HTTP:
             return ConversationAdapterHttp(
                 AI_SYSTEM_PROMPT,
                 base_url=args.converse_base_url,
+                model=args.converse_model,
                 api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                 temperature=args.converse_temperature,
                 top_p=args.converse_top_p,
@@ -1312,12 +1216,11 @@ def _build_adapter(args) -> ConversationAdapter:
                 num_ctx=args.converse_num_ctx,
                 tool_ids=args.tool_ids or None,
                 user_agent="ask/1.0",
-                **model_kw,
             )
         case ConversationProvider.CLAUDE:
-            return ConversationAdapterClaude(AI_SYSTEM_PROMPT, **model_kw)
+            return ConversationAdapterClaude(AI_SYSTEM_PROMPT, model=args.converse_model)
         case ConversationProvider.CODEX:
-            return ConversationAdapterCodex(AI_SYSTEM_PROMPT, **model_kw)
+            return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
 

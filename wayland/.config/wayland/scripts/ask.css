@@ -32,24 +32,30 @@
 .overlay * {
   font-family: monospace;
   font-size: 14pt;
-  border: 4px solid @ask_edge;
 }
 
 /* ============================================================ Root
- * EVERY rule in this file is namespaced under `.overlay` (set on the
- * ApplicationWindow). That keeps our selectors more specific than any
- * generic theme rule like `window { background-color: … }` so the theme
- * cannot win by source order.
+ * The window surface itself stays transparent; the `.ask-root` Box
+ * child paints the real background. That's the swaync recipe — some
+ * themes/compositors leave a `window { background-color: … }` painted
+ * under us, so we sidestep the whole fight by not styling the window
+ * and painting on a child Box instead. All other rules still namespace
+ * under `.overlay` so they outspecificity any generic theme selector.
  *
- * NOTE on backgrounds: set `background-color` AND `background-image: none`
- * on every surface that must show its own colour. The `background`
- * shorthand would clear both at once, but it also wipes the TextView
- * `text` subnode's colour, which then paints opaque over the parent card.
- * Use the long forms explicitly. */
+ * NOTE on backgrounds: use `background-color` + `background-image: none`
+ * explicitly rather than the `background` shorthand. The shorthand
+ * clears every image layer too, which can wipe the default background
+ * image on `.view`/`text` subnodes and paint them opaque over parents. */
 .overlay {
-  background-color: @ask_window;
+  background-color: transparent;
   background-image: none;
   color: @ask_fg;
+}
+
+.overlay box.ask-root {
+  background-color: @ask_window;
+  background-image: none;
+  border-left: 4px solid @ask_edge;
 }
 
 .overlay > * {

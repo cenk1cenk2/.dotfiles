@@ -6,7 +6,6 @@ scripts need so callers never reach for a submodule directly.
 
 from .converse import (
     DEFAULT_CONVERSE_ADAPTER,
-    DEFAULT_CONVERSE_MODEL,
     ConversationAdapter,
     ConversationAdapterClaude,
     ConversationAdapterCodex,
@@ -15,7 +14,6 @@ from .converse import (
 )
 from .enrich import (
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_ENRICH_MODEL,
     EnrichAdapterClaude,
     EnrichAdapterCodex,
     EnrichAdapter,
@@ -46,9 +44,7 @@ __all__ = [
     "ConversationAdapterHttp",
     "ConversationProvider",
     "DEFAULT_CONVERSE_ADAPTER",
-    "DEFAULT_CONVERSE_MODEL",
     "DEFAULT_ENRICH_ADAPTER",
-    "DEFAULT_ENRICH_MODEL",
     "EnrichAdapter",
     "EnrichAdapterClaude",
     "EnrichAdapterCodex",
