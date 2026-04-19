@@ -23,6 +23,7 @@ from markdown_it import MarkdownIt
 
 from lib import (
     DEFAULT_CONVERSE_ADAPTER,
+    DEFAULT_SERVER_NAMES,
     ConversationAdapter,
     ConversationAdapterClaude,
     ConversationAdapterCodex,
@@ -36,6 +37,7 @@ from lib import (
     OutputAdapterClipboard,
     ThinkingChunk,
     ToolCall,
+    get_server as _DEFAULT_SERVER_GET,
     load_prompt,
     load_relative_file,
     notify,
@@ -165,6 +167,32 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     # still goes through the approval router first, so the user sees a
     # row before anything spawns.
     _server.enable(McpCapability.OPEN)
+    # Skills directory: one --skills-dir flag enables the list/load tools
+    # backed by that directory. Parsed via the same early-flag trick as
+    # the auto-approve / auto-reject lists — argparse hasn't run yet.
+    for _skills_dir in _early_repeat_flag("--skills-dir"):
+        if not _skills_dir:
+            continue
+        _server.enable(McpCapability.SKILLS, skills_dir=_skills_dir)
+        break  # only one skills dir per subprocess; later flags ignored
+    # Agents.md (and any other file-backed resources): each --agents-md
+    # registers `resource__agents` pointing at the given path. If more
+    # bootstrap files ever need the same treatment we can splat more
+    # `--resource name=path` flags through here.
+    for _agents_path in _early_repeat_flag("--agents-md"):
+        if not _agents_path:
+            continue
+        _server.enable(
+            McpCapability.RESOURCE,
+            name="agents",
+            path=_agents_path,
+            description=(
+                "Fetch the AGENTS.md bootstrap rules — read this at the "
+                "start of the session to load project conventions, MCP "
+                "discovery steps, and long-standing context."
+            ),
+        )
+        break  # single agents.md per subprocess
     _server.run()
     sys.exit(0)
 
@@ -2460,6 +2488,9 @@ class Session:
 def _build_mcp_config(
     auto_approve: Optional[list[str]] = None,
     auto_reject: Optional[list[str]] = None,
+    agents_md: Optional[str] = None,
+    skills_dir: Optional[str] = None,
+    default_mcp: Optional[list[str]] = None,
 ) -> McpConfig:
     """Compose the `McpConfig` we hand to the Claude adapter.
 
@@ -2481,7 +2512,20 @@ def _build_mcp_config(
     subprocess's local auto-list sets are seeded at startup (matches
     the overlay's Session state for this invocation). Runtime
     mutations flow over the MCP bridge socket via the `auto-check`
-    command, so the child stays in sync without being restarted."""
+    command, so the child stays in sync without being restarted.
+
+    `agents_md` / `skills_dir` are likewise splatted so the
+    subprocess's early parser can wire up `McpCapability.RESOURCE`
+    (for AGENTS.md) and `McpCapability.SKILLS` (for the list/load
+    tools). Both are optional — skip either to leave that capability
+    out of the child's registered tool list.
+
+    `default_mcp` names are resolved against `lib.default_servers` and
+    mixed into the final config as peer servers alongside `pilot`. We
+    expand env-vars at this point so the spawned stdio binaries /
+    remote endpoints see the user's actual credentials; missing vars
+    collapse to empty string (the catalog's logging handles the
+    warning)."""
     self_script = os.path.abspath(__file__)
     child_args = ["-u", self_script, "mcp-server"]
     if SESSION_SUFFIX:
@@ -2490,8 +2534,39 @@ def _build_mcp_config(
         child_args.extend(["--auto-approve", name])
     for name in auto_reject or []:
         child_args.extend(["--auto-reject", name])
+    if agents_md:
+        child_args.extend(["--agents-md", agents_md])
+    if skills_dir:
+        child_args.extend(["--skills-dir", skills_dir])
+    # `--default-mcp` is splatted too so the subprocess COULD act on it
+    # in future, even though today it's only the parent claude adapter
+    # that consumes the expanded server specs. Keeps the flag surface
+    # symmetrical between the two halves.
+    for name in default_mcp or []:
+        child_args.extend(["--default-mcp", name])
     config = McpConfig()
     config.add("pilot", sys.executable, args=child_args)
+    # Layer in any requested default servers. Unknown names log a
+    # warning and skip — we don't want a typo on --default-mcp to
+    # prevent the overlay from opening.
+    for raw_name in default_mcp or []:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+        try:
+            spec = _DEFAULT_SERVER_GET(name)
+        except KeyError as e:
+            log.warning("ignoring unknown --default-mcp %r: %s", name, e)
+            continue
+        config.add(
+            name,
+            command=spec.get("command"),
+            args=spec.get("args"),
+            env=spec.get("env"),
+            url=spec.get("url"),
+            type=spec.get("type"),
+            headers=spec.get("headers"),
+        )
 
     return config
 
@@ -2517,6 +2592,60 @@ def _merge_extra_body(blobs) -> dict:
 
     return out
 
+def _resolve_default_mcp(args) -> list[str]:
+    """Collapse `--default-mcp` / `--all-default-mcp` into a de-duped
+    ordered list. `--all-default-mcp` wins when set — every catalog
+    entry is added in display order; individual `--default-mcp` names
+    are appended after (skipping dupes). Unknown names survive to
+    `_build_mcp_config` which logs and skips them; we don't validate
+    here so CLI typos don't crash toggle startup."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _push(name: str) -> None:
+        n = (name or "").strip()
+        if not n or n in seen:
+            return
+        seen.add(n)
+        out.append(n)
+
+    if getattr(args, "all_default_mcp", False):
+        for name in DEFAULT_SERVER_NAMES:
+            _push(name)
+    for name in getattr(args, "default_mcp", None) or []:
+        _push(name)
+
+    return out
+
+
+def _read_agents_md(path: Optional[str]) -> str:
+    """Return the AGENTS.md contents (or empty string if missing / not
+    configured). Any read error degrades to "" + a warning — we never
+    block `toggle` on a missing bootstrap file."""
+    if not path:
+        return ""
+    expanded = os.path.expanduser(path)
+    if not os.path.isfile(expanded):
+        log.warning("--agents-md %s: file not found; skipping injection", expanded)
+        return ""
+    try:
+        with open(expanded, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        log.warning("--agents-md %s: read failed (%s); skipping injection", expanded, e)
+        return ""
+
+
+def _compose_system_prompt(base: str, agents_md: str) -> str:
+    """Prepend `agents_md` to `base`, separated by a blank line, iff
+    `agents_md` has content. Otherwise return `base` unchanged so we
+    don't introduce a leading newline into the default prompt."""
+    if not agents_md:
+        return base
+
+    return f"{agents_md}\n\n{base}"
+
+
 def _build_adapter(args) -> ConversationAdapter:
     # Callers pass argparse values through as-is. None / missing values
     # collapse to per-adapter defaults (see `kwargs.get(name) or DEFAULT`
@@ -2527,10 +2656,17 @@ def _build_adapter(args) -> ConversationAdapter:
     config_suffix = SESSION_SUFFIX or None
     auto_approve = list(getattr(args, "auto_approve", None) or [])
     auto_reject = list(getattr(args, "auto_reject", None) or [])
+    agents_md_path = getattr(args, "agents_md", None)
+    skills_dir = getattr(args, "skills_dir", None)
+    default_mcp = _resolve_default_mcp(args)
+    system_prompt = _compose_system_prompt(
+        AI_SYSTEM_PROMPT,
+        _read_agents_md(agents_md_path),
+    )
     match provider:
         case ConversationProvider.HTTP:
             return ConversationAdapterHttp(
-                AI_SYSTEM_PROMPT,
+                system_prompt,
                 base_url=args.converse_base_url,
                 model=args.converse_model,
                 api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
@@ -2544,11 +2680,14 @@ def _build_adapter(args) -> ConversationAdapter:
             )
         case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(
-                AI_SYSTEM_PROMPT,
+                system_prompt,
                 model=args.converse_model,
                 mcp_config=_build_mcp_config(
                     auto_approve=auto_approve,
                     auto_reject=auto_reject,
+                    agents_md=agents_md_path,
+                    skills_dir=skills_dir,
+                    default_mcp=default_mcp,
                 ),
                 permission_tool="mcp__pilot__approve",
                 cwd=cwd,
@@ -2556,13 +2695,13 @@ def _build_adapter(args) -> ConversationAdapter:
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(
-                AI_SYSTEM_PROMPT,
+                system_prompt,
                 model=args.converse_model,
                 cwd=cwd,
             )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
-                AI_SYSTEM_PROMPT,
+                system_prompt,
                 model=args.converse_model,
                 # Same MCP config the claude branch uses — opencode
                 # supports MCP servers natively, we just splice ours
@@ -2570,6 +2709,9 @@ def _build_adapter(args) -> ConversationAdapter:
                 mcp_config=_build_mcp_config(
                     auto_approve=auto_approve,
                     auto_reject=auto_reject,
+                    agents_md=agents_md_path,
+                    skills_dir=skills_dir,
+                    default_mcp=default_mcp,
                 ),
                 cwd=cwd,
                 config_suffix=config_suffix,
@@ -2859,6 +3001,71 @@ def main():
             "Tool name to auto-reject without prompting the user. "
             "Repeatable; case-insensitive, `-`/`_` unified. Click the "
             "corresponding red pill in the compose bar to revoke."
+        ),
+    )
+    # Bootstrap-rules injection. When set (and the file exists) the
+    # contents are PREPENDED to the provider's system prompt on the
+    # first turn, AND registered as `mcp__pilot__resource__agents` so
+    # the model can re-read the canonical source mid-session. Default
+    # matches the nvim config's AGENTS.md path; set to empty string to
+    # disable injection entirely.
+    toggle_parser.add_argument(
+        "--agents-md",
+        dest="agents_md",
+        default="~/.config/nvim/utils/agents/AGENTS.md",
+        metavar="PATH",
+        help=(
+            "Path to AGENTS.md. When the file exists its contents are "
+            "prepended to the system prompt and exposed as an MCP "
+            "resource tool so the model can re-read it on demand. "
+            "Empty string disables injection. "
+            "Default: ~/.config/nvim/utils/agents/AGENTS.md"
+        ),
+    )
+    # Skills directory. When set (and the dir exists) the subprocess
+    # registers `list_skills` + `load_skill` MCP tools backed by the
+    # `*/SKILL.md` layout from mcphub-nvim. Default matches the nvim
+    # config; set to "" to skip.
+    toggle_parser.add_argument(
+        "--skills-dir",
+        dest="skills_dir",
+        default="~/.config/nvim/utils/agents/skills",
+        metavar="DIR",
+        help=(
+            "Path to the agent skills root. Each subdirectory must "
+            "contain a SKILL.md with `---`-delimited YAML frontmatter "
+            "(name + description). Empty string disables the skills "
+            "MCP capability. "
+            "Default: ~/.config/nvim/utils/agents/skills"
+        ),
+    )
+    # Default MCP catalog. `--default-mcp NAME` is repeatable and
+    # references an entry in `lib.default_servers.DEFAULT_SERVERS`.
+    # Unknown names log + skip; missing env vars expand to "" rather
+    # than crashing. Leave empty (the default) to opt out.
+    toggle_parser.add_argument(
+        "--default-mcp",
+        action="append",
+        dest="default_mcp",
+        default=[],
+        metavar="NAME",
+        choices=list(DEFAULT_SERVER_NAMES) + [""],
+        help=(
+            "Name of a default MCP server to register alongside "
+            "`pilot`. Repeatable. Valid names: "
+            + ", ".join(DEFAULT_SERVER_NAMES)
+        ),
+    )
+    # Shortcut for "every catalog entry". Mutually compatible with
+    # `--default-mcp` — explicit names after the flag are de-duped.
+    toggle_parser.add_argument(
+        "--all-default-mcp",
+        dest="all_default_mcp",
+        action="store_true",
+        default=False,
+        help=(
+            "Register every server in lib.default_servers in display "
+            "order. Equivalent to passing each name via --default-mcp."
         ),
     )
 

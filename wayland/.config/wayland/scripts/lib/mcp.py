@@ -676,7 +676,22 @@ class McpServer:
             skills = self._load_agent_skills(expanded)
             for s in skills:
                 if s["name"] == name:
-                    return {"name": name, "content": s["body"]}
+                    # Return the skill body directly as a markdown
+                    # text block — the Lua source shapes it the same
+                    # way (`res:text(string.format("--- %s ---\n%s",
+                    # name, content))`). Using the envelope form keeps
+                    # MCP clients happy; the runtime dispatcher would
+                    # otherwise misread a raw `{name, content}` dict
+                    # as an envelope because of the `content` key.
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"--- {name} ---\n{s['body']}",
+                            }
+                        ],
+                        "isError": False,
+                    }
 
             return {
                 "content": [
@@ -766,7 +781,20 @@ class McpServer:
                     "isError": True,
                 }
 
-            return {"name": name, "path": expanded, "content": content}
+            # Envelope-shape the payload so the `content` key isn't
+            # ambiguous to the runtime dispatcher (which treats any
+            # dict with `content` as a pre-baked MCP result). Prefix
+            # with a header line so the model can see which resource
+            # it's reading without inspecting the tool-call metadata.
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"--- {name} ({expanded}) ---\n{content}",
+                    }
+                ],
+                "isError": False,
+            }
 
         self.register_tool(
             tool_name,
