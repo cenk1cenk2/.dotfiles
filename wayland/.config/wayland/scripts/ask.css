@@ -1,13 +1,18 @@
 /* ============================================================ Tokens
  * Pulled from ~/.config/nvim/lua/onedarker/colors.lua so the overlay
- * matches the editor theme. Adjust here — not in the rule bodies. */
-@define-color ask_bg #121212;
-@define-color ask_surface #17191e;
-@define-color ask_surface_hi #1e2127;
-@define-color ask_surface_edit #22282f;
-@define-color ask_border #2c333d;
-@define-color ask_border_hi #4b5263;
-@define-color ask_border_focus #61afef;
+ * matches the editor theme. Adjust here — not in the rule bodies.
+ *
+ * Elevation (onedarker: higher number = lighter):
+ *   window    = bg[100]   darker base
+ *   cards     = bg[200]   lift above the surrounding surface
+ *   assistant = bg[300]   slightly more elevation vs user card
+ */
+@define-color ask_bg #17191e; /* bg[100]   window */
+@define-color ask_surface #1e2127; /* bg[200]   card */
+@define-color ask_surface_hi #22282f; /* bg[300]   assistant + edit */
+@define-color ask_border #2c333d; /* bg[400] */
+@define-color ask_border_hi #4b5263; /* bg[500] */
+@define-color ask_border_focus #61afef; /* blue[600] */
 @define-color ask_fg #abb2bf;
 @define-color ask_fg_dim #7c8a9d;
 @define-color ask_fg_muted #5c6370;
@@ -18,15 +23,14 @@
 @define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
 
-/* Use the system monospace (aliased via fontconfig to $term-font). */
+/* System monospace (aliased via fontconfig to $term-font). */
 * {
   font-family: monospace;
 }
 
-/* Surface. Slightly translucent so compositor blur peeks through where
- * enabled. */
+/* Window surface. bg[100] so cards at bg[200] visibly lift. */
 window {
-  background: #1e2127cc;
+  background: @ask_bg;
   color: @ask_fg;
 }
 
@@ -38,7 +42,7 @@ box.ask-header {
 }
 
 label.ask-provider {
-  font-size: 11pt;
+  font-size: 12pt;
   font-weight: 700;
   padding: 4px 12px;
   border-radius: 999px;
@@ -68,7 +72,7 @@ button.ask-close {
   padding: 4px 10px;
   min-width: 0;
   color: @ask_fg_dim;
-  font-size: 13pt;
+  font-size: 15pt;
   border-radius: 6px;
 }
 
@@ -83,17 +87,16 @@ scrolledwindow.ask-conv-scroller {
 }
 
 box.ask-conv {
-  padding: 12px 10px 6px 10px;
+  padding: 10px 10px 4px 10px;
 }
 
-/* Each user / assistant turn is its own card. Role-accented left edge
- * + role title above the body mark the speaker. */
+/* Turn card. Role-accented left edge + role title above the body. */
 box.ask-card {
   background: @ask_surface;
   border: 1px solid @ask_border;
-  border-radius: 12px;
-  padding: 10px 14px;
-  margin: 4px 2px;
+  border-radius: 10px;
+  padding: 6px 12px 4px 12px;
+  margin: 3px 2px;
 }
 
 box.ask-card-user {
@@ -106,11 +109,11 @@ box.ask-card-assistant {
 }
 
 label.ask-card-role {
-  font-size: 9pt;
+  font-size: 10pt;
   font-weight: 800;
   color: @ask_fg_dim;
   letter-spacing: 0.04em;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 label.ask-card-role-user {
@@ -123,7 +126,7 @@ label.ask-card-role-assistant {
 
 textview.ask-card-text,
 textview.ask-card-text text {
-  font-size: 11pt;
+  font-size: 13pt;
   background: transparent;
   color: @ask_fg;
 }
@@ -152,7 +155,7 @@ textview.ask-compose-text,
 textview.ask-compose-text text {
   background: transparent;
   color: @ask_fg;
-  font-size: 12pt;
+  font-size: 14pt;
   caret-color: @ask_accent;
 }
 
@@ -163,7 +166,7 @@ box.ask-compose-bar {
 }
 
 label.ask-compose-hint {
-  font-size: 9pt;
+  font-size: 11pt;
   color: @ask_fg_muted;
   letter-spacing: 0.02em;
 }
@@ -174,7 +177,7 @@ button.ask-compose-send {
   border: none;
   border-radius: 6px;
   padding: 4px 14px;
-  font-size: 10pt;
+  font-size: 12pt;
   font-weight: 700;
   letter-spacing: 0.08em;
   min-width: 0;
@@ -197,7 +200,7 @@ box.ask-queue {
 }
 
 label.ask-queue-header {
-  font-size: 9pt;
+  font-size: 11pt;
   font-weight: 700;
   color: @ask_fg_muted;
   padding: 4px 2px 6px 2px;
@@ -232,12 +235,12 @@ box.ask-queue-card:hover {
 }
 
 label.ask-queue-text {
-  font-size: 11pt;
+  font-size: 13pt;
   color: @ask_fg;
 }
 
 scrolledwindow.ask-queue-edit {
-  background: @ask_surface_edit;
+  background: @ask_surface_hi;
   border: 1px solid @ask_border_focus;
   border-radius: 6px;
   padding: 2px;
@@ -247,7 +250,7 @@ textview.ask-queue-edit-text,
 textview.ask-queue-edit-text text {
   background: transparent;
   color: @ask_fg;
-  font-size: 11pt;
+  font-size: 13pt;
 }
 
 box.ask-queue-actions {
@@ -263,7 +266,7 @@ button.ask-queue-remove {
   min-width: 0;
   color: @ask_fg_dim;
   border-radius: 6px;
-  font-size: 10pt;
+  font-size: 12pt;
 }
 
 button.ask-queue-edit:hover {

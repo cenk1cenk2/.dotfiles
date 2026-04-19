@@ -221,6 +221,23 @@ class MarkdownView:
         self.buffer.set_text("")
         tokens = self._md.parse(text)
         self._walk(tokens, tag_stack=[], list_stack=[])
+        self._trim_trailing_whitespace()
+
+    def _trim_trailing_whitespace(self) -> None:
+        """Paragraph/heading/list closers emit trailing newlines so blocks
+        are separated mid-buffer. The very last closer leaves a couple of
+        orphan newlines at the end — invisible in a single-buffer view but
+        read as empty lines of padding inside a per-turn card. Walk back
+        and delete them so the card hugs its content."""
+        buf = self.buffer
+        end = buf.get_end_iter()
+        start = end.copy()
+        while start.backward_char():
+            if start.get_char() not in (" ", "\n", "\t"):
+                start.forward_char()
+                break
+        if not start.equal(end):
+            buf.delete(start, end)
 
     def _walk(self, tokens, tag_stack, list_stack) -> None:
         for tok in tokens:
@@ -881,21 +898,15 @@ class AskWindow(Gtk.ApplicationWindow):
         return row.text()
 
     def _on_queue_send(self, row: QueueRow) -> None:
+        # Manual-drain policy: ⏎ dispatches this specific card only if
+        # nothing is currently streaming. While streaming, the button is
+        # a soft no-op — the user can wait or use the ⏎ on another
+        # card later. Keeps the conversation's pacing in their hands.
+        if self._streaming:
+            log.info("ignoring queue-send while streaming")
+            return
         text = self._remove_queue_row(row)
         if not text:
-            return
-        if self._streaming:
-            # Promote to the head of the queue — next to drain when
-            # _mark_idle fires.
-            promoted = QueueRow(
-                text=text,
-                on_send=self._on_queue_send,
-                on_remove=self._on_queue_remove,
-                on_edit_commit=self._on_queue_edit,
-            )
-            self._queue.insert(0, promoted)
-            self._queue_listbox.prepend(promoted)
-            self._queue_box.set_visible(True)
             return
         self._start_turn(text)
 
