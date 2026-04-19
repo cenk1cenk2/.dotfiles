@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from markdown_it import MarkdownIt
 
@@ -87,6 +87,28 @@ def _early_session_suffix() -> str:
 
     return ""
 
+def _early_repeat_flag(flag: str) -> list[str]:
+    """Pull every `--<flag> <value>` / `--<flag>=<value>` occurrence from
+    sys.argv without touching argparse. Mirrors `_early_session_suffix`
+    but for repeatable flags like `--auto-approve` / `--auto-reject`
+    that the early mcp-server branch needs to honour before the main
+    CLI parser exists."""
+    prefix_equals = f"{flag}="
+    out: list[str] = []
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == flag and i + 1 < len(argv):
+            out.append(argv[i + 1])
+            i += 2
+            continue
+        if token.startswith(prefix_equals):
+            out.append(token.split("=", 1)[1])
+        i += 1
+
+    return out
+
 def _mcp_sock_name(suffix: str) -> str:
     """Return the runtime-relative socket filename for the MCP bridge.
     With no suffix that's `wayland-pilot-mcp.sock`; with suffix `plan`
@@ -101,12 +123,27 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
         McpServer,
         question_route,
         socket_approval,
+        socket_auto_check,
         socket_question,
     )
 
     _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     _mcp_sock = os.path.join(_runtime, _mcp_sock_name(_early_session_suffix()))
     _server = McpServer("pilot")
+    # Seed the subprocess's local auto sets from CLI args. These serve
+    # as the offline-mode source of truth when the bridge socket is
+    # unreachable; when it IS reachable the socket_auto_check route
+    # (installed first below) consults the overlay's live sets instead,
+    # so user-driven mutations (pill clicks, ⛔ auto-reject button)
+    # take effect mid-session without having to rebuild the subprocess.
+    _server.add_auto_approve(*_early_repeat_flag("--auto-approve"))
+    _server.add_auto_reject(*_early_repeat_flag("--auto-reject"))
+    # Install the socket-backed auto-check route BEFORE anything else —
+    # the overlay is the authoritative source for live auto-list
+    # membership. `continue` responses / transport errors fall through
+    # to the server's local auto-list route (seeded above), then the
+    # question route, then the base socket_approval callback.
+    _server.prepend_approval_route(*socket_auto_check(_mcp_sock))
     # Single question callback shared between two entry points: the
     # generic approval router (registered below via
     # `add_approval_route`) pivots the model's built-in
@@ -500,10 +537,31 @@ class ComposeView:
         self._scroller.set_max_content_height(max(floor, cap))
 
     def set_trusted_pills(self, names, on_remove) -> None:
-        """Rebuild the trusted-tool pill strip. `names` is an iterable of
-        tool names; `on_remove(name)` is invoked when a pill is clicked.
-        Hides the pill row when empty, hides the hint label when we
-        have pills so they get room to breathe inline with the submit."""
+        """Back-compat shim. Old callers pass just the trusted list and
+        a 1-arg remove callback. Adapts to the new tri-list API by
+        wrapping the callback to ignore the `kind` arg."""
+        self.set_permission_pills(
+            trusted=list(names),
+            auto_approved=[],
+            auto_rejected=[],
+            on_remove=lambda name, _kind: on_remove(name),
+        )
+
+    def set_permission_pills(
+        self,
+        trusted,
+        auto_approved,
+        auto_rejected,
+        on_remove,
+    ) -> None:
+        """Rebuild the compose-bar pill strip with three colour bands —
+        accent (trusted), green (auto-approved), red (auto-rejected).
+        `on_remove(name, kind)` gets the list the clicked pill came
+        from so the window knows which set to drop it from
+        (`"trusted"` / `"auto_approve"` / `"auto_reject"`).
+
+        Hides the row when all three lists are empty; hides the hint
+        label otherwise so pills + hint + send don't crowd the bar."""
         self._pill_remove_cb = on_remove
         # Clear the old children — FlowBox doesn't have a bulk-clear.
         child = self._pills_flow.get_first_child()
@@ -512,29 +570,45 @@ class ComposeView:
             self._pills_flow.remove(child)
             child = nxt
 
-        names = list(names)
-        if not names:
+        groups = [
+            ("trusted", list(trusted), None, "Click to untrust {name} (re-enables prompts)"),
+            ("auto_approve", list(auto_approved), "auto-approve", "Click to drop {name} from the auto-approve list"),
+            ("auto_reject", list(auto_rejected), "auto-reject", "Click to drop {name} from the auto-reject list"),
+        ]
+        total = sum(len(lst) for _k, lst, _cls, _tip in groups)
+        if total == 0:
             self._pills_flow.set_visible(False)
             if self._hint_label is not None:
                 self._hint_label.set_visible(True)
 
             return
 
-        for name in names:
-            btn = Gtk.Button(label=f"{name} ✕")
-            btn.add_css_class("pilot-compose-pill")
-            btn.set_tooltip_text(f"Click to untrust {name} (re-enables prompts)")
-            btn.connect("clicked", lambda _b, n=name: self._on_pill_click(n))
-            self._pills_flow.append(btn)
+        for kind, names, extra_cls, tooltip_fmt in groups:
+            for name in names:
+                btn = Gtk.Button(label=f"{name} ✕")
+                btn.add_css_class("pilot-compose-pill")
+                if extra_cls:
+                    btn.add_css_class(extra_cls)
+                btn.set_tooltip_text(tooltip_fmt.format(name=name))
+                btn.connect(
+                    "clicked",
+                    lambda _b, n=name, k=kind: self._on_pill_click(n, k),
+                )
+                self._pills_flow.append(btn)
         self._pills_flow.set_visible(True)
         # Hide the hint when pills are present — pills + hint + send
         # would crowd the submit bar on narrow overlays.
         if self._hint_label is not None:
             self._hint_label.set_visible(False)
 
-    def _on_pill_click(self, name: str) -> None:
+    def _on_pill_click(self, name: str, kind: str = "trusted") -> None:
         if self._pill_remove_cb is not None:
-            self._pill_remove_cb(name)
+            # Accommodate both the new (name, kind) callback and any
+            # legacy single-arg callers that slip through.
+            try:
+                self._pill_remove_cb(name, kind)
+            except TypeError:
+                self._pill_remove_cb(name)
 
     def get_text(self) -> str:
         buf = self._textview.get_buffer()
@@ -891,12 +965,20 @@ class PermissionRow(Gtk.ListBoxRow):
     actual tool execution in any of our backends. Documented in the
     plan; user-facing copy keeps the verbs honest."""
 
-    def __init__(self, call: ToolCall, on_allow, on_trust, on_deny):
+    def __init__(
+        self,
+        call: ToolCall,
+        on_allow,
+        on_trust,
+        on_deny,
+        on_auto_reject=None,
+    ):
         super().__init__()
         self._call = call
         self._on_allow = on_allow
         self._on_trust = on_trust
         self._on_deny = on_deny
+        self._on_auto_reject = on_auto_reject
         self.add_css_class("pilot-permission-row")
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -952,6 +1034,24 @@ class PermissionRow(Gtk.ListBoxRow):
         self._deny_btn.connect("clicked", lambda _b: self._on_deny(self))
         actions.append(self._deny_btn)
 
+        # ⛔ auto-reject — symmetric to trust but for the auto-reject
+        # list: future calls for this tool short-circuit to `deny`
+        # without surfacing a row, AND the current turn is cancelled
+        # so the model stops mid-sentence. Red-tinted like deny to
+        # signal "this is destructive in both directions".
+        self._auto_reject_btn: Optional[Gtk.Button] = None
+        if on_auto_reject is not None:
+            self._auto_reject_btn = Gtk.Button(label="⛔ auto-reject")
+            self._auto_reject_btn.add_css_class("pilot-permission-autoreject")
+            self._auto_reject_btn.set_tooltip_text(
+                "Cancel this turn AND auto-reject every future call to "
+                "this tool for the rest of the session"
+            )
+            self._auto_reject_btn.connect(
+                "clicked", lambda _b: self._on_auto_reject(self)
+            )
+            actions.append(self._auto_reject_btn)
+
         card.append(actions)
         self.set_child(card)
 
@@ -982,12 +1082,24 @@ class PilotWindow(Gtk.ApplicationWindow):
     HEADER_FMT = "Pilot - {provider}"
     HEADER_WITH_MODEL_FMT = "Pilot - {provider} ({model})"
 
-    def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
+    def __init__(
+        self,
+        app: Gtk.Application,
+        adapter: ConversationAdapter,
+        auto_approve: Optional[list[str]] = None,
+        auto_reject: Optional[list[str]] = None,
+    ):
         super().__init__(application=app, title="Pilot")
         # `.overlay` is our root scope — every CSS rule is namespaced under
         # it so theme selectors like `window { background: … }` can't win.
         self.add_css_class("overlay")
         self._adapter = adapter
+        # Session handle wired later via `attach_session` — the overlay
+        # uses it to push auto-list mutations into the authoritative
+        # Session state (which the MCP subprocess polls over the bridge
+        # socket). None-safe so tests can construct windows without a
+        # live socket.
+        self._session: Optional["Session"] = None
         # HTTP adapter carries a model; claude/codex wrap CLIs that pick
         # their own. Model string can be empty → treat as absent.
         raw_model = getattr(adapter, "model", "") or ""
@@ -1018,6 +1130,17 @@ class PilotWindow(Gtk.ApplicationWindow):
         extra_body = getattr(adapter, "extra_body", None) or {}
         initial_tool_ids = extra_body.get("tool_ids") if isinstance(extra_body, dict) else None
         self._trusted_tools: set[str] = set(initial_tool_ids or [])
+        # Auto-lists are a SEPARATE short-circuit from trust:
+        # - `_auto_approved_tools` — responses come back `allow` without
+        #   the user seeing a row. Rendered as green pills.
+        # - `_auto_rejected_tools` — responses come back `deny` without
+        #   the user seeing a row. Rendered as red pills.
+        # These sets drive UI rendering; the Session owns the
+        # authoritative copy the MCP subprocess consults over the
+        # bridge. Seeded from CLI args in parallel with the Session so
+        # both start identical on session launch.
+        self._auto_approved_tools: set[str] = set(auto_approve or [])
+        self._auto_rejected_tools: set[str] = set(auto_reject or [])
         self._install_css()
 
         Gtk4LayerShell.init_for_window(self)
@@ -1113,10 +1236,12 @@ class PilotWindow(Gtk.ApplicationWindow):
 
         self.set_child(root)
 
-        # Render pills for the seeded trust set (from CLI defaults) so
-        # the user sees which tools are pre-authorised for this session
-        # from the moment the window opens.
-        self._sync_tool_gate()
+        # Render pills for the seeded trust + auto-list state so the
+        # user sees pre-authorised / auto-decided tools from the moment
+        # the window opens. `_sync_permission_state` is the full tri-
+        # list sync; the older `_sync_tool_gate` alias stays available
+        # for back-compat.
+        self._sync_permission_state()
 
         self._wire_keys()
         self.connect("close-request", self._on_close_request)
@@ -1454,11 +1579,25 @@ class PilotWindow(Gtk.ApplicationWindow):
             log.debug("tool %r is trusted; skipping permission row", call.name)
 
             return False
+        # Belt-and-suspenders: the MCP subprocess's approval route
+        # should have short-circuited before any row reaches this
+        # branch, but non-Claude adapters (HTTP, codex) bypass MCP
+        # entirely and still surface ToolCall events through the audit
+        # trail. Filter those here so the pills and the audit trail
+        # stay consistent.
+        if call.name:
+            if call.name in self._auto_approved_tools:
+                log.debug("tool %r auto-approved; skipping row", call.name)
+                return False
+            if call.name in self._auto_rejected_tools:
+                log.debug("tool %r auto-rejected; skipping row", call.name)
+                return False
         row = PermissionRow(
             call,
             on_allow=self._on_permission_allow,
             on_trust=self._on_permission_trust,
             on_deny=self._on_permission_deny,
+            on_auto_reject=self._on_permission_auto_reject,
         )
         was_empty = not self._permissions
         self._permissions.append(row)
@@ -1530,7 +1669,20 @@ class PilotWindow(Gtk.ApplicationWindow):
         the user clicks. This is the REAL gate for `--converse-provider
         claude` — the pilot MCP subprocess is blocked on a socket round-
         trip here, so claude's subprocess won't run the tool until we
-        return. Returns False so `GLib.idle_add` fires once."""
+        return. Returns False so `GLib.idle_add` fires once.
+
+        Belt-and-suspenders: if the tool is in an auto list the MCP
+        subprocess's socket_auto_check route should have resolved the
+        request upstream. If a request still reaches us (racy mutation,
+        first-call-per-tool, etc.) we resolve without surfacing a row
+        so the UI stays consistent with the pill state."""
+        name = call.name or ""
+        if name and name in self._auto_rejected_tools:
+            resolve(False, f"auto-rejected: {name}")
+            return False
+        if name and name in self._auto_approved_tools:
+            resolve(True, "")
+            return False
 
         def on_allow(r: PermissionRow) -> None:
             self._remove_permission_row(r)
@@ -1540,7 +1692,7 @@ class PilotWindow(Gtk.ApplicationWindow):
             name = r.tool_name
             if name:
                 self._trusted_tools.add(name)
-                self._sync_tool_gate()
+                self._sync_permission_state()
             for existing in list(self._permissions):
                 if existing.tool_name == name:
                     self._remove_permission_row(existing)
@@ -1551,11 +1703,42 @@ class PilotWindow(Gtk.ApplicationWindow):
             self._remove_permission_row(r)
             resolve(False, f"user denied {name}")
 
+        def on_auto_reject(r: PermissionRow) -> None:
+            # Add to auto-reject, push to session so the MCP subprocess
+            # sees the update for subsequent calls, cancel the turn,
+            # stamp the assistant card, clear the row + any siblings
+            # for the same tool. The `resolve(False)` path finalises
+            # the current in-flight MCP request — subsequent requests
+            # for the same tool will short-circuit upstream via the
+            # socket_auto_check route.
+            name = r.tool_name or "tool"
+            if r.tool_name:
+                self._auto_rejected_tools.add(r.tool_name)
+                # Removing from auto_approve keeps mutual exclusion
+                # honest — a tool in both sets would pick reject
+                # (reject wins in McpServer's normalisation), but UI
+                # wise we shouldn't show both pills.
+                self._auto_approved_tools.discard(r.tool_name)
+                self._sync_permission_state()
+            try:
+                self._adapter.cancel()
+            except Exception as e:
+                log.warning("adapter cancel raised during auto-reject: %s", e)
+            if self._active_assistant is not None:
+                self._active_assistant.append(
+                    f"\n\n*— cancelled (auto-rejected: {name}) —*"
+                )
+            for existing in list(self._permissions):
+                if existing.tool_name == r.tool_name:
+                    self._remove_permission_row(existing)
+            resolve(False, f"auto-rejected: {name}")
+
         row = PermissionRow(
             call,
             on_allow=on_allow,
             on_trust=on_trust,
             on_deny=on_deny,
+            on_auto_reject=on_auto_reject,
         )
         was_empty = not self._permissions
         self._permissions.append(row)
@@ -1575,12 +1758,33 @@ class PilotWindow(Gtk.ApplicationWindow):
         name = row.tool_name
         if name:
             self._trusted_tools.add(name)
-            self._sync_tool_gate()
+            self._sync_permission_state()
         # Drop every pending row for the same tool while we're at it —
         # the user just said they trust it, no point keeping duplicate
         # prompts for concurrent calls on screen.
         for existing in list(self._permissions):
             if existing.tool_name == name:
+                self._remove_permission_row(existing)
+
+    def _on_permission_auto_reject(self, row: PermissionRow) -> None:
+        """Non-MCP auto-reject path. Same shape as the MCP variant in
+        `show_permission_for_mcp` but without the resolver — this
+        fires for ToolCall audit rows, which are fire-and-forget."""
+        name = row.tool_name or "tool"
+        if row.tool_name:
+            self._auto_rejected_tools.add(row.tool_name)
+            self._auto_approved_tools.discard(row.tool_name)
+            self._sync_permission_state()
+        try:
+            self._adapter.cancel()
+        except Exception as e:
+            log.warning("adapter cancel raised during auto-reject: %s", e)
+        if self._active_assistant is not None:
+            self._active_assistant.append(
+                f"\n\n*— cancelled (auto-rejected: {name}) —*"
+            )
+        for existing in list(self._permissions):
+            if existing.tool_name == row.tool_name:
                 self._remove_permission_row(existing)
 
     def _untrust_tool(self, name: str) -> None:
@@ -1589,17 +1793,47 @@ class PilotWindow(Gtk.ApplicationWindow):
         pill click handler."""
         if name in self._trusted_tools:
             self._trusted_tools.discard(name)
-            self._sync_tool_gate()
+            self._sync_permission_state()
+
+    def attach_session(self, session: "Session") -> None:
+        """Wire a live Session onto the window so permission actions
+        (pill clicks, ⛔ auto-reject button) can push auto-list
+        mutations into the authoritative Session state. The window
+        stays functional without a session attached — mutations just
+        stay local, which matches the expected behaviour for tests and
+        non-MCP providers that don't spawn an approval bridge."""
+        self._session = session
+        # Seed the session's lists from the window so both sides
+        # agree at attach time (the session has its own CLI-seed path;
+        # this is belt-and-suspenders for construction orderings that
+        # pass lists to the window but not the session).
+        session.set_auto_lists(
+            approve=sorted(self._auto_approved_tools),
+            reject=sorted(self._auto_rejected_tools),
+        )
+        self._sync_permission_state()
 
     def _sync_tool_gate(self) -> None:
-        """Mirror `_trusted_tools` into the adapter's
-        `extra_body["tool_ids"]` so the next turn sends exactly the
-        trusted set to the server, and refresh the compose-bar pills
-        to match. This is the real gate — untrusted tools aren't
-        advertised, so the server can't invoke them. Runs every time
-        trust changes. Only the HTTP adapter carries an `extra_body`
-        today; the CLI adapters don't advertise server-side tool ids
-        so the hasattr guard keeps them quietly untouched."""
+        """Kept for back-compat — older callers use this name. Routes
+        through `_sync_permission_state` which handles the full (trust
+        + auto-approve + auto-reject) tri-list sync."""
+        self._sync_permission_state()
+
+    def _sync_permission_state(self) -> None:
+        """Push the current trust / auto-approve / auto-reject sets
+        into three places so every consumer sees the same truth:
+
+        1. `adapter.extra_body["tool_ids"]` — pre-flight trust gate
+           for HTTP adapters. Unchanged from `_sync_tool_gate`'s
+           original responsibility.
+        2. `Session._auto_approve` / `_auto_reject` — authority the
+           MCP subprocess consults over the bridge socket. Only
+           touched when a Session is attached (tests skip).
+        3. Compose-bar pills — visual reflection of all three sets
+           with click-to-remove affordances per list.
+
+        Called from attach_session and every time the user mutates
+        trust or an auto-list via a pill click / permission button."""
         extra_body = getattr(self._adapter, "extra_body", None)
         if isinstance(extra_body, dict):
             if self._trusted_tools:
@@ -1610,10 +1844,33 @@ class PilotWindow(Gtk.ApplicationWindow):
                 # tools, matching the pre-refactor behaviour where
                 # tool_ids=None suppressed the field entirely.
                 extra_body.pop("tool_ids", None)
-        self._compose.set_trusted_pills(
-            sorted(self._trusted_tools),
-            self._untrust_tool,
+        if self._session is not None:
+            self._session.set_auto_lists(
+                approve=sorted(self._auto_approved_tools),
+                reject=sorted(self._auto_rejected_tools),
+            )
+        self._compose.set_permission_pills(
+            trusted=sorted(self._trusted_tools),
+            auto_approved=sorted(self._auto_approved_tools),
+            auto_rejected=sorted(self._auto_rejected_tools),
+            on_remove=self._on_pill_remove,
         )
+
+    def _on_pill_remove(self, name: str, kind: str) -> None:
+        """Compose-bar pill click handler. `kind` picks which list the
+        tool gets removed from; the caller (ComposeView) passes
+        whichever list the clicked pill was rendered from, so each
+        pill's click affordance stays predictable (click green pill →
+        leaves auto-approve, click red → leaves auto-reject, etc.)."""
+        match kind:
+            case "trusted":
+                self._untrust_tool(name)
+            case "auto_approve":
+                self._auto_approved_tools.discard(name)
+                self._sync_permission_state()
+            case "auto_reject":
+                self._auto_rejected_tools.discard(name)
+                self._sync_permission_state()
 
     def _on_permission_deny(self, row: PermissionRow) -> None:
         """Cancel the in-flight stream and revoke trust for this tool.
@@ -1630,7 +1887,7 @@ class PilotWindow(Gtk.ApplicationWindow):
             self._active_assistant.append(f"\n\n*— cancelled (denied: {tool_name}) —*")
         if tool_name in self._trusted_tools:
             self._trusted_tools.discard(tool_name)
-            self._sync_tool_gate()
+            self._sync_permission_state()
         for existing in list(self._permissions):
             self._remove_permission_row(existing)
 
@@ -1953,15 +2210,71 @@ def _send(cmd: str, **kwargs) -> Optional[dict]:
 class Session:
     """Owns the Unix socket for a live pilot window. A background thread
     accepts connections from forwarder invocations and dispatches their
-    `turn` / `status` commands back onto the GTK main thread."""
+    `turn` / `status` commands back onto the GTK main thread.
 
-    def __init__(self, window: PilotWindow, provider: ConversationProvider):
+    Also acts as the AUTHORITATIVE source for auto-approve /
+    auto-reject sets. The MCP subprocess pings us over the bridge
+    socket via `auto-check` before every approval request; the user
+    mutates the sets by clicking pills / the ⛔ button in the overlay,
+    and the overlay forwards the new state into this object via
+    `set_auto_lists()`. Using a Lock around the sets keeps socket
+    handler threads (serving `auto-check`) and the GTK thread (pushing
+    mutations) from racing."""
+
+    def __init__(
+        self,
+        window: PilotWindow,
+        provider: ConversationProvider,
+        auto_approve: Optional[list[str]] = None,
+        auto_reject: Optional[list[str]] = None,
+    ):
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
         self._mcp_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._mcp_thread: Optional[threading.Thread] = None
+        self._auto_lock = threading.Lock()
+        # Normalise on insert so the mcp-server subprocess's canonical
+        # form (`lower + replace("-", "_")`) matches what it compares
+        # against over the bridge. Keep the raw forms readable — the
+        # overlay uses the un-normalised form for UI pills, but the
+        # authority needs canonical for correctness.
+        self._auto_approve: set[str] = set(
+            self._normalise_name(n) for n in (auto_approve or [])
+        )
+        self._auto_reject: set[str] = set(
+            self._normalise_name(n) for n in (auto_reject or [])
+        )
+
+    @staticmethod
+    def _normalise_name(name: str) -> str:
+        """Match `McpServer._normalise_tool_name` so the authority's
+        canonical form lines up with the subprocess's lookup keys."""
+        return (name or "").lower().replace("-", "_")
+
+    def set_auto_lists(self, approve: list[str], reject: list[str]) -> None:
+        """Replace the in-memory auto lists wholesale. Called from the
+        overlay whenever the user mutates a pill / button; subsequent
+        `auto-check` lookups from the MCP subprocess see the new
+        state immediately."""
+        with self._auto_lock:
+            self._auto_approve = set(self._normalise_name(n) for n in approve)
+            self._auto_reject = set(self._normalise_name(n) for n in reject)
+
+    def _auto_decision(self, tool_name: str) -> str:
+        """Return `"approve"`, `"reject"`, or `"continue"` for the
+        given tool name. Reject wins over approve when both lists
+        somehow contain the same tool — matches McpServer's local
+        route ordering."""
+        key = self._normalise_name(tool_name)
+        with self._auto_lock:
+            if key in self._auto_reject:
+                return "reject"
+            if key in self._auto_approve:
+                return "approve"
+
+            return "continue"
 
     def _bind(self, path: str, live_check: bool) -> socket.socket:
         """Bind a listener to `path`, cleaning up stale socket files.
@@ -2110,6 +2423,20 @@ class Session:
                     verdict = {"approved": False, "reason": "overlay timeout"}
 
                 return verdict
+            case "auto-check":
+                # MCP subprocess asks whether to short-circuit this
+                # tool call without surfacing a row. Pure in-memory
+                # lookup — no GTK hop, no user interaction, answers
+                # instantly. `continue` tells the subprocess to fall
+                # through to its next route (local fallback, question
+                # route, normal approval flow).
+                tool_name = (obj.get("tool_name") or "").strip()
+                decision = self._auto_decision(tool_name)
+                response: dict[str, Any] = {"decision": decision}
+                if decision == "reject":
+                    response["message"] = f"auto-rejected: {tool_name}"
+
+                return response
             case "question":
                 # Claude's `ask_question` MCP tool forwards here. Block
                 # the handler thread until the user types an answer
@@ -2130,7 +2457,10 @@ class Session:
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
-def _build_mcp_config() -> McpConfig:
+def _build_mcp_config(
+    auto_approve: Optional[list[str]] = None,
+    auto_reject: Optional[list[str]] = None,
+) -> McpConfig:
     """Compose the `McpConfig` we hand to the Claude adapter.
 
     Pre-seeds one entry — the `pilot` server, which re-execs THIS SAME
@@ -2144,11 +2474,22 @@ def _build_mcp_config() -> McpConfig:
     the child's argv so its early `_early_session_suffix()` parse
     picks the matching MCP socket path — otherwise the child would
     try to reach the default socket while our overlay is listening on
-    the suffixed one."""
+    the suffixed one.
+
+    `auto_approve` / `auto_reject` lists get splatted onto the child
+    as repeated `--auto-approve X` / `--auto-reject Y` flags so the
+    subprocess's local auto-list sets are seeded at startup (matches
+    the overlay's Session state for this invocation). Runtime
+    mutations flow over the MCP bridge socket via the `auto-check`
+    command, so the child stays in sync without being restarted."""
     self_script = os.path.abspath(__file__)
     child_args = ["-u", self_script, "mcp-server"]
     if SESSION_SUFFIX:
         child_args.extend(["--session", SESSION_SUFFIX])
+    for name in auto_approve or []:
+        child_args.extend(["--auto-approve", name])
+    for name in auto_reject or []:
+        child_args.extend(["--auto-reject", name])
     config = McpConfig()
     config.add("pilot", sys.executable, args=child_args)
 
@@ -2184,6 +2525,8 @@ def _build_adapter(args) -> ConversationAdapter:
     extra_body = _merge_extra_body(getattr(args, "extra_body", None))
     cwd = getattr(args, "cwd", None)
     config_suffix = SESSION_SUFFIX or None
+    auto_approve = list(getattr(args, "auto_approve", None) or [])
+    auto_reject = list(getattr(args, "auto_reject", None) or [])
     match provider:
         case ConversationProvider.HTTP:
             return ConversationAdapterHttp(
@@ -2203,7 +2546,10 @@ def _build_adapter(args) -> ConversationAdapter:
             return ConversationAdapterClaude(
                 AI_SYSTEM_PROMPT,
                 model=args.converse_model,
-                mcp_config=_build_mcp_config(),
+                mcp_config=_build_mcp_config(
+                    auto_approve=auto_approve,
+                    auto_reject=auto_reject,
+                ),
                 permission_tool="mcp__pilot__approve",
                 cwd=cwd,
                 config_suffix=config_suffix,
@@ -2221,7 +2567,10 @@ def _build_adapter(args) -> ConversationAdapter:
                 # Same MCP config the claude branch uses — opencode
                 # supports MCP servers natively, we just splice ours
                 # into its config JSON.
-                mcp_config=_build_mcp_config(),
+                mcp_config=_build_mcp_config(
+                    auto_approve=auto_approve,
+                    auto_reject=auto_reject,
+                ),
                 cwd=cwd,
                 config_suffix=config_suffix,
             )
@@ -2289,9 +2638,26 @@ def _cmd_toggle(args) -> None:
     app = Gtk.Application(application_id=APP_ID)
     session: dict[str, Optional[Session]] = {"server": None}
 
+    auto_approve = list(getattr(args, "auto_approve", None) or [])
+    auto_reject = list(getattr(args, "auto_reject", None) or [])
+
     def on_activate(application):
-        window = PilotWindow(application, adapter)
-        server = Session(window, adapter.provider)
+        window = PilotWindow(
+            application,
+            adapter,
+            auto_approve=auto_approve,
+            auto_reject=auto_reject,
+        )
+        server = Session(
+            window,
+            adapter.provider,
+            auto_approve=auto_approve,
+            auto_reject=auto_reject,
+        )
+        # The window needs a handle on the Session so permission-button
+        # handlers (e.g. the new ⛔ auto-reject button) can push list
+        # mutations straight into the authoritative Session state.
+        window.attach_session(server)
         server.start()
         session["server"] = server
 
@@ -2458,6 +2824,41 @@ def main():
             "Repeatable; later values win on leaf keys, nested dicts "
             "merge recursively. Default: "
             f"{_DEFAULT_EXTRA_BODY}. OpenWebUI / OpenAI-compatible only."
+        ),
+    )
+    # Auto-approve: tool names whose MCP permission requests are
+    # short-circuited to `allow` without surfacing a row in the
+    # overlay. Repeatable, matches case-insensitively and treats
+    # `-` / `_` as equivalent (so `Read`, `read`, `read-file`,
+    # `read_file` all canonicalise the same). Rendered as green pills
+    # on the submit bar; click a pill to drop the tool back into the
+    # normal approval flow.
+    toggle_parser.add_argument(
+        "--auto-approve",
+        action="append",
+        dest="auto_approve",
+        default=[],
+        metavar="TOOL_NAME",
+        help=(
+            "Tool name to auto-approve without prompting the user. "
+            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
+            "corresponding green pill in the compose bar to revoke."
+        ),
+    )
+    # Auto-reject: mirror of `--auto-approve` — tool names whose
+    # permission requests short-circuit to `deny`. Repeatable, same
+    # normalisation rules. Rendered as red pills; click to drop the
+    # tool back into the normal approval flow.
+    toggle_parser.add_argument(
+        "--auto-reject",
+        action="append",
+        dest="auto_reject",
+        default=[],
+        metavar="TOOL_NAME",
+        help=(
+            "Tool name to auto-reject without prompting the user. "
+            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
+            "corresponding red pill in the compose bar to revoke."
         ),
     )
 
