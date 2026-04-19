@@ -49,39 +49,6 @@ ApprovalCallback = Callable[[str, dict], "tuple[bool, str]"]
 # `enable_question`), we hand it off, get back a typed answer.
 QuestionCallback = Callable[[str], str]
 
-# Tool-name patterns that should be treated as "the model wants to
-# ask the user a question" rather than "the model wants permission to
-# run something". Claude Code's built-in is `AskUserQuestion`;
-# opencode's equivalent is `ask`. Match case-insensitively by
-# normalising both sides.
-_QUESTION_TOOL_NAMES = frozenset({
-    "askuserquestion",
-    "askuser",
-    "ask_user_question",
-    "ask_user",
-    "user_question",
-    "userquestion",
-    "ask_question",
-    "ask",
-})
-
-# Input keys we'll look at to pull a question string out of a tool
-# invocation we're intercepting. Order matters — first match wins.
-_QUESTION_KEYS = ("question", "prompt", "message", "text", "user_message")
-
-def _extract_question(tool_input: dict) -> str:
-    """Pull a human-readable question string out of the tool input
-    blob a model handed us. Falls back to stringifying the whole blob
-    so the user always sees *something* in the question banner."""
-    for key in _QUESTION_KEYS:
-        v = tool_input.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    try:
-        return json.dumps(tool_input)
-    except (TypeError, ValueError):
-        return str(tool_input)
-
 class McpServer:
     """Minimal MCP JSON-RPC 2.0 stdio server.
 
@@ -143,11 +110,34 @@ class McpServer:
             caller_tool = args.get("tool_name", "") or ""
             caller_input = args.get("input") or {}
 
-            if (
-                question_callback is not None
-                and caller_tool.lower().replace("-", "_") in _QUESTION_TOOL_NAMES
+            if question_callback is not None and caller_tool.lower().replace(
+                "-", "_"
+            ) in frozenset(
+                {
+                    "askuserquestion",
+                    "askuser",
+                    "ask_user_question",
+                    "ask_user",
+                    "user_question",
+                    "userquestion",
+                    "ask_question",
+                    "ask",
+                }
             ):
-                question = _extract_question(caller_input)
+                # Pull a readable question out of whatever input
+                # shape the model produced. Falls back to the raw
+                # input so the banner always has *something* to show.
+                question = ""
+                for _key in ("question", "prompt", "message", "text", "user_message"):
+                    _v = caller_input.get(_key)
+                    if isinstance(_v, str) and _v.strip():
+                        question = _v.strip()
+                        break
+                if not question:
+                    try:
+                        question = json.dumps(caller_input)
+                    except (TypeError, ValueError):
+                        question = str(caller_input)
                 try:
                     answer = question_callback(question)
                 except Exception as e:
@@ -242,9 +232,28 @@ class McpServer:
 
     # -- runtime --------------------------------------------------------
 
+    def _send(self, obj: dict) -> None:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+    def _error(self, mid, code: int, message: str) -> None:
+        if mid is None:
+            return
+        self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": code, "message": message},
+            }
+        )
+
     def run(self) -> None:
         """Blocking stdio JSON-RPC loop. Call from a subprocess entry
-        point that claude spawns."""
+        point that claude spawns. Handles every MCP method inline —
+        `initialize`, `notifications/initialized`, `tools/list`,
+        `tools/call` (dispatches to the registered handler and
+        wraps / forwards its result) — so there's a single place to
+        trace the protocol."""
         for raw in sys.stdin:
             line = raw.strip()
             if not line:
@@ -253,93 +262,82 @@ class McpServer:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            self._handle(msg)
-
-    def _send(self, obj: dict) -> None:
-        sys.stdout.write(json.dumps(obj) + "\n")
-        sys.stdout.flush()
-
-    def _error(self, mid, code: int, message: str) -> None:
-        if mid is None:
-            return
-        self._send({
-            "jsonrpc": "2.0",
-            "id": mid,
-            "error": {"code": code, "message": message},
-        })
-
-    def _handle(self, msg: dict) -> None:
-        method = msg.get("method")
-        mid = msg.get("id")
-        match method:
-            case "initialize":
-                self._send({
-                    "jsonrpc": "2.0",
-                    "id": mid,
-                    "result": {
-                        "protocolVersion": PROTOCOL_VERSION,
-                        "capabilities": {"tools": {"listChanged": False}},
-                        "serverInfo": {
-                            "name": self.name,
-                            "version": self.version,
-                        },
-                    },
-                })
-            case "notifications/initialized":
-                # Notification — no response expected.
-                pass
-            case "tools/list":
-                tools = [
-                    {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "inputSchema": t["inputSchema"],
-                    }
-                    for t in self._tools.values()
-                ]
-                self._send({
-                    "jsonrpc": "2.0",
-                    "id": mid,
-                    "result": {"tools": tools},
-                })
-            case "tools/call":
-                self._dispatch_call(mid, msg.get("params") or {})
-            case _:
-                self._error(mid, -32601, f"method not found: {method}")
-
-    def _dispatch_call(self, mid, params: dict) -> None:
-        name = params.get("name")
-        entry = self._tools.get(name)
-        if entry is None:
-            self._error(mid, -32602, f"unknown tool: {name!r}")
-
-            return
-        args = params.get("arguments") or {}
-        try:
-            raw_result = entry["handler"](args)
-        except Exception as e:
-            log.exception("tool handler raised")
-            self._send({
-                "jsonrpc": "2.0",
-                "id": mid,
-                "result": {
-                    "content": [{"type": "text", "text": f"handler error: {e}"}],
-                    "isError": True,
-                },
-            })
-
-            return
-        # If the handler returned the MCP content envelope directly,
-        # forward verbatim. Otherwise wrap its dict into a single text
-        # content block.
-        if isinstance(raw_result, dict) and "content" in raw_result:
-            result = raw_result
-        else:
-            result = {
-                "content": [{"type": "text", "text": json.dumps(raw_result)}],
-                "isError": False,
-            }
-        self._send({"jsonrpc": "2.0", "id": mid, "result": result})
+            method = msg.get("method")
+            mid = msg.get("id")
+            match method:
+                case "initialize":
+                    self._send(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": mid,
+                            "result": {
+                                "protocolVersion": PROTOCOL_VERSION,
+                                "capabilities": {"tools": {"listChanged": False}},
+                                "serverInfo": {
+                                    "name": self.name,
+                                    "version": self.version,
+                                },
+                            },
+                        }
+                    )
+                case "notifications/initialized":
+                    # Notification — no response expected.
+                    pass
+                case "tools/list":
+                    tools = [
+                        {
+                            "name": t["name"],
+                            "description": t["description"],
+                            "inputSchema": t["inputSchema"],
+                        }
+                        for t in self._tools.values()
+                    ]
+                    self._send(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": mid,
+                            "result": {"tools": tools},
+                        }
+                    )
+                case "tools/call":
+                    params = msg.get("params") or {}
+                    name = params.get("name")
+                    entry = self._tools.get(name)
+                    if entry is None:
+                        self._error(mid, -32602, f"unknown tool: {name!r}")
+                        continue
+                    try:
+                        raw_result = entry["handler"](params.get("arguments") or {})
+                    except Exception as e:
+                        log.exception("tool handler raised")
+                        self._send(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": mid,
+                                "result": {
+                                    "content": [
+                                        {"type": "text", "text": f"handler error: {e}"}
+                                    ],
+                                    "isError": True,
+                                },
+                            }
+                        )
+                        continue
+                    # If the handler returned the MCP content envelope
+                    # directly, forward verbatim. Otherwise wrap its
+                    # dict into a single text content block.
+                    if isinstance(raw_result, dict) and "content" in raw_result:
+                        result = raw_result
+                    else:
+                        result = {
+                            "content": [
+                                {"type": "text", "text": json.dumps(raw_result)}
+                            ],
+                            "isError": False,
+                        }
+                    self._send({"jsonrpc": "2.0", "id": mid, "result": result})
+                case _:
+                    self._error(mid, -32601, f"method not found: {method}")
 
 class McpConfig:
     """Builder for Claude's `--mcp-config` JSON. Holds any number of

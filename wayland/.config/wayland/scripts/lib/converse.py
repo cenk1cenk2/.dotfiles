@@ -785,57 +785,6 @@ class ConversationAdapterOpenCode:
         self._cancelled = False
         self._effective_config_path: Optional[str] = None
 
-    def _ensure_config(self) -> Optional[str]:
-        """Return the path to use for `OPENCODE_CONFIG`. When we have
-        an `mcp_config` to merge we emit a temp copy of the base JSON
-        with our MCP servers spliced in; otherwise we return the
-        untouched base path (or None if the file is missing)."""
-        if not os.path.exists(self.config_path):
-            log.warning(
-                "opencode config missing at %s — running without --config",
-                self.config_path,
-            )
-
-            return None
-        if self.mcp_config is None:
-            return self.config_path
-        if self._effective_config_path is not None:
-            return self._effective_config_path
-        try:
-            with open(self.config_path, encoding="utf-8") as f:
-                base = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            log.warning("couldn't read opencode config %s: %s", self.config_path, e)
-
-            return self.config_path
-        merged = dict(base)
-        existing_mcp = dict(merged.get("mcp") or {})
-        # Translate `{"mcpServers": {"ask": {command, args, env}}}` to
-        # OpenCode's `mcp` schema: `{type, command: [cmd, *args], environment, enabled}`.
-        for name, spec in self.mcp_config.to_dict().get("mcpServers", {}).items():
-            existing_mcp.setdefault(
-                name,
-                {
-                    "type": "local",
-                    "command": [spec.get("command", "")] + list(spec.get("args") or []),
-                    "environment": dict(spec.get("env") or {}),
-                    "enabled": True,
-                },
-            )
-        merged["mcp"] = existing_mcp
-        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-        path = os.path.join(runtime, "wayland-ask.opencode.json")
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(merged, f)
-        except OSError as e:
-            log.warning("couldn't write merged opencode config: %s", e)
-
-            return self.config_path
-        self._effective_config_path = path
-
-        return path
-
     def turn(self, user_message: str) -> Iterator[TurnChunk]:
         self._cancelled = False
         model_spec = f"{self.provider_name}/{self.model}"
@@ -861,8 +810,59 @@ class ConversationAdapterOpenCode:
             prompt = user_message
         argv.append(prompt)
 
+        # Resolve `OPENCODE_CONFIG`. Missing base config → run without
+        # --config. `mcp_config` supplied → splice our MCP servers
+        # into OpenCode's `mcp` schema and cache the merged file so
+        # follow-up turns reuse it.
         env = os.environ.copy()
-        cfg = self._ensure_config()
+        cfg: Optional[str]
+        if not os.path.exists(self.config_path):
+            log.warning(
+                "opencode config missing at %s — running without --config",
+                self.config_path,
+            )
+            cfg = None
+        elif self.mcp_config is None:
+            cfg = self.config_path
+        elif self._effective_config_path is not None:
+            cfg = self._effective_config_path
+        else:
+            try:
+                with open(self.config_path, encoding="utf-8") as f:
+                    base = json.load(f)
+                merged = dict(base)
+                existing_mcp = dict(merged.get("mcp") or {})
+                # Translate `{"mcpServers": {"ask": {command, args, env}}}`
+                # into OpenCode's `mcp` schema: `{type, command: [cmd, *args],
+                # environment, enabled}`.
+                for name, spec in self.mcp_config.to_dict().get(
+                    "mcpServers", {}
+                ).items():
+                    existing_mcp.setdefault(
+                        name,
+                        {
+                            "type": "local",
+                            "command": [spec.get("command", "")]
+                            + list(spec.get("args") or []),
+                            "environment": dict(spec.get("env") or {}),
+                            "enabled": True,
+                        },
+                    )
+                merged["mcp"] = existing_mcp
+                runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+                self._effective_config_path = os.path.join(
+                    runtime, "wayland-ask.opencode.json"
+                )
+                with open(self._effective_config_path, "w", encoding="utf-8") as f:
+                    json.dump(merged, f)
+                cfg = self._effective_config_path
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning(
+                    "couldn't prepare merged opencode config %s: %s",
+                    self.config_path,
+                    e,
+                )
+                cfg = self.config_path
         if cfg:
             env["OPENCODE_CONFIG"] = cfg
 
