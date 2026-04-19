@@ -26,17 +26,10 @@
   background-image: none;
 }
 
-.overlay box.pilot-header-top {
-  /* Row already lives inside the vertical `pilot-header` box; the
-   * close button hugs the right edge while the provider pill fills
-   * the rest via hexpand. No extra margin — spacing comes from the
-   * parent's padding. */
-}
-
 .overlay label.pilot-session {
   font-size: 0.78em;
   color: @pilot_fg_dim;
-  margin-top: 4px;
+  margin-left: 10px;
   letter-spacing: 0.02em;
 }
 
@@ -393,8 +386,8 @@
   background-color: @pilot_text_surface;
   background-image: none;
   color: @pilot_fg_dim;
-  font-size: 0.85em;
-  padding: 6px 10px;
+  font-size: 0.82em;
+  padding: 4px 8px;
   margin-top: 2px;
 }
 

@@ -86,6 +86,20 @@ class ConversationAdapter(Protocol):
 
     def close(self) -> None: ...
 
+    def set_permission_handler(self, handler: Any) -> None: ...
+
+    @property
+    def mcp_server_names(self) -> list[str]: ...
+
+    @property
+    def session_id(self) -> str | None: ...
+
+    @property
+    def session_resumed(self) -> bool: ...
+
+    @property
+    def session_store_path(self) -> str | None: ...
+
 def _translate_acp_chunk(kind: str, payload: Any) -> TurnChunk | None:
     """Fold an `AcpAdapter.turn()` tuple into the TurnChunk union."""
     if kind == "text":
@@ -116,7 +130,9 @@ class _AcpConverseAdapter(AcpAdapter):
         *,
         attachments: list[PromptAttachment] | None = None,
     ) -> Iterator[TurnChunk]:
-        for kind, payload in super().turn(user_message, attachments=attachments):
+        for kind, payload in self.iter_events(
+            user_message, attachments=attachments
+        ):
             chunk = _translate_acp_chunk(kind, payload)
             if chunk is not None:
                 yield chunk
@@ -180,18 +196,37 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `OPENCODE_SYSTEM_PROMPT` env var isn't honoured by opencode,
         # so we deliver `system_prompt` as a first-turn prefix instead.
         self.system_prompt = system_prompt
-        self.model = kwargs.get("model")
+        # `model` is Protocol-typed as `str`; coerce None → "" so an
+        # unset --model flag doesn't bleed a None into the header /
+        # waybar status renderers that expect a string.
+        self.model: str = kwargs.get("model") or ""
         self.mode = kwargs.get("mode")
         self.provider_name = kwargs.get("provider_name") or "kilic"
         self.config_path = kwargs.get("config_path") or self.DEFAULT_CONFIG_PATH
         env = dict(kwargs.get("env") or os.environ)
+        # FORCE the config + model into env, not `setdefault`. The shell
+        # env frequently carries leftover `OPENCODE_MODEL` entries from
+        # other opencode CLI runs; `setdefault` let that stale value
+        # win against the user's `--converse-model` flag, which is why
+        # `spawn plan` was silently routing to whichever model that
+        # stale env pinned.
         if os.path.exists(self.config_path):
-            env.setdefault("OPENCODE_CONFIG", self.config_path)
+            env["OPENCODE_CONFIG"] = self.config_path
         if self.model:
-            env.setdefault("OPENCODE_MODEL", f"{self.provider_name}/{self.model}")
+            env["OPENCODE_MODEL"] = f"{self.provider_name}/{self.model}"
         kwargs["env"] = env
         kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
-        kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
+        # yargs (opencode's CLI parser) requires top-level options BEFORE
+        # the subcommand, so `--model provider/model` is prepended to
+        # `acp`. opencode's env-var path is unreliable across releases
+        # (some ignore `OPENCODE_MODEL` entirely under the acp subcommand);
+        # passing the flag is the only path that consistently pins the
+        # model. We keep `OPENCODE_MODEL` in env too as a fallback.
+        base_args = list(kwargs.get("args") or self.DEFAULT_ARGS)
+        if self.model and "--model" not in base_args:
+            model_qualified = f"{self.provider_name}/{self.model}"
+            base_args = ["--model", model_qualified, *base_args]
+        kwargs["args"] = base_args
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-opencode"
         kwargs["agents_file"] = self.system_prompt
         log.info(

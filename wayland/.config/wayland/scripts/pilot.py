@@ -19,8 +19,15 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    # Only pulled in for the `_build_pilot_mcp_server` return annotation;
+    # the real import happens inside the function body so the schema
+    # module isn't forced on callers that never build an ACP server.
+    from acp.schema import McpServerStdio
 
 from lib import (
     DEFAULT_CONVERSE_ADAPTER,
@@ -42,7 +49,6 @@ from lib import (
     format_tool_args,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
-    image_attachment,
     load_prompt,
     notify,
     signal_waybar,
@@ -91,12 +97,12 @@ from lib.overlay import (  # noqa: E402
     load_overlay_css,
     load_css_from_path,
 )
-from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
-    Gdk,
-    Gio,
-    GLib,
-    Gtk,
-    Pango,
+from gi.repository import (  # noqa: E402
+    Gdk,  # ty: ignore[unresolved-import]
+    Gio,  # ty: ignore[unresolved-import]
+    GLib,  # ty: ignore[unresolved-import]
+    Gtk,  # ty: ignore[unresolved-import]
+    Pango,  # ty: ignore[unresolved-import]
 )
 
 log = logging.getLogger("pilot")
@@ -1295,31 +1301,17 @@ class PilotWindow(LayerOverlayWindow):
         root.add_css_class("pilot-root")
 
         # Header --------------------------------------------------------
-        # Two-row layout:
-        #   row 1: provider/phase pill + close button
-        #   row 2: cwd + mcp count + skills count (dim breadcrumb)
-        # Users were landing in a pilot window with zero indication of
-        # which project directory the agent was operating in — the
-        # breadcrumb makes `--cwd` / `--mcp` / `--skills-dir` visible at
-        # a glance.
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Single-line layout: provider/phase pill, dim cwd + mcp count
+        # breadcrumb, close button. Fits on one row on a 400px-wide
+        # sidebar; cwd uses middle-ellipsis so the most informative
+        # part (project name at the tail) stays visible when the full
+        # path overflows.
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("pilot-header")
-
-        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        top_row.add_css_class("pilot-header-top")
-        self._provider_label = Gtk.Label(
-            label=self._header_title(),
-            xalign=0.0,
-            hexpand=True,
-        )
+        self._provider_label = Gtk.Label(label=self._header_title(), xalign=0.0)
         self._provider_label.add_css_class("pilot-provider")
         self._provider_label.add_css_class("idle")
-        close_btn = Gtk.Button(label="✕")
-        close_btn.add_css_class("pilot-close")
-        close_btn.connect("clicked", lambda _b: self.close())
-        top_row.append(self._provider_label)
-        top_row.append(close_btn)
-        header.append(top_row)
+        header.append(self._provider_label)
 
         self._session_label = Gtk.Label(
             label=self._session_subtitle(),
@@ -1330,6 +1322,11 @@ class PilotWindow(LayerOverlayWindow):
         self._session_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
         self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
         header.append(self._session_label)
+
+        close_btn = Gtk.Button(label="✕")
+        close_btn.add_css_class("pilot-close")
+        close_btn.connect("clicked", lambda _b: self.close())
+        header.append(close_btn)
         root.append(header)
 
         # Conversation: a vertical box of TurnCard widgets inside a
@@ -1363,15 +1360,27 @@ class PilotWindow(LayerOverlayWindow):
         # too, otherwise the viewport cuts off the bottom of the
         # newest card.
         vadj.connect("notify::page-size", self._on_vadj_upper_changed)
-        # `notify::upper` fires multiple times as content reflows
-        # (markdown cards re-measure across multiple layout passes,
-        # collapsible thinking / plan expanders open, pill strips
-        # appear). Every firing re-runs `_on_vadj_upper_changed`,
-        # but a single `set_value` right when the first firing lands
-        # uses a stale `upper`. `_schedule_pinned_follow_up` kicks
-        # an idle + 60ms timeout so the LAST layout pass wins and
-        # the viewport actually ends at the new bottom.
-        self._scroll_retry_armed = False
+        # Frame-tick-driven autofollow. Content events (new chunk, new
+        # tool bubble, plan update, thinking expand) call
+        # `_arm_autofollow()`, which registers a GDK frame tick callback
+        # that re-pins the scrollbar to the bottom on every vblank for
+        # a short window. This beats the idle-add retry strategy we
+        # had before, which kept losing races against multi-pass
+        # markdown / Pango label re-measurement — the tick runs once
+        # per frame REGARDLESS of how many more reflows GTK queues,
+        # so a long reply + tool bubbles + thinking expander can't
+        # out-pace us. Deadline is extended every time new content
+        # arrives, so a continuous stream keeps the window alive as
+        # long as data is flowing.
+        self._autofollow_deadline: float = 0.0
+        self._autofollow_tick_id: Optional[int] = None
+        # Guards against unpinning when WE called `set_value(bottom)`.
+        # Without this, programmatic scrolls race the reflow: we set
+        # value = stale-bottom, upper grows immediately after, and the
+        # value-changed handler sees "you're above bottom by more than
+        # the threshold" and flips _pinned=False for the rest of the
+        # turn.
+        self._programmatic_scroll = False
 
         # Permissions ---------------------------------------------------
         # Sits above the queue so pending tool-use notifications take
@@ -1558,6 +1567,12 @@ class PilotWindow(LayerOverlayWindow):
     def queue_size(self) -> int:
         return len(self._queue)
 
+    def adapter(self) -> ConversationAdapter:
+        """Read-only accessor for the wrapped ConversationAdapter. Used
+        by the socket-status handler to surface the model name without
+        reaching past the window boundary."""
+        return self._adapter
+
     # -- Turn lifecycle -------------------------------------------------
 
     def _start_turn(
@@ -1640,18 +1655,17 @@ class PilotWindow(LayerOverlayWindow):
         return f"…/{tail}"
 
     def _session_subtitle(self, *, verbose: bool = False) -> str:
-        """Second header row: cwd · mcp count · skills count. `verbose`
-        returns the un-truncated path for the tooltip."""
-        segments: list[str] = []
-        if verbose:
-            segments.append(self._cwd or os.getcwd())
-        else:
-            segments.append(self._pretty_cwd())
+        """Single-line breadcrumb next to the provider pill:
+        `@ ~/notes  +3 mcps  +skills`. `verbose` swaps the truncated
+        cwd for the full untruncated path so the tooltip can show the
+        absolute path on hover."""
+        cwd = self._cwd or os.getcwd() if verbose else self._pretty_cwd()
+        parts = [f"@ {cwd}"]
         if self._mcp_server_names:
-            segments.append(f"{len(self._mcp_server_names)} mcp")
+            parts.append(f"+{len(self._mcp_server_names)} mcps")
         if self._skills_dir:
-            segments.append("skills on")
-        return "  ·  ".join(segments)
+            parts.append("+skills")
+        return "  ".join(parts)
 
     def _refresh_session_label(self) -> None:
         """Re-render the breadcrumb — called on attach_session / every
@@ -1670,11 +1684,13 @@ class PilotWindow(LayerOverlayWindow):
 
     def _append_chunk(self, chunk: str) -> bool:
         """Main-thread-safe sink for adapter chunks. Appends to the
-        currently-streaming assistant card; the `notify::upper` hook on
-        the vadjustment keeps us scrolled to bottom whenever we're
-        pinned. Returns False so it composes with `GLib.idle_add`."""
+        currently-streaming assistant card and re-arms the autofollow
+        window so the frame tick keeps the viewport locked to the
+        bottom across the card's multi-pass reflow. Returns False so
+        it composes with `GLib.idle_add`."""
         if self._active_assistant is not None:
             self._active_assistant.append(chunk)
+        self._arm_autofollow()
 
         return False
 
@@ -1959,6 +1975,10 @@ class PilotWindow(LayerOverlayWindow):
                 card.append_tool_bubble(call)
         except Exception as e:
             log.warning("tool bubble update raised: %s", e)
+        # A fresh bubble grows the assistant card's height; kick the
+        # autofollow window so we don't end up peeking at the bubble
+        # row from above after it renders.
+        self._arm_autofollow()
 
         return False
 
@@ -2158,80 +2178,103 @@ class PilotWindow(LayerOverlayWindow):
     # -- Scroll / keys / links -----------------------------------------
 
     _PIN_THRESHOLD_PX = 24
+    # Default time horizon (seconds) the tick callback keeps pinning
+    # to the bottom after an `_arm_autofollow()` call. Each new
+    # content event extends the deadline — so a chatty turn that
+    # streams chunks + tool bubbles + thinking over several seconds
+    # keeps the scroll locked throughout. 0.8s is long enough to
+    # outlast the slowest markdown re-layout I've seen, short enough
+    # that an idle window stops ticking promptly.
+    _AUTOFOLLOW_WINDOW_S = 0.8
 
     def _on_vadj_value_changed(self, adj) -> None:
-        """User-initiated scroll updates the pinned flag. If they scroll
-        to within `_PIN_THRESHOLD_PX` of the bottom we consider them
-        pinned; scrolling up beyond that unpins so subsequent content
-        arrivals don't fight the reader.
-
-        Programmatic `set_value` also emits `value-changed`, so we
-        only flip the flag when the incoming value is clearly off the
-        bottom — a tiny overshoot from our own follow-up scroll must
-        not unpin us."""
+        """Update the pinned flag based on where the user actually sat
+        down in the scrollable. Programmatic scrolls (from our own
+        `set_value`) are ignored via `_programmatic_scroll`, otherwise
+        they'd race the reflow loop and keep unpinning us."""
+        if self._programmatic_scroll:
+            return
         bottom = max(0.0, adj.get_upper() - adj.get_page_size())
         if adj.get_value() >= bottom - self._PIN_THRESHOLD_PX:
             self._pinned = True
         else:
             self._pinned = False
 
-    def _on_vadj_upper_changed(self, adj, _pspec) -> None:
-        """Content grew (card appended or streaming chunk landed), OR
-        viewport shrank (compose expanded into the scroller's space).
-        Either way, if we were pinned, stick to the new bottom —
-        AND schedule a follow-up pass in case the layout hasn't
-        finished growing yet (thinking / plan expanders, pill strips,
-        and freshly-rendered markdown cards all re-measure over
-        multiple ticks)."""
+    def _on_vadj_upper_changed(self, _adj, _pspec) -> None:
+        """Content grew OR the viewport shrank. Either way, arm the
+        autofollow window so the frame tick keeps the scrollbar glued
+        to the new bottom across every subsequent re-measure. The
+        adjustment param is unused — `_arm_autofollow` pulls the
+        current adj from the scroller directly."""
         if not self._pinned:
             return
-        adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
-        self._schedule_pinned_follow_up()
+        self._arm_autofollow()
+
+    def _arm_autofollow(self, window_s: Optional[float] = None) -> None:
+        """Enter (or extend) the autofollow window. While active, a GDK
+        frame-tick callback re-pins the scrollbar to the bottom every
+        vblank — so we can't lose races against markdown cards that
+        re-measure across multiple ticks, tool bubbles expanding, or
+        thinking / plan expanders opening. The deadline advances with
+        every call, so a continuous stream of content events keeps the
+        window alive; it only closes once data actually stops arriving.
+
+        `window_s` overrides the default horizon for one-shot kick
+        events (e.g. `_force_scroll_to_bottom` wants a longer window
+        on first-turn card appends)."""
+        if not self._pinned:
+            return
+        horizon = window_s if window_s is not None else self._AUTOFOLLOW_WINDOW_S
+        self._autofollow_deadline = time.monotonic() + horizon
+        if self._autofollow_tick_id is not None:
+            return
+        self._autofollow_tick_id = self._conv_scroller.add_tick_callback(
+            self._autofollow_tick
+        )
+
+    def _autofollow_tick(self, _widget, _frame_clock) -> bool:
+        """Per-frame callback. Returns True (GDK_SOURCE_CONTINUE) while
+        pinned + within window; returns False to deregister when the
+        user scrolls up or the window expires.
+
+        Work inside the tick is trivial when already at the bottom —
+        just a comparison + early out — so leaving it running for a
+        few extra frames after content stops is effectively free."""
+        if not self._pinned or time.monotonic() >= self._autofollow_deadline:
+            self._autofollow_tick_id = None
+            return False
+        adj = self._conv_scroller.get_vadjustment()
+        target = max(0.0, adj.get_upper() - adj.get_page_size())
+        if abs(adj.get_value() - target) > 0.5:
+            self._programmatic_scroll = True
+            try:
+                adj.set_value(target)
+            finally:
+                self._programmatic_scroll = False
+        return True
 
     def _schedule_pinned_follow_up(self) -> None:
-        """Idle + 60ms re-scroll so whichever layout pass settles last
-        still leaves us at the bottom. Guarded by `_scroll_retry_armed`
-        so the rapid-fire `notify::upper` / `notify::page-size` bursts
-        from a single content change collapse into ONE follow-up pair
-        instead of flooding the idle queue."""
-        if self._scroll_retry_armed or not self._pinned:
-            return
-        self._scroll_retry_armed = True
-        adj = self._conv_scroller.get_vadjustment()
-
-        def _idle() -> bool:
-            if self._pinned:
-                adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
-            return False
-
-        def _timeout() -> bool:
-            if self._pinned:
-                adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
-            self._scroll_retry_armed = False
-            return False
-
-        GLib.idle_add(_idle)
-        GLib.timeout_add(60, _timeout)
+        """Back-compat shim. Every caller that used to schedule an idle
+        + 60ms retry now just re-arms the frame-tick autofollow
+        window; the tick runs on every vblank until content settles,
+        which subsumes whatever the idle retries were trying to do."""
+        self._arm_autofollow()
 
     def _force_scroll_to_bottom(self) -> None:
-        """Queue several idle-ticks worth of "scroll to bottom". GTK
-        measures Gtk.Label natural height over multiple layout passes
-        (it caches conservatively on first measure then grows as the
-        text wraps), so one `set_value` right after `append()` lands
-        mid-measurement and gets leapfrogged by the card's final size.
-        Retrying across three ticks + a 60ms timeout covers every
-        measurement schedule I've seen hit in practice."""
+        """Hard pin — used when we KNOW the user wants the view at the
+        bottom (send button clicked, new card appended). Sets `_pinned`
+        explicitly (so a user who had scrolled up still jumps), then
+        arms a generous autofollow window so the multi-pass layout of
+        a freshly-mounted TurnCard (markdown measurements, wrapping,
+        image loads) can't leave us above the bottom line."""
         self._pinned = True
         adj = self._conv_scroller.get_vadjustment()
-
-        def _scroll() -> bool:
+        self._programmatic_scroll = True
+        try:
             adj.set_value(max(0.0, adj.get_upper() - adj.get_page_size()))
-            return False
-
-        GLib.idle_add(_scroll)
-        GLib.idle_add(_scroll)
-        GLib.timeout_add(60, _scroll)
-        GLib.timeout_add(180, _scroll)
+        finally:
+            self._programmatic_scroll = False
+        self._arm_autofollow(window_s=1.2)
 
     def _open_link(self, url: str) -> None:
         Gio.AppInfo.launch_default_for_uri(url, None)
@@ -2934,12 +2977,21 @@ class Session:
 
                 return {"ok": True}
             case "status":
+                adapter = self._window.adapter()
                 return {
                     "ok": True,
                     "phase": self._window.phase(),
                     "provider": self._provider.value,
+                    "model": getattr(adapter, "model", "") or "",
                     "queue": self._window.queue_size(),
                     "session": _PATHS.suffix,
+                    "session_id": getattr(adapter, "session_id", None) or "",
+                    "session_resumed": bool(
+                        getattr(adapter, "session_resumed", False)
+                    ),
+                    "session_store_path": (
+                        getattr(adapter, "session_store_path", None) or ""
+                    ),
                 }
             case "kill":
                 # Tear down from the GTK main thread so close-request handlers
@@ -2963,7 +3015,7 @@ _PILOT_MCP_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lib", "mcp_server.py"
 )
 
-def _build_pilot_mcp_server(skills_dir: Optional[str]) -> Any:
+def _build_pilot_mcp_server(skills_dir: Optional[str]) -> "McpServerStdio":
     """Construct the `system` ACP server pilot ships itself. Kept in
     pilot.py (not `lib.mcp_servers`) so the env — currently just
     `PILOT_SKILLS_DIR` — is resolved from pilot's own argparse state
@@ -3015,11 +3067,29 @@ def _build_permission_handler(window):
     point into the blocking `PermissionHandler` signature the ACP
     worker thread expects. Returns a callable that:
 
-    1. Schedules the PermissionRow on the GTK thread via `idle_add`.
-    2. Blocks on a `threading.Event` until the user clicks.
-    3. Returns the chosen `option_id` (or `None` to send `cancelled`)."""
+    1. Schedules the PermissionRow on the GTK thread via `idle_add`,
+       guarded by try/except so a raise inside the GTK handler still
+       unblocks the ACP worker instead of wedging it for the full
+       timeout window.
+    2. Blocks on a `threading.Event` until the user clicks OR the
+       timeout fires.
+    3. Returns the chosen `option_id` (or `None` to send `cancelled`).
+
+    On timeout we log and return None — the ACP request_permission
+    caller converts None → `DeniedOutcome(cancelled)` so the agent
+    resumes instead of hanging."""
+
+    # Shorter than the legacy 10 minutes: opencode issue #12133 (the
+    # hang the user reported) surfaces when no response comes back
+    # within seconds, and the UX of "click deny or wait 10 minutes" is
+    # strictly worse than "click deny within 2 minutes or we auto-deny
+    # and you can retry". The upper bound still covers every realistic
+    # think-time for a permission decision.
+    timeout_s = 120.0
 
     def handler(call, options):
+        import time as _time
+
         from lib.converse import ToolCall as _ToolCall
 
         # ACP gives us a ToolCallSummary; adapt to the ToolCall the
@@ -3034,17 +3104,45 @@ def _build_permission_handler(window):
         )
         event = threading.Event()
         result: dict[str, Optional[str]] = {"option_id": None}
+        start = _time.monotonic()
 
         def resolve(option_id: Optional[str]) -> None:
             result["option_id"] = option_id
             event.set()
 
-        GLib.idle_add(window.show_permission_for_acp, tool_call, options, resolve)
-        # 10-min ceiling keeps us consistent with the legacy MCP path.
-        if not event.wait(timeout=600):
-            log.warning("ACP permission prompt timed out")
+        def idle_wrap(call_arg, options_arg, resolve_arg) -> bool:
+            # GTK's `idle_add` swallows exceptions raised inside the
+            # callback; without this wrapper a bug in
+            # `show_permission_for_acp` would leave `event` unset and
+            # the worker thread blocked on `event.wait(timeout)`. The
+            # ACP agent sees nothing and hangs. Wrap + resolve(None)
+            # converts the bug into a clean "deny" response so the
+            # agent unblocks immediately.
+            try:
+                window.show_permission_for_acp(call_arg, options_arg, resolve_arg)
+            except Exception as e:
+                log.exception("show_permission_for_acp raised: %s", e)
+                resolve_arg(None)
+            return False  # GDK_SOURCE_REMOVE
+
+        GLib.idle_add(idle_wrap, tool_call, options, resolve)
+        if not event.wait(timeout=timeout_s):
+            log.warning(
+                "acp permission prompt timed out after %.0fs (tool=%s); "
+                "sending cancelled so the agent can resume",
+                timeout_s,
+                call.name,
+            )
             return None
-        return result["option_id"]
+        dt_ms = int((_time.monotonic() - start) * 1000)
+        chosen = result["option_id"]
+        log.info(
+            "acp permission responded: tool=%s option_id=%s dt_ms=%d",
+            call.name,
+            chosen,
+            dt_ms,
+        )
+        return chosen
 
     return handler
 
@@ -3118,6 +3216,19 @@ def _build_adapter(args) -> ConversationAdapter:
         AI_SYSTEM_PROMPT,
         _read_agents_md(agents_md_path),
     )
+    session_store_path = _session_store_path(
+        suffix=_PATHS.suffix,
+        provider=provider,
+        model=args.converse_model,
+        cwd=cwd,
+    )
+    log.info(
+        "_build_adapter: provider=%s model=%s cwd=%s session_store=%s",
+        provider.value,
+        args.converse_model,
+        cwd,
+        session_store_path,
+    )
     match provider:
         case ConversationProvider.CLAUDE:
             return ConversationAdapterClaude(
@@ -3125,6 +3236,7 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
+                session_store_path=session_store_path,
             )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
@@ -3132,9 +3244,69 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
+                session_store_path=session_store_path,
             )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
+
+
+_MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _model_tag(model: Optional[str]) -> str:
+    """Slugify `--converse-model` into a filesystem-safe token so it can
+    ride in the session-store filename. `glm-5.1:cloud` → `glm-5-1-cloud`,
+    None / empty → `default`. Keeps store paths predictable for the
+    `forget` / `session-info` commands."""
+    if not model:
+        return "default"
+    slug = _MODEL_TAG_RE.sub("-", model.lower()).strip("-")
+    return slug or "default"
+
+
+def _session_store_path(
+    *,
+    suffix: str,
+    provider: "ConversationProvider",
+    model: Optional[str],
+    cwd: Optional[str],
+) -> str:
+    """Derive the on-disk path where the ACP `session_id` for this
+    (suffix, provider, model, cwd) quadruple is persisted. Kept under
+    `$XDG_STATE_HOME/pilot/sessions/` so uninstalling pilot cleans up
+    with the rest of user state.
+
+    The key encodes:
+      - `suffix` — `--session` flag (e.g. "plan"); scopes sessions per
+        overlay so "plan" and "ask" don't collide.
+      - `provider` — Claude and OpenCode sessions aren't
+        interchangeable; different agents store different ids.
+      - `model` — resumed sessions keep whichever model they were
+        created with (opencode / claude-agent-acp don't reapply
+        `--model` to `load_session`). Including the model in the key
+        makes `--converse-model glm-5.1:cloud` vs `sonnet` spawn
+        *distinct* stored sessions so changing the flag actually
+        changes the model.
+      - `cwd` — the same `--session plan` launched against `~/notes`
+        vs `~/work` should resume INTO the corresponding project;
+        hashing cwd into the key splits them cleanly.
+
+    The cwd is hashed rather than path-embedded so filesystem-unsafe
+    characters in long paths (colons, slashes) don't leak into the
+    filename."""
+    import hashlib
+
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+        "~/.local/state"
+    )
+    root = os.path.join(state_home, "pilot", "sessions")
+    suffix_tag = suffix or "default"
+    cwd_key = cwd or os.getcwd()
+    cwd_hash = hashlib.sha1(cwd_key.encode("utf-8")).hexdigest()[:10]
+    filename = (
+        f"{suffix_tag}-{provider.value}-{_model_tag(model)}-{cwd_hash}.session"
+    )
+    return os.path.join(root, filename)
 
 def _read_input(mode: InputMode) -> str:
     match mode:
@@ -3198,7 +3370,7 @@ def _cmd_toggle(args) -> None:
     session: dict[str, Optional[Session]] = {"server": None}
 
     # MCP server names for the palette's `#{mcp/<name>}` references.
-    mcp_server_names = [s.name for s in adapter._session.mcp_servers if s.name]
+    mcp_server_names = adapter.mcp_server_names
     # Mirror mcphub's per-server `autoApprove` / `disabled_tools` lists
     # into pilot's permission state so pre-sanctioned read-only tools
     # auto-approve and known-dangerous ones auto-reject without popping
@@ -3304,6 +3476,83 @@ def _cmd_kill() -> None:
             os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
             pass
+    _signal_waybar_safe()
+
+
+def _cmd_forget(args) -> None:
+    """Delete the stored ACP session_id for the (suffix, provider, model,
+    cwd) slot so the next `toggle` creates a fresh conversation. This only
+    removes pilot's pointer file — the agent (opencode / claude-agent-acp)
+    keeps its own on-disk session record untouched; changing that is the
+    agent's job, not pilot's.
+
+    Writes a one-line result to stdout so shell wrappers can tell whether
+    anything was actually cleared."""
+    provider = ConversationProvider(args.converse_provider)
+    cwd = args.cwd
+    if cwd:
+        cwd = os.path.expanduser(cwd)
+    path = _session_store_path(
+        suffix=_PATHS.suffix,
+        provider=provider,
+        model=args.converse_model,
+        cwd=cwd,
+    )
+    try:
+        os.unlink(path)
+        print(f"forgot {path}")
+    except FileNotFoundError:
+        print(f"nothing to forget at {path}")
+    except OSError as e:
+        print(f"forget failed ({path}): {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_session_info() -> None:
+    """Emit a JSON snapshot of the session slot on stdout. Includes the
+    live session's `status` response when a pilot is running AND the
+    on-disk store contents even when nothing is running — so users can
+    verify that restart-resume actually lines up.
+
+    Read-only; never touches the store."""
+    # Live snapshot: whatever the running pilot is willing to report.
+    live = _send("status") or {}
+    # Disk snapshot: scan the sessions directory for any file that
+    # carries our suffix prefix. Several entries may exist per suffix
+    # when the user has cycled through provider / model combos.
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
+        "~/.local/state"
+    )
+    sessions_dir = os.path.join(state_home, "pilot", "sessions")
+    suffix_tag = _PATHS.suffix or "default"
+    stored: list[dict] = []
+    try:
+        entries = sorted(os.listdir(sessions_dir))
+    except FileNotFoundError:
+        entries = []
+    for entry in entries:
+        if not entry.startswith(f"{suffix_tag}-") or not entry.endswith(
+            ".session"
+        ):
+            continue
+        full = os.path.join(sessions_dir, entry)
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                sid = f.read().strip()
+        except OSError:
+            sid = ""
+        stored.append({"path": full, "session_id": sid})
+    print(
+        json.dumps(
+            {
+                "suffix": _PATHS.suffix,
+                "live": live,
+                "stored": stored,
+                "sessions_dir": sessions_dir,
+            },
+            indent=2,
+        )
+    )
     _signal_waybar_safe()
 
 def main():
@@ -3452,6 +3701,35 @@ def main():
         help="exit 0 if a session is live, non-zero otherwise",
     )
     subparsers.add_parser("kill", help="terminate the running session (if any)")
+    forget_parser = subparsers.add_parser(
+        "forget",
+        help=(
+            "drop the stored ACP session_id for a (session/provider/model/cwd) "
+            "slot so the next toggle starts a brand-new conversation. Does NOT "
+            "touch the agent's own on-disk session store — opencode / "
+            "claude-agent-acp keep their records, pilot just stops pointing "
+            "at them."
+        ),
+    )
+    # forget mirrors the subset of toggle flags that feed into the store
+    # key, so `pilot --session plan forget --converse-provider opencode
+    # --converse-model glm-5.1:cloud --cwd ~/notes` resolves the EXACT
+    # path that the matching toggle would write.
+    forget_parser.add_argument(
+        "--converse-provider",
+        choices=list(ConversationProvider),
+        default=DEFAULT_CONVERSE_ADAPTER,
+    )
+    forget_parser.add_argument("--converse-model", default=None)
+    forget_parser.add_argument("--cwd", default=None)
+
+    subparsers.add_parser(
+        "session-info",
+        help=(
+            "print the session state — live status (if any), store path, "
+            "stored session_id — as JSON on stdout. Read-only."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -3486,6 +3764,10 @@ def main():
             _cmd_is_running()
         case "kill":
             _cmd_kill()
+        case "forget":
+            _cmd_forget(args)
+        case "session-info":
+            _cmd_session_info()
 
 if __name__ == "__main__":
     main()

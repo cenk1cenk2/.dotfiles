@@ -249,14 +249,19 @@ def list_skills_via_mcp(
     except OSError as e:
         log.warning("skills mcp spawn failed: %s", e)
         return []
-    assert proc.stdin is not None and proc.stdout is not None
+    # Pin narrowed references so closures don't lose the `is not None`
+    # check ty otherwise complains about on `proc.stdin` / `proc.stdout`
+    # inside the nested send/recv helpers.
+    stdin = proc.stdin
+    stdout = proc.stdout
+    assert stdin is not None and stdout is not None
 
     def send(obj: dict) -> None:
-        proc.stdin.write(json.dumps(obj) + "\n")
-        proc.stdin.flush()
+        stdin.write(json.dumps(obj) + "\n")
+        stdin.flush()
 
     def recv() -> Optional[dict]:
-        line = proc.stdout.readline()
+        line = stdout.readline()
         if not line:
             return None
         try:
@@ -276,7 +281,7 @@ def list_skills_via_mcp(
         log.warning("skills mcp roundtrip failed: %s", e)
     finally:
         try:
-            proc.stdin.close()
+            stdin.close()
         except OSError:
             pass
         try:

@@ -35,11 +35,11 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
-    Gdk,
-    GLib,
-    Gtk,
-    Gtk4LayerShell,
+from gi.repository import (  # noqa: E402
+    Gdk,  # ty: ignore[unresolved-import]
+    GLib,  # ty: ignore[unresolved-import]
+    Gtk,  # ty: ignore[unresolved-import]
+    Gtk4LayerShell,  # ty: ignore[unresolved-import]
 )
 
 # ── Monitor helpers ─────────────────────────────────────────────
@@ -822,7 +822,6 @@ __all__ = [
     "Header",
     "LayerOverlayWindow",
     "PillVariant",
-    "ensure_layer_shell_preload",
     "focused_gdk_monitor",
     "focused_monitor_name",
     "load_css_from_path",

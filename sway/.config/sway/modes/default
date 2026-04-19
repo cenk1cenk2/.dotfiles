@@ -23,6 +23,9 @@ bindsym $mod+Space exec $menu
 ## Launch // Open clipboard ##
 bindsym $mod+p exec $clipboard
 
+## Launch // Quick note to clipboard ##
+bindsym $mod+Shift+p exec $quick_note
+
 # Drag floating windows by holding down $mod and left mouse button.
 # Resize them with right mouse button + $mod.
 # Despite the name, also works for non-floating windows.

@@ -307,8 +307,8 @@ def _dispatch(req: dict) -> None:
         return
     if method == "tools/call":
         name = params.get("name")
-        handler = _HANDLERS.get(name)
         log.info("tools/call: name=%s", name)
+        handler = _HANDLERS.get(name) if isinstance(name, str) else None
         if handler is None:
             _error(req_id, -32602, f"unknown tool: {name!r}")
             return

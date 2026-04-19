@@ -139,7 +139,11 @@ def select_option_id(options: list[PermissionOption], want_kind: str) -> Optiona
     """Pick the option_id matching `want_kind` (or its fallback chain).
     Returns None when nothing sensible is on offer so callers can decide
     whether to send `cancelled` or fall back to whatever the agent
-    declared first."""
+    declared first.
+
+    Logs at WARN when the fallback chain exhausts and we have to pick
+    the first option blindly — that's the signal that `_KIND_FALLBACK`
+    is missing a translation for the agent version we're talking to."""
     if not options:
         return None
     by_kind: dict[str, str] = {}
@@ -149,7 +153,15 @@ def select_option_id(options: list[PermissionOption], want_kind: str) -> Optiona
     for candidate in _KIND_FALLBACK.get(want_kind, (want_kind,)):
         if candidate in by_kind:
             return by_kind[candidate]
-    return options[0].option_id
+    chosen = options[0].option_id
+    log.warning(
+        "select_option_id: want_kind=%s not in agent options %s; "
+        "falling back to first option_id=%s",
+        want_kind,
+        list(by_kind.keys()),
+        chosen,
+    )
+    return chosen
 
 def _content_text(content: Any) -> Optional[str]:
     """ACP content blocks are a discriminated union; we only surface
@@ -410,7 +422,7 @@ class AcpClient(Client):
                     )
                     content = "".join(lines)
         except OSError as e:
-            raise acp.RequestError.internal_error(str(e))
+            raise acp.RequestError.internal_error({"message": str(e)})
         return acp.ReadTextFileResponse(content=content)
 
     async def write_text_file(
@@ -425,7 +437,7 @@ class AcpClient(Client):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
         except OSError as e:
-            raise acp.RequestError.internal_error(str(e))
+            raise acp.RequestError.internal_error({"message": str(e)})
         return None
 
 class AcpSession:
@@ -468,6 +480,16 @@ class AcpSession:
         # portable path. Consumed + nulled inside `prompt()`.
         raw_prefix = kwargs.get("agents_file")
         self._agents_file: str = (raw_prefix or "").strip()
+        # Optional path to a plain-text file that holds the last ACP
+        # `session_id` this adapter obtained. When set, `_ensure_started`
+        # tries `conn.load_session(session_id, ...)` first — if the agent
+        # still has it, the conversation resumes from wherever it left
+        # off. On failure (agent forgot / file is stale / first launch)
+        # we fall through to `new_session` and overwrite the store with
+        # whatever id comes back. `close()` intentionally does NOT call
+        # `conn.close_session` — we want the session to outlive the
+        # subprocess so the NEXT launch can pick it back up.
+        self.session_store_path: Optional[str] = kwargs.get("session_store_path")
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
@@ -475,6 +497,12 @@ class AcpSession:
         self._process_cm: Any = None
         self._process: Any = None
         self._session_id: Optional[str] = None
+        # Whether the current session_id came from the on-disk store
+        # (True → `load_session` succeeded, False → we minted a fresh
+        # one via `new_session`). Exposed so `pilot --session X
+        # session-info` / the status socket can tell the user which
+        # path fired without having to parse logs.
+        self._resumed_from_store: bool = False
         self._permission_handler: Optional[PermissionHandler] = None
         # Rebound by `prompt()` so a single long-lived `AcpClient` can
         # drain events into whichever turn is currently in flight.
@@ -490,6 +518,38 @@ class AcpSession:
         an active session). The client looks it up lazily per request,
         so late wiring is fine."""
         self._permission_handler = handler
+
+    def _read_stored_session_id(self) -> Optional[str]:
+        """Return the previously-saved `session_id` for this session
+        slot, or None if the store path isn't configured / the file is
+        missing / the payload is empty."""
+        path = self.session_store_path
+        if not path:
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            log.warning("session store read failed (%s): %s", path, e)
+            return None
+        return raw or None
+
+    def _write_stored_session_id(self, session_id: str) -> None:
+        """Persist `session_id` so the next launch can pick up where
+        this one leaves off. Any write failure is logged and swallowed
+        — a session still works without persistence, just without
+        cross-launch continuity."""
+        path = self.session_store_path
+        if not path:
+            return
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(session_id)
+        except OSError as e:
+            log.warning("session store write failed (%s): %s", path, e)
 
     def _start_loop(self) -> None:
         if self._thread is not None:
@@ -566,17 +626,55 @@ class AcpSession:
                 client_capabilities=caps,
                 client_info=info,
             )
-            log.debug(
-                "acp new_session: cwd=%s mcp=%s",
-                self.cwd or os.getcwd(),
-                [s.name for s in self.mcp_servers],
-            )
-            session = await conn.new_session(
-                cwd=self.cwd or os.getcwd(),
-                mcp_servers=list(self.mcp_servers),
-            )
-            log.info("acp session established: id=%s", session.session_id)
-            return session.session_id
+            cwd = self.cwd or os.getcwd()
+            mcp = list(self.mcp_servers)
+            # Two-phase session handshake:
+            #   1. If we have a stored session_id, try `load_session` —
+            #      the agent looks it up in its own on-disk store and
+            #      returns the conversation history to the client.
+            #   2. On any failure (no store, agent forgot, id mismatch
+            #      between providers) fall through to `new_session` and
+            #      overwrite the stored id.
+            # Claude's `claude-agent-acp` and `opencode acp` both
+            # implement load_session; other agents may not — the try/
+            # except keeps us portable.
+            stored_id = self._read_stored_session_id()
+            session_id: Optional[str] = None
+            resumed = False
+            if stored_id:
+                try:
+                    log.info(
+                        "acp load_session attempt: id=%s store=%s",
+                        stored_id,
+                        self.session_store_path,
+                    )
+                    await conn.load_session(
+                        cwd=cwd, session_id=stored_id, mcp_servers=mcp
+                    )
+                    session_id = stored_id
+                    resumed = True
+                    log.info("acp session resumed: id=%s", session_id)
+                except Exception as e:
+                    log.info(
+                        "acp load_session failed (%s); creating a fresh session",
+                        e,
+                    )
+            if session_id is None:
+                log.debug(
+                    "acp new_session: cwd=%s mcp=%s",
+                    cwd,
+                    [s.name for s in self.mcp_servers],
+                )
+                session = await conn.new_session(cwd=cwd, mcp_servers=mcp)
+                session_id = session.session_id
+                log.info(
+                    "acp session established (fresh): id=%s store=%s",
+                    session_id,
+                    self.session_store_path,
+                )
+            self._write_stored_session_id(session_id)
+            self._resumed_from_store = resumed
+            return session_id
 
         fut = asyncio.run_coroutine_threadsafe(_bootstrap(), loop)
         self._session_id = fut.result()
@@ -773,7 +871,35 @@ class AcpAdapter:
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
         self._session.set_permission_handler(handler)
 
-    def turn(
+    @property
+    def mcp_server_names(self) -> list[str]:
+        """Names of every MCP server the session handed to the agent at
+        `new_session`. Exposed here so callers don't need to reach into
+        `adapter._session.mcp_servers` to build palette listings."""
+        return [s.name for s in self._session.mcp_servers if s.name]
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """Current ACP `session_id`, or None before the first turn /
+        after `close()`. Surfaced for the `status` socket and the
+        `session-info` CLI so users can see which conversation they
+        just resumed into."""
+        return self._session._session_id
+
+    @property
+    def session_resumed(self) -> bool:
+        """True when the active session_id came from the on-disk store
+        (`load_session` succeeded), False when we just minted it via
+        `new_session`."""
+        return self._session._resumed_from_store
+
+    @property
+    def session_store_path(self) -> Optional[str]:
+        """Filesystem path the session_id is persisted to, or None
+        when persistence is disabled."""
+        return self._session.session_store_path
+
+    def iter_events(
         self,
         user_message: str,
         *,
@@ -782,7 +908,13 @@ class AcpAdapter:
         """Yields `(kind, payload)` tuples where `kind` is one of
         `"text" | "thinking" | "tool" | "plan"`. `attachments` is
         optional — pasted images or other binary blobs flow through
-        as ACP content blocks prefixed to the text prose."""
+        as ACP content blocks prefixed to the text prose.
+
+        Named `iter_events` (not `turn`) so `_AcpConverseAdapter.turn`
+        can define its own return type (`Iterator[TurnChunk]`) without
+        the override triggering a Liskov-violation on the raw-tuple
+        yield type here — this method is the low-level event stream
+        the converse layer wraps, not a user-facing API."""
         event_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
         error_holder: dict[str, BaseException] = {}
 
