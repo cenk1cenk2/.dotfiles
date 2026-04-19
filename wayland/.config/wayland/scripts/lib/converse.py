@@ -18,8 +18,8 @@ class ConversationProvider(StrEnum):
     CLAUDE = "claude"
     CODEX = "codex"
 
-DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
-DEFAULT_CONVERSE_MODEL = ""
+DEFAULT_CONVERSE_ADAPTER = ConversationProvider.HTTP
+DEFAULT_CONVERSE_MODEL = "glm-5.1:cloud"
 
 log = logging.getLogger(__name__)
 
@@ -148,9 +148,23 @@ class ConversationAdapterHttp:
         if self.tool_ids:
             body["tool_ids"] = self.tool_ids
         if self.features:
+            # OpenWebUI's middleware skips `features` handlers when
+            # `params.function_calling == "native"`, so we keep params
+            # out of the request unless the caller explicitly sets it.
+            # The features block alone is the happy path for web_search
+            # / image_generation / code_interpreter when the active
+            # model doesn't have native tool-calling enabled.
             body["features"] = self.features
         if self.files:
             body["files"] = self.files
+
+        # Debug-level body log so `ask.py -v` can show exactly what we
+        # sent — useful when a server-side feature (web_search, tools)
+        # isn't responding the way we expected.
+        log.debug(
+            "http request: %s",
+            json.dumps({**body, "messages": f"<{len(body['messages'])} msgs>"}),
+        )
 
         try:
             resp = requests.post(

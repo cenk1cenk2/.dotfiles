@@ -3,40 +3,33 @@
  *
  * Elevation (onedarker: higher = lighter):
  *   bg[200] = #1e2127   window surface (starting point)
- *   bg[300] = #22282f   assistant card / edit surface
+ *   bg[300] = #22282f   assistant / edit surface
  *   bg[400] = #2c333d   user card, compose surface
  *   bg[500] = #4b5263   strong borders
- *
- * The user card at bg[400] and the window at bg[200] differ by four
- * palette steps, which is enough to see the card clearly even through
- * the translucent window background. */
+ */
 @define-color ask_window #1e2127;
-/* bg[200]   window surface */
 @define-color ask_card #2c333d;
-/* bg[400]   user/queue card */
 @define-color ask_card_hi #22282f;
-/* bg[300]   assistant / edit */
 @define-color ask_compose #2c333d;
-/* bg[400]   compose surface */
 @define-color ask_border #4b5263;
-/* bg[500]   strong border */
 @define-color ask_border_soft #2c333d;
-/* bg[400]   soft divider */
-@define-color ask_border_focus #61afef;
-/* blue[600] */
+@define-color ask_border_focus #f1b862;
 @define-color ask_fg #abb2bf;
 @define-color ask_fg_dim #7c8a9d;
 @define-color ask_fg_muted #5c6370;
-@define-color ask_accent #61afef;
-@define-color ask_user #61afef;
-@define-color ask_assistant #c678dd;
+@define-color ask_accent #d19a66;
+@define-color ask_user #e5c07b;
+@define-color ask_assistant #98c379;
 @define-color ask_idle #98c379;
 @define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
 
-/* System monospace (aliased via fontconfig to $term-font). */
+/* Single base font size for the whole overlay. Every other `font-size`
+ * is an `em` multiplier — bump this one declaration to scale every
+ * label, textview, hint and button uniformly. */
 * {
   font-family: monospace;
+  font-size: 14pt;
 }
 
 /* Window surface. bg[200] is the starting tone — cards lift from here. */
@@ -47,15 +40,15 @@ window {
 
 /* ============================================================ Header */
 box.ask-header {
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-bottom: 1px solid @ask_border_soft;
   background: @ask_window;
 }
 
 label.ask-provider {
-  font-size: 13pt;
+  font-size: 0.9em;
   font-weight: 700;
-  padding: 6px 14px;
+  padding: 4px 12px;
   border-radius: 999px;
   background: alpha(@ask_fg_dim, 0.15);
   color: @ask_fg;
@@ -80,10 +73,10 @@ label.ask-provider.pending {
 button.ask-close {
   background: transparent;
   border: none;
-  padding: 4px 12px;
+  padding: 4px 10px;
   min-width: 0;
   color: @ask_fg_dim;
-  font-size: 16pt;
+  font-size: 1.1em;
   border-radius: 6px;
 }
 
@@ -101,8 +94,7 @@ box.ask-conv {
   padding: 10px 10px 4px 10px;
 }
 
-/* Turn card. bg[400] for user, bg[300] for assistant (the left edge
- * colour is the quickest role signal). */
+/* Turn card. bg[400] for user, bg[300] for assistant. */
 box.ask-card {
   background: @ask_card;
   border: 1px solid @ask_border_soft;
@@ -121,7 +113,7 @@ box.ask-card-assistant {
 }
 
 label.ask-card-role {
-  font-size: 12pt;
+  font-size: 0.8em;
   font-weight: 800;
   color: @ask_fg_dim;
   letter-spacing: 0.04em;
@@ -136,15 +128,14 @@ label.ask-card-role-assistant {
   color: @ask_assistant;
 }
 
-/* TextView colour / bg: aggressive-but-plain selectors so themes that
- * paint the `text` sub-node (e.g., Graphite: `textview text { bg:
- * #0F0F0F }`) lose on specificity. Body text also carries an explicit
- * `foreground` TextTag from MarkdownView — that is the definitive
- * source of truth; CSS is the fallback layer. */
+/* TextView colour: body text also carries an explicit `foreground`
+ * TextTag from MarkdownView (definitive source); CSS is the fallback.
+ * `window` ancestor + `> text` child form beats theme rules that
+ * target `text` sub-nodes on specificity. */
 window textview.ask-card-text,
 window textview.ask-card-text > text,
 window textview.ask-card-text text {
-  font-size: 15pt;
+  font-size: 1em;
   background-color: transparent;
   background: transparent;
   color: @ask_fg;
@@ -176,7 +167,7 @@ window textview.ask-compose-text text {
   background-color: transparent;
   background: transparent;
   color: @ask_fg;
-  font-size: 15pt;
+  font-size: 1em;
   caret-color: @ask_accent;
 }
 
@@ -187,7 +178,7 @@ box.ask-compose-bar {
 }
 
 label.ask-compose-hint {
-  font-size: 12pt;
+  font-size: 0.8em;
   color: @ask_fg_muted;
 }
 
@@ -197,7 +188,7 @@ button.ask-compose-send {
   border: none;
   border-radius: 6px;
   padding: 6px 16px;
-  font-size: 13pt;
+  font-size: 0.85em;
   font-weight: 700;
   letter-spacing: 0.08em;
   min-width: 0;
@@ -220,7 +211,7 @@ box.ask-queue {
 }
 
 label.ask-queue-header {
-  font-size: 12pt;
+  font-size: 0.8em;
   font-weight: 700;
   color: @ask_fg_muted;
   padding: 4px 2px 6px 2px;
@@ -255,7 +246,7 @@ box.ask-queue-card:hover {
 }
 
 label.ask-queue-text {
-  font-size: 15pt;
+  font-size: 1em;
   color: @ask_fg;
 }
 
@@ -272,7 +263,7 @@ window textview.ask-queue-edit-text text {
   background-color: transparent;
   background: transparent;
   color: @ask_fg;
-  font-size: 15pt;
+  font-size: 1em;
 }
 
 box.ask-queue-actions {
@@ -288,7 +279,7 @@ button.ask-queue-remove {
   min-width: 0;
   color: @ask_fg_dim;
   border-radius: 6px;
-  font-size: 13pt;
+  font-size: 0.85em;
 }
 
 button.ask-queue-edit:hover {

@@ -561,7 +561,7 @@ class TurnCard:
 
     def __init__(self, role: str, title: str, on_link):
         self.role = role
-        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.widget.add_css_class("ask-card")
         self.widget.add_css_class(f"ask-card-{role}")
 
@@ -578,6 +578,7 @@ class TurnCard:
             bottom_margin=2,
             left_margin=0,
             right_margin=0,
+            hexpand=True,
         )
         self._textview.add_css_class("ask-card-text")
         self.widget.append(self._textview)
@@ -771,9 +772,14 @@ class AskWindow(Gtk.ApplicationWindow):
             title=self.USER_TITLE,
             on_link=self._open_link,
         )
-        card.set_text(text)
         self._cards.append(card)
+        # Parent the widget BEFORE setting its content so GTK's allocate
+        # pass catches the child in the tree on the first layout cycle.
+        # Otherwise the first card sometimes doesn't render until a
+        # later turn forces a re-layout of the conversation box.
         self._conv_box.append(card.widget)
+        card.set_text(text)
+        self._conv_box.queue_resize()
         GLib.idle_add(self._scroll_to_end)
 
         return card
@@ -786,6 +792,7 @@ class AskWindow(Gtk.ApplicationWindow):
         )
         self._cards.append(card)
         self._conv_box.append(card.widget)
+        self._conv_box.queue_resize()
         GLib.idle_add(self._scroll_to_end)
 
         return card
@@ -1159,7 +1166,14 @@ class Session:
         try:
             raw = conn.recv(8192).decode("utf-8", errors="replace").strip()
             response = self._dispatch(raw)
-            conn.sendall(json.dumps(response).encode())
+            try:
+                conn.sendall(json.dumps(response).encode())
+            except (BrokenPipeError, ConnectionResetError):
+                # Client went away before reading our reply. Common and
+                # expected: forwarders that fire-and-forget, kill
+                # commands that tear everything down before the response
+                # can land. Not worth a warning.
+                log.debug("client closed before response was delivered")
         except Exception as e:
             log.warning("socket handler error: %s", e)
         finally:
@@ -1369,7 +1383,7 @@ def main():
     )
     toggle_parser.add_argument(
         "--converse-provider",
-        choices=["http", "claude", "codex"],
+        choices=list(ConversationProvider),
         default=DEFAULT_CONVERSE_ADAPTER,
     )
     toggle_parser.add_argument(
