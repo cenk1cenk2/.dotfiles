@@ -19,6 +19,7 @@ from lib import (
     OutputAdapterClipboard,
     EnrichAdapterCodex,
     EnrichAdapter,
+    EnrichAdapterOpenCode,
     EnrichProvider,
     EnrichAdapterHttp,
     OutputAdapter,
@@ -356,6 +357,12 @@ class Session:
                                 AI_USER_PROMPT,
                                 **spec_model_kw,
                             )
+                        case EnrichProvider.OPENCODE:
+                            new_enricher = EnrichAdapterOpenCode(
+                                AI_SYSTEM_PROMPT,
+                                AI_USER_PROMPT,
+                                **spec_model_kw,
+                            )
                         case _:
                             raise ValueError(
                                 f"unknown enrich provider: {spec.provider!r}",
@@ -684,6 +691,12 @@ def main():
                 )
             case EnrichProvider.CODEX:
                 enricher = EnrichAdapterCodex(
+                    AI_SYSTEM_PROMPT,
+                    AI_USER_PROMPT,
+                    model=args.enrich_model,
+                )
+            case EnrichProvider.OPENCODE:
+                enricher = EnrichAdapterOpenCode(
                     AI_SYSTEM_PROMPT,
                     AI_USER_PROMPT,
                     model=args.enrich_model,

@@ -251,6 +251,14 @@ window#waybar .modules-right {
   background-color: @error_color;
 }
 
+/* Awaiting — overlay is blocked on user input (pending permission
+ * row OR active ask_question banner). Matches `@ask_awaiting` in
+ * ask.css (#d19a66, orange). Inline literal so waybar's style sheet
+ * doesn't have to import the ask palette. */
+#custom-ask.awaiting {
+  background-color: #d19a66;
+}
+
 #mode,
 #submap {
   color: @accent_color;
