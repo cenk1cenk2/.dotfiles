@@ -162,10 +162,16 @@ class MarkdownView:
     LINK_COLOR = "#4676ac"
     CODE_BG = "#17191e"
     INLINE_CODE_BG = "#2c333d"
+    # Stamped on every inserted run so text is legible regardless of
+    # what the active GTK theme does to `textview text { color: … }`.
+    # CSS alone can lose to theme `.background` cascades depending on
+    # priority; a TextTag with an explicit foreground is definitive.
+    FG_COLOR = "#abb2bf"
 
     def __init__(self, buffer: Gtk.TextBuffer):
         self.buffer = buffer
         self._tags = self._build_static_tags()
+        self._fg_tag = buffer.create_tag("ask-fg", foreground=self.FG_COLOR)
         self._md = MarkdownIt("commonmark")
 
     def _build_static_tags(self) -> dict:
@@ -320,10 +326,10 @@ class MarkdownView:
 
     def _insert(self, text: str, tags: list) -> None:
         end = self.buffer.get_end_iter()
-        if tags:
-            self.buffer.insert_with_tags(end, text, *tags)
-        else:
-            self.buffer.insert(end, text)
+        # Always carry the foreground tag so text renders in our palette
+        # regardless of theme. Other tags (bold, italic, code, link) stack
+        # on top without needing to repeat the colour.
+        self.buffer.insert_with_tags(end, text, self._fg_tag, *tags)
 
 class ComposeView:
     """Multi-line compose with an obvious visual box, hint line, and a
@@ -1230,7 +1236,15 @@ def _build_adapter(args) -> ConversationAdapter:
 def _read_input(mode: InputMode) -> str:
     match mode:
         case InputMode.STDIN:
-            text = InputAdapterStdin().read()
+            # Only block on stdin when it's actually a pipe. Running
+            # `ask.py toggle` from a TTY (or via a compositor bind
+            # with no piped input) returns empty so the window opens
+            # ready-to-type instead of hanging on `sys.stdin.read()`
+            # waiting for EOF that never comes.
+            if sys.stdin.isatty():
+                text = ""
+            else:
+                text = InputAdapterStdin().read()
         case InputMode.CLIPBOARD:
             text = InputAdapterClipboard().read()
         case _:
@@ -1390,12 +1404,8 @@ def main():
         "--feature",
         action="append",
         dest="features",
-        default=[],
+        default=["web_search", "memory"],
         metavar="KEY",
-        choices=[
-            "web_search",
-            "memory",
-        ],
         help="enable a built-in feature (repeatable). OpenWebUI-only.",
     )
 
