@@ -324,12 +324,34 @@ class ComposeView:
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bar.add_css_class("ask-compose-bar")
+
+        # Trusted-tool pills live on the left of the submit bar. Each
+        # pill is a single button labelled `name ✕`; clicking invokes
+        # the registered remove callback (set from AskWindow). Hidden
+        # until at least one tool is trusted. Using a FlowBox so we
+        # wrap gracefully if the user has trusted a lot of tools.
+        self._pills_flow = Gtk.FlowBox(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            column_spacing=4,
+            row_spacing=4,
+            hexpand=True,
+            valign=Gtk.Align.CENTER,
+        )
+        self._pills_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._pills_flow.set_max_children_per_line(64)
+        self._pills_flow.set_homogeneous(False)
+        self._pills_flow.add_css_class("ask-compose-pills")
+        self._pills_flow.set_visible(False)
+        bar.append(self._pills_flow)
+        self._pill_remove_cb = None
+
         hint = Gtk.Label(
             label="Enter to send  ·  Shift+Enter newline  ·  Ctrl+P paste",
             xalign=0.0,
             hexpand=True,
         )
         hint.add_css_class("ask-compose-hint")
+        self._hint_label = hint
         bar.append(hint)
 
         self._send_btn = Gtk.Button(label="⏎ send")
@@ -350,6 +372,43 @@ class ComposeView:
         cap = int(window_height_px * fraction)
         floor = int(self._line_px * self.MIN_ROWS) + self._pad_px
         self._scroller.set_max_content_height(max(floor, cap))
+
+    def set_trusted_pills(self, names, on_remove) -> None:
+        """Rebuild the trusted-tool pill strip. `names` is an iterable of
+        tool names; `on_remove(name)` is invoked when a pill is clicked.
+        Hides the pill row when empty, hides the hint label when we
+        have pills so they get room to breathe inline with the submit."""
+        self._pill_remove_cb = on_remove
+        # Clear the old children — FlowBox doesn't have a bulk-clear.
+        child = self._pills_flow.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._pills_flow.remove(child)
+            child = nxt
+
+        names = list(names)
+        if not names:
+            self._pills_flow.set_visible(False)
+            if self._hint_label is not None:
+                self._hint_label.set_visible(True)
+
+            return
+
+        for name in names:
+            btn = Gtk.Button(label=f"{name} ✕")
+            btn.add_css_class("ask-compose-pill")
+            btn.set_tooltip_text(f"Click to untrust {name} (re-enables prompts)")
+            btn.connect("clicked", lambda _b, n=name: self._on_pill_click(n))
+            self._pills_flow.append(btn)
+        self._pills_flow.set_visible(True)
+        # Hide the hint when pills are present — pills + hint + send
+        # would crowd the submit bar on narrow overlays.
+        if self._hint_label is not None:
+            self._hint_label.set_visible(False)
+
+    def _on_pill_click(self, name: str) -> None:
+        if self._pill_remove_cb is not None:
+            self._pill_remove_cb(name)
 
     def get_text(self) -> str:
         buf = self._textview.get_buffer()
@@ -1047,12 +1106,27 @@ class AskWindow(Gtk.ApplicationWindow):
         name = row.tool_name
         if name:
             self._trusted_tools.add(name)
+            self._refresh_trust_pills()
         # Drop every pending row for the same tool while we're at it —
         # the user just said they trust it, no point keeping duplicate
         # prompts for concurrent calls on screen.
         for existing in list(self._permissions):
             if existing.tool_name == name:
                 self._remove_permission_row(existing)
+
+    def _untrust_tool(self, name: str) -> None:
+        """Remove `name` from the per-session trust set so future calls
+        surface a permission row again. Wired to the compose-bar pill
+        click handler."""
+        if name in self._trusted_tools:
+            self._trusted_tools.discard(name)
+            self._refresh_trust_pills()
+
+    def _refresh_trust_pills(self) -> None:
+        self._compose.set_trusted_pills(
+            sorted(self._trusted_tools),
+            self._untrust_tool,
+        )
 
     def _on_permission_deny(self, row: PermissionRow) -> None:
         tool_name = row.tool_name or "tool"

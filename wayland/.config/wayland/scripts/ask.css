@@ -243,6 +243,52 @@
   color: @ask_fg_muted;
 }
 
+/* Trusted-tool pills on the submit bar. Each pill is a compact
+ * button labelled `name ✕`; click removes the tool from the
+ * per-session trust set so future calls surface a permission row
+ * again. Accent tint since they represent active trust grants. */
+.overlay flowbox.ask-compose-pills {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay flowbox.ask-compose-pills > flowboxchild {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay button.ask-compose-pill {
+  background-color: alpha(@ask_accent, 0.18);
+  border: 1px solid alpha(@ask_accent, 0.45);
+  padding: 2px 10px;
+  min-width: 0;
+  color: @ask_accent;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.ask-compose-pill:hover {
+  color: @ask_pending;
+  background-color: alpha(@ask_pending, 0.22);
+  border-color: alpha(@ask_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.ask-compose-pill:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
 /* Primary action — SEND. Stronger shadow than secondary buttons; the
  * pressed state flips the shadow inwards for tactile feedback. */
 .overlay button.ask-compose-send {
