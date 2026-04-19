@@ -422,7 +422,17 @@ class ConversationAdapterClaude:
 
                 return []
 
-        args = ["--mcp-config", self._mcp_config_path]
+        # `--strict-mcp-config` makes OUR config authoritative for
+        # this claude subprocess. Without it, user-level
+        # (`~/.claude.json`) and project (`.mcp.json`) configs merge
+        # in and drown us out — the permission-prompt-tool lookup
+        # then can't find the tool we registered. Strict mode is the
+        # only way to guarantee `mcp__ask__approve` resolves.
+        args = [
+            "--mcp-config",
+            self._mcp_config_path,
+            "--strict-mcp-config",
+        ]
         if self.permission_tool:
             args.extend(["--permission-prompt-tool", self.permission_tool])
 
@@ -530,7 +540,17 @@ class ConversationAdapterClaude:
                         elif itype == "content_block_stop":
                             idx = inner.get("index", 0)
                             slot = pending_tools.pop(idx, None)
-                            if slot and slot.get("name"):
+                            # When MCP permission gating is active the
+                            # approval tool already fired a row BEFORE
+                            # the tool ran; emitting the in-stream
+                            # event here would duplicate it. Gating
+                            # path wins; in-stream tool_use becomes a
+                            # no-op.
+                            if (
+                                slot
+                                and slot.get("name")
+                                and not (self.mcp_config and self.permission_tool)
+                            ):
                                 yield ToolCall(
                                     tool_id=slot["id"],
                                     name=slot["name"],

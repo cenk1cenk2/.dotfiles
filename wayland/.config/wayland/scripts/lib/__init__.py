@@ -28,7 +28,7 @@ from .input import (
     InputMode,
     InputAdapterStdin,
 )
-from .mcp import McpConfig, McpServer, socket_approval
+from .mcp import McpConfig, McpServer, socket_approval, socket_question
 from .notify import notify
 from .output import (
     OutputAdapterClipboard,
@@ -71,4 +71,5 @@ __all__ = [
     "notify",
     "signal_waybar",
     "socket_approval",
+    "socket_question",
 ]

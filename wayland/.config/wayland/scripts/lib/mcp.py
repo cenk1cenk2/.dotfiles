@@ -45,6 +45,10 @@ PROTOCOL_VERSION = "2025-06-18"
 # allow/deny envelope the Claude SDK expects.
 ApprovalCallback = Callable[[str, dict], "tuple[bool, str]"]
 
+# Question callback: claude asks the user a free-form question (via
+# `enable_question`), we hand it off, get back a typed answer.
+QuestionCallback = Callable[[str], str]
+
 class McpServer:
     """Minimal MCP JSON-RPC 2.0 stdio server.
 
@@ -119,6 +123,48 @@ class McpServer:
                     "input": {"type": "object"},
                 },
                 "required": ["tool_name", "input"],
+            },
+            handler,
+        )
+
+    def enable_question(
+        self,
+        callback: QuestionCallback,
+        tool_name: str = "ask_question",
+        description: str = (
+            "Ask the user a free-form question and wait for them to type "
+            "an answer in the overlay's compose box. Returns the answer "
+            "as a string; empty answer means the user declined to answer."
+        ),
+    ) -> None:
+        """Register an `ask_question` tool claude can invoke to get a
+        typed reply from the user. `callback(question)` must return the
+        user's answer (string). The UI side is responsible for blocking
+        until the user actually answers."""
+
+        def handler(args: dict) -> dict:
+            question = args.get("question", "") or ""
+            if not question:
+                return {"answer": ""}
+            try:
+                answer = callback(question)
+            except Exception as e:
+                log.exception("question callback raised")
+
+                return {
+                    "content": [{"type": "text", "text": f"callback error: {e}"}],
+                    "isError": True,
+                }
+
+            return {"answer": answer or ""}
+
+        self.register_tool(
+            tool_name,
+            description,
+            {
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"],
             },
             handler,
         )
@@ -267,6 +313,35 @@ class McpConfig:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f)
 
+def _socket_roundtrip(socket_path: str, payload: dict, timeout_s: float) -> dict:
+    """Shared transport for both approval and question callbacks. Sends
+    a newline-delimited JSON request over a Unix socket, reads one
+    newline-terminated response, returns the parsed dict. Any transport
+    error returns `{"error": "<reason>"}` so callers can degrade
+    gracefully without trying to distinguish failure modes themselves."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout_s)
+            s.connect(socket_path)
+            s.sendall((json.dumps(payload) + "\n").encode())
+            chunks: list[bytes] = []
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+                if b"\n" in data:
+                    break
+            raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+    except (ConnectionError, FileNotFoundError, OSError, socket.timeout) as e:
+        return {"error": f"socket unavailable: {e}"}
+    if not raw:
+        return {"error": "socket closed connection"}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"error": f"non-JSON response: {raw[:120]}"}
+
 def socket_approval(socket_path: str, timeout_s: float = 600.0) -> ApprovalCallback:
     """Return an `ApprovalCallback` that forwards every approval
     request to a Unix socket and waits for the user's verdict.
@@ -288,29 +363,34 @@ def socket_approval(socket_path: str, timeout_s: float = 600.0) -> ApprovalCallb
                 else str(tool_input or "")
             ),
         }
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-                s.settimeout(timeout_s)
-                s.connect(socket_path)
-                s.sendall((json.dumps(payload) + "\n").encode())
-                chunks: list[bytes] = []
-                while True:
-                    data = s.recv(4096)
-                    if not data:
-                        break
-                    chunks.append(data)
-                    if b"\n" in data:
-                        break
-                raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
-        except (ConnectionError, FileNotFoundError, OSError, socket.timeout) as e:
-            return False, f"overlay unavailable: {e}"
-        if not raw:
-            return False, "overlay closed connection"
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return False, f"overlay sent non-JSON: {raw[:120]}"
+        parsed = _socket_roundtrip(socket_path, payload, timeout_s)
+        if "error" in parsed:
+            return False, parsed["error"]
 
         return bool(parsed.get("approved")), str(parsed.get("reason") or "")
+
+    return callback
+
+def socket_question(socket_path: str, timeout_s: float = 600.0) -> QuestionCallback:
+    """Return a `QuestionCallback` that forwards the question to a Unix
+    socket and waits for the user's typed answer.
+
+    Wire shape:
+      request  →  {"cmd":"question","question":"…"}
+      response ←  {"answer":"…"}
+
+    Transport errors degrade to an empty-string answer so claude can
+    continue the turn with something in hand instead of blowing up."""
+
+    def callback(question: str) -> str:
+        parsed = _socket_roundtrip(
+            socket_path,
+            {"cmd": "question", "question": question},
+            timeout_s,
+        )
+        if "error" in parsed:
+            return ""
+
+        return str(parsed.get("answer") or "")
 
     return callback

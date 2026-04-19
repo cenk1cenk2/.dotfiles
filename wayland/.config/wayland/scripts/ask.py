@@ -16,7 +16,7 @@ import socket
 import subprocess
 import sys
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from markdown_it import MarkdownIt
 
@@ -59,6 +59,23 @@ def _ensure_layer_shell_preload() -> None:
 
 if len(sys.argv) > 1 and sys.argv[1] == "toggle":
     _ensure_layer_shell_preload()
+
+# Very-early MCP server mode. Claude spawns us as a stdio MCP server
+# via `--mcp-config` → our config points back at this same script with
+# `mcp-server` as argv[1]. We don't want to drag gtk4-layer-shell /
+# GTK imports into that subprocess (it has no display + doesn't need
+# them), so we short-circuit to the MCP event loop here and exit.
+if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
+    # Late import so the normal ask.py paths still load gi below.
+    from lib.mcp import McpServer, socket_approval, socket_question  # noqa: E402
+
+    _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    _mcp_sock = os.path.join(_runtime, "wayland-ask-mcp.sock")
+    _server = McpServer("ask")
+    _server.enable_approval(socket_approval(_mcp_sock))
+    _server.enable_question(socket_question(_mcp_sock))
+    _server.run()
+    sys.exit(0)
 
 import gi  # noqa: E402
 
@@ -300,6 +317,35 @@ class ComposeView:
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.widget.add_css_class("ask-compose-wrap")
 
+        # Question banner. Hidden until `set_question_mode` is called
+        # by a claude `ask_question` MCP forward; shows the question
+        # text above the compose textview with a "✕ skip" button. The
+        # next submit sends its text to the question callback instead
+        # of dispatching a normal turn; the banner clears as soon as
+        # the user answers or skips.
+        self._question_banner = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+        )
+        self._question_banner.add_css_class("ask-question-banner")
+        self._question_label = Gtk.Label(
+            xalign=0.0,
+            hexpand=True,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            selectable=True,
+        )
+        self._question_label.add_css_class("ask-question-text")
+        self._question_banner.append(self._question_label)
+        skip_btn = Gtk.Button(label="✕ skip")
+        skip_btn.add_css_class("ask-question-skip")
+        skip_btn.set_tooltip_text("Skip this question — return an empty answer")
+        skip_btn.connect("clicked", lambda _b: self._on_question_skip())
+        self._question_banner.append(skip_btn)
+        self._question_banner.set_visible(False)
+        self.widget.append(self._question_banner)
+        self._question_callback: Optional[Callable[[str], None]] = None
+
         self._scroller = Gtk.ScrolledWindow()
         self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._scroller.set_propagate_natural_height(True)
@@ -443,9 +489,55 @@ class ComposeView:
 
     def _submit(self) -> None:
         text = self.get_text().strip()
-        if text and self._on_submit:
+        if not text:
+            return
+        # Question mode wins: while a claude `ask_question` is pending,
+        # submit routes the typed text back to that callback instead of
+        # dispatching a normal user turn. Clear the banner + callback
+        # before firing so re-entrant calls don't double-answer.
+        if self._question_callback is not None:
+            cb = self._question_callback
+            self.clear()
+            self.clear_question_mode()
+            cb(text)
+
+            return
+        if self._on_submit:
             self.clear()
             self._on_submit(text)
+
+    def set_question_mode(self, question: str, on_answer: Callable[[str], None]) -> None:
+        """Show the question banner above the textview and wire the
+        next submit to `on_answer(text)` instead of the normal turn
+        dispatch. Replaces any previous question in flight — the prior
+        callback is resolved with empty-string so the socket handler
+        doesn't hang."""
+        if self._question_callback is not None and self._question_callback is not on_answer:
+            # Resolve the stale one so its socket thread unblocks.
+            try:
+                self._question_callback("")
+            except Exception:
+                log.exception("stale question callback raised")
+        self._question_callback = on_answer
+        self._question_label.set_label(f"🤔 {question}")
+        self._question_banner.set_visible(True)
+
+    def clear_question_mode(self) -> None:
+        """Hide the banner and forget the callback. Safe to call when
+        no question is active."""
+        self._question_callback = None
+        self._question_banner.set_visible(False)
+
+    def _on_question_skip(self) -> None:
+        """`✕ skip` button: resolve the question with an empty answer
+        and dismiss the banner without sending a turn."""
+        cb = self._question_callback
+        self.clear_question_mode()
+        if cb is not None:
+            try:
+                cb("")
+            except Exception:
+                log.exception("question skip callback raised")
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
@@ -1190,6 +1282,20 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             self._permissions_box.set_visible(False)
 
+    def show_question(self, question: str, resolve) -> bool:
+        """Route a claude `ask_question` MCP tool through the overlay.
+
+        Places a question banner inside the compose wrap so the
+        question reads right above the input box; the user's next
+        submit sends the typed text back to `resolve` instead of
+        dispatching a normal turn. The banner disappears as soon as
+        they answer (or skip). Returns False so `GLib.idle_add` fires
+        once."""
+        self._compose.set_question_mode(question, on_answer=resolve)
+        self._compose.focus()
+
+        return False
+
     def show_permission_for_mcp(self, call: ToolCall, resolve) -> bool:
         """Render a permission row for a Claude MCP permission-prompt
         request and invoke `resolve(approved: bool, reason: str)` when
@@ -1701,11 +1807,11 @@ class Session:
 
                 return {"ok": True}
             case "permission":
-                # Claude's MCP permission-prompt-tool forwards here via
-                # ask-mcp.py. Block this socket handler thread until
-                # the user clicks allow/deny in the overlay, then
-                # return the answer. The ask-mcp.py wrapper translates
-                # the `approved` flag to Claude's allow/deny envelope.
+                # Claude's MCP permission-prompt-tool forwards here.
+                # Block this socket handler thread until the user
+                # clicks allow/deny in the overlay, then return the
+                # answer. The MCP server translates the `approved`
+                # flag into claude's allow/deny envelope.
                 tool_name = (obj.get("tool_name") or "").strip()
                 arguments = obj.get("arguments") or ""
                 event = threading.Event()
@@ -1722,28 +1828,43 @@ class Session:
                     arguments=str(arguments),
                 )
                 GLib.idle_add(self._window.show_permission_for_mcp, call, resolve)
-                # 10-min ceiling matches ask-mcp.py's socket timeout.
+                # 10-min ceiling matches `socket_approval`'s timeout.
                 if not event.wait(timeout=600):
                     verdict = {"approved": False, "reason": "overlay timeout"}
 
                 return verdict
+            case "question":
+                # Claude's `ask_question` MCP tool forwards here. Block
+                # the handler thread until the user types an answer
+                # into compose and hits send; return the answer string.
+                question = (obj.get("question") or "").strip()
+                q_event = threading.Event()
+                q_holder = {"answer": ""}
+
+                def q_resolve(answer: str) -> None:
+                    q_holder["answer"] = answer or ""
+                    q_event.set()
+
+                GLib.idle_add(self._window.show_question, question, q_resolve)
+                if not q_event.wait(timeout=600):
+                    return {"answer": ""}
+
+                return {"answer": q_holder["answer"]}
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
 def _build_mcp_config() -> McpConfig:
     """Compose the `McpConfig` we hand to the Claude adapter.
 
-    Pre-seeds one entry — the `ask` server, which is `ask-mcp.py`
-    wrapping `lib.mcp.McpServer.run()` with the socket-backed
-    approval callback. Callers can add more servers (github,
-    filesystem, …) either by extending this function or by mutating
-    the returned `McpConfig` before it's passed along."""
-    mcp_stub = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "ask-mcp.py",
-    )
+    Pre-seeds one entry — the `ask` server, which re-execs THIS SAME
+    script with `mcp-server` as argv[1]. The top of ask.py short-
+    circuits to `lib.mcp.McpServer.run()` for that argv and exits
+    without touching GTK, so the subprocess is a pure stdio server.
+    Callers can layer additional servers (github, filesystem, …) by
+    mutating the returned `McpConfig` before it reaches the adapter."""
+    self_script = os.path.abspath(__file__)
     config = McpConfig()
-    config.add("ask", sys.executable, args=["-u", mcp_stub])
+    config.add("ask", sys.executable, args=["-u", self_script, "mcp-server"])
 
     return config
 
