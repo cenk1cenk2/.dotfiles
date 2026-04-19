@@ -30,15 +30,21 @@
 * {
   font-family: monospace;
   font-size: 14pt;
-  background: @ask_window;
-  background-color: @ask_window;
 }
 
 /* Square surfaces everywhere — no rounding. Borders stay so surface
- * transitions are still readable. */
+ * transitions are still readable.
+ *
+ * NOTE on backgrounds: do NOT use a universal `* { background: ... }`
+ * rule. The `background` shorthand resets `background-image` (GTK
+ * themes use image layers on textview/text subnodes for the normal
+ * background), and painting `@ask_window` on every node makes the
+ * textview's `text` subnode render opaque instead of letting the
+ * parent card colour show through. Set `background-color` only on
+ * the specific container that needs it. */
 
 window {
-  background: @ask_window;
+  background-color: @ask_window;
   color: @ask_fg;
 }
 
@@ -46,37 +52,37 @@ window {
 box.ask-header {
   padding: 10px 14px;
   border-bottom: 1px solid @ask_border_soft;
-  background: @ask_window;
+  background-color: @ask_window;
 }
 
 label.ask-provider {
   font-size: 0.9em;
   font-weight: 700;
   padding: 4px 12px;
-  background: alpha(@ask_fg_dim, 0.15);
+  background-color: alpha(@ask_fg_dim, 0.15);
   color: @ask_fg;
   letter-spacing: 0.04em;
 }
 
 label.ask-provider.idle {
   color: @ask_idle;
-  background: alpha(@ask_idle, 0.22);
+  background-color: alpha(@ask_idle, 0.22);
 }
 
 label.ask-provider.streaming {
   color: @ask_stream;
-  background: alpha(@ask_stream, 0.22);
+  background-color: alpha(@ask_stream, 0.22);
 }
 
 label.ask-provider.pending {
   color: @ask_pending;
-  background: alpha(@ask_pending, 0.22);
+  background-color: alpha(@ask_pending, 0.22);
 }
 
 /* Button shadows. Depth comes from a hairline top-highlight and a soft
  * drop below — presses invert the pair so the button reads "sunken". */
 button.ask-close {
-  background: alpha(@ask_fg_dim, 0.08);
+  background-color: alpha(@ask_fg_dim, 0.08);
   border: 1px solid @ask_border_soft;
   padding: 3px 10px;
   min-width: 0;
@@ -89,7 +95,7 @@ button.ask-close {
 
 button.ask-close:hover {
   color: @ask_pending;
-  background: alpha(@ask_pending, 0.18);
+  background-color: alpha(@ask_pending, 0.18);
   border-color: alpha(@ask_pending, 0.45);
   box-shadow:
     inset 0 1px 0 alpha(white, 0.07),
@@ -104,7 +110,8 @@ button.ask-close:active {
 
 /* ====================================================== Conversation */
 scrolledwindow.ask-conv-scroller {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
 }
 
 box.ask-conv {
@@ -112,7 +119,7 @@ box.ask-conv {
 }
 
 box.ask-card {
-  background: @ask_card;
+  background-color: @ask_card;
   border: 1px solid @ask_border_soft;
   padding: 8px 14px;
   margin: 4px 2px;
@@ -124,7 +131,7 @@ box.ask-card-user {
 
 box.ask-card-assistant {
   border-left: 3px solid @ask_assistant;
-  background: @ask_card_hi;
+  background-color: @ask_card_hi;
 }
 
 label.ask-card-role {
@@ -143,20 +150,26 @@ label.ask-card-role-assistant {
   color: @ask_assistant;
 }
 
-window textview.ask-card-text,
-window textview.ask-card-text > text,
-window textview.ask-card-text text {
-  font-size: 1em;
+/* GTK4 paints a background on BOTH `textview` and its `text` subnode.
+ * Zero both, and explicitly clear `background-image` so the theme's
+ * `.view`-class image layer doesn't leak through. `min-height` on the
+ * text subnode keeps empty cards from collapsing below one line. */
+textview.ask-card-text,
+textview.ask-card-text > text {
   background-color: transparent;
-  background: transparent;
+  background-image: none;
   color: @ask_fg;
+  font-size: 1em;
+}
+
+textview.ask-card-text > text {
   min-height: 1.4em;
 }
 
 /* ========================================================== Compose */
 box.ask-compose-wrap {
   margin: 8px 12px 12px 12px;
-  background: @ask_compose;
+  background-color: @ask_compose;
   border: 2px solid @ask_border;
   transition:
     border-color 120ms ease,
@@ -169,14 +182,14 @@ box.ask-compose-wrap:focus-within {
 }
 
 scrolledwindow.ask-compose {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
 }
 
-window textview.ask-compose-text,
-window textview.ask-compose-text > text,
-window textview.ask-compose-text text {
+textview.ask-compose-text,
+textview.ask-compose-text > text {
   background-color: transparent;
-  background: transparent;
+  background-image: none;
   color: @ask_fg;
   font-size: 1em;
   caret-color: @ask_accent;
@@ -185,7 +198,7 @@ window textview.ask-compose-text text {
 box.ask-compose-bar {
   padding: 6px 10px 6px 12px;
   border-top: 1px solid @ask_border_soft;
-  background: alpha(black, 0.25);
+  background-color: alpha(black, 0.25);
 }
 
 label.ask-compose-hint {
@@ -196,7 +209,7 @@ label.ask-compose-hint {
 /* Primary action — SEND. Stronger shadow than secondary buttons; the
  * pressed state flips the shadow inwards for tactile feedback. */
 button.ask-compose-send {
-  background: alpha(@ask_accent, 0.28);
+  background-color: alpha(@ask_accent, 0.28);
   color: @ask_accent;
   border: 1px solid alpha(@ask_accent, 0.55);
   padding: 4px 16px;
@@ -210,7 +223,7 @@ button.ask-compose-send {
 }
 
 button.ask-compose-send:hover {
-  background: alpha(@ask_accent, 0.42);
+  background-color: alpha(@ask_accent, 0.42);
   color: @ask_fg;
   border-color: @ask_accent;
   box-shadow:
@@ -219,7 +232,7 @@ button.ask-compose-send:hover {
 }
 
 button.ask-compose-send:active {
-  background: alpha(@ask_accent, 0.4);
+  background-color: alpha(@ask_accent, 0.4);
   box-shadow:
     inset 0 2px 3px alpha(black, 0.5),
     0 0 0 transparent;
@@ -232,7 +245,7 @@ button.ask-compose-send:disabled {
 
 /* =========================================== Queue (full-text cards) */
 box.ask-queue {
-  background: alpha(black, 0.35);
+  background-color: alpha(black, 0.35);
   border-top: 1px solid @ask_border_soft;
   padding: 6px 10px 10px 10px;
 }
@@ -246,21 +259,23 @@ label.ask-queue-header {
 }
 
 list {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
 }
 
 row.ask-queue-row {
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
   padding: 0;
   margin: 0;
 }
 
 row.ask-queue-row:hover {
-  background: transparent;
+  background-color: transparent;
 }
 
 box.ask-queue-card {
-  background: @ask_card;
+  background-color: @ask_card;
   border: 1px solid @ask_border_soft;
   padding: 10px 12px;
   margin: 4px 0;
@@ -277,18 +292,20 @@ label.ask-queue-text {
 }
 
 scrolledwindow.ask-queue-edit {
-  background: @ask_card_hi;
+  background-color: @ask_card_hi;
   border: 1px solid @ask_border_focus;
   padding: 2px;
 }
 
-window textview.ask-queue-edit-text,
-window textview.ask-queue-edit-text > text,
-window textview.ask-queue-edit-text text {
+textview.ask-queue-edit-text,
+textview.ask-queue-edit-text > text {
   background-color: transparent;
-  background: transparent;
+  background-image: none;
   color: @ask_fg;
   font-size: 1em;
+}
+
+textview.ask-queue-edit-text > text {
   min-height: 1.4em;
 }
 
@@ -301,7 +318,7 @@ box.ask-queue-actions {
 button.ask-queue-edit,
 button.ask-queue-send,
 button.ask-queue-remove {
-  background: alpha(@ask_fg_dim, 0.08);
+  background-color: alpha(@ask_fg_dim, 0.08);
   border: 1px solid @ask_border_soft;
   padding: 3px 12px;
   min-width: 0;
@@ -314,7 +331,7 @@ button.ask-queue-remove {
 
 button.ask-queue-edit:hover {
   color: @ask_accent;
-  background: alpha(@ask_accent, 0.18);
+  background-color: alpha(@ask_accent, 0.18);
   border-color: alpha(@ask_accent, 0.45);
   box-shadow:
     inset 0 1px 0 alpha(white, 0.07),
@@ -323,7 +340,7 @@ button.ask-queue-edit:hover {
 
 button.ask-queue-send:hover {
   color: @ask_idle;
-  background: alpha(@ask_idle, 0.18);
+  background-color: alpha(@ask_idle, 0.18);
   border-color: alpha(@ask_idle, 0.45);
   box-shadow:
     inset 0 1px 0 alpha(white, 0.07),
@@ -332,7 +349,7 @@ button.ask-queue-send:hover {
 
 button.ask-queue-remove:hover {
   color: @ask_pending;
-  background: alpha(@ask_pending, 0.18);
+  background-color: alpha(@ask_pending, 0.18);
   border-color: alpha(@ask_pending, 0.45);
   box-shadow:
     inset 0 1px 0 alpha(white, 0.07),
