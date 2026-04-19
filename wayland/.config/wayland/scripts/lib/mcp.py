@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import subprocess
 import sys
 from typing import Any, Callable, Optional
 
@@ -291,6 +292,69 @@ class McpServer:
                 "type": "object",
                 "properties": {"question": {"type": "string"}},
                 "required": ["question"],
+            },
+            handler,
+        )
+
+    def enable_open(
+        self,
+        tool_name: str = "open",
+        description: str = (
+            "Open a URL, file path, or URI scheme via `xdg-open` — routes "
+            "through the desktop's default handler for the scheme. "
+            "Examples: `https://…` → browser, `obsidian://…` → Obsidian, "
+            "`mailto:…` → mail client, a file path → whatever is "
+            "registered for that mime type. Runs the dispatcher detached "
+            "from us so the AI turn isn't blocked on the target app's "
+            "lifecycle."
+        ),
+    ) -> None:
+        """Register a generic `open` tool backed by `xdg-open`.
+
+        With strict MCP mode active the permission-prompt tool fires
+        FIRST (same path as any other tool), so the user gets an
+        approval row before we spawn `xdg-open`. No sandboxing beyond
+        that — `xdg-open` can launch anything the user's MIME / URI
+        handlers point at, which is the whole point.
+
+        Handler spawns the command detached via `Popen` + DEVNULL so
+        the AI turn isn't waiting for whatever the target app does."""
+
+        def handler(args: dict) -> dict:
+            target = args.get("url") or args.get("path") or args.get("target")
+            if not isinstance(target, str) or not target.strip():
+                return {"opened": False, "error": "missing url / path"}
+            target = target.strip()
+            try:
+                subprocess.Popen(
+                    ["xdg-open", target],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                return {"opened": False, "error": "xdg-open not on PATH"}
+            except OSError as e:
+                return {"opened": False, "error": f"spawn failed: {e}"}
+
+            return {"opened": True, "target": target}
+
+        self.register_tool(
+            tool_name,
+            description,
+            {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": (
+                            "URL, URI (https, obsidian, mailto, …), or "
+                            "absolute / relative file path."
+                        ),
+                    },
+                },
+                "required": ["url"],
             },
             handler,
         )

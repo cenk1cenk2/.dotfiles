@@ -95,6 +95,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     #       handler=lambda tool, inp: {"behavior": "allow", "updatedInput": inp},
     #   )
     _server.enable_question(_question_cb)
+    # `mcp__ask__open` hands URIs / file paths to `xdg-open` — lets the
+    # AI ask to open things in the browser, obsidian, etc. The call
+    # still goes through the approval router first, so the user sees a
+    # row before anything spawns.
+    _server.enable_open()
     _server.run()
     sys.exit(0)
 
