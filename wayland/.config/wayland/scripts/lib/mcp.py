@@ -26,12 +26,26 @@ Design constraints the caller drove:
   callback encapsulates that — pilot happens to pass a socket-backed
   one, but a web-UI caller could pass something that talks to an HTTP
   endpoint and it would work just the same.
+
+Agents.md / resources choice:
+
+  For ad-hoc file-backed resources (the "agents.md" injection being
+  the current driver) we expose a single capability, `McpCapability.RESOURCE`
+  (and a matching `install_resource` installer). Each invocation
+  registers ONE tool named `resource__<name>` that returns the file's
+  contents on call. Caller supplies `name`, `path`, and `description`
+  per resource — repeat `enable(RESOURCE, …)` to stack several. This
+  keeps the capability enum small (no dedicated AGENTS slot) and lets
+  the same wiring cover agents.md, prompts, runbooks, whatever the
+  user wants to expose to the model.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import socket
 import subprocess
 import sys
@@ -52,6 +66,8 @@ class McpCapability(StrEnum):
     APPROVAL = "approval"
     QUESTION = "question"
     OPEN = "open"
+    SKILLS = "skills"
+    RESOURCE = "resource"
 
 # Type alias for approval callbacks. `(tool_name, input)` arrive from
 # claude; the return `(approved, reason)` is translated into the
@@ -171,6 +187,8 @@ class McpServer:
             McpCapability.APPROVAL: self._install_approval,
             McpCapability.QUESTION: self._install_question,
             McpCapability.OPEN: self._install_open,
+            McpCapability.SKILLS: self._install_skills,
+            McpCapability.RESOURCE: self._install_resource,
         }
 
     @staticmethod
@@ -517,6 +535,250 @@ class McpServer:
             handler,
         )
 
+    # -- skills + resources --------------------------------------------
+
+    @staticmethod
+    def _parse_skill_markdown(
+        content: str,
+        fallback_name: str,
+    ) -> "dict[str, Any]":
+        """Minimal YAML-frontmatter parser mirroring the Lua
+        `parse_skill_markdown` in mcphub-nvim. Extracts top-level
+        `key: value` pairs (plus `- list` continuations) from the
+        `---`-delimited header, returns `{name, description, body,
+        frontmatter}`. Non-frontmatter files are returned verbatim as
+        the body with `frontmatter={}`."""
+        lines = content.split("\n")
+        frontmatter: "dict[str, Any]" = {}
+        body_start = 0
+        if lines and lines[0].strip() == "---":
+            end_idx = None
+            for i in range(1, len(lines)):
+                if lines[i].strip() == "---":
+                    end_idx = i
+                    break
+            if end_idx is not None:
+                current_key: Optional[str] = None
+                for i in range(1, end_idx):
+                    line = lines[i]
+                    list_match = re.match(r"^\s+-\s+(.+)", line)
+                    if list_match and current_key is not None:
+                        existing = frontmatter.get(current_key)
+                        if not isinstance(existing, list):
+                            existing = []
+                        existing.append(list_match.group(1).strip())
+                        frontmatter[current_key] = existing
+                        continue
+                    kv_match = re.match(r"^([\w_-]+):\s*(.*)", line)
+                    if kv_match:
+                        key, val = kv_match.group(1), kv_match.group(2).strip()
+                        current_key = key
+                        if val == "":
+                            frontmatter[key] = []
+                        else:
+                            stripped = re.sub(
+                                r"^[\"'](.*)[\"']$", r"\1", val
+                            )
+                            if stripped == "true":
+                                frontmatter[key] = True
+                            elif stripped == "false":
+                                frontmatter[key] = False
+                            else:
+                                frontmatter[key] = stripped
+                body_start = end_idx + 1
+        body = "\n".join(lines[body_start:]).strip()
+        name = frontmatter.get("name") or fallback_name
+        description = frontmatter.get("description") or f"Guidance for {name}"
+
+        return {
+            "name": name,
+            "description": description,
+            "body": body,
+            "frontmatter": frontmatter,
+        }
+
+    @classmethod
+    def _load_agent_skills(cls, skills_dir: str) -> "list[dict[str, Any]]":
+        """Walk `skills_dir/*/SKILL.md`, parse each, return the list.
+        Empty dirs / unreadable files are skipped silently — matches
+        the Lua implementation in mcphub-nvim.lua."""
+        out: "list[dict[str, Any]]" = []
+        if not os.path.isdir(skills_dir):
+            return out
+        try:
+            entries = sorted(os.listdir(skills_dir))
+        except OSError:
+            return out
+        for entry in entries:
+            skill_path = os.path.join(skills_dir, entry, "SKILL.md")
+            if not os.path.isfile(skill_path):
+                continue
+            try:
+                with open(skill_path, "r", encoding="utf-8") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            if not raw.strip():
+                continue
+            parsed = cls._parse_skill_markdown(raw, entry)
+            parsed["file_path"] = skill_path
+            parsed["dir"] = os.path.join(skills_dir, entry)
+            if parsed["name"] and parsed["description"] and parsed["body"]:
+                out.append(parsed)
+
+        return out
+
+    def _install_skills(
+        self,
+        skills_dir: str,
+    ) -> None:
+        """`McpCapability.SKILLS` installer. Ports the `skills` native
+        server from mcphub-nvim.lua to Python.
+
+        Registers two tools:
+          - `list_skills`  → returns `{skills: [{name, description}, …]}`
+          - `load_skill`   → `{name: "<skill>"}` → `{name, content}`
+                             where `content` is the full SKILL.md (body
+                             only — frontmatter stripped).
+
+        `skills_dir` is expanded (`~`) and walked at CALL TIME, not
+        registration time, so dropping a new skill into the dir while
+        the server is live picks it up on the next `list_skills`. If
+        the directory is missing we just return an empty list — no
+        error, matches the Lua behaviour."""
+        expanded = os.path.expanduser(skills_dir)
+
+        def list_handler(_args: dict) -> dict:
+            skills = self._load_agent_skills(expanded)
+
+            return {
+                "skills": [
+                    {
+                        "name": s["name"],
+                        "description": s["description"],
+                    }
+                    for s in skills
+                ],
+            }
+
+        def load_handler(args: dict) -> dict:
+            name = (args.get("name") or "").strip()
+            if not name:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "load_skill: `name` is required",
+                        }
+                    ],
+                    "isError": True,
+                }
+            skills = self._load_agent_skills(expanded)
+            for s in skills:
+                if s["name"] == name:
+                    return {"name": name, "content": s["body"]}
+
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"skill not found: {name}",
+                    }
+                ],
+                "isError": True,
+            }
+
+        self.register_tool(
+            "list_skills",
+            (
+                "List every available agent skill loaded from the "
+                "configured skills directory. Each entry has `name` "
+                "and `description`; call `load_skill` with the name "
+                "to retrieve the full body."
+            ),
+            {
+                "type": "object",
+                "properties": {},
+            },
+            list_handler,
+        )
+        self.register_tool(
+            "load_skill",
+            (
+                "Load the full markdown body of an agent skill by "
+                "name. Returns `{name, content}` where `content` is "
+                "the SKILL.md body with YAML frontmatter stripped."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The skill's name (from list_skills).",
+                    },
+                },
+                "required": ["name"],
+            },
+            load_handler,
+        )
+
+    def _install_resource(
+        self,
+        name: str,
+        path: str,
+        description: str,
+    ) -> None:
+        """`McpCapability.RESOURCE` installer. Registers ONE tool named
+        `resource__<name>` that returns the contents of `path` on
+        call. File is read lazily so callers can point at things that
+        don't exist yet — the tool reports the error at invocation
+        time instead of crashing at registration.
+
+        Typical use: `enable(RESOURCE, name="agents", path="~/.config/nvim/AGENTS.md",
+        description="Session bootstrap rules")`. Call as many times as
+        you want to expose several files; each call stamps a distinct
+        tool name so they don't collide."""
+        expanded = os.path.expanduser(path)
+        tool_name = f"resource__{name}"
+
+        def handler(_args: dict) -> dict:
+            try:
+                with open(expanded, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"resource {name!r} not found at {expanded}",
+                        }
+                    ],
+                    "isError": True,
+                }
+            except OSError as e:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"resource {name!r} read failed: {e}",
+                        }
+                    ],
+                    "isError": True,
+                }
+
+            return {"name": name, "path": expanded, "content": content}
+
+        self.register_tool(
+            tool_name,
+            description
+            or f"Read the contents of the {name!r} resource file.",
+            {
+                "type": "object",
+                "properties": {},
+            },
+            handler,
+        )
+
     # -- runtime --------------------------------------------------------
 
     def _send(self, obj: dict) -> None:
@@ -628,8 +890,9 @@ class McpServer:
 
 class McpConfig:
     """Builder for Claude's `--mcp-config` JSON. Holds any number of
-    named servers; each entry is `{command, args, env}` exactly as
-    Claude's docs describe. Seed at init or extend later."""
+    named servers; each entry is either a stdio `{command, args, env}`
+    or an HTTP/SSE `{type, url, headers}` spec exactly as Claude's
+    docs describe. Seed at init or extend later."""
 
     def __init__(self, initial_servers: Optional[dict[str, dict]] = None):
         self._servers: dict[str, dict] = {}
@@ -638,20 +901,56 @@ class McpConfig:
             # (command only) or a full one; fill in empty defaults.
             self.add(
                 name,
-                spec.get("command", ""),
+                command=spec.get("command", "") or None,
                 args=spec.get("args"),
                 env=spec.get("env"),
+                url=spec.get("url"),
+                type=spec.get("type"),
+                headers=spec.get("headers"),
             )
 
     def add(
         self,
         name: str,
-        command: str,
+        command: Optional[str] = None,
         args: Optional[list[str]] = None,
         env: Optional[dict[str, str]] = None,
+        url: Optional[str] = None,
+        type: Optional[str] = None,
+        headers: Optional[dict[str, str]] = None,
     ) -> None:
+        """Register an MCP server under `name`.
+
+        Two shapes are supported:
+          - stdio: pass `command` (and optionally `args`, `env`).
+          - remote: pass `url` (and optionally `type`, `headers`). When
+            `type` is omitted it defaults to `"http"`; set to `"sse"`
+            for SSE endpoints.
+
+        Passing both `command` and `url` prefers the stdio shape."""
+        if command:
+            self._servers[name] = {
+                "command": command,
+                "args": list(args or []),
+                "env": dict(env or {}),
+            }
+
+            return
+        if url:
+            entry: dict[str, Any] = {
+                "type": type or "http",
+                "url": url,
+            }
+            if headers:
+                entry["headers"] = dict(headers)
+            self._servers[name] = entry
+
+            return
+        # Neither shape populated — keep an empty stdio stub so the
+        # name is at least reserved. Matches the pre-existing "empty
+        # command means empty defaults" behaviour.
         self._servers[name] = {
-            "command": command,
+            "command": "",
             "args": list(args or []),
             "env": dict(env or {}),
         }
