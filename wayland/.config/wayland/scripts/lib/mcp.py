@@ -49,6 +49,39 @@ ApprovalCallback = Callable[[str, dict], "tuple[bool, str]"]
 # `enable_question`), we hand it off, get back a typed answer.
 QuestionCallback = Callable[[str], str]
 
+# Tool-name patterns that should be treated as "the model wants to
+# ask the user a question" rather than "the model wants permission to
+# run something". Claude Code's built-in is `AskUserQuestion`;
+# opencode's equivalent is `ask`. Match case-insensitively by
+# normalising both sides.
+_QUESTION_TOOL_NAMES = frozenset({
+    "askuserquestion",
+    "askuser",
+    "ask_user_question",
+    "ask_user",
+    "user_question",
+    "userquestion",
+    "ask_question",
+    "ask",
+})
+
+# Input keys we'll look at to pull a question string out of a tool
+# invocation we're intercepting. Order matters — first match wins.
+_QUESTION_KEYS = ("question", "prompt", "message", "text", "user_message")
+
+def _extract_question(tool_input: dict) -> str:
+    """Pull a human-readable question string out of the tool input
+    blob a model handed us. Falls back to stringifying the whole blob
+    so the user always sees *something* in the question banner."""
+    for key in _QUESTION_KEYS:
+        v = tool_input.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    try:
+        return json.dumps(tool_input)
+    except (TypeError, ValueError):
+        return str(tool_input)
+
 class McpServer:
     """Minimal MCP JSON-RPC 2.0 stdio server.
 
@@ -81,6 +114,7 @@ class McpServer:
     def enable_approval(
         self,
         callback: ApprovalCallback,
+        question_callback: Optional[QuestionCallback] = None,
         tool_name: str = "approve",
         description: str = (
             "Ask an external approver whether a Claude tool invocation "
@@ -92,11 +126,48 @@ class McpServer:
 
         `callback(tool_name, input)` must return `(approved, reason)`.
         We handle the translation to Claude's allow/deny envelope and
-        any plumbing around it — the callback just has to decide."""
+        any plumbing around it — the callback just has to decide.
+
+        When `question_callback` is provided AND the inbound tool is
+        one of the model's built-in "ask the user a question" tools
+        (`AskUserQuestion`, opencode's `ask`, etc.) we route the
+        request through it instead of the approval UI. The user's
+        typed answer comes back to the model as a denial message of
+        the form `User answered: …` — the only honest way to inject a
+        reply through the permission-prompt channel in `-p` mode,
+        where the underlying tool can't actually do interactive
+        stdin. Skipped questions come back as a terse deny so the
+        model doesn't loop trying to re-ask."""
 
         def handler(args: dict) -> dict:
             caller_tool = args.get("tool_name", "") or ""
             caller_input = args.get("input") or {}
+
+            if (
+                question_callback is not None
+                and caller_tool.lower().replace("-", "_") in _QUESTION_TOOL_NAMES
+            ):
+                question = _extract_question(caller_input)
+                try:
+                    answer = question_callback(question)
+                except Exception as e:
+                    log.exception("question callback raised in approval router")
+
+                    return {
+                        "behavior": "deny",
+                        "message": f"question callback error: {e}",
+                    }
+                if answer:
+                    return {
+                        "behavior": "deny",
+                        "message": f"User answered: {answer}",
+                    }
+
+                return {
+                    "behavior": "deny",
+                    "message": "User skipped the question without answering.",
+                }
+
             try:
                 approved, reason = callback(caller_tool, caller_input)
             except Exception as e:

@@ -73,8 +73,18 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     _runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     _mcp_sock = os.path.join(_runtime, "wayland-ask-mcp.sock")
     _server = McpServer("ask")
-    _server.enable_approval(socket_approval(_mcp_sock))
-    _server.enable_question(socket_question(_mcp_sock))
+    # Single question callback shared between the two hooks: the
+    # approval router forwards built-in `AskUserQuestion`-style tool
+    # invocations to it (so they pop the compose-banner question UI
+    # instead of the allow/deny row), AND the standalone
+    # `ask_question` tool we register uses the same callback when the
+    # model explicitly picks our MCP tool.
+    _question_cb = socket_question(_mcp_sock)
+    _server.enable_approval(
+        socket_approval(_mcp_sock),
+        question_callback=_question_cb,
+    )
+    _server.enable_question(_question_cb)
     _server.run()
     sys.exit(0)
 
@@ -400,7 +410,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · Ctrl+Q quit",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · ESC hide · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -507,13 +517,18 @@ class ComposeView:
             self.clear()
             self._on_submit(text)
 
-    def set_question_mode(self, question: str, on_answer: Callable[[str], None]) -> None:
+    def set_question_mode(
+        self, question: str, on_answer: Callable[[str], None]
+    ) -> None:
         """Show the question banner above the textview and wire the
         next submit to `on_answer(text)` instead of the normal turn
         dispatch. Replaces any previous question in flight — the prior
         callback is resolved with empty-string so the socket handler
         doesn't hang."""
-        if self._question_callback is not None and self._question_callback is not on_answer:
+        if (
+            self._question_callback is not None
+            and self._question_callback is not on_answer
+        ):
             # Resolve the stale one so its socket thread unblocks.
             try:
                 self._question_callback("")
@@ -772,9 +787,7 @@ class TurnCard:
             self._thinking_expander.set_child(self._thinking_label)
             # Slot the expander between the role label and the reply
             # label so the visual order is: role → thinking → reply.
-            self.widget.insert_child_after(
-                self._thinking_expander, self._role_label
-            )
+            self.widget.insert_child_after(self._thinking_expander, self._role_label)
         self._thinking_text += chunk
         assert self._thinking_label is not None
         self._thinking_label.set_markup(self._md.render(self._thinking_text))
@@ -1700,9 +1713,7 @@ class Session:
                 raise
             if live_check and _is_live():
                 sock.close()
-                raise RuntimeError(
-                    f"another ask session is already running at {path}"
-                )
+                raise RuntimeError(f"another ask session is already running at {path}")
             try:
                 os.unlink(path)
             except FileNotFoundError:
