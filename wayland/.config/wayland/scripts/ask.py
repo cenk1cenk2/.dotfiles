@@ -1042,17 +1042,18 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def _bind_to_focused_monitor(self) -> None:
         """Pin the layer-shell surface to whichever output is currently
-        focused, resize width to 40% of that output, and recompute the
-        compose-scroller cap to 25% of that output's height. Called on
-        every toggle-to-visible so monitor switches rehome the overlay.
+        focused, resize width to 40% of that output, and cap the compose
+        scroller at 25% of that output's height. Called on every
+        toggle-to-visible so monitor switches rehome the overlay.
 
-        The layer-shell surface size follows the widget's requested size.
-        GTK caches allocations aggressively, so on a monitor switch we
-        have to force a full reconfigure — `set_default_size` + a fresh
-        `set_size_request` + `queue_resize`, and if we're currently
-        mapped we unmap/remap so the compositor assigns a new layer
-        surface with the new dimensions. Without the unmap/remap the
-        first width sticks forever."""
+        A layer-shell surface's size follows the widget's requested
+        size on commit. `set_default_size` + `set_size_request` +
+        `queue_resize` marks the widget tree dirty; the next map cycle
+        (toggle hides + shows) then commits a new layer surface with
+        the updated dimensions. We do NOT manually call `unmap()` /
+        `map()` here — on some builds that emits the `map` signal
+        twice, which makes GTK re-append the compose bar every toggle
+        (duplicate send buttons stacking at the bottom)."""
         monitor = _focused_gdk_monitor()
         if monitor is not None:
             Gtk4LayerShell.set_monitor(self, monitor)
@@ -1064,13 +1065,6 @@ class AskWindow(Gtk.ApplicationWindow):
             self._compose.set_max_content_fraction(
                 monitor.get_geometry().height, 0.25
             )
-        if self.get_mapped():
-            # Remap to commit a new layer surface with the updated size.
-            # Layer-shell only reads the surface dimensions during the
-            # initial configure; subsequent widget allocations don't
-            # propagate to the compositor.
-            self.unmap()
-            self.map()
 
     @staticmethod
     def _install_css() -> None:
