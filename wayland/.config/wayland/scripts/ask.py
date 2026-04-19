@@ -27,6 +27,7 @@ from lib import (
     ConversationAdapterCodex,
     ConversationAdapterHttp,
     ConversationProvider,
+    ConversationAdapterOpenCode,
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
@@ -1896,6 +1897,15 @@ def _build_adapter(args) -> ConversationAdapter:
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
+        case ConversationProvider.OPENCODE:
+            return ConversationAdapterOpenCode(
+                AI_SYSTEM_PROMPT,
+                model=args.converse_model,
+                # Same MCP config the claude branch uses — opencode
+                # supports MCP servers natively, we just splice ours
+                # into its config JSON.
+                mcp_config=_build_mcp_config(),
+            )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
 

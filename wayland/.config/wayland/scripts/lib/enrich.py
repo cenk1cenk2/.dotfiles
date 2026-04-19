@@ -5,6 +5,7 @@ transport config; callers pick one based on args."""
 
 import json
 import logging
+import os
 import subprocess
 import urllib.error
 import urllib.request
@@ -15,6 +16,7 @@ class EnrichProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
     CODEX = "codex"
+    OPENCODE = "opencode"
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 
@@ -186,6 +188,66 @@ class EnrichAdapterCodex:
         )
         if proc.returncode != 0 or not proc.stdout.strip():
             log.error("codex enrichment failed (exit=%d)", proc.returncode)
+            return None
+
+        return proc.stdout.strip()
+
+class EnrichAdapterOpenCode:
+    """OpenCode CLI in one-shot mode.
+
+    One `opencode run` per call, no session state — rewrites are
+    stateless by definition. Uses the `--format default` plain-text
+    output so we just collect stdout as the result. The `<provider>/
+    <model>` addressing scheme matches ConversationAdapterOpenCode;
+    default provider is `kilic`, default model is `gemma4:e2b` (fast
+    local)."""
+
+    provider = EnrichProvider.OPENCODE
+
+    DEFAULT_MODEL = "gemma4:e2b"
+    DEFAULT_PROVIDER = "kilic"
+    DEFAULT_CONFIG_PATH = os.path.expanduser(
+        "~/.config/nvim/utils/agents/opencode/kilic.json"
+    )
+
+    def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
+        self.system_prompt = system_prompt
+        self.user_prompt_template = user_prompt_template
+        self.model = kwargs.get("model") or self.DEFAULT_MODEL
+        self.mode = kwargs.get("mode") or "plan"
+        self.config_path = kwargs.get("config_path") or self.DEFAULT_CONFIG_PATH
+        self.provider_name = kwargs.get("provider_name") or self.DEFAULT_PROVIDER
+
+    def enrich(self, text: str) -> Optional[str]:
+        prompt = (
+            f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
+        )
+        model_spec = f"{self.provider_name}/{self.model}"
+        argv = [
+            "opencode",
+            "run",
+            "--format",
+            "default",
+            "--model",
+            model_spec,
+        ]
+        if self.mode == "plan":
+            argv.extend(["--agent", "plan"])
+        argv.append(prompt)
+
+        env = os.environ.copy()
+        if self.config_path and os.path.exists(self.config_path):
+            env["OPENCODE_CONFIG"] = self.config_path
+
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            log.error("opencode enrichment failed (exit=%d)", proc.returncode)
             return None
 
         return proc.stdout.strip()

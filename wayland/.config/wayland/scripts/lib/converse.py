@@ -18,6 +18,7 @@ class ConversationProvider(StrEnum):
     HTTP = "http"
     CLAUDE = "claude"
     CODEX = "codex"
+    OPENCODE = "opencode"
 
 DEFAULT_CONVERSE_ADAPTER = ConversationProvider.CLAUDE
 
@@ -311,7 +312,9 @@ class ConversationAdapterHttp:
                     if fn.get("name"):
                         slot["name"] = fn["name"]
                     if fn.get("arguments") is not None:
-                        slot["arguments"] = (slot.get("arguments") or "") + fn["arguments"]
+                        slot["arguments"] = (slot.get("arguments") or "") + fn[
+                            "arguments"
+                        ]
                 if choice.get("finish_reason") == "tool_calls":
                     yield from _flush_tools()
             # End of stream: flush any still-pending tool calls that
@@ -525,9 +528,9 @@ class ConversationAdapterClaude:
                             elif dtype == "input_json_delta":
                                 idx = inner.get("index", 0)
                                 slot = pending_tools.setdefault(idx, {})
-                                slot["arguments"] = (
-                                    slot.get("arguments") or ""
-                                ) + (delta.get("partial_json") or "")
+                                slot["arguments"] = (slot.get("arguments") or "") + (
+                                    delta.get("partial_json") or ""
+                                )
                         elif itype == "content_block_start":
                             block = inner.get("content_block") or {}
                             if block.get("type") == "tool_use":
@@ -740,3 +743,225 @@ class ConversationAdapterCodex:
             # ~/.codex/sessions/YYYY/MM/DD/ containing the thread_id in its
             # name. Glob-match and drop anything that mentions our thread.
             _cleanup_session_files("~/.codex/sessions", [f"*{thread_id}*"])
+
+class ConversationAdapterOpenCode:
+    """OpenCode CLI wrapper using `opencode run --format json`.
+
+    OpenCode reads `$OPENCODE_CONFIG` at startup — the JSON defines
+    providers, models, permissions, and (optionally) MCP servers. We
+    default to the `kilic.json` config shipped alongside the nvim
+    dotfiles. Models are addressed as `<provider>/<model>`; our
+    default provider is `kilic`, so the default model is
+    `kilic/glm-5.1:cloud`.
+
+    Session continuity: first turn captures `sessionID` from the
+    initial `step_start` event, follow-up turns pass `--session <id>`.
+
+    MCP merging: when an `mcp_config` (the lib.mcp `McpConfig` we use
+    for claude) is supplied, we translate its server definitions into
+    OpenCode's `mcp` schema and splice them into a temp config file
+    that extends the base config. That way the ask overlay's MCP
+    approve/question tools are available to OpenCode too."""
+
+    provider = ConversationProvider.OPENCODE
+
+    DEFAULT_MODEL = "glm-5.1:cloud"
+    DEFAULT_PROVIDER = "kilic"
+
+    def __init__(self, system_prompt: str, **kwargs):
+        self.system_prompt = system_prompt
+        self.model = kwargs.get("model") or self.DEFAULT_MODEL
+        # OpenCode's `plan` agent is a built-in read-only mode. We
+        # pass it through `--agent` when mode == "plan"; otherwise
+        # the CLI uses the default agent.
+        self.mode = kwargs.get("mode") or "plan"
+        self.config_path = kwargs.get("config_path") or os.path.expanduser(
+            "~/.config/nvim/utils/agents/opencode/kilic.json"
+        )
+        self.provider_name = kwargs.get("provider_name") or "kilic"
+        self.mcp_config = kwargs.get("mcp_config")
+        self._session_id: Optional[str] = None
+        self._proc: Optional[subprocess.Popen] = None
+        self._cancelled = False
+        self._effective_config_path: Optional[str] = None
+
+    def _ensure_config(self) -> Optional[str]:
+        """Return the path to use for `OPENCODE_CONFIG`. When we have
+        an `mcp_config` to merge we emit a temp copy of the base JSON
+        with our MCP servers spliced in; otherwise we return the
+        untouched base path (or None if the file is missing)."""
+        if not os.path.exists(self.config_path):
+            log.warning(
+                "opencode config missing at %s — running without --config",
+                self.config_path,
+            )
+
+            return None
+        if self.mcp_config is None:
+            return self.config_path
+        if self._effective_config_path is not None:
+            return self._effective_config_path
+        try:
+            with open(self.config_path, encoding="utf-8") as f:
+                base = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning("couldn't read opencode config %s: %s", self.config_path, e)
+
+            return self.config_path
+        merged = dict(base)
+        existing_mcp = dict(merged.get("mcp") or {})
+        # Translate `{"mcpServers": {"ask": {command, args, env}}}` to
+        # OpenCode's `mcp` schema: `{type, command: [cmd, *args], environment, enabled}`.
+        for name, spec in self.mcp_config.to_dict().get("mcpServers", {}).items():
+            existing_mcp.setdefault(
+                name,
+                {
+                    "type": "local",
+                    "command": [spec.get("command", "")] + list(spec.get("args") or []),
+                    "environment": dict(spec.get("env") or {}),
+                    "enabled": True,
+                },
+            )
+        merged["mcp"] = existing_mcp
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+        path = os.path.join(runtime, "wayland-ask.opencode.json")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(merged, f)
+        except OSError as e:
+            log.warning("couldn't write merged opencode config: %s", e)
+
+            return self.config_path
+        self._effective_config_path = path
+
+        return path
+
+    def turn(self, user_message: str) -> Iterator[TurnChunk]:
+        self._cancelled = False
+        model_spec = f"{self.provider_name}/{self.model}"
+        argv = [
+            "opencode",
+            "run",
+            "--format",
+            "json",
+            "--model",
+            model_spec,
+        ]
+        if self.mode == "plan":
+            argv.extend(["--agent", "plan"])
+        if self._session_id:
+            argv.extend(["--session", self._session_id])
+
+        # First turn carries the system prompt inline (opencode run
+        # has no dedicated `--system-prompt`). Subsequent turns rely
+        # on the resumed session's context.
+        if self._session_id is None:
+            prompt = f"{self.system_prompt}\n\n{user_message}"
+        else:
+            prompt = user_message
+        argv.append(prompt)
+
+        env = os.environ.copy()
+        cfg = self._ensure_config()
+        if cfg:
+            env["OPENCODE_CONFIG"] = cfg
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                env=env,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError as e:
+            log.error("opencode CLI not found: %s", e)
+            raise RuntimeError("opencode CLI not found on PATH") from e
+
+        self._proc = proc
+        assert proc.stdout is not None
+
+        drain_thread, stderr_buf = _spawn_stderr_drain(proc)
+        try:
+            for raw in proc.stdout:
+                if self._cancelled:
+                    break
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    log.warning("skipping malformed opencode event: %r", line[:120])
+                    continue
+                etype = event.get("type")
+                part = event.get("part") or {}
+                if etype == "step_start":
+                    sid = part.get("sessionID") or event.get("sessionID")
+                    if sid and self._session_id is None:
+                        self._session_id = sid
+                elif etype == "text":
+                    # OpenCode emits text as a single aggregated event
+                    # per step (no per-token deltas). Still yields as
+                    # a str for the overlay; just won't feel as
+                    # progressive as claude's stream-json.
+                    text = part.get("text") or ""
+                    if text:
+                        yield text
+                elif etype == "reasoning":
+                    thinking = part.get("text") or part.get("content") or ""
+                    if thinking:
+                        yield ThinkingChunk(text=str(thinking))
+                elif etype in ("tool", "tool-start", "tool-use"):
+                    tool_name = (
+                        part.get("tool")
+                        or part.get("name")
+                        or event.get("tool")
+                        or etype
+                    )
+                    tool_input = (
+                        part.get("input")
+                        or part.get("arguments")
+                        or part.get("args")
+                        or {}
+                    )
+                    if isinstance(tool_input, (dict, list)):
+                        tool_args = json.dumps(tool_input)
+                    else:
+                        tool_args = str(tool_input)
+                    yield ToolCall(
+                        tool_id=part.get("id") or f"oc-{etype}",
+                        name=str(tool_name),
+                        arguments=tool_args,
+                    )
+                elif etype == "step_finish":
+                    # One step complete. OpenCode may emit multiple
+                    # step_* pairs per turn when tool calls happen;
+                    # just keep consuming.
+                    continue
+        finally:
+            try:
+                rc = proc.wait()
+            except Exception:
+                rc = -1
+            drain_thread.join(timeout=1)
+            _close_pipes(proc)
+            self._proc = None
+
+        if self._cancelled:
+            return
+        stderr = "".join(stderr_buf)
+        if rc != 0:
+            log.error("opencode exited %s: %s", rc, stderr[:500])
+            raise RuntimeError(f"opencode exited {rc}: {stderr[:200]}")
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        _terminate_proc(self._proc)
+
+    def close(self) -> None:
+        self.cancel()
+        self._proc = None
+        self._session_id = None

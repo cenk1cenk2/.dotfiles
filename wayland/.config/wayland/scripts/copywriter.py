@@ -16,6 +16,7 @@ from lib import (
     OutputAdapterClipboard,
     EnrichAdapterClaude,
     EnrichAdapterCodex,
+    EnrichAdapterOpenCode,
     EnrichAdapter,
     EnrichProvider,
     EnrichAdapterHttp,
@@ -268,6 +269,8 @@ def main():
                 enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case EnrichProvider.CODEX:
                 enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
+            case EnrichProvider.OPENCODE:
+                enricher = EnrichAdapterOpenCode(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
             case _:
                 raise ValueError(f"unknown enrich provider: {args.provider!r}")
 
