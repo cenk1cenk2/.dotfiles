@@ -134,7 +134,6 @@ class ConversationAdapterHttp:
         thinking: str = "none",
         num_ctx: Optional[int] = None,
         tool_ids: Optional[list[str]] = None,
-        features: Optional[dict[str, bool]] = None,
         files: Optional[list[dict]] = None,
     ):
         self.system_prompt = system_prompt
@@ -147,11 +146,11 @@ class ConversationAdapterHttp:
         self.thinking = thinking
         self.num_ctx = num_ctx
         # OpenWebUI extensions (silently ignored by generic OpenAI servers).
-        # tool_ids: server-side tool UUIDs (or "server:mcp:<id>").
-        # features: toggles for web_search / code_interpreter / image_generation / memory / voice.
+        # tool_ids: server-side tool UUIDs, also accepting the pseudo-ids
+        # that represent built-ins (web_search, memory, code_interpreter,
+        # image_generation, voice) plus "server:mcp:<id>" for MCP servers.
         # files: [{"type": "file"|"folder"|"collection", "id": "..."}] for RAG context.
         self.tool_ids = tool_ids
-        self.features = features
         self.files = files
         self.messages: list[dict] = [
             {"role": "system", "content": system_prompt},
@@ -179,14 +178,6 @@ class ConversationAdapterHttp:
             body["options"] = {"num_ctx": self.num_ctx}
         if self.tool_ids:
             body["tool_ids"] = self.tool_ids
-        if self.features:
-            # OpenWebUI's middleware skips `features` handlers when
-            # `params.function_calling == "native"`, so we keep params
-            # out of the request unless the caller explicitly sets it.
-            # The features block alone is the happy path for web_search
-            # / image_generation / code_interpreter when the active
-            # model doesn't have native tool-calling enabled.
-            body["features"] = self.features
         if self.files:
             body["files"] = self.files
 

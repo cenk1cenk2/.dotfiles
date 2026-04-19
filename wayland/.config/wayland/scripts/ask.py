@@ -674,11 +674,9 @@ class AskWindow(Gtk.ApplicationWindow):
 
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
         super().__init__(application=app, title="Ask")
-        # Custom root class — the theme's `window` selector tries to paint
-        # its own solid background on every toplevel; adding `.ask-overlay`
-        # lets our rules outspecificity the theme without resorting to a
-        # universal `*` that clobbers every subnode.
-        self.add_css_class("ask-overlay")
+        # `.overlay` is our root scope — every CSS rule is namespaced under
+        # it so theme selectors like `window { background: … }` can't win.
+        self.add_css_class("overlay")
         self._adapter = adapter
         # HTTP adapter carries a model; claude/codex wrap CLIs that pick
         # their own. Model string can be empty → treat as absent.
@@ -1304,8 +1302,6 @@ def _build_adapter(args) -> ConversationAdapter:
 
     match provider:
         case ConversationProvider.HTTP:
-            features = {k: True for k in args.features} if args.features else None
-
             return ConversationAdapterHttp(
                 AI_SYSTEM_PROMPT,
                 base_url=args.converse_base_url,
@@ -1315,7 +1311,6 @@ def _build_adapter(args) -> ConversationAdapter:
                 thinking=args.converse_thinking,
                 num_ctx=args.converse_num_ctx,
                 tool_ids=args.tool_ids or None,
-                features=features,
                 user_agent="ask/1.0",
                 **model_kw,
             )
@@ -1495,25 +1490,21 @@ def main():
     )
     toggle_parser.add_argument("--converse-num-ctx", type=int)
     # OpenWebUI extensions for --converse-provider=http. Ignored by other
-    # providers and by plain OpenAI endpoints.
+    # providers and by plain OpenAI endpoints. Default bundles the
+    # always-on built-ins (web_search + memory); pass extra `--tool-id`
+    # flags for custom tools or `server:mcp:<id>` for MCP servers.
     toggle_parser.add_argument(
         "--tool-id",
         action="append",
         dest="tool_ids",
-        default=[],
+        default=["web_search", "memory"],
         metavar="ID",
         help=(
-            "server-side tool UUID (repeatable); use 'server:mcp:<id>' for "
-            "an MCP server. OpenWebUI-only."
+            "server-side tool UUID or built-in pseudo-id "
+            "(web_search/memory/code_interpreter/image_generation/voice). "
+            "Use 'server:mcp:<id>' for an MCP server. Repeatable. "
+            "OpenWebUI-only."
         ),
-    )
-    toggle_parser.add_argument(
-        "--feature",
-        action="append",
-        dest="features",
-        default=["web_search", "memory"],
-        metavar="KEY",
-        help="enable a built-in feature (repeatable). OpenWebUI-only.",
     )
 
     subparsers.add_parser("status", help="print waybar-shaped JSON status")

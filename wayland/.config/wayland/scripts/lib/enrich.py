@@ -51,6 +51,8 @@ class EnrichAdapterHttp:
         thinking: str = "none",
         num_ctx: Optional[int] = None,
         user_agent: str = "enrich/1.0",
+        tool_ids: Optional[list[str]] = None,
+        files: Optional[list[dict]] = None,
     ):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
@@ -62,6 +64,14 @@ class EnrichAdapterHttp:
         self.thinking = thinking
         self.num_ctx = num_ctx
         self.user_agent = user_agent
+        # OpenWebUI extensions: server-side tool UUIDs (and the pseudo-ids
+        # "web_search", "memory", "code_interpreter", "image_generation",
+        # "voice" for built-ins, plus "server:mcp:<id>" for MCP). `files`
+        # attaches [{"type": "file"|"folder"|"collection", "id": "..."}]
+        # for RAG context. Both are silently ignored by non-OpenWebUI
+        # servers.
+        self.tool_ids = tool_ids
+        self.files = files
 
     def enrich(self, text: str) -> Optional[str]:
         body: dict[str, Any] = {
@@ -81,6 +91,10 @@ class EnrichAdapterHttp:
             body["top_p"] = self.top_p
         if self.num_ctx:
             body["options"] = {"num_ctx": self.num_ctx}
+        if self.tool_ids:
+            body["tool_ids"] = self.tool_ids
+        if self.files:
+            body["files"] = self.files
 
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
