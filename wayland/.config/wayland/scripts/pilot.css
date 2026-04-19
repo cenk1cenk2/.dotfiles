@@ -1,73 +1,21 @@
-/* ============================================================ Tokens
- * Pulled from ~/.config/nvim/lua/onedarker/colors.lua.
+/* Pilot-specific CSS. The shared palette (`@define-color pilot_*`),
+ * the `.overlay` font / transparent-window rules, and the `.overlay`
+ * primitives (cards, collapsibles, pills, buttons, close, header)
+ * live in `lib/overlay.css` — loaded FIRST by `PilotWindow._install_css`
+ * so these rules override on ties at the same USER+1 priority.
  *
- * Elevation (onedarker: higher = lighter):
- *   bg[200] = #1e2127   window surface (starting point)
- *   bg[300] = #22282f   assistant / edit surface
- *   bg[400] = #2c333d   user card, compose surface
- *   bg[500] = #4b5263   strong borders
- */
-/* Card containers keep their distinct elevations so user/assistant
- * turns read at a glance. The TEXT SURFACE inside each card + the
- * compose input both drop to @pilot_window (bg[200]) so the reply body
- * reads as a quiet panel inside the coloured card chrome. */
-@define-color pilot_window #1e2127;
-@define-color pilot_card #2c333d;
-@define-color pilot_card_hi #22282f;
-@define-color pilot_compose #2c333d;
-/* bg[200] — applied to the text-carrying surface of cards + compose,
- * not the card frame itself. */
-@define-color pilot_text_surface #1e2127;
-@define-color pilot_border #4b5263;
-@define-color pilot_border_soft #2c333d;
-@define-color pilot_border_focus #6c778d;
-@define-color pilot_fg #abb2bf;
-@define-color pilot_fg_dim #7c8a9d;
-@define-color pilot_fg_muted #5c6370;
-@define-color pilot_accent #abb2bf;
-@define-color pilot_user #e5c07b;
-@define-color pilot_assistant #98c379;
-@define-color pilot_idle #98c379;
-@define-color pilot_stream #e5c07b;
-@define-color pilot_pending #e06c75;
-@define-color pilot_awaiting #d19a66;
-@define-color pilot_edge #d3b051;
-
-/* Base font for the overlay. Every other `font-size` is an `em` multiplier
- * so bumping this one declaration scales the whole UI. Scoped to
- * `.overlay *` so we don't touch widgets outside our window tree. */
-.overlay,
-.overlay * {
-  font-family: monospace;
-  font-size: 14pt;
-}
+ * Any future script that composes `LayerOverlayWindow` loads the same
+ * shared base; restyle here for pilot-only surfaces (permission rows,
+ * tool bubbles, queue, question banner, resource palette). */
 
 /* ============================================================ Root
- * The window surface itself stays transparent; the `.pilot-root` Box
- * child paints the real background. That's the swaync recipe — some
- * themes/compositors leave a `window { background-color: … }` painted
- * under us, so we sidestep the whole fight by not styling the window
- * and painting on a child Box instead. All other rules still namespace
- * under `.overlay` so they outspecificity any generic theme selector.
- *
- * NOTE on backgrounds: use `background-color` + `background-image: none`
- * explicitly rather than the `background` shorthand. The shorthand
- * clears every image layer too, which can wipe the default background
- * image on `.view`/`text` subnodes and paint them opaque over parents. */
-.overlay {
-  background-color: transparent;
-  background-image: none;
-  color: @pilot_fg;
-}
-
+ * Pilot-specific accent stripe on the root Box. Shares the tokens +
+ * transparent-window recipe from `overlay.css` but re-uses the
+ * `.pilot-root` class so historical selectors keep landing. */
 .overlay box.pilot-root {
   background-color: @pilot_window;
   background-image: none;
   border-left: 2px solid @pilot_edge;
-}
-
-.overlay > * {
-  color: @pilot_fg;
 }
 
 /* ============================================================ Header */

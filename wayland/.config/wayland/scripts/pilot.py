@@ -14,7 +14,6 @@ import logging
 import os
 import re
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -42,7 +41,6 @@ from lib import (
     get_server as _DEFAULT_SERVER_GET,
     highlight_code,
     load_prompt,
-    load_relative_file,
     notify,
     signal_waybar,
 )
@@ -51,23 +49,16 @@ from lib.converse import _deep_merge
 # gtk4-layer-shell must be LD_PRELOAD'd at program start: its libwayland
 # shim hooks in at load time, so without it `is_supported()` returns false
 # and every layer-shell call becomes a no-op — the window falls through to
-# a normal xdg_toplevel. Re-exec ourselves with the preload if needed —
-# only for `toggle`; waybar-poll commands (status / is-running / kill)
-# don't open a window and don't need the preload or GTK display.
-_LAYER_SHELL_SONAME = "libgtk4-layer-shell.so.0"
-
-def _ensure_layer_shell_preload() -> None:
-    current = os.environ.get("LD_PRELOAD", "")
-    if _LAYER_SHELL_SONAME in current.split(":"):
-        return
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = (
-        f"{current}:{_LAYER_SHELL_SONAME}" if current else _LAYER_SHELL_SONAME
-    )
-    os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], env)
-
+# a normal xdg_toplevel. Only for `toggle`; waybar-poll commands (status /
+# is-running / kill) don't open a window and don't need the preload or
+# the GTK display. The preload helper lives in `lib.overlay` so other
+# scripts can reuse it, but we don't import that module here yet —
+# pulling gi into the headless mcp-server subprocess below is avoidable
+# and the preload call stands alone.
 if len(sys.argv) > 1 and sys.argv[1] == "toggle":
-    _ensure_layer_shell_preload()
+    from lib.overlay import ensure_layer_shell_preload as _ensure_layer_shell_preload
+
+    _ensure_layer_shell_preload(__file__)
 
 # Very-early MCP server mode. Claude spawns us as a stdio MCP server
 # via `--mcp-config` → our config points back at this same script with
@@ -199,17 +190,23 @@ if len(sys.argv) > 1 and sys.argv[1] == "mcp-server":
     _server.run()
     sys.exit(0)
 
-import gi  # noqa: E402
-
-gi.require_version("Gtk", "4.0")
-gi.require_version("Gdk", "4.0")
-gi.require_version("Gtk4LayerShell", "1.0")
+# `lib.overlay` handles the `gi.require_version` calls + layer-shell
+# setup; importing it first ensures the right GI versions are pinned
+# before we reach for `gi.repository.*` directly below. Pilot-specific
+# widgets (TurnCard, PermissionRow, etc.) still need Gio/GLib/Gtk/Gdk
+# and Pango, so we pull them from gi.repository after overlay has
+# done its version dance.
+from lib.overlay import (  # noqa: E402
+    CommandPalette,
+    LayerOverlayWindow,
+    load_overlay_css,
+    load_css_from_path,
+)
 from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
     Gdk,
     Gio,
     GLib,
     Gtk,
-    Gtk4LayerShell,
     Pango,
 )
 
@@ -254,64 +251,6 @@ def _signal_waybar_safe() -> None:
         signal_waybar("pilot")
     except Exception as e:
         log.debug("waybar signal failed: %s", e)
-
-def _focused_monitor_name() -> Optional[str]:
-    """Ask the compositor for the connector name of the focused output
-    (e.g., 'DP-1', 'HDMI-A-1'). Returns None if neither Hyprland nor
-    sway is available or neither answers cleanly."""
-    try:
-        out = subprocess.run(
-            ["hyprctl", "monitors", "-j"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for m in json.loads(out):
-            if m.get("focused"):
-                return m.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-    try:
-        out = subprocess.run(
-            ["swaymsg", "-t", "get_outputs"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for o in json.loads(out):
-            if o.get("focused"):
-                return o.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-
-    return None
-
-def _focused_gdk_monitor():
-    """Resolve the compositor-focused output to a `GdkMonitor` by
-    matching connector names. Returns None on miss."""
-    name = _focused_monitor_name()
-    display = Gdk.Display.get_default()
-    if display is None or name is None:
-        return None
-    monitors = display.get_monitors()
-    for i in range(monitors.get_n_items()):
-        monitor = monitors.get_item(i)
-        if monitor.get_connector() == name:
-            return monitor
-
-    return None
 
 class MarkdownMarkup:
     """Render CommonMark to a Pango markup string for Gtk.Label.
@@ -1321,10 +1260,11 @@ class PermissionRow(Gtk.ListBoxRow):
 
 # Tokens we insert into the compose via the resource palette. The parser
 # in `PilotWindow.dispatch_turn` and the pre-check logic in
-# `ResourcePalette.open` both use this regex — keep the character class
-# permissive enough for nested paths (`file/sub/dir/foo.py`) but tight
-# enough that unrelated `#{…}` text in the user's message doesn't get
-# swept up. The kind token restricts to `skill` / `file` / `mcp:*` etc.
+# `_preseed_resource_active_from_compose` both use this regex — keep the
+# character class permissive enough for nested paths
+# (`file/sub/dir/foo.py`) but tight enough that unrelated `#{…}` text in
+# the user's message doesn't get swept up. The kind token restricts to
+# `skill` / `file` / `mcp:*` etc.
 _RESOURCE_TOKEN_RE = re.compile(
     r"#\{(?P<kind>[A-Za-z0-9_.:-]+)/(?P<name>[^}]+)\}"
 )
@@ -1337,272 +1277,65 @@ def _format_resource_token(kind: str, name: str) -> str:
     return "#{" + kind + "/" + name + "}"
 
 
-class ResourcePalette(Gtk.Box):
-    """Rofi-like in-overlay palette. Floats over the compose area via
-    `Gtk.Overlay`, shows a fuzzy-search entry + a filterable list of
-    resources (skills / MCP servers / top-level files). Tab toggles the
-    highlighted row's active state; Enter inserts all active rows as
-    `#{kind/name}` tokens into the compose textview and closes;
-    Escape cancels.
+def _preseed_resource_active_from_compose(
+    compose: "ComposeView",
+    resources: list[tuple[str, str, str, str]],
+) -> set[tuple[str, str]]:
+    """Scan the compose text for any `#{kind/name}` tokens that match a
+    known resource and return the matched (kind, name) pairs. Unknown
+    tokens are ignored — the dispatch pre-filter logs + strips them
+    anyway. Pilot-specific: the `#{…}` wire shape is our token format,
+    not the generic palette's concern."""
+    text = compose.get_text()
+    known = {(k, n) for k, n, _d, _p in resources}
+    active: set[tuple[str, str]] = set()
+    for match in _RESOURCE_TOKEN_RE.finditer(text):
+        pair = (match.group("kind"), match.group("name"))
+        if pair in known:
+            active.add(pair)
 
-    The class is deliberately self-contained — it doesn't reach into
-    `PilotWindow` internals beyond `_compose`, `_compose_overlay` and
-    the resource list it's handed at `open()` time. That keeps a future
-    lib-extraction mechanical: swap the two widget refs for a handful
-    of callbacks and move the file."""
-
-    def __init__(self, compose, compose_overlay):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.add_css_class("pilot-palette")
-        self.set_valign(Gtk.Align.FILL)
-        self.set_halign(Gtk.Align.FILL)
-
-        self._compose = compose
-        self._compose_overlay = compose_overlay
-        # `_resources` holds every (kind, name, description, preview)
-        # tuple the current session knows about. `_filtered` mirrors the
-        # slice currently rendered — rebuilt on every search keystroke.
-        self._resources: list[tuple[str, str, str, str]] = []
-        self._filtered: list[tuple[str, str, str, str]] = []
-        # Toggle state keyed on (kind, name) — survives filter changes,
-        # clears on open(). Enter reads this to emit tokens.
-        self._active: set[tuple[str, str]] = set()
-        self._attached = False
-
-        self._search = Gtk.Entry(
-            placeholder_text="Search resources — Tab toggles · Enter inserts · Esc cancels",
-            hexpand=True,
-        )
-        self._search.add_css_class("pilot-palette-search")
-        self._search.connect("changed", self._on_search_changed)
-        # Forward Enter from the entry to the commit path. The palette's
-        # own key controller catches Enter at the capture phase when the
-        # list has focus, but the entry consumes Return by default.
-        self._search.connect("activate", lambda _e: self._commit_and_close())
-        self.append(self._search)
-
-        self._scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
-        self._scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._listbox = Gtk.ListBox()
-        self._listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self._listbox.add_css_class("pilot-palette-list")
-        self._scroller.set_child(self._listbox)
-        self.append(self._scroller)
-
-        # Capture-phase controller so Tab / Enter / Escape beat the
-        # default Entry / ListBox bindings. `_on_key` pivots on the
-        # palette state and returns True to stop propagation whenever
-        # it handled the key.
-        key = Gtk.EventControllerKey()
-        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        key.connect("key-pressed", self._on_key)
-        self.add_controller(key)
-
-    # ── lifecycle ──
-    def open(self, resources: list[tuple[str, str, str, str]]) -> None:
-        """Populate with `resources`, pre-tick any (kind, name) pairs
-        already referenced in the compose textview, add ourselves to
-        the overlay and focus the search entry. Safe to call
-        repeatedly — a second call re-seeds the state."""
-        self._resources = list(resources)
-        self._active = self._preseed_active_from_compose(resources)
-        self._search.set_text("")
-        self._rebuild_list()
-        if not self._attached:
-            self._compose_overlay.add_overlay(self)
-            self._attached = True
-        self.set_visible(True)
-        # Idle-add the focus so GTK has finished the overlay
-        # attachment by the time we reach for `grab_focus`. Without it
-        # the entry's grab can race with the layer-shell surface's
-        # initial keyboard grab and silently fail.
-        GLib.idle_add(self._search.grab_focus)
-
-    def close(self) -> None:
-        """Hide + detach. Stateful widgets keep their contents — the
-        next `open()` call re-seeds them from scratch."""
-        self.set_visible(False)
-        if self._attached:
-            self._compose_overlay.remove_overlay(self)
-            self._attached = False
-        # Hand focus back to the compose textview so typing resumes
-        # where the user left off.
-        self._compose.focus()
-
-    def _preseed_active_from_compose(
-        self, resources: list[tuple[str, str, str, str]]
-    ) -> set[tuple[str, str]]:
-        """Scan the compose text for any `#{kind/name}` tokens that
-        match a known resource and pre-check them so re-opening the
-        palette doesn't lose state. Unknown tokens are ignored here —
-        the dispatch pre-filter logs + strips them anyway."""
-        text = self._compose.get_text()
-        known = {(k, n) for k, n, _d, _p in resources}
-        active: set[tuple[str, str]] = set()
-        for match in _RESOURCE_TOKEN_RE.finditer(text):
-            pair = (match.group("kind"), match.group("name"))
-            if pair in known:
-                active.add(pair)
-
-        return active
-
-    # ── rendering ──
-    def _rebuild_list(self) -> None:
-        """Wipe and rebuild the ListBox from `_resources` filtered by
-        the current search input. Substring-only fuzziness — matches
-        case-insensitively across `name + kind + description`."""
-        child = self._listbox.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            self._listbox.remove(child)
-            child = nxt
-
-        query = (self._search.get_text() or "").strip().lower()
-        self._filtered = []
-        for entry in self._resources:
-            kind, name, desc, _preview = entry
-            haystack = f"{name} {kind} {desc}".lower()
-            if query and query not in haystack:
-                continue
-            self._filtered.append(entry)
-            row = self._make_row(kind, name, desc)
-            self._listbox.append(row)
-
-        # Select the first row so arrow keys + Tab have something to
-        # operate on without the user first clicking.
-        first = self._listbox.get_row_at_index(0)
-        if first is not None:
-            self._listbox.select_row(first)
-
-    def _make_row(self, kind: str, name: str, desc: str) -> Gtk.ListBoxRow:
-        row = Gtk.ListBoxRow()
-        row.add_css_class("pilot-palette-row")
-        # Track the identity on the row so `_toggle_active` /
-        # `_commit_and_close` can look it up without a dict.
-        row._palette_key = (kind, name)  # type: ignore[attr-defined]
-        if (kind, name) in self._active:
-            row.add_css_class("active")
-
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box.set_margin_start(8)
-        box.set_margin_end(8)
-        box.set_margin_top(4)
-        box.set_margin_bottom(4)
-
-        mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
-        mark.add_css_class("pilot-palette-mark")
-        box.append(mark)
-        row._palette_mark = mark  # type: ignore[attr-defined]
-
-        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
-        title = Gtk.Label(xalign=0.0, hexpand=True)
-        title.set_markup(
-            f'<span weight="bold">{GLib.markup_escape_text(name)}</span>'
-            f' <span alpha="60%">({GLib.markup_escape_text(kind)})</span>'
-        )
-        title.add_css_class("pilot-palette-name")
-        text_box.append(title)
-        if desc:
-            desc_label = Gtk.Label(
-                label=desc,
-                xalign=0.0,
-                ellipsize=Pango.EllipsizeMode.END,
-            )
-            desc_label.add_css_class("pilot-palette-desc")
-            text_box.append(desc_label)
-        box.append(text_box)
-
-        row.set_child(box)
-
-        return row
-
-    # ── interaction ──
-    def _on_search_changed(self, _entry) -> None:
-        self._rebuild_list()
-
-    def _on_key(self, _controller, keyval, _keycode, state) -> bool:
-        ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
-        if keyval == Gdk.KEY_Escape:
-            self.close()
-            return True
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-            self._commit_and_close()
-            return True
-        if keyval == Gdk.KEY_Tab or keyval == Gdk.KEY_ISO_Left_Tab:
-            self._toggle_current()
-            return True
-        if keyval == Gdk.KEY_Down or (ctrl and keyval == Gdk.KEY_n):
-            self._move_selection(1)
-            return True
-        if keyval == Gdk.KEY_Up or (ctrl and keyval == Gdk.KEY_p):
-            self._move_selection(-1)
-            return True
-
-        return False
-
-    def _move_selection(self, direction: int) -> None:
-        row = self._listbox.get_selected_row()
-        idx = row.get_index() if row is not None else -1
-        target = idx + direction
-        nxt = self._listbox.get_row_at_index(target)
-        if nxt is not None:
-            self._listbox.select_row(nxt)
-            nxt.grab_focus()
-
-    def _toggle_current(self) -> None:
-        row = self._listbox.get_selected_row()
-        if row is None:
-            return
-        key = getattr(row, "_palette_key", None)
-        mark = getattr(row, "_palette_mark", None)
-        if not key:
-            return
-        if key in self._active:
-            self._active.discard(key)
-            row.remove_css_class("active")
-            if mark is not None:
-                mark.set_label("☐")
-        else:
-            self._active.add(key)
-            row.add_css_class("active")
-            if mark is not None:
-                mark.set_label("☑")
-
-    def _commit_and_close(self) -> None:
-        """Enter / Entry `activate`: emit tokens for every active entry
-        into the compose textview. We strip any pre-existing
-        `#{kind/name}` tokens FIRST so toggling a resource off is a
-        real remove, not an additive no-op, then insert the fresh set
-        at the current cursor position."""
-        buf = self._compose._textview.get_buffer()
-        existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
-        stripped = _RESOURCE_TOKEN_RE.sub("", existing)
-        # Collapse double-spaces left behind by the strip — keeps the
-        # textual flow clean when a user toggles off every resource.
-        stripped = re.sub(r"[ \t]{2,}", " ", stripped)
-        buf.set_text(stripped)
-
-        tokens = [
-            _format_resource_token(k, n)
-            for k, n in sorted(self._active)
-        ]
-        if tokens:
-            joined = " ".join(tokens)
-            cursor = buf.get_iter_at_mark(buf.get_insert())
-            # Prefix a space if the existing text doesn't already end on
-            # whitespace so tokens don't fuse with the previous word.
-            before_iter = cursor.copy()
-            prefix = ""
-            if before_iter.backward_char():
-                ch = buf.get_text(before_iter, cursor, True)
-                if ch and ch not in (" ", "\n", "\t"):
-                    prefix = " "
-            buf.insert(cursor, prefix + joined + " ")
-
-        self.close()
+    return active
 
 
-class PilotWindow(Gtk.ApplicationWindow):
+def _commit_resources_to_compose(
+    compose: "ComposeView",
+    active_entries: list[tuple[str, str, str, str]],
+) -> None:
+    """Palette commit callback. Strip any pre-existing `#{kind/name}`
+    tokens from the compose buffer (so toggling a resource off is a
+    real remove, not an additive no-op) then insert the fresh set at
+    the current cursor position. Pilot-specific: the token format and
+    the spacing policy (prefix a space when the cursor sits on a
+    non-whitespace character) are both our concern, not the generic
+    palette's."""
+    buf = compose._textview.get_buffer()
+    existing = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True)
+    stripped = _RESOURCE_TOKEN_RE.sub("", existing)
+    # Collapse double-spaces left behind by the strip — keeps the
+    # textual flow clean when a user toggles off every resource.
+    stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+    buf.set_text(stripped)
+
+    tokens = [_format_resource_token(k, n) for (k, n, _d, _p) in active_entries]
+    if tokens:
+        joined = " ".join(tokens)
+        cursor = buf.get_iter_at_mark(buf.get_insert())
+        # Prefix a space if the existing text doesn't already end on
+        # whitespace so tokens don't fuse with the previous word.
+        before_iter = cursor.copy()
+        prefix = ""
+        if before_iter.backward_char():
+            ch = buf.get_text(before_iter, cursor, True)
+            if ch and ch not in (" ", "\n", "\t"):
+                prefix = " "
+        buf.insert(cursor, prefix + joined + " ")
+
+    # Hand focus back to the compose textview so typing resumes
+    # where the user left off.
+    compose.focus()
+
+
+class PilotWindow(LayerOverlayWindow):
     """Layer-shell sidebar. Conversation is a vertical stack of TurnCard
     widgets (one per user/assistant turn), queued turns are cards of
     their own above the compose, and compose is a multi-line TextView
@@ -1625,10 +1358,20 @@ class PilotWindow(Gtk.ApplicationWindow):
         skills_dir: Optional[str] = None,
         mcp_server_names: Optional[list[str]] = None,
     ):
-        super().__init__(application=app, title="Pilot")
-        # `.overlay` is our root scope — every CSS rule is namespaced under
-        # it so theme selectors like `window { background: … }` can't win.
-        self.add_css_class("overlay")
+        # LayerOverlayWindow handles Gtk4LayerShell init, anchors,
+        # keyboard mode, and the initial width sizing. Pilot's shape
+        # (top+bottom+right → full-height sidebar, 40% width) matches
+        # the scaffold's defaults, but we pass them explicitly so
+        # future scripts reading this call-site can see exactly what
+        # a pilot-style overlay needs.
+        super().__init__(
+            application=app,
+            title="Pilot",
+            namespace="pilot",
+            anchors=("top", "bottom", "right"),
+            width_fraction=0.4,
+            fallback_width=520,
+        )
         self._adapter = adapter
         # Session handle wired later via `attach_session` — the overlay
         # uses it to push auto-list mutations into the authoritative
@@ -1693,21 +1436,8 @@ class PilotWindow(Gtk.ApplicationWindow):
         # Palette widget is built on demand (first Ctrl+Space) and then
         # cached — we reset state (search box, active set) on every
         # open so stale selections don't leak across sessions.
-        self._palette: Optional[ResourcePalette] = None
+        self._palette: Optional[CommandPalette] = None
         self._install_css()
-
-        Gtk4LayerShell.init_for_window(self)
-        # Explicit namespace so compositor layerrules can target us
-        # (`layerrule = blur, pilot`) without regex-escaping the app-id.
-        Gtk4LayerShell.set_namespace(self, "pilot")
-        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
-        Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
-        Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.BOTTOM, True)
-        Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, True)
-        # EXCLUSIVE so toggle-window / present() grab keyboard focus the
-        # moment we map. Escape hides → grab releases automatically.
-        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.EXCLUSIVE)
-        self.set_default_size(self._overlay_width(), -1)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         root.add_css_class("pilot-root")
@@ -2646,10 +2376,30 @@ class PilotWindow(Gtk.ApplicationWindow):
         with a freshly-collected resource list. Lazy-constructs the
         palette on first call, re-uses the same widget on subsequent
         opens — state (search input, active toggles) resets every
-        `open()` call so stale ticks don't leak across sessions."""
+        `open()` call so stale ticks don't leak across sessions.
+
+        `CommandPalette` from `lib.overlay` handles the list + key
+        wiring; `_preseed_resource_active_from_compose` and
+        `_commit_resources_to_compose` are the two pilot-specific
+        shims that translate between its generic tuple interface and
+        our `#{kind/name}` compose-buffer token format."""
         if self._palette is None:
-            self._palette = ResourcePalette(self._compose, self._compose_overlay)
+            self._palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=lambda entries: _commit_resources_to_compose(
+                    self._compose, entries
+                ),
+                on_cancel=self._compose.focus,
+                placeholder=(
+                    "Search resources — Tab toggles · Enter inserts · Esc cancels"
+                ),
+            )
         resources = self._collect_resources()
+        # Preseed BEFORE open() so the palette's set survives its own
+        # `known`-filter trim inside `open()`.
+        self._palette.preseed_active(
+            _preseed_resource_active_from_compose(self._compose, resources)
+        )
         self._palette.open(resources)
 
     def _collect_resources(self) -> list[tuple[str, str, str, str]]:
@@ -2782,56 +2532,20 @@ class PilotWindow(Gtk.ApplicationWindow):
 
     # -- Statics --------------------------------------------------------
 
-    @staticmethod
-    def _overlay_width(fraction: float = 0.4, monitor=None) -> int:
-        """Fraction of the focused monitor's logical width. Caller can
-        pass a specific `monitor` (already resolved); otherwise we query
-        the compositor live. Falls back to GDK's first monitor, then a
-        hardcoded default, when no info is available."""
-        width = None
-        if monitor is None:
-            monitor = _focused_gdk_monitor()
+    def _on_monitor_bound(self, monitor) -> None:
+        """`LayerOverlayWindow` hook: called after every
+        `_bind_to_focused_monitor` resize. We cap the compose scroller
+        at 25% of the bound monitor's height so a tall conversation
+        can't push the compose box off-screen."""
         if monitor is not None:
-            width = monitor.get_geometry().width
-        if width is None:
-            display = Gdk.Display.get_default()
-            if display is not None:
-                monitors = display.get_monitors()
-                if monitors.get_n_items() > 0:
-                    width = monitors.get_item(0).get_geometry().width
-        if not width:
-            return 520
-
-        return max(320, int(width * fraction))
-
-    def _bind_to_focused_monitor(self) -> None:
-        """Pin the layer-shell surface to whichever output is currently
-        focused, resize width to 40% of that output, and cap the compose
-        scroller at 25% of that output's height. Called on every
-        toggle-to-visible so monitor switches rehome the overlay.
-
-        A layer-shell surface's size follows the widget's requested
-        size on commit. `set_default_size` + `set_size_request` +
-        `queue_resize` marks the widget tree dirty; the next map cycle
-        (toggle hides + shows) then commits a new layer surface with
-        the updated dimensions. We do NOT manually call `unmap()` /
-        `map()` here — on some builds that emits the `map` signal
-        twice, which makes GTK re-append the compose bar every toggle
-        (duplicate send buttons stacking at the bottom)."""
-        monitor = _focused_gdk_monitor()
-        if monitor is not None:
-            Gtk4LayerShell.set_monitor(self, monitor)
-        width = self._overlay_width(monitor=monitor)
-        self.set_default_size(width, -1)
-        self.set_size_request(width, -1)
-        self.queue_resize()
-        if monitor is not None:
-            self._compose.set_max_content_fraction(monitor.get_geometry().height, 0.25)
+            self._compose.set_max_content_fraction(
+                monitor.get_geometry().height, 0.25
+            )
 
     @staticmethod
     def _install_css() -> None:
-        """Load `pilot.css` from alongside this script and register it at
-        USER+1 priority.
+        """Install the shared overlay CSS first, then layer pilot.css on
+        top at the same priority (USER+1).
 
         A USER-priority `~/.config/gtk-4.0/gtk.css` beats
         APPLICATION-priority rules regardless of selector specificity —
@@ -2840,28 +2554,14 @@ class PilotWindow(Gtk.ApplicationWindow):
         every TextView's text subnode in the overlay. `USER + 1` is the
         smallest bump that beats `~/.config/gtk-4.0/gtk.css` without
         stomping on anything the user might layer on top intentionally.
+        Loading the shared overlay CSS FIRST means pilot-specific rules
+        (with the same priority but added later) win on ties.
 
         Parsing errors are routed to our logger so missing selectors /
         bad rule bodies surface in `-v` runs instead of vanishing."""
-        css = load_relative_file("pilot.css", relative_to=__file__).encode("utf-8")
-        provider = Gtk.CssProvider()
-
-        def _on_error(_prov, section, err):
-            start = section.get_start_location()
-            log.warning(
-                "pilot.css parse error at line %d col %d: %s",
-                start.lines + 1,
-                start.line_chars + 1,
-                err.message,
-            )
-
-        provider.connect("parsing-error", _on_error)
-        provider.load_from_data(css, len(css))
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(),
-            provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_USER + 1,
-        )
+        load_overlay_css()
+        pilot_css_path = os.path.join(os.path.dirname(__file__), "pilot.css")
+        load_css_from_path(pilot_css_path, tag="pilot.css")
 
 def _is_live() -> bool:
     """Probe the session socket without sending a command. Returns True if

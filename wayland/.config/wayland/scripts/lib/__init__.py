@@ -2,6 +2,13 @@
 
 Import via `from lib import …` — this __init__ re-exports everything the
 scripts need so callers never reach for a submodule directly.
+
+`lib.overlay` is the exception — its GTK / gtk4-layer-shell imports are
+heavy and unwanted in headless subprocesses (e.g. `pilot.py mcp-server`).
+We expose its symbols via a lazy `__getattr__` at the bottom of this
+module so `from lib import LayerOverlayWindow` works for GUI callers
+without making `from lib.mcp import McpServer` drag gi into the MCP
+stdio subprocess.
 """
 
 from .converse import (
@@ -58,8 +65,42 @@ from .prompts import load_prompt, load_relative_file
 from .tool_format import format_tool_args
 from .waybar import signal_waybar
 
+_OVERLAY_EXPORTS = frozenset({
+    "ButtonVariant",
+    "CommandPalette",
+    "CommandPaletteEntry",
+    "Header",
+    "LayerOverlayWindow",
+    "PillVariant",
+    "ensure_layer_shell_preload",
+    "focused_gdk_monitor",
+    "focused_monitor_name",
+    "load_css_from_path",
+    "load_overlay_css",
+    "make_button",
+    "make_card",
+    "make_collapsible",
+    "make_pill",
+})
+
+
+def __getattr__(name: str):
+    """Lazy re-export for `lib.overlay` symbols. Keeps `from lib import
+    LayerOverlayWindow` working while `from lib.mcp import McpServer`
+    continues to load without pulling in gi / Gtk — the mcp-server
+    subprocess path depends on that."""
+    if name in _OVERLAY_EXPORTS:
+        from . import overlay as _overlay_module
+
+        return getattr(_overlay_module, name)
+    raise AttributeError(f"module 'lib' has no attribute {name!r}")
+
+
 __all__ = [
     "AutoCheckPassthrough",
+    "ButtonVariant",
+    "CommandPalette",
+    "CommandPaletteEntry",
     "ConversationAdapter",
     "ConversationAdapterClaude",
     "ConversationAdapterCodex",
@@ -76,10 +117,12 @@ __all__ = [
     "EnrichAdapterHttp",
     "EnrichAdapterOpenCode",
     "EnrichProvider",
+    "Header",
     "InputAdapter",
     "InputAdapterClipboard",
     "InputAdapterStdin",
     "InputMode",
+    "LayerOverlayWindow",
     "McpCapability",
     "McpConfig",
     "McpServer",
@@ -88,13 +131,23 @@ __all__ = [
     "OutputAdapterStdout",
     "OutputAdapterType",
     "OutputMode",
+    "PillVariant",
     "ThinkingChunk",
     "ToolCall",
+    "ensure_layer_shell_preload",
+    "focused_gdk_monitor",
+    "focused_monitor_name",
     "format_tool_args",
     "get_server",
     "highlight_code",
+    "load_css_from_path",
+    "load_overlay_css",
     "load_prompt",
     "load_relative_file",
+    "make_button",
+    "make_card",
+    "make_collapsible",
+    "make_pill",
     "notify",
     "question_route",
     "signal_waybar",
