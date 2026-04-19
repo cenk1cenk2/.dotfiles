@@ -346,7 +346,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter to send  ·  Shift+Enter newline  ·  Ctrl+P paste",
+            label="Enter to send · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus",
             xalign=0.0,
             hexpand=True,
         )
@@ -1118,6 +1118,45 @@ class AskWindow(Gtk.ApplicationWindow):
         if not self._permissions:
             self._permissions_box.set_visible(False)
 
+    def show_permission_for_mcp(self, call: ToolCall, resolve) -> bool:
+        """Render a permission row for a Claude MCP permission-prompt
+        request and invoke `resolve(approved: bool, reason: str)` when
+        the user clicks. This is the REAL gate for `--converse-provider
+        claude` — the ask-mcp.py server is blocked on a socket round-
+        trip here, so claude's subprocess won't run the tool until we
+        return. Returns False so `GLib.idle_add` fires once."""
+
+        def on_allow(r: PermissionRow) -> None:
+            self._remove_permission_row(r)
+            resolve(True, "")
+
+        def on_trust(r: PermissionRow) -> None:
+            name = r.tool_name
+            if name:
+                self._trusted_tools.add(name)
+                self._sync_tool_gate()
+            for existing in list(self._permissions):
+                if existing.tool_name == name:
+                    self._remove_permission_row(existing)
+            resolve(True, "")
+
+        def on_deny(r: PermissionRow) -> None:
+            name = r.tool_name or "tool"
+            self._remove_permission_row(r)
+            resolve(False, f"user denied {name}")
+
+        row = PermissionRow(
+            call,
+            on_allow=on_allow,
+            on_trust=on_trust,
+            on_deny=on_deny,
+        )
+        self._permissions.append(row)
+        self._permissions_listbox.append(row)
+        self._permissions_box.set_visible(True)
+
+        return False
+
     def _on_permission_allow(self, row: PermissionRow) -> None:
         self._remove_permission_row(row)
 
@@ -1550,6 +1589,33 @@ class Session:
                 GLib.idle_add(self._window.toggle_visibility)
 
                 return {"ok": True}
+            case "permission":
+                # Claude's MCP permission-prompt-tool forwards here via
+                # ask-mcp.py. Block this socket handler thread until
+                # the user clicks allow/deny in the overlay, then
+                # return the answer. The ask-mcp.py wrapper translates
+                # the `approved` flag to Claude's allow/deny envelope.
+                tool_name = (obj.get("tool_name") or "").strip()
+                arguments = obj.get("arguments") or ""
+                event = threading.Event()
+                verdict = {"approved": False, "reason": "timeout"}
+
+                def resolve(approved: bool, reason: str = "") -> None:
+                    verdict["approved"] = bool(approved)
+                    verdict["reason"] = reason
+                    event.set()
+
+                call = ToolCall(
+                    tool_id=f"mcp-{id(event)}",
+                    name=tool_name,
+                    arguments=str(arguments),
+                )
+                GLib.idle_add(self._window.show_permission_for_mcp, call, resolve)
+                # 10-min ceiling matches ask-mcp.py's socket timeout.
+                if not event.wait(timeout=600):
+                    verdict = {"approved": False, "reason": "overlay timeout"}
+
+                return verdict
             case _:
                 return {"ok": False, "error": f"unhandled command: {cmd!r}"}
 
@@ -1573,8 +1639,20 @@ def _build_adapter(args) -> ConversationAdapter:
                 user_agent="ask/1.0",
             )
         case ConversationProvider.CLAUDE:
+            # The MCP stdio server next to this script handles per-tool
+            # approval prompts — claude's subprocess blocks on our
+            # overlay for each tool invocation. Pass an absolute path
+            # so claude doesn't have to resolve anything relative to
+            # its own cwd.
+            mcp_script = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "ask-mcp.py",
+            )
+
             return ConversationAdapterClaude(
-                AI_SYSTEM_PROMPT, model=args.converse_model
+                AI_SYSTEM_PROMPT,
+                model=args.converse_model,
+                permission_prompt_mcp=mcp_script,
             )
         case ConversationProvider.CODEX:
             return ConversationAdapterCodex(AI_SYSTEM_PROMPT, model=args.converse_model)
