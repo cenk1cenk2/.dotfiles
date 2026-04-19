@@ -40,9 +40,26 @@ class ToolCall:
     name: str
     arguments: str
 
-# Convenience alias for generator yield types — `str` for text chunks,
-# `ToolCall` for tool events.
-TurnChunk = Union[str, ToolCall]
+@dataclass
+class ThinkingChunk:
+    """A streamed chunk of reasoning / extended-thinking content.
+
+    Claude's extended-thinking → `stream_event.event.delta.thinking`.
+    OpenAI-compatible chat-completions → `delta.reasoning_content`
+    (DeepSeek / GLM / Qwen convention), falling back to `delta.reasoning`
+    (OpenRouter) and `delta.thinking` (Anthropic-proxy convention).
+    Codex → `item.completed` with `item.type == "reasoning"` and
+    `item.text`.
+
+    The UI renders these into a collapsible section inside the active
+    assistant card; the section auto-collapses the moment the first
+    regular text chunk arrives (visible sign the model has moved from
+    thinking to replying)."""
+
+    text: str
+
+# Convenience alias for generator yield types.
+TurnChunk = Union[str, ToolCall, ThinkingChunk]
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +284,17 @@ class ConversationAdapterHttp:
                     continue
                 choice = choices[0]
                 delta = choice.get("delta") or {}
+                # Reasoning / thinking tokens. No OpenAI-spec field
+                # exists on chat-completions, so we try DeepSeek/GLM's
+                # `reasoning_content` first, then OpenRouter's
+                # `reasoning`, then Anthropic-proxy's `thinking`.
+                thinking = (
+                    delta.get("reasoning_content")
+                    or delta.get("reasoning")
+                    or delta.get("thinking")
+                )
+                if thinking:
+                    yield ThinkingChunk(text=thinking)
                 chunk = delta.get("content")
                 if chunk:
                     collected.append(chunk)
@@ -483,6 +511,15 @@ class ConversationAdapterClaude:
                                 text = delta.get("text")
                                 if text:
                                     yield text
+                            elif dtype == "thinking_delta":
+                                # Extended-thinking stream. We ignore
+                                # the sibling `signature_delta` events;
+                                # they're for multi-turn continuity on
+                                # the API and don't carry user-visible
+                                # content.
+                                thinking = delta.get("thinking")
+                                if thinking:
+                                    yield ThinkingChunk(text=thinking)
                             elif dtype == "input_json_delta":
                                 idx = inner.get("index", 0)
                                 slot = pending_tools.setdefault(idx, {})
@@ -636,6 +673,13 @@ class ConversationAdapterCodex:
                             text = item.get("text")
                             if text:
                                 yield text
+                        elif itype == "reasoning":
+                            # Codex emits reasoning as a single item
+                            # (no streaming deltas like Claude), so it
+                            # arrives whole.
+                            text = item.get("text") or item.get("content") or ""
+                            if text:
+                                yield ThinkingChunk(text=str(text))
                         elif itype in ("tool_use", "tool_call", "shell_command"):
                             # Codex stringifies the invocation differently per
                             # item type. Prefer structured fields, fall back

@@ -31,6 +31,7 @@ from lib import (
     InputAdapterStdin,
     InputMode,
     OutputAdapterClipboard,
+    ThinkingChunk,
     ToolCall,
     load_prompt,
     load_relative_file,
@@ -75,10 +76,14 @@ from gi.repository import (  # type: ignore[attr-defined]  # noqa: E402
 log = logging.getLogger("ask")
 
 APP_ID = "dev.kilic.wayland.ask"
-SOCKET_PATH = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
-    "wayland-ask.sock",
-)
+_RUNTIME = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+# Main CLI socket — toggle/status/kill/turn from user-facing invocations.
+SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask.sock")
+# Dedicated MCP permission-prompt socket. `ask-mcp.py` connects here and
+# blocks on overlay approval before returning allow/deny to claude. Split
+# from the main socket so a user kill / stale-cleanup never trips the
+# MCP bridge (and vice-versa).
+MCP_SOCKET_PATH = os.path.join(_RUNTIME, "wayland-ask-mcp.sock")
 
 AI_SYSTEM_PROMPT = load_prompt("ask.md", relative_to=__file__)
 
@@ -347,7 +352,7 @@ class ComposeView:
         self._pill_remove_cb = None
 
         hint = Gtk.Label(
-            label="Enter to send · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus",
+            label="Enter · Shift+Enter newline · Ctrl+D interrupt · Ctrl+P paste · Ctrl+Y yank · Ctrl+F focus · Ctrl+Q quit",
             xalign=0.0,
             hexpand=True,
         )
@@ -582,16 +587,30 @@ class TurnCard:
     layout pass (TextView doesn't, which used to leave user cards
     collapsed until the assistant reply forced a re-layout)."""
 
+    THINKING_LABEL_STREAMING = "🧠 thinking…"
+    THINKING_LABEL_DONE = "🧠 thinking"
+
     def __init__(self, role: str, title: str, on_link):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.widget.add_css_class("ask-card")
         self.widget.add_css_class(f"ask-card-{role}")
 
-        role_label = Gtk.Label(label=title, xalign=0.0)
-        role_label.add_css_class("ask-card-role")
-        role_label.add_css_class(f"ask-card-role-{role}")
-        self.widget.append(role_label)
+        self._role_label = Gtk.Label(label=title, xalign=0.0)
+        self._role_label.add_css_class("ask-card-role")
+        self._role_label.add_css_class(f"ask-card-role-{role}")
+        self.widget.append(self._role_label)
+
+        self._md = MarkdownMarkup()
+        self._on_link = on_link
+        self._text = ""
+        self._thinking_text = ""
+        # Lazily built when the first ThinkingChunk arrives — assistant
+        # cards that never surface reasoning stay structurally
+        # identical to user cards.
+        self._thinking_expander: Optional[Gtk.Expander] = None
+        self._thinking_label: Optional[Gtk.Label] = None
+        self._thinking_collapsed = False
 
         self._label = Gtk.Label(
             xalign=0.0,
@@ -601,8 +620,6 @@ class TurnCard:
             wrap_mode=Pango.WrapMode.WORD_CHAR,
             use_markup=True,
             selectable=True,
-            # Prefer wrapping at word boundaries where possible, fall
-            # back to inline when a single long token would overflow.
             natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
         )
         self._label.add_css_class("ask-card-text")
@@ -616,17 +633,57 @@ class TurnCard:
         )
         self.widget.append(self._label)
 
-        self._md = MarkdownMarkup()
-        self._text = ""
-        self._on_link = on_link
-
     def append(self, chunk: str) -> None:
+        # First visible reply chunk — auto-collapse any thinking block
+        # so the user's eye doesn't have to scroll past reasoning to
+        # see the answer.
+        if (
+            not self._text
+            and self._thinking_expander is not None
+            and not self._thinking_collapsed
+        ):
+            self._thinking_expander.set_expanded(False)
+            self._thinking_expander.set_label(self.THINKING_LABEL_DONE)
+            self._thinking_collapsed = True
         self._text += chunk
         self._label.set_markup(self._md.render(self._text))
 
     def set_text(self, text: str) -> None:
         self._text = text
         self._label.set_markup(self._md.render(text))
+
+    def append_thinking(self, chunk: str) -> None:
+        """Append a reasoning chunk to the card's thinking section,
+        creating the collapsible expander on first arrival. While
+        streaming, the expander is open so the user sees reasoning
+        land live; `append()` closes it once the real reply starts."""
+        if self._thinking_expander is None:
+            self._thinking_label = Gtk.Label(
+                xalign=0.0,
+                yalign=0.0,
+                hexpand=True,
+                wrap=True,
+                wrap_mode=Pango.WrapMode.WORD_CHAR,
+                use_markup=True,
+                selectable=True,
+                natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+            )
+            self._thinking_label.add_css_class("ask-card-text")
+            self._thinking_label.add_css_class("ask-thinking-text")
+            self._thinking_expander = Gtk.Expander(
+                label=self.THINKING_LABEL_STREAMING,
+                expanded=True,
+            )
+            self._thinking_expander.add_css_class("ask-thinking-expander")
+            self._thinking_expander.set_child(self._thinking_label)
+            # Slot the expander between the role label and the reply
+            # label so the visual order is: role → thinking → reply.
+            self.widget.insert_child_after(
+                self._thinking_expander, self._role_label
+            )
+        self._thinking_text += chunk
+        assert self._thinking_label is not None
+        self._thinking_label.set_markup(self._md.render(self._thinking_text))
 
     def get_text(self) -> str:
         return self._text
@@ -974,6 +1031,16 @@ class AskWindow(Gtk.ApplicationWindow):
 
         return False
 
+    def _append_thinking(self, chunk: str) -> bool:
+        """Main-thread-safe sink for `ThinkingChunk` events. Routes
+        the reasoning text into the active assistant card's
+        collapsible thinking section. Returns False so it composes
+        with `GLib.idle_add`."""
+        if self._active_assistant is not None:
+            self._active_assistant.append_thinking(chunk)
+
+        return False
+
     def _run_turn(self, user_message: str) -> None:
         first_text_chunk = True
         try:
@@ -993,6 +1060,9 @@ class AskWindow(Gtk.ApplicationWindow):
                 # the turn is already done).
                 if isinstance(chunk, ToolCall):
                     GLib.idle_add(self._on_tool_call, chunk)
+                    continue
+                if isinstance(chunk, ThinkingChunk):
+                    GLib.idle_add(self._append_thinking, chunk.text)
                     continue
                 if first_text_chunk:
                     GLib.idle_add(self._set_phase, "streaming")
@@ -1503,54 +1573,72 @@ class Session:
         self._window = window
         self._provider = provider
         self._sock: Optional[socket.socket] = None
+        self._mcp_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
+        self._mcp_thread: Optional[threading.Thread] = None
 
-    def start(self) -> None:
+    def _bind(self, path: str, live_check: bool) -> socket.socket:
+        """Bind a listener to `path`, cleaning up stale socket files.
+        Set `live_check=True` only for the main socket — there we must
+        detect another running session; for the MCP socket we can
+        always clobber a stale file because it's only meaningful while
+        OUR session is alive."""
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.bind(SOCKET_PATH)
+            sock.bind(path)
         except OSError as e:
             if e.errno != errno.EADDRINUSE:
                 sock.close()
                 raise
-            # Socket file exists. Probe to tell live owner from stale file:
-            # a live owner answers connect; a stale file gives ECONNREFUSED.
-            # Only unlink after confirming stale, so we don't race another
-            # starting owner into a two-windows-one-path state.
-            if _is_live():
+            if live_check and _is_live():
                 sock.close()
                 raise RuntimeError(
-                    f"another ask session is already running at {SOCKET_PATH}"
+                    f"another ask session is already running at {path}"
                 )
             try:
-                os.unlink(SOCKET_PATH)
+                os.unlink(path)
             except FileNotFoundError:
                 pass
-            sock.bind(SOCKET_PATH)
+            sock.bind(path)
 
-        os.chmod(SOCKET_PATH, 0o600)
+        os.chmod(path, 0o600)
         sock.listen(4)
-        self._sock = sock
-        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+        return sock
+
+    def start(self) -> None:
+        self._sock = self._bind(SOCKET_PATH, live_check=True)
+        self._mcp_sock = self._bind(MCP_SOCKET_PATH, live_check=False)
+        self._thread = threading.Thread(
+            target=self._serve, args=(self._sock,), daemon=True
+        )
         self._thread.start()
+        self._mcp_thread = threading.Thread(
+            target=self._serve, args=(self._mcp_sock,), daemon=True
+        )
+        self._mcp_thread.start()
 
     def stop(self) -> None:
-        if self._sock:
+        for attr, path in (
+            ("_sock", SOCKET_PATH),
+            ("_mcp_sock", MCP_SOCKET_PATH),
+        ):
+            sock = getattr(self, attr, None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+                setattr(self, attr, None)
             try:
-                self._sock.close()
-            except OSError:
+                os.unlink(path)
+            except FileNotFoundError:
                 pass
-            self._sock = None
-        try:
-            os.unlink(SOCKET_PATH)
-        except FileNotFoundError:
-            pass
 
-    def _serve(self) -> None:
-        assert self._sock is not None, "_serve requires start() to have run"
+    def _serve(self, listener: socket.socket) -> None:
         while True:
             try:
-                conn, _ = self._sock.accept()
+                conn, _ = listener.accept()
             except OSError:
                 return
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()

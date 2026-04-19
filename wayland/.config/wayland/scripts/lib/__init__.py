@@ -11,6 +11,7 @@ from .converse import (
     ConversationAdapterCodex,
     ConversationAdapterHttp,
     ConversationProvider,
+    ThinkingChunk,
     ToolCall,
 )
 from .enrich import (
@@ -60,6 +61,7 @@ __all__ = [
     "OutputAdapterStdout",
     "OutputAdapterType",
     "OutputMode",
+    "ThinkingChunk",
     "ToolCall",
     "load_prompt",
     "load_relative_file",

@@ -199,6 +199,34 @@
   min-height: 2em;
 }
 
+/* Collapsible reasoning section. Sister to the card-text reply: same
+ * bg[200] text surface, slightly smaller + italic + dimmed foreground
+ * so the reply remains the visual anchor. Header row lives on the
+ * expander's title node. */
+.overlay expander.ask-thinking-expander {
+  background-color: transparent;
+  background-image: none;
+  color: @ask_fg_dim;
+  margin: 2px 0 4px 0;
+}
+
+.overlay expander.ask-thinking-expander > title {
+  color: @ask_fg_dim;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+}
+
+.overlay label.ask-thinking-text {
+  background-color: @ask_text_surface;
+  background-image: none;
+  color: @ask_fg_muted;
+  font-size: 0.95em;
+  font-style: italic;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
 /* ========================================================== Compose */
 .overlay box.ask-compose-wrap {
   margin: 8px 12px 12px 12px;

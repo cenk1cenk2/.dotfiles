@@ -26,8 +26,8 @@ import socket
 import sys
 
 SOCKET_PATH = os.path.join(
-    os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
-    "wayland-ask.sock",
+    os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
+    "wayland-ask-mcp.sock",
 )
 PROTOCOL_VERSION = "2025-06-18"
 TOOL_NAME = "approve"
@@ -91,14 +91,16 @@ def _handle_tools_call(mid, params):
             "behavior": "deny",
             "message": result["reason"] or "User denied this action",
         }
-    _respond({
-        "jsonrpc": "2.0",
-        "id": mid,
-        "result": {
-            "content": [{"type": "text", "text": json.dumps(payload)}],
-            "isError": False,
-        },
-    })
+    _respond(
+        {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps(payload)}],
+                "isError": False,
+            },
+        }
+    )
 
 def main():
     for raw in sys.stdin:
@@ -113,52 +115,60 @@ def main():
         mid = msg.get("id")
         match method:
             case "initialize":
-                _respond({
-                    "jsonrpc": "2.0",
-                    "id": mid,
-                    "result": {
-                        "protocolVersion": PROTOCOL_VERSION,
-                        "capabilities": {"tools": {"listChanged": False}},
-                        "serverInfo": {"name": "ask", "version": "0.1.0"},
-                    },
-                })
+                _respond(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "result": {
+                            "protocolVersion": PROTOCOL_VERSION,
+                            "capabilities": {"tools": {"listChanged": False}},
+                            "serverInfo": {"name": "ask", "version": "0.1.0"},
+                        },
+                    }
+                )
             case "notifications/initialized":
                 # Notification, no response expected.
                 pass
             case "tools/list":
-                _respond({
-                    "jsonrpc": "2.0",
-                    "id": mid,
-                    "result": {
-                        "tools": [{
-                            "name": TOOL_NAME,
-                            "description": (
-                                "Route a Claude tool-use request through the ask "
-                                "overlay for user approval. Returns the allow/deny "
-                                "JSON Claude expects from a permission-prompt tool."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "tool_name": {"type": "string"},
-                                    "input": {"type": "object"},
-                                },
-                                "required": ["tool_name", "input"],
-                            },
-                        }],
-                    },
-                })
+                _respond(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": TOOL_NAME,
+                                    "description": (
+                                        "Route a Claude tool-use request through the ask "
+                                        "overlay for user approval. Returns the allow/deny "
+                                        "JSON Claude expects from a permission-prompt tool."
+                                    ),
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "tool_name": {"type": "string"},
+                                            "input": {"type": "object"},
+                                        },
+                                        "required": ["tool_name", "input"],
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                )
             case "tools/call":
                 _handle_tools_call(mid, msg.get("params") or {})
             case _ if mid is not None:
-                _respond({
-                    "jsonrpc": "2.0",
-                    "id": mid,
-                    "error": {
-                        "code": -32601,
-                        "message": f"method not found: {method}",
-                    },
-                })
+                _respond(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {
+                            "code": -32601,
+                            "message": f"method not found: {method}",
+                        },
+                    }
+                )
 
 if __name__ == "__main__":
     main()
