@@ -29,6 +29,9 @@ set $menu rofi -modi "run,drun" run -show drun -terminal $term -ssh-command "{te
 # clipboard manager (clipse)
 set $clipboard $term_float --class clipse clipse
 
+# quick note -> clipboard (nvim scratch; on :w pipes buffer to cbcp)
+set $quick_note $term_float zsh -c '$HOME/.config/wayland/scripts/quick-note.sh'
+
 ### Lockscreen configuration
 set $locking swaylock --daemonize --color "$selection-color" --inside-color "$selection-color" --inside-clear-color "$text-color" --ring-color "$color2" --ring-clear-color "$color11" --ring-ver-color "$color13" --show-failed-attempts --fade-in 0.2 --grace 0.5 --effect-vignette 0.5:0.5 --effect-blur 7x5 --ignore-empty-password --screenshots --clock
 
@@ -118,6 +121,6 @@ set $recorder $HOME/.config/wayland/scripts/recorder.py
 # Speech-to-text
 set $speech zsh -c '$HOME/.config/wayland/scripts/speech.py "$@"' zsh
 set $copywriter zsh -c '$HOME/.config/wayland/scripts/copywriter.py "$@"' zsh
-set $ask zsh -c '$HOME/.config/wayland/scripts/ask.py "$@"' zsh
+set $pilot zsh -c '$HOME/.config/wayland/scripts/pilot.py "$@"' zsh
 
 set $tablet_map_to_output swaymsg input type:tablet_tool map_to_output $(swaymsg -t get_outputs | jq -r '.[] | select(.focused == true) | .name')

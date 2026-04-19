@@ -22,7 +22,9 @@ class InputAdapter(Protocol):
         ...
 
 class InputAdapterClipboard:
-    """Reads text from the Wayland clipboard via `wl-paste`."""
+    """Reads from the Wayland clipboard via `wl-paste`. Defaults to
+    text; `read_binary(mime)` pulls an image / audio / arbitrary
+    blob for mime types that don't flatten to UTF-8."""
 
     mode = InputMode.CLIPBOARD
 
@@ -34,11 +36,41 @@ class InputAdapterClipboard:
                 text=True,
                 check=True,
             )
-
             return result.stdout
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             log.error("failed to read clipboard: %s", e)
             return None
+
+    @staticmethod
+    def list_mime_types() -> list[str]:
+        """Return every MIME type `wl-paste` advertises for the current
+        clipboard selection. Empty list on transport errors."""
+        try:
+            result = subprocess.run(
+                ["wl-paste", "--list-types"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    @staticmethod
+    def read_binary(mime: str) -> Optional[bytes]:
+        """Pull the clipboard payload for `mime` as raw bytes. Returns
+        None if the clipboard doesn't expose that type or `wl-paste`
+        errors out."""
+        try:
+            result = subprocess.run(
+                ["wl-paste", "--no-newline", "--type", mime],
+                capture_output=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            log.debug("wl-paste %s failed: %s", mime, e)
+            return None
+        return result.stdout or None
 
 class InputAdapterStdin:
     """Reads text from the process's standard input until EOF."""

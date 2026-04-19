@@ -10,8 +10,8 @@ def signal_waybar(module: str) -> None:
     line on success and a `No signal mapped for …` line on failure. We
     route both to our stderr so nothing leaks into a piped stdout — this
     helper runs inside scripts whose stdout is semantically meaningful
-    (e.g. `speech.py --output stdout | ask.py --input stdin`, or the
-    waybar custom-module JSON emitted by `ask.py status`)."""
+    (e.g. `speech.py --output stdout | pilot.py --input stdin`, or the
+    waybar custom-module JSON emitted by `pilot.py status`)."""
     subprocess.run(
         ["waybar-signal.sh", module],
         check=False,

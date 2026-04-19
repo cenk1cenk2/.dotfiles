@@ -14,12 +14,11 @@ from lib import (
     DEFAULT_ENRICH_ADAPTER,
     InputAdapterClipboard,
     OutputAdapterClipboard,
-    EnrichAdapterClaude,
-    EnrichAdapterCodex,
-    EnrichAdapterOpenCode,
     EnrichAdapter,
-    EnrichProvider,
+    EnrichAdapterClaude,
     EnrichAdapterHttp,
+    EnrichAdapterOpenCode,
+    EnrichProvider,
     InputAdapter,
     InputMode,
     OutputAdapter,
@@ -266,11 +265,13 @@ def main():
                     user_agent="copywriter/1.0",
                 )
             case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
-            case EnrichProvider.CODEX:
-                enricher = EnrichAdapterCodex(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
+                enricher = EnrichAdapterClaude(
+                    SYSTEM_PROMPT, USER_PROMPT, model=args.model
+                )
             case EnrichProvider.OPENCODE:
-                enricher = EnrichAdapterOpenCode(SYSTEM_PROMPT, USER_PROMPT, model=args.model)
+                enricher = EnrichAdapterOpenCode(
+                    SYSTEM_PROMPT, USER_PROMPT, model=args.model
+                )
             case _:
                 raise ValueError(f"unknown enrich provider: {args.provider!r}")
 

@@ -232,30 +232,30 @@ window#waybar .modules-right {
   background-color: @warning_color;
 }
 
-#custom-ask {
+#custom-pilot {
   color: @bg_color_100;
   border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
 
-#custom-ask.idle {
+#custom-pilot.idle {
   background-color: @success_color;
 }
 
-#custom-ask.streaming {
+#custom-pilot.streaming {
   background-color: @warning_color;
 }
 
-#custom-ask.pending {
+#custom-pilot.pending {
   background-color: @error_color;
 }
 
 /* Awaiting — overlay is blocked on user input (pending permission
- * row OR active ask_question banner). Matches `@ask_awaiting` in
- * ask.css (#d19a66, orange). Inline literal so waybar's style sheet
- * doesn't have to import the ask palette. */
-#custom-ask.awaiting {
+ * row OR active ask_question banner). Matches `@pilot_awaiting` in
+ * pilot.css (#d19a66, orange). Inline literal so waybar's style sheet
+ * doesn't have to import the pilot palette. */
+#custom-pilot.awaiting {
   background-color: #d19a66;
 }
 

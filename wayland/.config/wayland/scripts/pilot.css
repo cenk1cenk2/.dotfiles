@@ -1,0 +1,962 @@
+/* Pilot-specific CSS. The shared palette (`@define-color pilot_*`),
+ * the `.overlay` font / transparent-window rules, and the `.overlay`
+ * primitives (cards, collapsibles, pills, buttons, close, header)
+ * live in `lib/overlay.css` — loaded FIRST by `PilotWindow._install_css`
+ * so these rules override on ties at the same USER+1 priority.
+ *
+ * Any future script that composes `LayerOverlayWindow` loads the same
+ * shared base; restyle here for pilot-only surfaces (permission rows,
+ * tool bubbles, queue, question banner, resource palette). */
+
+/* ============================================================ Root
+ * Pilot-specific accent stripe on the root Box. Shares the tokens +
+ * transparent-window recipe from `overlay.css` but re-uses the
+ * `.pilot-root` class so historical selectors keep landing. */
+.overlay box.pilot-root {
+  background-color: @pilot_window;
+  background-image: none;
+  border-left: 2px solid @pilot_edge;
+}
+
+/* ============================================================ Header */
+.overlay box.pilot-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid @pilot_border_soft;
+  background-color: @pilot_window;
+  background-image: none;
+}
+
+.overlay label.pilot-session {
+  font-size: 0.78em;
+  color: @pilot_fg_dim;
+  margin-left: 10px;
+  letter-spacing: 0.02em;
+}
+
+.overlay label.pilot-provider {
+  font-size: 0.9em;
+  font-weight: 700;
+  padding: 4px 12px;
+  background-color: alpha(@pilot_fg_dim, 0.15);
+  color: @pilot_fg;
+  letter-spacing: 0.04em;
+}
+
+.overlay label.pilot-provider.idle {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.22);
+}
+
+.overlay label.pilot-provider.streaming {
+  color: @pilot_stream;
+  background-color: alpha(@pilot_stream, 0.22);
+}
+
+.overlay label.pilot-provider.pending {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+}
+
+.overlay label.pilot-provider.awaiting {
+  color: @pilot_awaiting;
+  background-color: alpha(@pilot_awaiting, 0.22);
+}
+
+/* Button shadows. Depth comes from a hairline top-highlight and a soft
+ * drop below — presses invert the pair so the button reads "sunken". */
+.overlay button.pilot-close {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 3px 10px;
+  min-width: 0;
+  color: @pilot_fg_dim;
+  font-size: 1.1em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.4);
+}
+
+.overlay button.pilot-close:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.5);
+}
+
+.overlay button.pilot-close:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
+/* ====================================================== Conversation */
+.overlay scrolledwindow.pilot-conv-scroller {
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay box.pilot-conv {
+  padding: 10px 10px 4px 10px;
+}
+
+.overlay box.pilot-card {
+  background-color: @pilot_card;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  padding: 8px 14px;
+  margin: 4px 2px;
+}
+
+.overlay box.pilot-card-user {
+  border-left: 3px solid @pilot_user;
+}
+
+.overlay box.pilot-card-assistant {
+  border-left: 3px solid @pilot_assistant;
+  background-color: @pilot_card_hi;
+  background-image: none;
+}
+
+.overlay label.pilot-card-role {
+  font-size: 0.8em;
+  font-weight: 800;
+  color: @pilot_fg_dim;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.overlay label.pilot-card-role-user {
+  color: @pilot_user;
+}
+
+.overlay label.pilot-card-role-assistant {
+  color: @pilot_assistant;
+}
+
+/* Card body (the Gtk.Label rendering the markdown). Drops to bg[200]
+ * so the reply text reads as an inset panel inside the coloured card
+ * chrome. Small padding so the text isn't flush against the edge. */
+.overlay label.pilot-card-text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg;
+  font-size: 1em;
+  padding: 8px 12px;
+}
+
+/* Legacy TextView selectors kept in case a future card variant wants
+ * to revert to TextView — harmless no-ops on the Label-based cards. */
+.overlay textview.pilot-card-text,
+.overlay textview.pilot-card-text > text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg;
+  font-size: 1em;
+}
+
+.overlay textview.pilot-card-text > text {
+  min-height: 2em;
+}
+
+/* Collapsible reasoning section. Sister to the card-text reply: same
+ * bg[200] text surface, slightly smaller + italic + dimmed foreground
+ * so the reply remains the visual anchor. Header row lives on the
+ * expander's title node. */
+.overlay expander.pilot-thinking-expander {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_fg_dim;
+  margin: 2px 0 4px 0;
+}
+
+.overlay expander.pilot-thinking-expander > title {
+  color: @pilot_fg_dim;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+}
+
+.overlay label.pilot-thinking-text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg_muted;
+  font-size: 0.95em;
+  font-style: italic;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
+/* Plan expander — matches thinking's tone (dim title, card-surface
+ * body) but without italics since plan entries are structural list
+ * items, not prose. Ctrl+O reopens the latest one. */
+.overlay expander.pilot-plan-expander {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_fg_dim;
+  margin: 2px 0 4px 0;
+}
+
+.overlay expander.pilot-plan-expander > title {
+  color: @pilot_fg_dim;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+}
+
+.overlay label.pilot-plan-text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg;
+  font-size: 0.95em;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
+/* ================================================ Tool-bubble strip
+ * A compact pill strip inside every assistant TurnCard that audits
+ * every tool call the adapter streamed. Pills render at the card
+ * font size with a colour-coded tint per status, and toggle an
+ * expanded detail panel below the strip showing pretty-printed
+ * arguments and (when available) result text. Once the turn
+ * finalises the strip gets a `.frozen` class so it reads as a
+ * static audit trail rather than a live indicator. */
+.overlay box.pilot-tool-bubbles {
+  margin: 2px 0 6px 0;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow > flowboxchild {
+  padding: 0;
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay flowbox.pilot-tool-bubbles-flow > flowboxchild:selected {
+  background-color: transparent;
+}
+
+/* Square the default GTK rounding on every control inside the
+ * overlay so the look stays consistent — pills, pass-through
+ * buttons, list rows, and the palette cells all flatten to the same
+ * 2px corner. Individual rules can override when a specific control
+ * needs a different radius. */
+.overlay button,
+.overlay entry,
+.overlay row,
+.overlay flowboxchild {
+  border-radius: 2px;
+}
+
+/* Pill-density rule: every compose-adjacent FlowBox child collapses
+ * its default 8px border so pills pack against each other and more
+ * fit per row. Without this GTK's FlowBoxChild keeps ~6px around
+ * every cell which wastes horizontal space on narrow sidebars. */
+.overlay flowbox.pilot-compose-resources > flowboxchild,
+.overlay flowbox.pilot-compose-attachments > flowboxchild {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* Compose-bar resource pill strip. One chip per attached skill /
+ * reference picked via Ctrl+Space. Lives ABOVE the hint so users
+ * see what's queued before submit; `dispatch_turn` inlines the
+ * bodies and clears the strip. */
+.overlay flowbox.pilot-compose-resources {
+  padding: 2px 6px;
+}
+
+.overlay button.pilot-compose-resource {
+  background-color: alpha(@pilot_accent, 0.16);
+  color: @pilot_accent;
+  border: 1px solid alpha(@pilot_accent, 0.45);
+  padding: 0 6px;
+  margin: 0;
+  min-height: 0;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+}
+
+.overlay button.pilot-compose-resource:hover {
+  background-color: alpha(@pilot_accent, 0.28);
+  border-color: @pilot_accent;
+}
+
+/* Compose-bar attachment pill strip. One chip per pasted binary
+ * payload (image today, audio / arbitrary blobs later). Sits below
+ * the resource strip and above the hint bar so the user sees the
+ * non-text content they're about to ship before pressing Enter.
+ * `dispatch_turn` snapshots + clears the strip at submit. */
+.overlay flowbox.pilot-compose-attachments {
+  padding: 2px 6px;
+}
+
+.overlay button.pilot-compose-attachment {
+  background-color: alpha(@pilot_awaiting, 0.16);
+  color: @pilot_awaiting;
+  border: 1px solid alpha(@pilot_awaiting, 0.45);
+  padding: 0 6px;
+  margin: 0;
+  min-height: 0;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+}
+
+.overlay button.pilot-compose-attachment:hover {
+  background-color: alpha(@pilot_awaiting, 0.28);
+  border-color: @pilot_awaiting;
+}
+
+/* Tool-use bubble pill. The assistant card stacks these in a
+ * FlowBox; see `pilot-tool-bubbles-flow > flowboxchild` above for
+ * the density reset that lets long MCP tool names sit side-by-side
+ * on the same row before wrapping. */
+.overlay button.pilot-tool-bubble {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  border-radius: 2px;
+  padding: 0 8px;
+  margin: 0;
+  min-width: 0;
+  min-height: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.pilot-tool-bubble:hover {
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.pilot-tool-bubble:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+/* Status tints. Pending/running share the awaiting hue (blue-ish
+ * orange tone), completed picks up the idle green, cancelled
+ * borrows the pending red. */
+.overlay button.pilot-tool-bubble.pending,
+.overlay button.pilot-tool-bubble.running {
+  color: @pilot_awaiting;
+  background-color: alpha(@pilot_awaiting, 0.14);
+  border-color: alpha(@pilot_awaiting, 0.4);
+}
+
+.overlay button.pilot-tool-bubble.completed {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.14);
+  border-color: alpha(@pilot_idle, 0.4);
+}
+
+.overlay button.pilot-tool-bubble.failed {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.2);
+  border-color: alpha(@pilot_pending, 0.55);
+  font-weight: bold;
+}
+
+.overlay button.pilot-tool-bubble.cancelled {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.14);
+  border-color: alpha(@pilot_pending, 0.4);
+}
+
+/* Frozen: once the turn finalised the strip is a historical audit
+ * trail. Dim the whole thing by a touch so the eye skips it in
+ * favour of the live card below. */
+.overlay box.pilot-tool-bubbles.frozen button.pilot-tool-bubble {
+  opacity: 0.75;
+}
+
+.overlay label.pilot-tool-bubble-details {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg_dim;
+  font-size: 0.82em;
+  padding: 4px 8px;
+  margin-top: 2px;
+}
+
+/* Question banner — shown inside the compose wrap when claude's
+ * `pilot_question` MCP tool is awaiting a typed answer. Sits above the
+ * textview so the question frames the input it's prompting for. */
+.overlay box.pilot-question-banner {
+  background-color: alpha(@pilot_accent, 0.12);
+  background-image: none;
+  border-bottom: 1px solid alpha(@pilot_accent, 0.4);
+  padding: 8px 10px;
+}
+
+.overlay label.pilot-question-text {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_accent;
+  font-size: 0.95em;
+}
+
+.overlay button.pilot-question-skip {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 2px 10px;
+  min-width: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.8em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.pilot-question-skip:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+/* ========================================================== Compose */
+.overlay box.pilot-compose-wrap {
+  margin: 8px 12px 12px 12px;
+  background-color: @pilot_compose;
+  background-image: none;
+  border: 2px solid @pilot_border;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.overlay box.pilot-compose-wrap:focus-within {
+  border-color: @pilot_border_focus;
+  box-shadow: 0 0 0 2px alpha(@pilot_accent, 0.3);
+}
+
+.overlay scrolledwindow.pilot-compose {
+  background-color: @pilot_text_surface;
+  background-image: none;
+}
+
+/* Compose input surface — bg[200], matching the card body so typing
+ * and replies share the same inset look. */
+.overlay textview.pilot-compose-text,
+.overlay textview.pilot-compose-text > text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  color: @pilot_fg;
+  font-size: 1em;
+  caret-color: @pilot_accent;
+}
+
+.overlay box.pilot-compose-bar {
+  padding: 6px 10px 6px 12px;
+  border-top: 1px solid @pilot_border_soft;
+  background-color: alpha(black, 0.25);
+  background-image: none;
+}
+
+.overlay label.pilot-compose-hint {
+  font-size: 0.8em;
+  color: @pilot_fg_muted;
+}
+
+/* Trusted-tool pills on the submit bar. Each pill is a compact
+ * button labelled `name ✕`; click removes the tool from the
+ * per-session trust set so future calls surface a permission row
+ * again. Accent tint since they represent active trust grants. */
+.overlay flowbox.pilot-compose-pills {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay flowbox.pilot-compose-pills > flowboxchild {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  min-height: 0;
+}
+
+.overlay button.pilot-compose-pill {
+  background-color: alpha(@pilot_accent, 0.18);
+  border: 1px solid alpha(@pilot_accent, 0.45);
+  padding: 0 8px;
+  min-width: 0;
+  min-height: 0;
+  color: @pilot_accent;
+  font-size: 0.78em;
+  letter-spacing: 0.02em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 1px 2px alpha(black, 0.3);
+}
+
+.overlay button.pilot-compose-pill:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+  border-color: alpha(@pilot_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+.overlay button.pilot-compose-pill:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.45),
+    0 0 0 transparent;
+}
+
+/* Auto-approved pill — green tint so the user can tell at a glance
+ * that the tool runs without prompting. Hover flips the colour to
+ * accent red-ish to signal "click to drop from the list", same recipe
+ * as the plain trusted pill. */
+.overlay button.pilot-compose-pill.auto-approve {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border-color: alpha(@pilot_idle, 0.45);
+}
+
+.overlay button.pilot-compose-pill.auto-approve:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.22);
+  border-color: alpha(@pilot_pending, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+/* Auto-rejected pill — red tint so it reads as a standing deny. Hover
+ * flips to accent so the click-to-drop affordance stays consistent
+ * with the other pills (hover = "clicking removes"). */
+.overlay button.pilot-compose-pill.auto-reject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+}
+
+.overlay button.pilot-compose-pill.auto-reject:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.22);
+  border-color: alpha(@pilot_accent, 0.55);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.4);
+}
+
+/* Primary action — SEND. Stronger shadow than secondary buttons; the
+ * pressed state flips the shadow inwards for tactile feedback. */
+.overlay button.pilot-compose-send {
+  background-color: alpha(@pilot_accent, 0.28);
+  color: @pilot_accent;
+  border: 1px solid alpha(@pilot_accent, 0.55);
+  padding: 4px 16px;
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  min-width: 0;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.1),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-compose-send:hover {
+  background-color: alpha(@pilot_accent, 0.42);
+  color: @pilot_fg;
+  border-color: @pilot_accent;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.14),
+    0 3px 6px alpha(black, 0.55);
+}
+
+.overlay button.pilot-compose-send:active {
+  background-color: alpha(@pilot_accent, 0.4);
+  box-shadow:
+    inset 0 2px 3px alpha(black, 0.5),
+    0 0 0 transparent;
+}
+
+.overlay button.pilot-compose-send:disabled {
+  opacity: 0.4;
+  box-shadow: none;
+}
+
+/* =========================================== Queue (full-text cards) */
+.overlay box.pilot-queue {
+  background-color: alpha(black, 0.35);
+  background-image: none;
+  border-top: 1px solid @pilot_border_soft;
+  padding: 4px 8px 6px 8px;
+}
+
+.overlay label.pilot-queue-header {
+  font-size: 0.78em;
+  font-weight: 700;
+  color: @pilot_fg_muted;
+  padding: 2px 2px 2px 2px;
+  letter-spacing: 0.14em;
+}
+
+.overlay list {
+  background-color: transparent;
+  background-image: none;
+}
+
+.overlay row.pilot-queue-row {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  margin: 0;
+}
+
+.overlay row.pilot-queue-row:hover {
+  background-color: transparent;
+}
+
+.overlay box.pilot-queue-card {
+  background-color: @pilot_card;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  padding: 6px 10px;
+  margin: 2px 0;
+  transition: border-color 120ms ease;
+}
+
+.overlay box.pilot-queue-card:hover {
+  border-color: alpha(@pilot_accent, 0.4);
+}
+
+.overlay label.pilot-queue-text {
+  font-size: 1em;
+  color: @pilot_fg;
+}
+
+.overlay scrolledwindow.pilot-queue-edit {
+  background-color: @pilot_card_hi;
+  background-image: none;
+  border: 1px solid @pilot_border_focus;
+  padding: 2px;
+}
+
+.overlay textview.pilot-queue-edit-text,
+.overlay textview.pilot-queue-edit-text > text {
+  background-color: transparent;
+  background-image: none;
+  color: @pilot_fg;
+  font-size: 1em;
+}
+
+.overlay textview.pilot-queue-edit-text > text {
+  min-height: 2em;
+}
+
+.overlay box.pilot-queue-actions {
+  margin-top: 4px;
+}
+
+/* Secondary buttons share a base shadow treatment; the hover tint
+ * swaps the accent colour so intent is legible per-button. */
+.overlay button.pilot-queue-edit,
+.overlay button.pilot-queue-send,
+.overlay button.pilot-queue-remove {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 1px 8px;
+  min-width: 0;
+  min-height: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.8em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.pilot-queue-edit:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.18);
+  border-color: alpha(@pilot_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-queue-send:hover {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border-color: alpha(@pilot_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-queue-remove:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-queue-edit:active,
+.overlay button.pilot-queue-send:active,
+.overlay button.pilot-queue-remove:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+/* ========================================= Permissions (tool-use) */
+/* Sits between the conversation and the queue. Shape mirrors the
+ * queue panel so the two read as siblings; colour hints lean
+ * warning-ish (accent left stripe) because tool events are more
+ * attention-grabby than queued user messages. */
+.overlay box.pilot-permissions {
+  background-color: alpha(black, 0.35);
+  background-image: none;
+  border-top: 1px solid @pilot_border_soft;
+  padding: 4px 8px 6px 8px;
+}
+
+.overlay label.pilot-permissions-header {
+  font-size: 0.78em;
+  font-weight: 700;
+  color: @pilot_fg_muted;
+  padding: 2px 2px 2px 2px;
+  letter-spacing: 0.14em;
+}
+
+.overlay row.pilot-permission-row {
+  background-color: transparent;
+  background-image: none;
+  padding: 0;
+  margin: 0;
+}
+
+.overlay row.pilot-permission-row:hover {
+  background-color: transparent;
+}
+
+.overlay box.pilot-permission-card {
+  background-color: @pilot_card;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  border-left: 3px solid @pilot_accent;
+  padding: 6px 10px;
+  margin: 2px 0;
+  transition: border-color 120ms ease;
+}
+
+.overlay box.pilot-permission-card:hover {
+  border-color: alpha(@pilot_accent, 0.6);
+  border-left-color: @pilot_accent;
+}
+
+.overlay label.pilot-permission-tool-name {
+  font-size: 0.9em;
+  font-weight: 800;
+  color: @pilot_accent;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.overlay label.pilot-permission-args {
+  font-size: 0.85em;
+  color: @pilot_fg_dim;
+  /* Long command + diff previews get wrapped — min-width:0 lets the
+   * Pango label shrink below its natural width so the card stays
+   * within the sidebar for multi-kilo-char Bash one-liners. The
+   * markdown renderer inlines its own code-block styling (monospace
+   * span + bg tint), so no extra <tt> rules are needed. */
+  min-width: 0;
+}
+
+.overlay box.pilot-permission-actions {
+  margin-top: 4px;
+}
+
+/* Button row: allow → green (idle), trust → accent, deny → red
+ * (pending), auto-reject → darker red with a pre-tinted idle so it
+ * reads as a standing action, not a momentary dismiss. Same base
+ * shadow as the queue trio. */
+.overlay button.pilot-permission-allow,
+.overlay button.pilot-permission-trust,
+.overlay button.pilot-permission-deny,
+.overlay button.pilot-permission-autoreject {
+  background-color: alpha(@pilot_fg_dim, 0.08);
+  border: 1px solid @pilot_border_soft;
+  padding: 1px 8px;
+  min-width: 0;
+  min-height: 0;
+  color: @pilot_fg_dim;
+  font-size: 0.8em;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.04),
+    0 1px 2px alpha(black, 0.35);
+}
+
+.overlay button.pilot-permission-allow:hover {
+  color: @pilot_idle;
+  background-color: alpha(@pilot_idle, 0.18);
+  border-color: alpha(@pilot_idle, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-permission-trust:hover {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.18);
+  border-color: alpha(@pilot_accent, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+.overlay button.pilot-permission-deny:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-color: alpha(@pilot_pending, 0.45);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.07),
+    0 2px 4px alpha(black, 0.45);
+}
+
+/* Auto-reject: idle state is pre-tinted red so the "standing deny"
+ * intent reads even before hover — this is a heavier action than
+ * plain deny (it also affects future calls). Hover deepens the red
+ * so the click target is obvious. */
+.overlay button.pilot-permission-autoreject {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.14);
+  border-color: alpha(@pilot_pending, 0.4);
+}
+
+.overlay button.pilot-permission-autoreject:hover {
+  color: @pilot_pending;
+  background-color: alpha(@pilot_pending, 0.28);
+  border-color: alpha(@pilot_pending, 0.65);
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 2px 4px alpha(black, 0.5);
+}
+
+.overlay button.pilot-permission-allow:active,
+.overlay button.pilot-permission-trust:active,
+.overlay button.pilot-permission-deny:active,
+.overlay button.pilot-permission-autoreject:active {
+  box-shadow:
+    inset 0 1px 2px alpha(black, 0.4),
+    0 0 0 transparent;
+}
+
+/* ============================================================ Palette
+ * Ctrl+Space resource palette: a rofi-like overlay floating on top of
+ * the compose box. Elevation matches PermissionRow's card — same
+ * bg/border/shadow pairing so the overlay reads as an authoritative
+ * in-overlay surface, not a popover. The `.active` tint uses the
+ * user-card accent (onedarker's warm yellow) so a toggled row stands
+ * out without competing with the tool-bubble strip's green/red. */
+.overlay box.pilot-palette {
+  background-color: @pilot_card_hi;
+  background-image: none;
+  border: 1px solid @pilot_border;
+  padding: 8px;
+  margin: 6px;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.05),
+    0 4px 12px alpha(black, 0.55);
+}
+
+/* Centred floating frame — thicker border, deeper shadow, slightly
+ * brighter surface so the palette reads as an overlay over the chat
+ * instead of another inline strip. Paired with `set_size_request`
+ * on the Box (see `CommandPalette.set_size`) so it lands at a
+ * consistent 60% window-height rectangle. */
+.overlay box.pilot-palette.pilot-palette-frame {
+  background-color: @pilot_card_hi;
+  border: 2px solid @pilot_border;
+  padding: 12px;
+  box-shadow:
+    inset 0 1px 0 alpha(white, 0.08),
+    0 10px 32px alpha(black, 0.7);
+}
+
+.overlay entry.pilot-palette-search,
+.overlay entry.pilot-palette-search text {
+  background-color: @pilot_text_surface;
+  background-image: none;
+  border: 1px solid @pilot_border_soft;
+  color: @pilot_fg;
+  padding: 6px 10px;
+  font-size: 0.95em;
+}
+
+.overlay entry.pilot-palette-search:focus,
+.overlay entry.pilot-palette-search:focus text {
+  border-color: @pilot_border_focus;
+}
+
+.overlay listbox.pilot-palette-list {
+  background-color: transparent;
+  background-image: none;
+  margin-top: 4px;
+}
+
+.overlay row.pilot-palette-row {
+  background-color: transparent;
+  background-image: none;
+  border: 1px solid transparent;
+  padding: 2px 0;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease;
+}
+
+.overlay row.pilot-palette-row:selected {
+  background-color: alpha(@pilot_fg_dim, 0.12);
+  border-color: @pilot_border_soft;
+}
+
+.overlay row.pilot-palette-row.active {
+  background-color: alpha(@pilot_user, 0.14);
+  border-color: alpha(@pilot_user, 0.45);
+}
+
+.overlay row.pilot-palette-row.active:selected {
+  background-color: alpha(@pilot_user, 0.22);
+  border-color: @pilot_user;
+}
+
+.overlay label.pilot-palette-mark {
+  font-size: 1.05em;
+  color: @pilot_fg_dim;
+  min-width: 18px;
+}
+
+.overlay row.pilot-palette-row.active label.pilot-palette-mark {
+  color: @pilot_user;
+}
+
+.overlay label.pilot-palette-name {
+  font-size: 0.95em;
+  color: @pilot_fg;
+}
+
+.overlay label.pilot-palette-desc {
+  font-size: 0.85em;
+  color: @pilot_fg_dim;
+}
