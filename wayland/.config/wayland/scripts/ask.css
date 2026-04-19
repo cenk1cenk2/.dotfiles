@@ -1,44 +1,32 @@
-/* Tokens — design decisions live here so the rest of the sheet reads
- * as role applications, not hex noise. Adjust here, ripple everywhere. */
-@define-color ask_bg #14161c;
-@define-color ask_surface #1d2029;
-@define-color ask_surface_hi #262b37;
-@define-color ask_border rgba(255, 255, 255, 0.07);
-@define-color ask_border_hi rgba(255, 255, 255, 0.18);
-@define-color ask_border_focus rgba(110, 168, 254, 0.75);
-@define-color ask_fg #e8ecf1;
-@define-color ask_fg_dim #9aa0ad;
-@define-color ask_fg_muted #5c6170;
-@define-color ask_accent #6ea8fe;
-@define-color ask_user #82b5ff;
-@define-color ask_assistant #c5a7ff;
-@define-color ask_idle #7dcf7d;
-@define-color ask_stream #e6c07b;
+/* ============================================================ Tokens
+ * Pulled from ~/.config/nvim/lua/onedarker/colors.lua so the overlay
+ * matches the editor theme. Adjust here — not in the rule bodies. */
+@define-color ask_bg #121212;
+@define-color ask_surface #17191e;
+@define-color ask_surface_hi #1e2127;
+@define-color ask_surface_edit #22282f;
+@define-color ask_border #2c333d;
+@define-color ask_border_hi #4b5263;
+@define-color ask_border_focus #61afef;
+@define-color ask_fg #abb2bf;
+@define-color ask_fg_dim #7c8a9d;
+@define-color ask_fg_muted #5c6370;
+@define-color ask_accent #61afef;
+@define-color ask_user #61afef;
+@define-color ask_assistant #c678dd;
+@define-color ask_idle #98c379;
+@define-color ask_stream #e5c07b;
 @define-color ask_pending #e06c75;
 
-/* System monospace, globally. Some GTK themes ship a `font` shorthand
- * that beats a bare `font-family` on `*`, so apply it explicitly to the
- * widgets we care about too. */
-*,
-window,
-box,
-label,
-button,
-entry,
-textview,
-row,
-list,
-window *,
-box *,
-textview *,
-entry * {
-  font-family: monospace, "Fira Code", "JetBrains Mono", "Cascadia Code";
+/* Use the system monospace (aliased via fontconfig to $term-font). */
+* {
+  font-family: monospace;
 }
 
 /* Surface. Slightly translucent so compositor blur peeks through where
  * enabled. */
 window {
-  background: rgba(20, 22, 28, 0.97);
+  background: rgba(18, 18, 18, 0.96);
   color: @ask_fg;
 }
 
@@ -56,7 +44,7 @@ label.ask-provider {
   border-radius: 999px;
   background: alpha(@ask_fg_dim, 0.15);
   color: @ask_fg;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
 }
 
 label.ask-provider.idle {
@@ -98,8 +86,8 @@ box.ask-conv {
   padding: 12px 10px 6px 10px;
 }
 
-/* Each user / assistant turn is its own card. Colour + role label
- * identify the speaker at a glance. */
+/* Each user / assistant turn is its own card. Role-accented left edge
+ * + role title above the body mark the speaker. */
 box.ask-card {
   background: @ask_surface;
   border: 1px solid @ask_border;
@@ -118,11 +106,11 @@ box.ask-card-assistant {
 }
 
 label.ask-card-role {
-  font-size: 8pt;
+  font-size: 9pt;
   font-weight: 800;
   color: @ask_fg_dim;
-  letter-spacing: 0.18em;
-  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
 }
 
 label.ask-card-role-user {
@@ -171,7 +159,7 @@ textview.ask-compose-text text {
 box.ask-compose-bar {
   padding: 4px 8px 6px 10px;
   border-top: 1px solid @ask_border;
-  background: alpha(black, 0.18);
+  background: alpha(black, 0.3);
 }
 
 label.ask-compose-hint {
@@ -203,7 +191,7 @@ button.ask-compose-send:disabled {
 
 /* =========================================== Queue (full-text cards) */
 box.ask-queue {
-  background: rgba(0, 0, 0, 0.3);
+  background: alpha(black, 0.35);
   border-top: 1px solid @ask_border;
   padding: 6px 10px 10px 10px;
 }
@@ -249,7 +237,7 @@ label.ask-queue-text {
 }
 
 scrolledwindow.ask-queue-edit {
-  background: alpha(black, 0.25);
+  background: @ask_surface_edit;
   border: 1px solid @ask_border_focus;
   border-radius: 6px;
   padding: 2px;

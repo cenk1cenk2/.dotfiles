@@ -537,13 +537,13 @@ class TurnCard:
     `Gtk.TextBuffer` + `MarkdownView`, so per-link tag trees are scoped
     to the card that rendered them."""
 
-    def __init__(self, role: str, on_link):
+    def __init__(self, role: str, title: str, on_link):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.widget.add_css_class("ask-card")
         self.widget.add_css_class(f"ask-card-{role}")
 
-        role_label = Gtk.Label(label=role.upper(), xalign=0.0)
+        role_label = Gtk.Label(label=title, xalign=0.0)
         role_label.add_css_class("ask-card-role")
         role_label.add_css_class(f"ask-card-role-{role}")
         self.widget.append(role_label)
@@ -601,9 +601,20 @@ class AskWindow(Gtk.ApplicationWindow):
     with a visible SEND button. Phases (idle/pending/streaming) surface
     in both the header pill and the waybar module."""
 
+    USER_TITLE = "Retarded Peasant"
+    ASSISTANT_TITLE_FMT = "AI Overlord - {provider}"
+    ASSISTANT_TITLE_WITH_MODEL_FMT = "AI Overlord - {provider} ({model})"
+    HEADER_FMT = "Ask - {provider}"
+    HEADER_WITH_MODEL_FMT = "Ask - {provider} ({model})"
+
     def __init__(self, app: Gtk.Application, adapter: ConversationAdapter):
         super().__init__(application=app, title="Ask")
         self._adapter = adapter
+        # HTTP adapter carries a model; claude/codex wrap CLIs that pick
+        # their own. Model string can be empty → treat as absent.
+        raw_model = getattr(adapter, "model", "") or ""
+        self._model: Optional[str] = raw_model.strip() or None
+        self._provider_name = adapter.provider.value
         self._streaming = False
         self._alive = True
         self._queue: list[QueueRow] = []
@@ -632,7 +643,7 @@ class AskWindow(Gtk.ApplicationWindow):
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("ask-header")
         self._provider_label = Gtk.Label(
-            label=f"󱍊  {adapter.provider.value.upper()}",
+            label=self._header_title(),
             xalign=0.0,
             hexpand=True,
         )
@@ -734,7 +745,11 @@ class AskWindow(Gtk.ApplicationWindow):
         threading.Thread(target=self._run_turn, args=(message,), daemon=True).start()
 
     def _append_user_card(self, text: str) -> TurnCard:
-        card = TurnCard(role="user", on_link=self._open_link)
+        card = TurnCard(
+            role="user",
+            title=self.USER_TITLE,
+            on_link=self._open_link,
+        )
         card.set_text(text)
         self._cards.append(card)
         self._conv_box.append(card.widget)
@@ -743,12 +758,32 @@ class AskWindow(Gtk.ApplicationWindow):
         return card
 
     def _append_assistant_card(self) -> TurnCard:
-        card = TurnCard(role="assistant", on_link=self._open_link)
+        card = TurnCard(
+            role="assistant",
+            title=self._assistant_title(),
+            on_link=self._open_link,
+        )
         self._cards.append(card)
         self._conv_box.append(card.widget)
         GLib.idle_add(self._scroll_to_end)
 
         return card
+
+    def _header_title(self) -> str:
+        if self._model:
+            return self.HEADER_WITH_MODEL_FMT.format(
+                provider=self._provider_name, model=self._model
+            )
+
+        return self.HEADER_FMT.format(provider=self._provider_name)
+
+    def _assistant_title(self) -> str:
+        if self._model:
+            return self.ASSISTANT_TITLE_WITH_MODEL_FMT.format(
+                provider=self._provider_name, model=self._model
+            )
+
+        return self.ASSISTANT_TITLE_FMT.format(provider=self._provider_name)
 
     def _append_chunk(self, chunk: str) -> bool:
         """Main-thread-safe sink for adapter chunks. Appends to whichever
