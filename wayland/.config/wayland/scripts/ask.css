@@ -346,7 +346,7 @@
 }
 
 .overlay textview.ask-queue-edit-text > text {
-  min-height: 1.4em;
+  min-height: 2em;
 }
 
 .overlay box.ask-queue-actions {

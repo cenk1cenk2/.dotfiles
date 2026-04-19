@@ -284,9 +284,11 @@ class ComposeView:
     up to `set_max_content_fraction` of the window height before
     scrolling kicks in."""
 
-    # Minimum rows of compose height so the surface stays usable even
-    # on tiny screens where 25% of the height wouldn't be enough.
-    MIN_ROWS = 2
+    # Minimum rows of compose height. Starts at 3 rows so the input
+    # feels like a proper compose box, not a single-line entry, and
+    # stays usable on short screens where 25% of the height would be
+    # even less.
+    MIN_ROWS = 3
 
     def __init__(self, on_submit=None):
         self._on_submit = on_submit
