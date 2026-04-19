@@ -30,13 +30,12 @@
 * {
   font-family: monospace;
   font-size: 14pt;
+  background: @ask_window;
+  background-color: @ask_window;
 }
 
 /* Square surfaces everywhere — no rounding. Borders stay so surface
  * transitions are still readable. */
-* {
-  background: @ask_window;
-}
 
 window {
   background: @ask_window;
