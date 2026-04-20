@@ -677,7 +677,6 @@ def _make_code_block_widget(block: CodeBlock) -> Gtk.Box:
     for text, color in block.tokens:
         buf.insert_with_tags(buf.get_end_iter(), text, _tag_for(color))
 
-    view.set_tooltip_text(block.source)
     box.append(view)
     return box
 
