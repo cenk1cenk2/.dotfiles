@@ -1107,6 +1107,108 @@ class AcpSession:
         self._current_queue = None
         self._in_flight = None
 
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """Return every ACP session the agent is willing to resume.
+
+        Calls `session/list` through the same asyncio loop + connection
+        the turn path uses. Returns a list of `{session_id, cwd, title,
+        updated_at}` dicts — normalised from the ACP `SessionInfo`
+        shape into plain dicts so the UI doesn't have to import the
+        schema.
+
+        Spawns the subprocess on first call (same path as a real turn
+        would) because `session/list` needs a live `ClientSideConnection`
+        anyway. Returns `[]` on any failure (agent doesn't implement
+        listSessions, subprocess crashed, etc.) — the palette falls
+        back to "new session" only when this is empty."""
+        try:
+            self._ensure_started()
+        except Exception as e:
+            log.warning("list_sessions: ensure_started failed: %s", e)
+            return []
+        conn = self._conn
+        loop = self._loop
+        if conn is None or loop is None:
+            return []
+        cwd = self.cwd or os.getcwd()
+
+        async def _call() -> list[dict[str, Any]]:
+            resp = await conn.list_sessions(cwd=cwd)
+            out: list[dict[str, Any]] = []
+            for s in getattr(resp, "sessions", None) or []:
+                out.append(
+                    {
+                        "session_id": getattr(s, "session_id", "") or "",
+                        "cwd": getattr(s, "cwd", "") or "",
+                        "title": getattr(s, "title", "") or "",
+                        "updated_at": getattr(s, "updated_at", "") or "",
+                    }
+                )
+            return out
+
+        try:
+            return asyncio.run_coroutine_threadsafe(_call(), loop).result(timeout=5)
+        except Exception as e:
+            log.warning("list_sessions rpc failed: %s", e)
+            return []
+
+    def select_session(self, session_id: str) -> None:
+        """Swap the active session to `session_id`. Sequence:
+
+          1. `close()` the current subprocess + asyncio loop.
+          2. Write the new id to the pointer file so `_ensure_started`
+             picks it up on the next turn.
+          3. Re-arm the lifecycle flags the same way `reset()` does —
+             without unlinking the pointer first (that's the whole
+             point of this method; we want the NEXT bootstrap to
+             `load_session(new_id)`).
+
+        The agent may refuse to load the id (session doesn't exist on
+        its side, cwd mismatch, etc.); `_ensure_started` treats that
+        as a soft failure and falls back to `new_session`, which
+        mirrors the behaviour for a stale pointer file."""
+        if not session_id:
+            return
+        log.info("acp select_session: switching to id=%s", session_id)
+        self.close()
+        self._write_stored_session_id(session_id)
+        self._closed = False
+        self._session_id = None
+        self._resumed_from_store = False
+        self._agents_file = self._original_agents_file
+        self._current_queue = None
+        self._in_flight = None
+
+    def forget_session(self, session_id: str) -> bool:
+        """Drop `session_id` from pilot's pointer file if it matches
+        the currently-stored id. Returns True when something was
+        actually unlinked, False when the stored id points elsewhere
+        (or no store is configured).
+
+        This only clears the pilot-side bookmark — the agent keeps
+        its own on-disk session record. The user can still pick the
+        session through `list_sessions` until the agent prunes it."""
+        if not session_id or not self.session_store_path:
+            return False
+        stored = self._read_stored_session_id()
+        if stored != session_id:
+            return False
+        try:
+            os.unlink(self.session_store_path)
+        except FileNotFoundError:
+            return False
+        except OSError as e:
+            log.warning(
+                "session store unlink failed (%s): %s",
+                self.session_store_path,
+                e,
+            )
+            return False
+        if self._session_id == session_id:
+            self._session_id = None
+            self._resumed_from_store = False
+        return True
+
 class AcpAdapter:
     """Base class for any `lib.converse` adapter that speaks ACP.
 
@@ -1171,6 +1273,24 @@ class AcpAdapter:
         sequence."""
         self._session.reset()
 
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """Ask the agent for every resumable session. See
+        `AcpSession.list_sessions` — returns a list of plain dicts
+        so the UI doesn't need to import the ACP schema."""
+        return self._session.list_sessions()
+
+    def select_session(self, session_id: str) -> None:
+        """Swap the active session to `session_id`; next turn will
+        load it via `load_session` instead of bootstrapping new.
+        See `AcpSession.select_session`."""
+        self._session.select_session(session_id)
+
+    def forget_session(self, session_id: str) -> bool:
+        """Clear pilot's pointer file if it currently resolves to
+        `session_id`. Returns True when the pointer was actually
+        unlinked. See `AcpSession.forget_session`."""
+        return self._session.forget_session(session_id)
+
     @property
     def mcp_server_names(self) -> list[str]:
         """Names of every MCP server the session handed to the agent at
@@ -1181,9 +1301,8 @@ class AcpAdapter:
     @property
     def session_id(self) -> Optional[str]:
         """Current ACP `session_id`, or None before the first turn /
-        after `close()`. Surfaced for the `status` socket and the
-        `session-info` CLI so users can see which conversation they
-        just resumed into."""
+        after `close()`. Surfaced for the `status` socket so the
+        waybar module can tell which conversation is live."""
         return self._session._session_id
 
     @property

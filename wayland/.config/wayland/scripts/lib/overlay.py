@@ -424,25 +424,33 @@ class CommandPalette(Gtk.Box):
     """Rofi-like fuzzy-match palette. Floats inside a `Gtk.Overlay`
     supplied by the host window — doesn't create its own chrome.
 
-    Flow:
-      * `open(entries)` — seed the list; palette grabs keyboard focus.
-      * Tab / Shift+Tab    — toggle the highlighted row's active state.
-      * Down / Ctrl+N      — next row.
-      * Up   / Ctrl+P      — previous row.
-      * Enter              — close, call `on_commit(active_entries)`.
-      * Escape             — close without committing.
+    Two dispatch modes:
+
+    * **multi-select** (default). Tab / Shift+Tab toggles active
+      state on the highlighted row. Enter commits EVERY active
+      entry. `preseed_active(pairs)` marks starting picks. Active
+      entries sort to the top of the list on every rebuild so
+      current picks stay visible as the user filters.
+    * **select** (`select_mode=True`). No active-set semantics —
+      there's exactly one "currently selected" row driven by arrow
+      keys. Enter commits that single entry (as a one-element list
+      so `on_commit` has a consistent signature). Tab is a no-op.
+      Checkboxes aren't rendered.
+
+    Common controls:
+      * `open(entries)`   — seed the list; palette grabs keyboard focus.
+      * Down / Ctrl+N     — next row.
+      * Up   / Ctrl+P     — previous row.
+      * Enter             — close, call `on_commit(entries)`.
+      * Escape            — close, call `on_cancel()` if provided.
+      * Ctrl+D            — call `on_delete(entry)` on the highlighted
+                            row (stays open). Hook is optional; the
+                            sessions palette uses it for "forget".
 
     The palette is intentionally agnostic about WHAT gets committed:
-    it hands the caller the tuples it was opened with (filtered to
-    whichever entries are toggled active). Callers decide what to do
-    with them — inject tokens into a compose box, spawn subcommands,
-    etc.
-
-    `preseed_active(entries)` is an optional hook the host can call
-    before `open()` to mark a starting subset as active (e.g. because
-    the user has already referenced them elsewhere in their input).
-    Pass an iterable of `(kind, name)` pairs. After `open()` the set
-    persists until the next open."""
+    it hands the caller the entry tuples it was opened with. Callers
+    decide what to do — inject tokens into a compose box, restore a
+    session, toggle MCP servers, etc."""
 
     def __init__(
         self,
@@ -450,6 +458,8 @@ class CommandPalette(Gtk.Box):
         on_commit: Callable[[list[CommandPaletteEntry]], None],
         *,
         on_cancel: Optional[Callable[[], None]] = None,
+        on_delete: Optional[Callable[[CommandPaletteEntry], None]] = None,
+        select_mode: bool = False,
         placeholder: str = "Search — Tab toggles · Enter commits · Esc cancels",
     ):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -471,6 +481,8 @@ class CommandPalette(Gtk.Box):
         self._host_overlay = host_overlay
         self._on_commit = on_commit
         self._on_cancel = on_cancel
+        self._on_delete = on_delete
+        self._select_mode = select_mode
 
         self._entries: list[CommandPaletteEntry] = []
         self._filtered: list[CommandPaletteEntry] = []
@@ -589,8 +601,18 @@ class CommandPalette(Gtk.Box):
                 log.exception("palette on_cancel raised")
 
     def active_entries(self) -> list[CommandPaletteEntry]:
-        """Return the full entry tuples for every currently-active
-        row, sorted by (kind, name) for stable output."""
+        """Return the entries the current commit should carry:
+
+        * multi-select mode: every `(kind, name)` pair in `_active`,
+          sorted lexicographically for stable output.
+        * select mode: a one-element list with the currently-
+          highlighted row, or `[]` when the list is empty / nothing
+          is selected. Keeps the `on_commit` signature uniform (a
+          list of entries) so multi-select and select hosts can
+          share helper glue."""
+        if self._select_mode:
+            entry = self._selected_entry()
+            return [entry] if entry is not None else []
         by_key = {(k, n): (k, n, d, p) for (k, n, d, p) in self._entries}
         out: list[CommandPaletteEntry] = []
         for key in sorted(self._active):
@@ -599,6 +621,22 @@ class CommandPalette(Gtk.Box):
                 out.append(entry)
 
         return out
+
+    def _selected_entry(self) -> Optional[CommandPaletteEntry]:
+        """Return the highlighted row's entry (or None when the
+        list is empty). Used by select-mode commits + the Ctrl+D
+        delete hook, both of which operate on a single row rather
+        than the multi-set."""
+        row = self._listbox.get_selected_row()
+        if row is None:
+            return None
+        key = getattr(row, "_palette_key", None)
+        if not key:
+            return None
+        for entry in self._filtered:
+            if (entry[0], entry[1]) == key:
+                return entry
+        return None
 
     # ── rendering ──
     @staticmethod
@@ -636,7 +674,14 @@ class CommandPalette(Gtk.Box):
     def _rebuild_list(self) -> None:
         """Wipe and rebuild the ListBox from `_entries`, fuzzy-matched
         (subsequence) against the search input. Case-insensitive;
-        searches `name + kind + description` concatenated."""
+        searches `name + kind + description` concatenated.
+
+        Multi-select palettes sort active entries to the top so the
+        user's current picks stay visible as they narrow the search —
+        otherwise a filter query that doesn't match an active entry
+        would hide it, forcing the user to clear the box before they
+        could untick. Select-mode palettes skip this reorder because
+        there's no active set."""
         child = self._listbox.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
@@ -644,16 +689,21 @@ class CommandPalette(Gtk.Box):
             child = nxt
 
         query = (self._search.get_text() or "").strip().lower()
-        scored: list[tuple[int, int, CommandPaletteEntry]] = []
+        scored: list[tuple[int, int, int, CommandPaletteEntry]] = []
         for idx, entry in enumerate(self._entries):
             kind, name, desc, _preview = entry
             haystack = f"{name} {kind} {desc}".lower()
             score = self._fuzzy_score(query, haystack)
             if score is None:
                 continue
-            scored.append((score, idx, entry))
-        scored.sort(key=lambda t: (t[0], t[1]))
-        self._filtered = [e for _s, _i, e in scored]
+            # First sort key is 0 for active rows, 1 for inactive, so
+            # actives bubble to the top regardless of score. In select
+            # mode nothing ever enters `_active`, so this collapses
+            # into a no-op priority of 1 for every row.
+            priority = 0 if (kind, name) in self._active else 1
+            scored.append((priority, score, idx, entry))
+        scored.sort(key=lambda t: (t[0], t[1], t[2]))
+        self._filtered = [e for _p, _s, _i, e in scored]
         for entry in self._filtered:
             kind, name, desc, _preview = entry
             row = self._make_row(kind, name, desc)
@@ -691,11 +741,18 @@ class CommandPalette(Gtk.Box):
         box.set_margin_top(4)
         box.set_margin_bottom(4)
 
-        mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
-        mark.add_css_class("overlay-palette-mark")
-        mark.add_css_class("pilot-palette-mark")
-        box.append(mark)
-        row._palette_mark = mark  # type: ignore[attr-defined]
+        # Select-mode palettes skip the checkbox — there's no active
+        # set, Enter just commits whatever row is highlighted. Keep
+        # the attribute defined (as None) so `_toggle_current` can
+        # short-circuit on it without raising.
+        if self._select_mode:
+            row._palette_mark = None  # type: ignore[attr-defined]
+        else:
+            mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
+            mark.add_css_class("overlay-palette-mark")
+            mark.add_css_class("pilot-palette-mark")
+            box.append(mark)
+            row._palette_mark = mark  # type: ignore[attr-defined]
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         title = Gtk.Label(xalign=0.0, hexpand=True)
@@ -735,7 +792,18 @@ class CommandPalette(Gtk.Box):
             self._commit_and_close()
             return True
         if keyval == Gdk.KEY_Tab or keyval == Gdk.KEY_ISO_Left_Tab:
-            self._toggle_current()
+            # Select-mode palettes only care about the highlighted
+            # row — Tab has no toggle semantics there, so we swallow
+            # the event instead of letting GTK move focus.
+            if not self._select_mode:
+                self._toggle_current()
+            return True
+        if ctrl and keyval == Gdk.KEY_d:
+            # Destructive per-row action (sessions palette uses this
+            # for "forget"). No-op when no hook is wired — the
+            # palette stays open so the user can keep operating on
+            # the remaining rows.
+            self._delete_current()
             return True
         if keyval == Gdk.KEY_Down or (ctrl and keyval == Gdk.KEY_n):
             self._move_selection(1)
@@ -800,6 +868,32 @@ class CommandPalette(Gtk.Box):
             row.add_css_class("active")
             if mark is not None:
                 mark.set_label("☑")
+
+    def _delete_current(self) -> None:
+        """Ctrl+D — hand the highlighted entry to `on_delete` and
+        rebuild the list so the row disappears on success. No-op
+        when the hook wasn't wired or the list is empty. Swallows
+        hook exceptions so a misbehaving callback can't strand the
+        palette in a broken state."""
+        if self._on_delete is None:
+            return
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        try:
+            self._on_delete(entry)
+        except Exception:
+            log.exception("palette on_delete raised")
+            return
+        # Drop the deleted entry from our local list + the active
+        # set, then rebuild. If the entry wasn't actually deleted
+        # by the hook (e.g. callback short-circuited), it'll come
+        # back via the caller's next `open()` — this local mutation
+        # just keeps the view coherent with the hook's intent.
+        key = (entry[0], entry[1])
+        self._entries = [e for e in self._entries if (e[0], e[1]) != key]
+        self._active.discard(key)
+        self._rebuild_list()
 
     def _commit_and_close(self) -> None:
         """Enter / Entry `activate`: detach, then fire the commit

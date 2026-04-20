@@ -3073,50 +3073,162 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _open_sessions_palette(self) -> None:
-        """Ctrl+S: palette listing known ACP sessions the adapter can
-        resume. Commit replays the picked session — pilot asks the
-        adapter to tear down the current session and re-bind to the
-        chosen id. Gracefully degrades to the current session only
-        when the adapter can't enumerate."""
+        """Ctrl+S: palette listing every ACP session the agent is
+        willing to resume, plus a `new session` sentinel. Select-mode
+        palette — Enter restores the highlighted row (swaps the
+        adapter's session_id and wipes the transcript), Ctrl+D drops
+        pilot's pointer file if it resolves to the highlighted
+        session (next launch would otherwise still auto-resume into
+        it)."""
         if self._sessions_palette is None:
             self._sessions_palette = CommandPalette(
                 host_overlay=self._compose_overlay,
                 on_commit=self._commit_session_restore,
                 on_cancel=self._compose.focus,
-                placeholder=("Switch session — Enter restores · Esc cancels"),
+                on_delete=self._forget_session_entry,
+                select_mode=True,
+                placeholder=(
+                    "Restore session — Enter loads · Ctrl+D forgets · Esc cancels"
+                ),
             )
         self._size_palette(self._sessions_palette)
         self._sessions_palette.preseed_active(set())
         self._sessions_palette.open(self._collect_session_entries())
 
     def _collect_session_entries(self) -> list[tuple[str, str, str, str]]:
-        """Build the (kind, id, description, preview) list for the
-        sessions palette. The adapter exposes the current session id
-        via `_session._session_id`; listing all sessions isn't on the
-        ACP surface so we show only the current one for now, plus a
-        `new` sentinel that starts fresh on commit."""
-        out: list[tuple[str, str, str, str]] = []
-        session = getattr(self._adapter, "_session", None)
-        current = getattr(session, "_session_id", None)
-        if current:
-            out.append(
-                ("session", current, "current session · press Enter to keep", current)
-            )
-        out.append(("new-session", "new", "start a fresh ACP session", "new"))
+        """Build the (kind, name, description, preview) list for the
+        sessions palette.
+
+        Row shapes:
+          - `("new-session", "new session", "…", "new")` — always
+            first so the primary escape hatch is one Enter away.
+          - `("session", <title-or-short-id>, "<cwd> · <updatedAt>",
+            <session_id>)` — one per entry returned by the adapter's
+            `list_sessions`. The current session's description gets
+            a leading `current ·` marker so the user can tell which
+            one they're already on.
+
+        Falls back gracefully: if the adapter can't enumerate, the
+        palette still has the `new session` sentinel."""
+        out: list[tuple[str, str, str, str]] = [
+            ("new-session", "new session", "start a fresh ACP session", "new"),
+        ]
+        current = getattr(self._adapter, "session_id", None)
+        try:
+            sessions = self._adapter.list_sessions()
+        except Exception as e:
+            log.warning("list_sessions raised: %s", e)
+            sessions = []
+        for s in sessions:
+            sid = s.get("session_id", "") or ""
+            if not sid:
+                continue
+            title = (s.get("title") or "").strip() or sid[:12]
+            desc_bits: list[str] = []
+            if sid == current:
+                desc_bits.append("current")
+            cwd = (s.get("cwd") or "").strip()
+            if cwd:
+                desc_bits.append(cwd)
+            updated = (s.get("updated_at") or "").strip()
+            if updated:
+                desc_bits.append(updated)
+            desc = " · ".join(desc_bits) or sid
+            out.append(("session", title, desc, sid))
         return out
 
     def _commit_session_restore(self, entries) -> None:
-        """Commit handler for the Ctrl+S sessions palette. The
-        `new-session` sentinel tears down the current ACP session,
-        unlinks its on-disk pointer, and resets the adapter so the next
-        turn bootstraps a brand-new session (via `new_session`, never
-        `load_session`). Existing-session picks are a no-op — we're
-        already on that session."""
-        for kind, _name, _desc, _preview in entries:
-            if kind == "new-session":
-                self.start_fresh_session()
-                break
+        """Select-mode commit handler: `entries` is a one-element
+        list (or empty if the list had no rows). `new-session`
+        sentinel hard-resets via `start_fresh_session`; any `session`
+        row calls `_restore_session(<id>)` to load it."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind, _name, _desc, preview = entries[0]
+        if kind == "new-session":
+            self.start_fresh_session()
+        elif kind == "session" and preview:
+            self._restore_session(preview)
         self._compose.focus()
+
+    def _forget_session_entry(self, entry) -> None:
+        """Ctrl+D inside the sessions palette. Only affects pilot's
+        own pointer file — the agent's on-disk session record stays
+        untouched, so the same session is still selectable from the
+        palette next time if the user wants to load it manually.
+
+        The `new-session` sentinel isn't a session to forget; ignore
+        Ctrl+D on it so the user can't accidentally wipe something
+        unrelated."""
+        kind, _name, _desc, preview = entry
+        if kind != "session" or not preview:
+            return
+        forgotten = False
+        try:
+            forgotten = self._adapter.forget_session(preview)
+        except Exception as e:
+            log.warning("forget_session raised: %s", e)
+        if forgotten:
+            self._refresh_session_label()
+
+    def _restore_session(self, session_id: str) -> None:
+        """Swap the adapter onto `session_id` and wipe the visible
+        transcript so the replayed history (loaded lazily on the
+        agent side) starts fresh in the UI. Mirrors
+        `start_fresh_session` for in-memory cleanup — the only
+        difference is the adapter call (`select_session` vs
+        `reset`)."""
+        if not session_id:
+            return
+        log.info("_restore_session: switching to id=%s", session_id)
+        try:
+            self._adapter.select_session(session_id)
+        except Exception as e:
+            log.warning("adapter select_session raised: %s", e)
+            return
+
+        # Same housekeeping as `start_fresh_session` — the old
+        # transcript, queue, and pending UI state belonged to the
+        # session we just unhooked.
+        self._streaming = False
+        self._stream_started = False
+        self._turn_cancelled = False
+        self._active_assistant = None
+        for card in list(self._cards):
+            try:
+                self._conv_box.remove(card.widget)
+            except Exception:
+                pass
+        self._cards.clear()
+        for row in list(self._queue):
+            try:
+                self._queue_listbox.remove(row)
+            except Exception:
+                pass
+        self._queue.clear()
+        self._queue_box.set_visible(False)
+        for row in list(self._permissions):
+            try:
+                self._permissions_listbox.remove(row)
+            except Exception:
+                pass
+        self._permissions.clear()
+        self._permissions_box.set_visible(False)
+        self._last_plan_card = None
+        self._last_plan_items = []
+        if self._pending_resources:
+            self._pending_resources = []
+            self._refresh_resource_pills()
+        if self._pending_attachments:
+            self._pending_attachments = []
+            self._refresh_attachment_pills()
+        self._session_title = ""
+        self._update_phase()
+        self._refresh_session_label()
+        if hasattr(self, "_provider_label"):
+            self._provider_label.set_label(self._header_title())
+        _signal_waybar_safe()
 
     def start_fresh_session(self) -> None:
         """Hard reset: drop the ACP session + wipe the visible
@@ -3781,7 +3893,7 @@ def _model_tag(model: Optional[str]) -> str:
     """Slugify `--converse-model` into a filesystem-safe token so it can
     ride in the session-store filename. `glm-5.1:cloud` → `glm-5-1-cloud`,
     None / empty → `default`. Keeps store paths predictable for the
-    `forget` / `session-info` commands."""
+    sessions palette's Ctrl+D / restore flow."""
     if not model:
         return "default"
     slug = _MODEL_TAG_RE.sub("-", model.lower()).strip("-")
@@ -4004,79 +4116,6 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
-def _cmd_forget(args) -> None:
-    """Delete the stored ACP session_id for the (suffix, provider, model,
-    cwd) slot so the next `toggle` creates a fresh conversation. This only
-    removes pilot's pointer file — the agent (opencode / claude-agent-acp)
-    keeps its own on-disk session record untouched; changing that is the
-    agent's job, not pilot's.
-
-    Writes a one-line result to stdout so shell wrappers can tell whether
-    anything was actually cleared."""
-    provider = ConversationProvider(args.converse_provider)
-    cwd = args.cwd
-    if cwd:
-        cwd = os.path.expanduser(cwd)
-    path = _session_store_path(
-        suffix=_PATHS.suffix,
-        provider=provider,
-        model=args.converse_model,
-        cwd=cwd,
-    )
-    try:
-        os.unlink(path)
-        print(f"forgot {path}")
-    except FileNotFoundError:
-        print(f"nothing to forget at {path}")
-    except OSError as e:
-        print(f"forget failed ({path}): {e}", file=sys.stderr)
-        sys.exit(1)
-
-def _cmd_session_info() -> None:
-    """Emit a JSON snapshot of the session slot on stdout. Includes the
-    live session's `status` response when a pilot is running AND the
-    on-disk store contents even when nothing is running — so users can
-    verify that restart-resume actually lines up.
-
-    Read-only; never touches the store."""
-    # Live snapshot: whatever the running pilot is willing to report.
-    live = _send("status") or {}
-    # Disk snapshot: scan the sessions directory for any file that
-    # carries our suffix prefix. Several entries may exist per suffix
-    # when the user has cycled through provider / model combos.
-    state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
-        "~/.local/state"
-    )
-    sessions_dir = os.path.join(state_home, "pilot", "sessions")
-    suffix_tag = _PATHS.suffix or "default"
-    stored: list[dict] = []
-    try:
-        entries = sorted(os.listdir(sessions_dir))
-    except FileNotFoundError:
-        entries = []
-    for entry in entries:
-        if not entry.startswith(f"{suffix_tag}-") or not entry.endswith(".session"):
-            continue
-        full = os.path.join(sessions_dir, entry)
-        try:
-            with open(full, "r", encoding="utf-8") as f:
-                sid = f.read().strip()
-        except OSError:
-            sid = ""
-        stored.append({"path": full, "session_id": sid})
-    print(
-        json.dumps(
-            {
-                "suffix": _PATHS.suffix,
-                "live": live,
-                "stored": stored,
-                "sessions_dir": sessions_dir,
-            },
-            indent=2,
-        )
-    )
-    _signal_waybar_safe()
-
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
     parser.add_argument(
@@ -4234,35 +4273,6 @@ def main():
         help="exit 0 if a session is live, non-zero otherwise",
     )
     subparsers.add_parser("kill", help="terminate the running session (if any)")
-    forget_parser = subparsers.add_parser(
-        "forget",
-        help=(
-            "drop the stored ACP session_id for a (session/provider/model/cwd) "
-            "slot so the next toggle starts a brand-new conversation. Does NOT "
-            "touch the agent's own on-disk session store — opencode / "
-            "claude-agent-acp keep their records, pilot just stops pointing "
-            "at them."
-        ),
-    )
-    # forget mirrors the subset of toggle flags that feed into the store
-    # key, so `pilot --session plan forget --converse-provider opencode
-    # --converse-model glm-5.1:cloud --cwd ~/notes` resolves the EXACT
-    # path that the matching toggle would write.
-    forget_parser.add_argument(
-        "--converse-provider",
-        choices=list(ConversationProvider),
-        default=DEFAULT_CONVERSE_ADAPTER,
-    )
-    forget_parser.add_argument("--converse-model", default=None)
-    forget_parser.add_argument("--cwd", default=None)
-
-    subparsers.add_parser(
-        "session-info",
-        help=(
-            "print the session state — live status (if any), store path, "
-            "stored session_id — as JSON on stdout. Read-only."
-        ),
-    )
 
     args = parser.parse_args()
 
@@ -4297,10 +4307,6 @@ def main():
             _cmd_is_running()
         case "kill":
             _cmd_kill()
-        case "forget":
-            _cmd_forget(args)
-        case "session-info":
-            _cmd_session_info()
 
 if __name__ == "__main__":
     main()
