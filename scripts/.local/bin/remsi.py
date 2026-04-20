@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Iterator, Optional, Protocol
+from typing import Any, ClassVar, Iterator, Optional, Protocol
 
 import click
 from rich.console import Console
@@ -1245,25 +1245,81 @@ class CutEncoder(Encoder):
 
 
 class SmartCutEncoder(Encoder):
-    """Pure stream-copy cut. Snaps each kept segment OUTWARD to the
-    surrounding keyframes, merges overlapping ranges, writes one
-    `ffmpeg -ss -to -c copy` part per range, stitches with concat-
-    demuxer. No re-encoding — the output re-uses the source's
-    exact video packets.
+    """Frame-accurate smart-cut via an MPEG-TS sandwich.
 
-    Tradeoffs:
-      * No audio crossfades. Each stitch point is a hard packet
-        boundary, may click slightly.
-      * A silence shorter than one GOP can't be cut: its cut
-        boundaries would land inside a GOP whose surrounding
-        keyframes fall outside the silence, so the outward snap
-        overlaps and the merger drops the cut. Shorter GOPs
-        (lower `-g` on the source encode) = more cut precision.
-      * Cuts may keep up to one GOP of silence at each boundary
-        (the kept content is always fully preserved).
+    Quality/precision upgrade over `cut`: where `cut` has to snap
+    every boundary outward to a source keyframe (so up to one GOP
+    of unwanted content survives at each edge), `smart-cut` keeps
+    the cuts frame-accurate by re-encoding *only* the short seam
+    neighbourhoods around each boundary and stream-copying the GOP-
+    aligned middle of each segment.
 
-    For frame-accurate cuts with audio crossfades use FancyEncoder
-    instead (`--mode fancy`)."""
+    For each kept segment `[s, e]`:
+      * lead-in  `[s, kf_first)`  — re-encode (kf_first = first
+                                    source keyframe ≥ s, > s)
+      * middle   `[kf_first, kf_last]` — stream-copy (bit-exact
+                                         source packets)
+      * lead-out `(kf_last, e]`   — re-encode (kf_last = last
+                                    source keyframe ≤ e, < e)
+
+    A segment whose middle would be shorter than `_MIN_COPY_SECONDS`
+    degrades gracefully to a single full re-encode — the concat
+    overhead would outweigh a tiny stream-copy win.
+
+    ## Why MPEG-TS intermediates
+
+    Splicing re-encoded seams onto stream-copied middles is the
+    classic smart-cut landmine: MP4 / Matroska require a single
+    global parameter-set record per file, so the concat demuxer
+    refuses (or silently glitches) when any seam's SPS/PPS differs
+    from the copy's. We sidestep that by rendering every piece —
+    copy or re-encode — through `mpegts`. Transport streams carry
+    in-band parameter-set updates per PES packet, so the demuxer
+    just passes varying SPS/PPS through without caring whether
+    libx264's output matches the source encoder byte-for-byte.
+
+    Alternatives considered: (a) concat demuxer on MP4 — works
+    only when re-encoder parameter-sets match the source, which
+    x264 does not guarantee; (b) `concat` filter in a single
+    ffmpeg pass — robust but decodes-and-re-encodes the entire
+    middle, so the stream-copy speed win evaporates. MPEG-TS keeps
+    the speed win and the robustness.
+
+    ## Scope
+
+    Supports h264 and hevc directly (MPEG-TS maps both).
+    AV1 / VP9 / MPEG4 fall back to a single-piece libx264 re-encode
+    per segment — still frame-accurate, no seam concat involved.
+
+    Audio is rendered independently via one `filter_complex` pass
+    against the source with `atrim` + `afade` at every internal
+    boundary (same shape as `cut`). Since the video edges are
+    frame-accurate, A/V stays in sync.
+    """
+
+    # Source codec → (software re-encoder, MPEG-TS bitstream filter).
+    # The BSF converts MP4/MOV length-prefixed NALUs to Annex-B start-
+    # code NALUs, which is what `mpegts` requires when the input is a
+    # stream-copied MP4 fragment.
+    _TS_MATRIX: ClassVar[dict[str, tuple[str, str]]] = {
+        "h264": ("libx264", "h264_mp4toannexb"),
+        "hevc": ("libx265", "hevc_mp4toannexb"),
+    }
+
+    # Minimum duration of the stream-copied middle. Below this the
+    # seam-reencode + TS mux overhead exceeds any savings, so we
+    # re-encode the segment whole.
+    _MIN_COPY_SECONDS: ClassVar[float] = 1.0
+
+    def __init__(
+        self,
+        gpu: Optional[str],
+        codec: Optional[str],
+        fade_time: float,
+        force: bool = False,
+    ):
+        super().__init__(gpu, codec, force)
+        self.fade_time = fade_time
 
     @staticmethod
     def _probe_keyframes(input_file: Path) -> list[float]:
@@ -1278,6 +1334,7 @@ class SmartCutEncoder(Encoder):
         ]
         log.debug("spawn: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True)
+        log.debug("ffprobe stderr: %s", result.stderr.strip())
         keyframes: list[float] = []
         for line in result.stdout.splitlines():
             line = line.strip()
@@ -1292,64 +1349,177 @@ class SmartCutEncoder(Encoder):
         return keyframes
 
     @staticmethod
-    def _snap_outward(
-        segments: list[Segment], keyframes: list[float], total: float
-    ) -> list[tuple[float, float]]:
-        """Expand each segment's `[start, end]` outward to the nearest
-        enclosing keyframes (`kf_before <= start`, `kf_after > end`),
-        clamp to `[0, total]`, then merge overlaps.
+    def _probe_video_params(input_file: Path) -> dict[str, Any]:
+        """Pull the video-stream parameters a seam re-encode needs
+        to replicate. `pix_fmt` + colour metadata are the visually
+        load-bearing ones; codec_name picks the encoder matrix row."""
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries",
+            "stream=codec_name,profile,level,pix_fmt,"
+            "color_space,color_transfer,color_primaries,color_range",
+            "-of", "json",
+            str(input_file),
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        log.debug("ffprobe stderr: %s", result.stderr.strip())
+        try:
+            streams = json.loads(result.stdout).get("streams", [])
+            return streams[0] if streams else {}
+        except (json.JSONDecodeError, IndexError):
+            return {}
 
-        Two segments whose expansions collide (silence between them
-        is shorter than one GOP) merge into one copy range — the
-        silence stays in, because cutting it losslessly isn't
-        possible."""
-        if not keyframes:
-            return [(seg.start, seg.end) for seg in segments]
+    def _reencode_video_args(self, params: dict[str, Any]) -> list[str]:
+        """ffmpeg args that re-encode a seam piece to match the
+        source's visual parameters. Closed-GOP + CRF 16 so every
+        output frame is an IDR (no dangling refs into copied
+        middles) and the seam is visually lossless."""
+        codec_name = (params.get("codec_name") or "").lower()
+        encoder, _ = self._TS_MATRIX.get(codec_name, ("libx264", ""))
 
-        expanded: list[tuple[float, float]] = []
-        for seg in segments:
-            # Largest keyframe <= seg.start, or 0 if none precedes.
-            idx_before = bisect.bisect_right(keyframes, seg.start) - 1
-            kf_before = keyframes[idx_before] if idx_before >= 0 else 0.0
-            # Smallest keyframe > seg.end, or total if none follows.
-            idx_after = bisect.bisect_right(keyframes, seg.end)
-            kf_after = keyframes[idx_after] if idx_after < len(keyframes) else total
-            expanded.append((max(0.0, kf_before), min(total, kf_after)))
+        args: list[str] = ["-c:v", encoder]
 
-        expanded.sort(key=lambda r: r[0])
-        merged: list[tuple[float, float]] = [expanded[0]]
-        for a, b in expanded[1:]:
-            pa, pb = merged[-1]
-            if a <= pb:
-                merged[-1] = (pa, max(pb, b))
-            else:
-                merged.append((a, b))
-        return merged
+        pix_fmt = params.get("pix_fmt")
+        if pix_fmt:
+            args.extend(["-pix_fmt", pix_fmt])
 
-    def _copy_range(
+        for src, flag in (
+            ("color_space", "-colorspace"),
+            ("color_transfer", "-color_trc"),
+            ("color_primaries", "-color_primaries"),
+        ):
+            v = params.get(src)
+            if v and v != "unknown":
+                args.extend([flag, v])
+        cr = params.get("color_range")
+        if cr and cr != "unknown":
+            args.extend(["-color_range", {"tv": "mpeg", "pc": "jpeg"}.get(cr, cr)])
+
+        # Every re-encoded frame is an IDR. Seam pieces butt directly
+        # against stream-copied middles; any B/P reference pointing
+        # outside this piece's boundary would break decoding.
+        args.extend([
+            "-g", "1",
+            "-keyint_min", "1",
+            "-bf", "0",
+            "-sc_threshold", "0",
+        ])
+        args.extend(["-crf", "16"])
+        return args
+
+    def _segment_plan(
+        self, seg: Segment, keyframes: list[float]
+    ) -> list[tuple[float, float, str]]:
+        """Split one segment into (start, end, action) pieces.
+
+        Returns either a single re-encode piece (segment too short
+        / no interior keyframes / middle below `_MIN_COPY_SECONDS`)
+        or a sandwich of up to three: re-encode lead-in + copy
+        middle + re-encode lead-out."""
+        s, e = seg.start, seg.end
+
+        idx_first = bisect.bisect_left(keyframes, s)
+        kf_first = keyframes[idx_first] if idx_first < len(keyframes) else None
+        idx_last = bisect.bisect_right(keyframes, e) - 1
+        kf_last = keyframes[idx_last] if idx_last >= 0 else None
+
+        if kf_first is None or kf_last is None:
+            return [(s, e, "reencode")]
+        if kf_first >= e or kf_last <= s or kf_first >= kf_last:
+            return [(s, e, "reencode")]
+        if kf_last - kf_first < self._MIN_COPY_SECONDS:
+            return [(s, e, "reencode")]
+
+        parts: list[tuple[float, float, str]] = []
+        if kf_first > s:
+            parts.append((s, kf_first, "reencode"))
+        parts.append((kf_first, kf_last, "copy"))
+        if e > kf_last:
+            parts.append((kf_last, e, "reencode"))
+        return parts
+
+    def _render_piece_ts(
         self,
         input_file: Path,
-        output_file: Path,
+        output_path: Path,
         start: float,
         end: float,
+        action: str,
+        reencode_args: list[str],
+        annexb_bsf: str,
     ) -> subprocess.CompletedProcess:
-        """Stream-copy `[start, end]` (absolute input seconds) out to
-        `output_file`. `-ss` BEFORE `-i` is the fast container-level
-        seek; since `start` is a real keyframe the seek is exact.
-        `-to` with `-ss` before `-i` is an input-timeline absolute
-        end marker, so the packet range is well-defined."""
-        cmd = [
+        """Render one sandwich piece directly to an MPEG-TS fragment.
+
+        `action`:
+          * "copy"     — container seek to `start` (a keyframe), dump
+                         packets to `end` at `-c copy`, muxing as
+                         MPEG-TS with the Annex-B bitstream filter.
+          * "reencode" — accurate-seek, re-encode with closed GOP,
+                         muxed as MPEG-TS.
+
+        Audio is dropped from every piece; we render it separately
+        in one filter_complex pass so fades land on frame-accurate
+        bounds regardless of the video stitch geometry."""
+        base = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "warning",
-            "-ss", str(start),
-            "-to", str(end),
-            "-i", str(input_file),
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
-            "-y", str(output_file),
         ]
+        if action == "copy":
+            cmd = [
+                *base,
+                "-ss", str(start),
+                "-to", str(end),
+                "-i", str(input_file),
+                "-c", "copy",
+            ]
+            if annexb_bsf:
+                cmd.extend(["-bsf:v", annexb_bsf])
+            cmd.extend([
+                "-an",
+                "-avoid_negative_ts", "make_zero",
+                "-f", "mpegts",
+                "-y", str(output_path),
+            ])
+        else:
+            cmd = [
+                *base,
+                "-ss", str(start),
+                "-i", str(input_file),
+                "-t", str(end - start),
+                *reencode_args,
+                "-an",
+                "-f", "mpegts",
+                "-y", str(output_path),
+            ]
         return self._run(cmd)
+
+    def _build_audio_filter(self, segments: list[Segment]) -> str:
+        """Audio filter_complex covering every kept segment: atrim
+        at frame-accurate `[seg.start, seg.end]` bounds, afade on
+        every internal boundary, concat the lot."""
+        lines: list[str] = []
+        for i, seg in enumerate(segments):
+            duration = seg.end - seg.start
+            chain = [
+                f"atrim=start={seg.start}:end={seg.end}",
+                "asetpts=PTS-STARTPTS",
+            ]
+            if self.fade_time > 0 and duration > 2 * self.fade_time:
+                if i > 0:
+                    chain.append(f"afade=t=in:d={self.fade_time}:curve=log")
+                if i < len(segments) - 1:
+                    chain.append(
+                        f"afade=t=out:st={duration - self.fade_time}"
+                        f":d={self.fade_time}:curve=log"
+                    )
+            lines.append(f"[0:a]{','.join(chain)}[a{i}]")
+        concat_inputs = "".join(f"[a{i}]" for i in range(len(segments)))
+        lines.append(f"{concat_inputs}concat=n={len(segments)}:v=0:a=1[aout]")
+        return ";\n".join(lines)
 
     def encode(
         self,
@@ -1358,63 +1528,128 @@ class SmartCutEncoder(Encoder):
         segments: list[Segment],
         media: Optional[MediaInfo] = None,
     ) -> subprocess.CompletedProcess:
-        """Override parent so the single-segment fast path also
-        snaps. The parent assumes raw `seg.start` / `seg.end` are
-        keyframes; for non-aligned cuts that produces garbage."""
+        media = media or MediaInfo()
         keyframes = self._probe_keyframes(input_file)
         if not keyframes:
-            log.error("no keyframes found in input; smart-cut impossible")
+            log.error("no keyframes found in input; smart-cut can't plan")
             return subprocess.CompletedProcess(args=[], returncode=1)
 
-        total = max((seg.end for seg in segments), default=0.0)
-        ranges = self._snap_outward(segments, keyframes, total)
-        kept = sum(b - a for a, b in ranges)
-        requested = sum(seg.end - seg.start for seg in segments)
+        video_params = self._probe_video_params(input_file)
+        codec_name = (video_params.get("codec_name") or "").lower()
+        annexb_bsf = self._TS_MATRIX.get(codec_name, ("", ""))[1]
+        if codec_name not in self._TS_MATRIX:
+            log.warning(
+                "source codec %s not in smart-cut TS matrix; "
+                "each segment will be re-encoded whole via libx264 "
+                "(frame-accurate, just not faster than `fancy`)",
+                codec_name or "?",
+            )
+        reencode_args = self._reencode_video_args(video_params)
+
+        # When we don't have a TS-capable codec match, force every
+        # segment to a single re-encode piece — no stream-copy
+        # middles, no concat stitching. Still frame-accurate.
+        pieces: list[tuple[float, float, str]] = []
+        if codec_name in self._TS_MATRIX:
+            for seg in segments:
+                pieces.extend(self._segment_plan(seg, keyframes))
+        else:
+            pieces = [(seg.start, seg.end, "reencode") for seg in segments]
+
+        copy_dur = sum(e - s for s, e, a in pieces if a == "copy")
+        reencode_dur = sum(e - s for s, e, a in pieces if a == "reencode")
         console.print(
-            f"snap: [yellow]{len(segments)}[/] segments → "
-            f"[green]{len(ranges)}[/] copy range(s); "
-            f"kept [green]{kept:.1f}s[/] "
-            f"(requested {requested:.1f}s, "
-            f"[dim]+{kept - requested:.1f}s from GOP alignment[/])"
+            f"smart-cut: [green]{copy_dur:.1f}s[/] stream copy · "
+            f"[yellow]{reencode_dur:.1f}s[/] re-encode "
+            f"([dim]{len(pieces)} piece(s)[/])"
         )
-        for i, (a, b) in enumerate(ranges, 1):
+        for i, (s, e, a) in enumerate(pieces, 1):
             log.info(
-                "%d. %s → %s (%.1fs)",
+                "%d. %s → %s (%.1fs, %s)",
                 i,
-                format_timestamp(a),
-                format_timestamp(b),
-                b - a,
+                format_timestamp(s),
+                format_timestamp(e),
+                e - s,
+                a,
             )
 
-        # Single range: one ffmpeg call straight into the output.
-        if len(ranges) == 1:
-            a, b = ranges[0]
-            return self._copy_range(input_file, output_file, a, b)
+        audio_args = self._audio_codec_args(media.audio)
 
-        # Multi-range: write each to a tmp file, then concat-demux.
-        with tempfile.TemporaryDirectory(prefix="remsi_copy_") as tmpdir_str:
+        with tempfile.TemporaryDirectory(prefix="remsi_smart_") as tmpdir_str:
             tmpdir = Path(tmpdir_str)
+
+            # ── 1) render every sandwich piece to MPEG-TS
+            console.rule("[bold yellow]Render video pieces[/]")
             entries: list[str] = []
-            for i, (a, b) in enumerate(ranges):
-                part_path = tmpdir / f"part{i:04d}{input_file.suffix}"
-                result = self._copy_range(input_file, part_path, a, b)
+            for i, (s, e, a) in enumerate(pieces):
+                part_path = tmpdir / f"part{i:04d}.ts"
+                result = self._render_piece_ts(
+                    input_file, part_path, s, e, a, reencode_args, annexb_bsf,
+                )
                 if result.returncode != 0:
                     return result
                 entries.append(f"file '{part_path}'\n")
 
-            console.rule("[bold yellow]Concat[/]")
+            # ── 2) concat-demux the TS fragments into one video-only
+            #      TS stream. Transport streams tolerate per-fragment
+            #      parameter-set updates inline, so seam SPS/PPS
+            #      differences from the copied middle's are fine.
+            console.rule("[bold yellow]Concat video[/]")
             concat_list = tmpdir / "concat.txt"
             concat_list.write_text("".join(entries))
+            video_only = tmpdir / "video.ts"
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-c", "copy",
+                "-an",
+                "-f", "mpegts",
+                "-y", str(video_only),
+            ]
+            result = self._run(cmd)
+            if result.returncode != 0:
+                return result
 
+            # ── 3) render the faded audio in one filter_complex pass
+            console.rule("[bold yellow]Fade audio[/]")
+            script_content = self._build_audio_filter(segments)
+            script_path = tmpdir / "audio.filter"
+            script_path.write_text(script_content)
+            log.debug("audio filter:\n%s", script_content)
+            audio_only = tmpdir / "audio.m4a"
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-i", str(input_file),
+                "-/filter_complex", str(script_path),
+                "-map", "[aout]",
+                *audio_args,
+                "-vn",
+                "-y", str(audio_only),
+            ]
+            result = self._run(cmd)
+            if result.returncode != 0:
+                return result
+
+            # ── 4) remux video TS + audio into the final container.
+            #      `-c copy` on both streams; the video is already
+            #      in its target codec (source codec), just reboxed.
+            console.rule("[bold yellow]Mux[/]")
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
                 "-loglevel", "warning",
                 "-stats",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_list),
+                "-i", str(video_only),
+                "-i", str(audio_only),
                 "-c", "copy",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
             ]
             if self.force:
                 cmd.append("-y")
@@ -1428,8 +1663,6 @@ class SmartCutEncoder(Encoder):
         segments: list[Segment],
         media: MediaInfo,
     ) -> subprocess.CompletedProcess:
-        # `encode()` is overridden; this is unreachable but the abstract
-        # contract requires an implementation. Delegate.
         return self.encode(input_file, output_file, segments, media)
 
 # ── CLI orchestrator ─────────────────────────────────────────────────
@@ -1783,6 +2016,7 @@ class Remsi:
                 pipeline = SmartCutEncoder(
                     gpu=resolved_gpu,
                     codec=codec,
+                    fade_time=fade_time,
                     force=force,
                 )
             case EncoderKind.FANCY:
