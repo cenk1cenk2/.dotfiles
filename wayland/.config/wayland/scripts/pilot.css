@@ -91,6 +91,34 @@
     0 0 0 transparent;
 }
 
+/* ============================================================ Toast
+ * Dismissable error strip below the header. `show_error(msg)` makes
+ * it visible; Ctrl+E (or the × button) hides it. Tinted with the
+ * pending/red palette so it reads as an error at a glance. */
+.overlay box.pilot-toast {
+  padding: 8px 12px;
+  background-color: alpha(@pilot_pending, 0.18);
+  border-bottom: 1px solid alpha(@pilot_pending, 0.45);
+  color: @pilot_fg;
+}
+
+.overlay label.pilot-toast-text {
+  color: @pilot_pending;
+  font-weight: 600;
+}
+
+.overlay button.pilot-toast-close {
+  min-width: 0;
+  padding: 2px 8px;
+  background-color: transparent;
+  border: 1px solid alpha(@pilot_pending, 0.55);
+  color: @pilot_pending;
+}
+
+.overlay button.pilot-toast-close:hover {
+  background-color: alpha(@pilot_pending, 0.24);
+}
+
 /* ====================================================== Conversation */
 .overlay scrolledwindow.pilot-conv-scroller {
   background-color: transparent;

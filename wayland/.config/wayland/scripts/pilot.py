@@ -95,8 +95,10 @@ if "toggle" in sys.argv[1:]:
 from lib.overlay import (  # noqa: E402
     CommandPalette,
     LayerOverlayWindow,
+    PillVariant,
     load_overlay_css,
     load_css_from_path,
+    make_pill,
 )
 from gi.repository import (  # noqa: E402
     Gdk,  # ty: ignore[unresolved-import]
@@ -1627,21 +1629,45 @@ class PilotWindow(LayerOverlayWindow):
         self._provider_label.add_css_class("idle")
         header.append(self._provider_label)
 
-        self._session_label = Gtk.Label(
-            label=self._session_subtitle(),
-            xalign=0.0,
+        # Breadcrumb — one row of pills (cwd / mcps / skills /
+        # restored). Kept as Gtk.Box not Label so each segment can get
+        # its own CSS tint (`restored` glows yellow so it stands out).
+        self._session_pills = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
             hexpand=True,
         )
-        self._session_label.add_css_class("pilot-session")
-        self._session_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
-        header.append(self._session_label)
+        self._session_pills.add_css_class("pilot-session")
+        self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
+        header.append(self._session_pills)
 
         close_btn = Gtk.Button(label="󰅖")
         close_btn.add_css_class("pilot-close")
         close_btn.connect("clicked", lambda _b: self.close())
         header.append(close_btn)
         root.append(header)
+
+        # Dismissable error toast — hidden until an ACP-side failure
+        # fires `show_error`. Ctrl+E clears it. Sits right below the
+        # header so errors never push the conversation scroller down.
+        self._toast = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+            visible=False,
+        )
+        self._toast.add_css_class("pilot-toast")
+        self._toast_label = Gtk.Label(xalign=0.0, hexpand=True)
+        self._toast_label.set_wrap(True)
+        self._toast_label.set_wrap_mode(2)  # WORD_CHAR
+        self._toast_label.set_max_width_chars(1)
+        self._toast_label.add_css_class("pilot-toast-text")
+        self._toast.append(self._toast_label)
+        toast_close = Gtk.Button(label="󰅖")
+        toast_close.add_css_class("pilot-toast-close")
+        toast_close.set_tooltip_text("Dismiss (Ctrl+E)")
+        toast_close.connect("clicked", lambda _b: self.dismiss_error())
+        self._toast.append(toast_close)
+        root.append(self._toast)
 
         # Conversation: a vertical box of TurnCard widgets inside a
         # scroller. Each card is its own markdown-rendered surface.
@@ -2028,19 +2054,9 @@ class PilotWindow(LayerOverlayWindow):
         return f"…/{tail}"
 
     def _session_subtitle(self, *, verbose: bool = False) -> str:
-        """Single-line breadcrumb next to the provider pill:
-        `@ ~/notes  +3 mcps  +skills  󰑐 restored`. `verbose` swaps the
-        truncated cwd for the full untruncated path so the tooltip can
-        show the absolute path on hover.
-
-        The `󰑐 restored` tag only appears once the adapter has
-        bootstrapped a session AND `load_session` succeeded; a fresh
-        `new_session` leaves it off. That way the user can tell at a
-        glance whether the current conversation is resuming a prior
-        session off disk or starting from scratch. `start_fresh_session`
-        forces the flag off by tearing the old session down before the
-        next bootstrap — no stale "restored" tag after a Ctrl+S reset.
-        """
+        """Single-line textual breadcrumb — used as the pill-row
+        tooltip so hover shows the full path + segments at once.
+        `verbose` swaps the truncated cwd for the untruncated one."""
         cwd = self._cwd or os.getcwd() if verbose else self._pretty_cwd()
         parts = [f"@ {cwd}"]
         if self._mcp_server_names:
@@ -2052,22 +2068,49 @@ class PilotWindow(LayerOverlayWindow):
         return "  ".join(parts)
 
     def _refresh_session_label(self) -> None:
-        """Re-render the breadcrumb — called on attach_session / every
-        config change that could flip one of the three segments.
+        """Rebuild the header breadcrumb as a pill row.
 
-        Also pulls the adapter's current model back onto `self._model`
-        so model switches (`set_model` RPC + `_reconcile_model` after
-        each turn) propagate to the assistant card header without a
-        window restart."""
+        Segments:
+          - `@ <cwd>`                muted pill
+          - `+N mcps` (if any)       muted pill
+          - `+skills` (if any)       muted pill
+          - `󰑐 restored` (if resumed) WARN pill — yellow so the user
+                                      notices resumed state without
+                                      reading the row character-by-
+                                      character.
+
+        Also pulls the adapter's current model onto `self._model` so
+        `_reconcile_model` after a turn and `set_model` palette picks
+        surface in the assistant-card title on the next repaint."""
         effective = (
             getattr(self._adapter, "current_model_id", None)
             or getattr(self._adapter, "model", None)
             or ""
         )
         self._model = effective.strip() or None
-        if hasattr(self, "_session_label"):
-            self._session_label.set_label(self._session_subtitle())
-            self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
+
+        if not hasattr(self, "_session_pills"):
+            return
+        # Wipe + rebuild; cheaper than diffing. The row has 2-4 pills.
+        child = self._session_pills.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._session_pills.remove(child)
+            child = nxt
+
+        segments: list[tuple[str, str]] = [(f"@ {self._pretty_cwd()}", PillVariant.MUTED)]
+        if self._mcp_server_names:
+            segments.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
+        if self._skills_dir:
+            segments.append(("+skills", PillVariant.MUTED))
+        if getattr(self._adapter, "session_resumed", False):
+            segments.append(("󰑐 restored", PillVariant.WARN))
+
+        for label, variant in segments:
+            pill = make_pill(label, variant)
+            pill.set_sensitive(False)  # Breadcrumb is informational, not actionable.
+            self._session_pills.append(pill)
+        self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
 
     def _assistant_title(self) -> str:
         if self._model:
@@ -2164,10 +2207,42 @@ class PilotWindow(LayerOverlayWindow):
                 return
             log.exception("turn failed: %s", e)
             GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
+            GLib.idle_add(self.show_error, self._humanise_error(e))
         finally:
             log.info("run_turn: end streamed=%s", self._stream_started)
             if self._alive:
                 GLib.idle_add(self._mark_idle)
+
+    @staticmethod
+    def _humanise_error(exc: BaseException) -> str:
+        """Strip an ACP exception down to the human-readable line the
+        user actually needs. ACP errors come through as
+        `acp.RequestError('Internal error: Prompt is too long',
+        code=-32603)`; we surface `"Prompt is too long"` + the code."""
+        msg = str(exc).strip()
+        code = getattr(exc, "code", None)
+        if code is not None:
+            return f"{msg} (acp {code})"
+        return msg or exc.__class__.__name__
+
+    def show_error(self, message: str) -> bool:
+        """Surface `message` in the dismissable toast strip. Repeat
+        calls replace the text; no stacking (the user cares about the
+        latest failure, not a history). Ctrl+E dismisses. Safe to
+        call from the GTK main thread — for worker threads, wrap in
+        `GLib.idle_add(window.show_error, msg)`."""
+        if not hasattr(self, "_toast_label"):
+            return False
+        self._toast_label.set_label(message)
+        self._toast.set_visible(True)
+        return False
+
+    def dismiss_error(self) -> None:
+        """Hide the error toast and clear its text."""
+        if not hasattr(self, "_toast"):
+            return
+        self._toast.set_visible(False)
+        self._toast_label.set_label("")
 
     def _mark_idle(self) -> bool:
         # Only fire the "response finished" toast when we actually
@@ -2775,6 +2850,9 @@ class PilotWindow(LayerOverlayWindow):
             else:
                 self._open_permissions_palette()
             return True
+        if ctrl and keyval == Gdk.KEY_e:
+            self.dismiss_error()
+            return True
         # Esc when any palette is open should dismiss only the palette.
         any_palette_open = (
             resource_open or permissions_open or mcp_open or sessions_open or root_open
@@ -3275,6 +3353,13 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _commit_model_choice(self, entries) -> None:
+        """Swap the adapter's configured model and start a fresh
+        session. Skipping the ACP `session/set_session_model` RPC and
+        going straight to teardown + respawn is intentional — the
+        current agent session already holds the previous model's
+        context, and continuing it under a smaller window usually
+        trips the "prompt too long" response from the new model.
+        Cleaner UX: model change → clean slate."""
         if not entries:
             self._compose.focus()
             return
@@ -3282,14 +3367,22 @@ class PilotWindow(LayerOverlayWindow):
         if kind != "model" or not model_id:
             self._compose.focus()
             return
-        ok = False
+        log.info("model change → %s (tearing down session)", model_id)
+        # Rebind the adapter's spawn-time model so the next bootstrap
+        # uses it. The ACP subprocess picks `self.model` up through
+        # `--model` / env vars at spawn time, not via an on-the-wire
+        # switch, so respawning is the real way to change it.
         try:
-            ok = self._adapter.set_model(model_id)
+            self._adapter.model = model_id
         except Exception as e:
-            log.error("set_model raised: %s", e)
-        if ok:
-            log.info("switched model to %s", model_id)
-            self._refresh_session_label()
+            log.error("setting adapter.model raised: %s", e)
+            self._compose.focus()
+            return
+        # `start_fresh_session` tears the subprocess + session down,
+        # wipes the transcript, clears pending queue / permissions /
+        # resource pills / attachments. Next turn bootstraps fresh
+        # with the new model.
+        self.start_fresh_session()
         self._compose.focus()
 
     def _forget_session_entry(self, entry) -> None:

@@ -299,12 +299,16 @@ class PillVariant(str, Enum):
     ACCENT = "accent"
     APPROVE = "approve"
     REJECT = "reject"
+    WARN = "warn"
+    MUTED = "muted"
 
 def make_pill(label: str, variant: str = "accent") -> Gtk.Button:
     """Compose-style pill button. Variant picks the tint:
       * `accent`  — neutral highlight, pairs with hover-to-remove
       * `approve` — green (standing approval / success)
       * `reject`  — red (standing deny)
+      * `warn`    — yellow (heads-up state, e.g. session resumed)
+      * `muted`   — low-contrast neutral (informational breadcrumb)
     Each variant has a matching hover state defined in overlay.css."""
     btn = Gtk.Button(label=label)
     btn.add_css_class("overlay-pill")
