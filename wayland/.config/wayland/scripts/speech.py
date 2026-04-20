@@ -1,11 +1,7 @@
 #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
-# The `sh -c` trampoline lets us run `uv run --project <fixed dir>` no
-# matter where the invoking shell's CWD happens to sit. See
-# pyproject.toml for the full rationale.
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
@@ -17,6 +13,8 @@ import threading
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Optional, Protocol
+
+import click
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
@@ -30,42 +28,26 @@ from lib import (
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
+    create_logger,
     load_prompt,
     notify,
     signal_waybar,
 )
 
+
 class STTAdapter(Protocol):
-    """Contract for a speech-to-text daemon driven by speech.py.
+    """Speech-to-text backend contract."""
 
-    Swap implementations here to target a different backend; the rest of
-    speech.py talks only through this interface."""
+    def is_recording(self) -> bool: ...
 
-    def is_recording(self) -> bool:
-        """True while the backend is capturing audio."""
-        ...
+    def stop(self) -> None: ...
 
-    def stop(self) -> None:
-        """Finalise the current recording. Any transcription will be
-        delivered through the subprocess returned by `capture()`."""
-        ...
+    def cancel(self) -> None: ...
 
-    def cancel(self) -> None:
-        """Abort the current recording and discard the audio."""
-        ...
+    def capture(self) -> subprocess.Popen[bytes]: ...
 
-    def capture(self) -> "subprocess.Popen[bytes]":
-        """Subscribe to the backend's transcription stream.
-
-        Subscribing must trigger recording if the backend is idle, or
-        attach to an in-flight recording otherwise. The returned process
-        must close stdout after delivering the final transcription so the
-        caller can drive it with `communicate()`."""
-        ...
 
 class HyprwhsprAdapter:
-    """Talks to the hyprwhspr daemon through its `record` CLI subcommands."""
-
     def is_recording(self) -> bool:
         result = subprocess.run(
             ["hyprwhspr", "record", "status"],
@@ -76,44 +58,33 @@ class HyprwhsprAdapter:
         return "Recording in progress" in (result.stdout + result.stderr)
 
     def stop(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "stop"],
-            capture_output=True,
-            check=False,
-        )
+        subprocess.run(["hyprwhspr", "record", "stop"], capture_output=True, check=False)
 
     def cancel(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "cancel"],
-            capture_output=True,
-            check=False,
-        )
+        subprocess.run(["hyprwhspr", "record", "cancel"], capture_output=True, check=False)
 
-    def capture(self) -> "subprocess.Popen[bytes]":
+    def capture(self) -> subprocess.Popen[bytes]:
         return subprocess.Popen(
             ["hyprwhspr", "record", "capture"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
 
+
 class Command(StrEnum):
     STATUS = "status"
     STOP = "stop"
     KILL = "kill"
+
 
 class Phase(StrEnum):
     RECORDING = "recording"
     WORKING = "working"
     OUTPUT = "output"
 
+
 @dataclass
 class EnrichSpec:
-    """Serialisable form of an enrichment choice, sent over the socket.
-
-    `provider` identifies the backend; the remaining fields are config that
-    the `HttpEnrichAdapter` needs. Claude/Codex ignore everything but
-    `provider`."""
-
     provider: EnrichProvider
     base_url: Optional[str] = None
     model: Optional[str] = None
@@ -124,7 +95,7 @@ class EnrichSpec:
     num_ctx: Optional[int] = None
 
     @classmethod
-    def from_dict(cls, d: dict) -> "EnrichSpec":
+    def from_dict(cls, d: dict) -> EnrichSpec:
         return cls(
             provider=EnrichProvider(d["provider"]),
             base_url=d.get("base_url"),
@@ -136,11 +107,13 @@ class EnrichSpec:
             num_ctx=d.get("num_ctx"),
         )
 
+
 @dataclass
 class SessionState:
     phase: Phase
     output: OutputMode
     enrich: Optional[EnrichProvider] = None
+
 
 @dataclass
 class Response:
@@ -149,7 +122,7 @@ class Response:
     error: Optional[str] = None
 
     @classmethod
-    def from_json(cls, raw: str) -> "Response":
+    def from_json(cls, raw: str) -> Response:
         obj = json.loads(raw)
         state = None
         sd = obj.get("state")
@@ -160,23 +133,11 @@ class Response:
                 output=OutputMode(sd["output"]),
                 enrich=EnrichProvider(enrich_val) if enrich_val else None,
             )
-
-        return cls(
-            ok=bool(obj.get("ok", False)),
-            state=state,
-            error=obj.get("error"),
-        )
-
-log = logging.getLogger("speech")
-
-ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
+        return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
 
 @dataclass(frozen=True)
 class SpeechPaths:
-    """Per-session filesystem coordinates. `--session <suffix>` derives
-    a parallel socket path so multiple speech sessions can coexist."""
-
     socket_path: str
     suffix: str = ""
 
@@ -185,68 +146,17 @@ class SpeechPaths:
         suffix = suffix or ""
         runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         stem = f"wayland-speech-{suffix}" if suffix else "wayland-speech"
-        return cls(
-            socket_path=os.path.join(runtime, f"{stem}.sock"),
-            suffix=suffix,
-        )
+        return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
 
-# Populated in main() once `--session` has been parsed. Module-level
-# holder so `_send` and `Session` agree on the same socket without
-# threading a paths argument through every call-site.
+# Populated by the root click callback once `--session` is known.
 _PATHS: SpeechPaths = SpeechPaths.from_suffix("")
 
-AI_SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
-AI_USER_PROMPT = "Clean up the following speech transcription:\n<transcription>\n{text}\n</transcription>"
-
-def _send(cmd: Command, **kwargs) -> Optional[Response]:
-    """Deliver a command to the running session over the Unix socket.
-
-    Extra kwargs become top-level fields in the JSON payload. The server
-    inspects `"enrich" in payload` to tell an override from a no-op — only
-    the press-2 toggle path sets it, so presence is the override signal.
-
-    Returns the parsed Response, or None when no session answers."""
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(2)
-    try:
-        sock.connect(_PATHS.socket_path)
-    except (FileNotFoundError, ConnectionRefusedError):
-        # Stale socket file from a crashed session — remove so the next
-        # press 1 can bind fresh.
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        return None
-    except OSError as e:
-        log.warning("socket connect failed: %s", e)
-        return None
-
-    try:
-        payload = json.dumps({"cmd": cmd.value, **kwargs}) + "\n"
-        sock.sendall(payload.encode())
-        chunks = []
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                break
-            chunks.append(data)
-        raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
-        if not raw:
-            return None
-        try:
-            return Response.from_json(raw)
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            log.warning("bad response from session: %s (raw=%r)", e, raw)
-            return None
-    finally:
-        sock.close()
 
 class Session:
-    """Owns the Unix socket for a live session. The main thread updates
-    `self.state` as it moves through phases; a background thread answers
-    status/stop/cancel queries from other speech.py invocations."""
+    """UNIX-socket-backed live recording session."""
+
+    log = logging.getLogger("speech.session")
 
     def __init__(
         self,
@@ -267,29 +177,23 @@ class Session:
         self._thread: Optional[threading.Thread] = None
 
     def set_enricher(self, enricher: Optional[EnrichAdapter]) -> None:
-        """Swap the active enricher mid-session. Updates the state's
-        displayed provider so waybar reflects the new choice."""
         with self._lock:
             self.enricher = enricher
             self.state.enrich = enricher.provider if enricher else None
         self._signal_waybar()
 
     def set_output(self, output: OutputAdapter) -> None:
-        """Swap the active output sink mid-session. Updates the state's
-        mode so waybar reflects the new destination."""
         with self._lock:
             self.output = output
             self.state.output = output.mode
         self._signal_waybar()
 
     def start(self):
-        # Become our own process group leader so a KILL command can take out
-        # every subprocess we've spawned (capture client, enrichment CLIs,
-        # output commands) in one signal.
+        # Session leader → KILL reaches every child subprocess.
         try:
             os.setpgrp()
         except OSError as e:
-            log.warning("setpgrp failed: %s; KILL may leak subprocesses", e)
+            self.log.warning("setpgrp failed: %s", e)
 
         try:
             os.unlink(_PATHS.socket_path)
@@ -299,6 +203,7 @@ class Session:
         self._sock.bind(_PATHS.socket_path)
         os.chmod(_PATHS.socket_path, 0o600)
         self._sock.listen(4)
+        self.log.debug("listening on %s", _PATHS.socket_path)
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         self._signal_waybar()
@@ -308,7 +213,7 @@ class Session:
         signal_waybar("speech")
 
     def _serve(self):
-        assert self._sock is not None, "_serve requires start() to have run"
+        assert self._sock is not None
         while True:
             try:
                 conn, _ = self._sock.accept()
@@ -322,7 +227,7 @@ class Session:
             response = self._dispatch(raw)
             conn.sendall(json.dumps(asdict(response)).encode())
         except Exception as e:
-            log.warning("socket handler error: %s", e)
+            self.log.warning("socket handler error: %s", e)
         finally:
             try:
                 conn.close()
@@ -336,84 +241,64 @@ class Session:
         except (json.JSONDecodeError, ValueError):
             return Response(ok=False, error=f"bad request: {raw!r}")
 
-        log.info("socket cmd: %s", cmd.value)
+        self.log.info("socket cmd: %s", cmd.value)
         if cmd is Command.STATUS:
             with self._lock:
                 return Response(ok=True, state=SessionState(**asdict(self.state)))
         if cmd is Command.STOP:
-            # Presence of an "enrich" key signals the press-2 toggle
-            # overriding press-1's choice. Value is either an EnrichSpec
-            # dict (→ new enricher) or null (→ skip enrichment entirely).
-            # Apply the swap BEFORE telling the daemon to stop, so press-1's
-            # main thread sees the new enricher when communicate() unblocks.
             if "enrich" in obj:
-                spec_dict = obj["enrich"]
-                new_enricher: Optional[EnrichAdapter] = None
-                if spec_dict:
-                    spec = EnrichSpec.from_dict(spec_dict)
-                    # Per-provider model default: HTTP wants the OpenWebUI
-                    # shape, Claude/Codex want their CLI aliases. Only pass
-                    # `model=` when the spec set one; otherwise the adapter
-                    # picks its own baseline.
-                    spec_model_kw = {"model": spec.model} if spec.model else {}
-                    match spec.provider:
-                        case EnrichProvider.HTTP:
-                            new_enricher = EnrichAdapterHttp(
-                                AI_SYSTEM_PROMPT,
-                                AI_USER_PROMPT,
-                                base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
-                                api_key=spec.api_key or "",
-                                temperature=spec.temperature,
-                                top_p=spec.top_p,
-                                thinking=spec.thinking,
-                                num_ctx=spec.num_ctx,
-                                user_agent="speech/1.0",
-                                **spec_model_kw,
-                            )
-                        case EnrichProvider.CLAUDE:
-                            new_enricher = EnrichAdapterClaude(
-                                AI_SYSTEM_PROMPT,
-                                AI_USER_PROMPT,
-                                **spec_model_kw,
-                            )
-                        case EnrichProvider.OPENCODE:
-                            new_enricher = EnrichAdapterOpenCode(
-                                AI_SYSTEM_PROMPT,
-                                AI_USER_PROMPT,
-                                **spec_model_kw,
-                            )
-                        case _:
-                            raise ValueError(
-                                f"unknown enrich provider: {spec.provider!r}",
-                            )
-                self.set_enricher(new_enricher)
-            # Presence of an "output" key signals the press-2 toggle picking
-            # a different sink. Same window as the enrich override: lands
-            # before the daemon transcribes, so press-1's output write goes
-            # to the new destination.
+                self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
-                mode = OutputMode(obj["output"])
-                match mode:
-                    case OutputMode.CLIPBOARD:
-                        self.set_output(OutputAdapterClipboard())
-                    case OutputMode.TYPE:
-                        self.set_output(OutputAdapterType())
-                    case OutputMode.STDOUT:
-                        self.set_output(OutputAdapterStdout())
-                    case _:
-                        raise ValueError(
-                            f"unsupported output mode for speech: {mode!r}",
-                        )
+                self._apply_output_override(OutputMode(obj["output"]))
             self._adapter.stop()
             return Response(ok=True)
         if cmd is Command.KILL:
-            # Cancel the daemon so it isn't left transcribing into a dead
-            # socket, then SIGKILL our process group. This does not return
-            # — the client sees EOF on its socket instead of a response.
             self._adapter.cancel()
             os.killpg(0, signal.SIGKILL)
 
         return Response(ok=False, error=f"unhandled command: {cmd.value}")
+
+    def _apply_enrich_override(self, spec_dict: Optional[dict]) -> None:
+        new_enricher: Optional[EnrichAdapter] = None
+        if spec_dict:
+            spec = EnrichSpec.from_dict(spec_dict)
+            model_kw = {"model": spec.model} if spec.model else {}
+            match spec.provider:
+                case EnrichProvider.HTTP:
+                    new_enricher = EnrichAdapterHttp(
+                        Speech.SYSTEM_PROMPT,
+                        Speech.USER_PROMPT,
+                        base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
+                        api_key=spec.api_key or "",
+                        temperature=spec.temperature,
+                        top_p=spec.top_p,
+                        thinking=spec.thinking,
+                        num_ctx=spec.num_ctx,
+                        user_agent="speech/1.0",
+                        **model_kw,
+                    )
+                case EnrichProvider.CLAUDE:
+                    new_enricher = EnrichAdapterClaude(
+                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
+                    )
+                case EnrichProvider.OPENCODE:
+                    new_enricher = EnrichAdapterOpenCode(
+                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
+                    )
+                case _:
+                    raise ValueError(f"unknown enrich provider: {spec.provider!r}")
+        self.set_enricher(new_enricher)
+
+    def _apply_output_override(self, mode: OutputMode) -> None:
+        match mode:
+            case OutputMode.CLIPBOARD:
+                self.set_output(OutputAdapterClipboard())
+            case OutputMode.TYPE:
+                self.set_output(OutputAdapterType())
+            case OutputMode.STDOUT:
+                self.set_output(OutputAdapterStdout())
+            case _:
+                raise ValueError(f"unsupported output mode: {mode!r}")
 
     def set_phase(self, phase: Phase):
         with self._lock:
@@ -433,77 +318,89 @@ class Session:
             pass
         self._signal_waybar()
 
+
 class Speech:
+    ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
+    SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
+    USER_PROMPT = (
+        "Clean up the following speech transcription:\n"
+        "<transcription>\n{text}\n</transcription>"
+    )
+
+    log = logging.getLogger("speech")
+
     def __init__(
         self,
-        args,
         adapter: STTAdapter,
         enricher: Optional[EnrichAdapter] = None,
         output: Optional[OutputAdapter] = None,
     ):
-        self.args = args
         self._adapter = adapter
         self._enricher = enricher
         self._output = output
 
-    def run(self):
-        cmd = self.args.command
-        if cmd == "toggle":
-            self._toggle()
-        elif cmd == "stop":
-            self._stop()
-        elif cmd == "kill":
-            self._kill()
-        elif cmd == "status":
-            print(self._get_status_json())
-        elif cmd == "is-recording":
-            sys.exit(0 if self._is_recording() else 1)
+    # ── core ──────────────────────────────────────────────────────
 
     def _notify(self, message, timeout=None):
-        notify("Speech-to-Text", message, ICON, timeout)
+        notify("Speech-to-Text", message, self.ICON, timeout)
 
-    def _is_recording(self):
-        if _send(Command.STATUS) is not None:
+    @classmethod
+    def _send(cls, cmd: Command, **kwargs) -> Optional[Response]:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect(_PATHS.socket_path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            try:
+                os.unlink(_PATHS.socket_path)
+            except FileNotFoundError:
+                pass
+            return None
+        except OSError as e:
+            cls.log.warning("socket connect failed: %s", e)
+            return None
+
+        try:
+            payload = json.dumps({"cmd": cmd.value, **kwargs}) + "\n"
+            cls.log.debug("rpc send: %s", payload.rstrip())
+            sock.sendall(payload.encode())
+            chunks = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+            raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+            if not raw:
+                return None
+            try:
+                return Response.from_json(raw)
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                cls.log.warning("bad response: %s (raw=%r)", e, raw)
+                return None
+        finally:
+            sock.close()
+
+    def is_recording(self) -> bool:
+        if self._send(Command.STATUS) is not None:
             return True
-
         return self._adapter.is_recording()
 
-    def _toggle(self):
-        # Press 2 path: ship this invocation's enrich + output choices
-        # alongside STOP so the running session can swap them before the
-        # daemon starts transcribing. Both are read only when present in
-        # the payload — absent keys leave press-1's setup intact.
-        enrich_payload = None
-        if getattr(self.args, "enrich", False):
-            enrich_payload = asdict(
-                EnrichSpec(
-                    provider=EnrichProvider(self.args.enrich_provider),
-                    base_url=self.args.enrich_base_url,
-                    model=self.args.enrich_model,
-                    api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                    temperature=self.args.enrich_temperature,
-                    top_p=self.args.enrich_top_p,
-                    thinking=self.args.enrich_thinking,
-                    num_ctx=self.args.enrich_num_ctx,
-                )
-            )
-        output_payload = self.args.output.value
-        if (
-            _send(
-                Command.STOP,
-                enrich=enrich_payload,
-                output=output_payload,
-            )
-            is not None
-        ):
-            log.info("signaled running session to stop")
-
+    def run_once(
+        self,
+        *,
+        enrich_spec: Optional[EnrichSpec],
+        output_mode: OutputMode,
+        save: bool,
+    ) -> None:
+        enrich_payload = asdict(enrich_spec) if enrich_spec else None
+        if self._send(Command.STOP, enrich=enrich_payload, output=output_mode.value) is not None:
+            self.log.info("press-2: signaled running session to stop")
             return
 
-        # Press 1: no session. Own it.
         assert self._output is not None, "toggle requires an output adapter"
-        log.info(
-            "starting session (output=%s, enrich=%s)",
+        self.log.info(
+            "starting session output=%s enrich=%s",
             self._output.mode.value,
             self._enricher.provider.value if self._enricher else None,
         )
@@ -511,37 +408,30 @@ class Speech:
         server = Session(self._output, self._enricher, self._adapter)
         server.start()
         try:
-            # The STT adapter subscribes to the backend's transcription
-            # stream: subscribing triggers recording if the backend is idle,
-            # or attaches to an in-flight one. The returned process blocks
-            # until the backend delivers the final transcription and closes
-            # stdout (on stop/cancel).
             capture = self._adapter.capture()
             stdout, _ = capture.communicate()
 
             text = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
             if not text:
-                log.warning("empty transcription from capture socket")
+                self.log.warning("empty transcription")
                 self._notify("No transcription captured")
-
                 return
 
-            log.info("captured %d chars from socket", len(text))
+            self.log.info("captured %d chars", len(text))
 
-            # Read enricher + output from the session — the dispatch thread
-            # may have swapped either on STOP with press-2's choices.
             enricher = server.enricher
             output = server.output
             if enricher is not None:
                 server.set_phase(Phase.WORKING)
-                if self.args.save:
-                    log.info("saving raw transcription to clipboard before enrichment")
+                if save:
+                    self.log.debug("saving raw transcription to clipboard")
                     subprocess.run(["wl-copy"], input=text, text=True)
                 self._notify("Enriching transcription...", timeout=3000)
                 enriched = enricher.enrich(text)
                 if enriched and enriched.strip():
                     text = enriched.strip()
                 else:
+                    self.log.warning("enrichment empty; using raw")
                     self._notify("Enrichment failed, using raw transcription")
 
             server.set_phase(Phase.OUTPUT)
@@ -551,204 +441,166 @@ class Speech:
         finally:
             server.stop()
 
-    def _stop(self):
-        if _send(Command.STOP) is None:
-            # No live session; forward to the backend for any orphan recording
-            # started outside speech.py. No session server means nobody else
-            # is going to signal waybar, so we do it here.
+    def stop(self):
+        if self._send(Command.STOP) is None:
             self._adapter.stop()
             Session._signal_waybar()
 
-    def _kill(self):
-        if _send(Command.KILL) is None:
-            # No live session — nothing to tear down, but the daemon may
-            # still be recording via some other entry point, so cancel it.
+    def kill(self):
+        if self._send(Command.KILL) is None:
             self._adapter.cancel()
             Session._signal_waybar()
 
-    def _get_status_json(self):
-        resp = _send(Command.STATUS)
+    def status_json(self) -> str:
+        resp = self._send(Command.STATUS)
         state = resp.state if resp and resp.ok else None
 
         if state is None:
             if self._adapter.is_recording():
                 return json.dumps(
-                    {
-                        "class": Phase.RECORDING.value,
-                        "text": "󰍬",
-                        "tooltip": "Recording speech (no session)",
-                    }
+                    {"class": Phase.RECORDING.value, "text": "󰍬", "tooltip": "Recording (no session)"}
                 )
-            return json.dumps(
-                {"class": "idle", "text": "", "tooltip": "Speech-to-text ready"}
-            )
+            return json.dumps({"class": "idle", "text": "", "tooltip": "Speech-to-text ready"})
 
-        icons = {
-            OutputMode.CLIPBOARD: "󰅇",
-            OutputMode.TYPE: "󰌌",
-            OutputMode.STDOUT: "󰼭",
-        }
-        labels = {
-            OutputMode.CLIPBOARD: "clipboard",
-            OutputMode.TYPE: "typing",
-            OutputMode.STDOUT: "stdout",
-        }
+        icons = {OutputMode.CLIPBOARD: "󰅇", OutputMode.TYPE: "󰌌", OutputMode.STDOUT: "󰼭"}
+        labels = {OutputMode.CLIPBOARD: "clipboard", OutputMode.TYPE: "typing", OutputMode.STDOUT: "stdout"}
         icon = icons[state.output]
         label = labels[state.output]
-
-        # RECORDING is ambiguous: press-2 may still swap or drop the enricher,
-        # so we don't claim a provider yet. By WORKING the swap has landed;
-        # by OUTPUT the transcription is out the door.
         enrich_label = f" ({state.enrich.value})" if state.enrich else ""
 
-        status_map = {
-            Phase.RECORDING: (
-                f"󰍬 {icon}",
-                f"Recording speech → {label}",
-            ),
-            Phase.WORKING: (
-                f"󰼭 󰧑 {icon}",
-                f"Processing transcription{enrich_label} → {label}",
-            ),
-            Phase.OUTPUT: (
-                icon,
-                f"Outputting transcription → {label}",
-            ),
+        mapping = {
+            Phase.RECORDING: (f"󰍬 {icon}", f"Recording speech → {label}"),
+            Phase.WORKING: (f"󰼭 󰧑 {icon}", f"Processing{enrich_label} → {label}"),
+            Phase.OUTPUT: (icon, f"Outputting → {label}"),
         }
-        text, tooltip = status_map[state.phase]
+        text, tooltip = mapping[state.phase]
+        return json.dumps({"class": state.phase.value, "text": text, "tooltip": tooltip})
 
-        return json.dumps(
-            {"class": state.phase.value, "text": text, "tooltip": tooltip}
+    # ── CLI ───────────────────────────────────────────────────────
+
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Socket-path suffix.")
+    def cli(verbose: bool, session_suffix: str):
+        """Control speech-to-text via an STT adapter."""
+        create_logger(verbose)
+        global _PATHS
+        _PATHS = SpeechPaths.from_suffix(session_suffix or "")
+
+    @cli.command("toggle")
+    @click.option(
+        "--output",
+        type=click.Choice([m.value for m in OutputMode], case_sensitive=False),
+        default=OutputMode.CLIPBOARD.value,
+        help="Output sink.",
+    )
+    @click.option("--enrich", is_flag=True, help="Enrich transcription through AI.")
+    @click.option(
+        "--enrich-provider",
+        type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
+        default=DEFAULT_ENRICH_ADAPTER.value,
+    )
+    @click.option("--enrich-base-url", default="https://ai.kilic.dev/api/v1")
+    @click.option("--enrich-model", default=None)
+    @click.option("--enrich-temperature", type=float, default=None)
+    @click.option("--enrich-top-p", type=float, default=None)
+    @click.option(
+        "--enrich-thinking",
+        type=click.Choice(["high", "medium", "low", "none"]),
+        default="none",
+    )
+    @click.option("--enrich-num-ctx", type=int, default=None)
+    @click.option("--save/--no-save", default=True, help="Copy raw transcript to clipboard first.")
+    def cmd_toggle(
+        output,
+        enrich,
+        enrich_provider,
+        enrich_base_url,
+        enrich_model,
+        enrich_temperature,
+        enrich_top_p,
+        enrich_thinking,
+        enrich_num_ctx,
+        save,
+    ):
+        """Start a session, or toggle an existing one."""
+        output_mode = OutputMode(output)
+        match output_mode:
+            case OutputMode.CLIPBOARD:
+                output_adapter: OutputAdapter = OutputAdapterClipboard()
+            case OutputMode.TYPE:
+                output_adapter = OutputAdapterType()
+            case OutputMode.STDOUT:
+                output_adapter = OutputAdapterStdout()
+            case _:
+                raise click.UsageError(f"unsupported output mode: {output_mode!r}")
+
+        enrich_spec: Optional[EnrichSpec] = None
+        enricher: Optional[EnrichAdapter] = None
+        if enrich:
+            provider_enum = EnrichProvider(enrich_provider)
+            enrich_spec = EnrichSpec(
+                provider=provider_enum,
+                base_url=enrich_base_url,
+                model=enrich_model,
+                api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                temperature=enrich_temperature,
+                top_p=enrich_top_p,
+                thinking=enrich_thinking,
+                num_ctx=enrich_num_ctx,
+            )
+            model_kw = {"model": enrich_model} if enrich_model else {}
+            match provider_enum:
+                case EnrichProvider.HTTP:
+                    enricher = EnrichAdapterHttp(
+                        Speech.SYSTEM_PROMPT,
+                        Speech.USER_PROMPT,
+                        base_url=enrich_base_url,
+                        api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                        temperature=enrich_temperature,
+                        top_p=enrich_top_p,
+                        thinking=enrich_thinking,
+                        num_ctx=enrich_num_ctx,
+                        user_agent="speech/1.0",
+                        **model_kw,
+                    )
+                case EnrichProvider.CLAUDE:
+                    enricher = EnrichAdapterClaude(
+                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
+                    )
+                case EnrichProvider.OPENCODE:
+                    enricher = EnrichAdapterOpenCode(
+                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
+                    )
+                case _:
+                    raise click.UsageError(f"unknown enrich provider: {provider_enum!r}")
+
+        Speech(HyprwhsprAdapter(), enricher, output_adapter).run_once(
+            enrich_spec=enrich_spec,
+            output_mode=output_mode,
+            save=save,
         )
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Control speech-to-text via an STT adapter"
-    )
-    parser.add_argument("-v", "--verbose", action="store_true")
-    # Session suffix plumbed through to the Unix-socket path so multiple
-    # speech sessions can coexist (e.g. one tied to a normal overlay,
-    # another to a `plan` pilot). Empty (default) keeps the original
-    # `wayland-speech.sock` path byte-for-byte.
-    parser.add_argument(
-        "--session",
-        default="",
-        metavar="SUFFIX",
-        help=(
-            "session suffix — appended to the socket filename so "
-            "multiple speech sessions can coexist. Empty keeps the "
-            "original path."
-        ),
-    )
+    @cli.command("stop")
+    def cmd_stop():
+        """Stop the active session."""
+        Speech(HyprwhsprAdapter()).stop()
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    @cli.command("kill")
+    def cmd_kill():
+        """Kill the session's process group."""
+        Speech(HyprwhsprAdapter()).kill()
 
-    toggle_parser = subparsers.add_parser("toggle")
-    toggle_parser.add_argument(
-        "--output",
-        type=OutputMode,
-        choices=list(OutputMode),
-        default=OutputMode.CLIPBOARD,
-        help="Output mode: 'clipboard' (wl-copy) or 'type' (paste via hyprwhspr)",
-    )
-    toggle_parser.add_argument(
-        "--enrich",
-        action="store_true",
-        help="Enrich transcription through AI",
-    )
-    toggle_parser.add_argument(
-        "--enrich-provider",
-        choices=list(EnrichProvider),
-        default=DEFAULT_ENRICH_ADAPTER,
-    )
-    toggle_parser.add_argument(
-        "--enrich-base-url",
-        default="https://ai.kilic.dev/api/v1",
-    )
-    # Model default is provider-specific — see the enrich-adapter branches
-    # below. Unset here so each backend falls back to its own baseline.
-    toggle_parser.add_argument("--enrich-model", default=None)
-    toggle_parser.add_argument("--enrich-temperature", type=float)
-    toggle_parser.add_argument("--enrich-top-p", type=float)
-    toggle_parser.add_argument(
-        "--enrich-thinking",
-        nargs="?",
-        const="high",
-        default="none",
-        choices=["high", "medium", "low", "none"],
-    )
-    toggle_parser.add_argument("--enrich-num-ctx", type=int)
-    toggle_parser.add_argument(
-        "--save",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Before AI enrichment, copy the raw transcription to the clipboard as a backup (default: True)",
-    )
+    @cli.command("status")
+    def cmd_status():
+        """Print waybar-shaped status JSON."""
+        sys.stdout.write(Speech(HyprwhsprAdapter()).status_json() + "\n")
 
-    subparsers.add_parser("stop")
-    subparsers.add_parser("kill")
-    subparsers.add_parser("status")
-    subparsers.add_parser("is-recording")
+    @cli.command("is-recording")
+    def cmd_is_recording():
+        """Exit 0 if a recording is live."""
+        sys.exit(0 if Speech(HyprwhsprAdapter()).is_recording() else 1)
 
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        format="%(name)s: %(message)s",
-        level=logging.DEBUG if args.verbose else logging.WARNING,
-    )
-
-    global _PATHS
-    _PATHS = SpeechPaths.from_suffix(args.session or "")
-
-    enricher: Optional[EnrichAdapter] = None
-    if getattr(args, "enrich", False):
-        provider = EnrichProvider(args.enrich_provider)
-        # None values (no --enrich-model, etc.) collapse to each adapter's
-        # default via the `kwargs.get(name) or DEFAULT` pattern inside.
-        match provider:
-            case EnrichProvider.HTTP:
-                enricher = EnrichAdapterHttp(
-                    AI_SYSTEM_PROMPT,
-                    AI_USER_PROMPT,
-                    base_url=args.enrich_base_url,
-                    model=args.enrich_model,
-                    api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                    temperature=args.enrich_temperature,
-                    top_p=args.enrich_top_p,
-                    thinking=args.enrich_thinking,
-                    num_ctx=args.enrich_num_ctx,
-                    user_agent="speech/1.0",
-                )
-            case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(
-                    AI_SYSTEM_PROMPT,
-                    AI_USER_PROMPT,
-                    model=args.enrich_model,
-                )
-            case EnrichProvider.OPENCODE:
-                enricher = EnrichAdapterOpenCode(
-                    AI_SYSTEM_PROMPT,
-                    AI_USER_PROMPT,
-                    model=args.enrich_model,
-                )
-            case _:
-                raise ValueError(f"unknown enrich provider: {provider!r}")
-
-    output: Optional[OutputAdapter] = None
-    if hasattr(args, "output"):
-        match args.output:
-            case OutputMode.CLIPBOARD:
-                output = OutputAdapterClipboard()
-            case OutputMode.TYPE:
-                output = OutputAdapterType()
-            case OutputMode.STDOUT:
-                output = OutputAdapterStdout()
-            case _:
-                raise ValueError(
-                    f"unsupported output mode for speech: {args.output!r}",
-                )
-
-    Speech(args, HyprwhsprAdapter(), enricher, output).run()
 
 if __name__ == "__main__":
-    main()
+    Speech.cli()

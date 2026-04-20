@@ -1,9 +1,12 @@
 """Desktop notification helper."""
 
-import sys
-
+import logging
 import subprocess
+import sys
 from typing import Optional
+
+log = logging.getLogger(__name__)
+
 
 def notify(
     title: str,
@@ -15,9 +18,5 @@ def notify(
     cmd = ["notify-send", title, message, "-i", icon]
     if timeout:
         cmd.extend(["-t", str(timeout)])
-    subprocess.run(
-        cmd,
-        check=False,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-    )
+    log.debug("spawn: %s", " ".join(cmd))
+    subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)

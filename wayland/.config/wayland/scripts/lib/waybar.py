@@ -1,20 +1,15 @@
 """Waybar signalling helper."""
 
+import logging
 import subprocess
 import sys
 
-def signal_waybar(module: str) -> None:
-    """Poke waybar to re-render the named custom module.
+log = logging.getLogger(__name__)
 
-    waybar-signal.sh prints an informational `Sending waybar signal: …`
-    line on success and a `No signal mapped for …` line on failure. We
-    route both to our stderr so nothing leaks into a piped stdout — this
-    helper runs inside scripts whose stdout is semantically meaningful
-    (e.g. `speech.py --output stdout | pilot.py --input stdin`, or the
-    waybar custom-module JSON emitted by `pilot.py status`)."""
-    subprocess.run(
-        ["waybar-signal.sh", module],
-        check=False,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-    )
+
+def signal_waybar(module: str) -> None:
+    """Poke waybar to re-render the named custom module. Output is
+    routed to stderr so nothing leaks into pipeable stdout."""
+    cmd = ["waybar-signal.sh", module]
+    log.debug("spawn: %s", " ".join(cmd))
+    subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)

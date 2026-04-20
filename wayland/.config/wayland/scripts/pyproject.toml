@@ -37,20 +37,18 @@ description = "Pilot overlay, speech capture, recorder and copywriter glue for t
 # [tool.uv] below).
 requires-python = ">=3.14"
 dependencies = [
-  # Agent Client Protocol SDK — pilot's ACP adapter talks to
-  # claude-agent-acp + opencode acp via this library.
+  # ACP SDK for pilot's agent transport.
   "agent-client-protocol>=0.9",
-  # Markdown → Pango pipeline (lib/markup.py). `markdown-it-py`
-  # imports as `markdown_it`.
+  # CLI parsing + styled logging (stderr only).
+  "click>=8.1",
+  "rich>=13.7",
+  # Markdown → Pango pipeline (lib/markup.py).
   "markdown-it-py>=4.0",
-  # Pygments drives the syntax highlighting that backs the fenced
-  # code-block widgets in the overlay.
+  # Syntax highlighting for code-block widgets.
   "pygments>=2.19",
-  # psutil powers pilot's singleton detection + waybar's process
-  # chatter in copywriter.py.
+  # Singleton detection + waybar process chatter.
   "psutil>=7.0",
-  # obs-websocket bindings for recorder.py's remote-control path
-  # into OBS Studio.
+  # obs-websocket bindings for recorder.py.
   "obsws-python>=1.8",
 ]
 

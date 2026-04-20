@@ -8,8 +8,8 @@ Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
 from __future__ import annotations
+from lib.acp_adapter import AcpAdapter
 
-import argparse
 import errno
 import json
 import logging
@@ -21,15 +21,13 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import Callable, Optional
 
-if TYPE_CHECKING:
-    # Only pulled in for the `_build_pilot_mcp_server` return annotation;
-    # the real import happens inside the function body so the schema
-    # module isn't forced on callers that never build an ACP server.
-    from acp.schema import McpServerStdio
+import click
+from acp.schema import McpServerStdio
 
 from lib import (
+    create_logger,
     DEFAULT_CONVERSE_ADAPTER,
     DEFAULT_SERVER_NAMES,
     ConversationAdapter,
@@ -97,8 +95,10 @@ if "toggle" in sys.argv[1:]:
 from lib.overlay import (  # noqa: E402
     CommandPalette,
     LayerOverlayWindow,
+    PillVariant,
     load_overlay_css,
     load_css_from_path,
+    make_pill,
 )
 from gi.repository import (  # noqa: E402
     Gdk,  # ty: ignore[unresolved-import]
@@ -136,9 +136,10 @@ class PilotPaths:
             socket_path=os.path.join(runtime, "wayland-pilot.sock"),
         )
 
-# Populated in main() once `--session` has been parsed. Module-level
-# holder so the waybar-poll helpers (_send, _is_live, _cmd_status) can
-# share it without every caller threading a paths argument through.
+# Populated by the click group callback once `--session` has been
+# parsed. Module-level so `Session.send` / `Session.is_live` / click
+# commands on `Pilot` all read the same paths without threading a
+# PilotPaths arg through every caller.
 _PATHS: PilotPaths = PilotPaths.from_suffix("")
 
 AI_SYSTEM_PROMPT = load_prompt("pilot.md", relative_to=__file__)
@@ -251,7 +252,7 @@ class ComposeView:
         self._hint_label = hint
         bar.append(hint)
 
-        self._send_btn = Gtk.Button(label="⏎ send")
+        self._send_btn = Gtk.Button(label="󰌑 send")
         self._send_btn.add_css_class("pilot-compose-send")
         self._send_btn.set_tooltip_text("Send the current message (Enter)")
         self._send_btn.connect("clicked", lambda _b: self._submit())
@@ -323,7 +324,7 @@ class ComposeView:
     ) -> None:
         """Re-render the resource-pill strip above the compose bar.
         Each entry is `(kind, name, description)`; `on_remove(kind,
-        name)` fires when the pill's ✕ is clicked. Empty list hides
+        name)` fires when the pill's 󰅖 is clicked. Empty list hides
         the strip. CodeCompanion-style: picked skills live as chips
         instead of polluting the compose text with `#{}` tokens, and
         `PilotWindow.dispatch_turn` prepends their bodies at submit."""
@@ -337,7 +338,7 @@ class ComposeView:
             self._resource_flow.set_visible(False)
             return
         for kind, name, desc in entries:
-            btn = Gtk.Button(label=f"{kind}/{name} ✕")
+            btn = Gtk.Button(label=f"{kind}/{name} 󰅖")
             btn.add_css_class("pilot-compose-resource")
             btn.add_css_class(f"resource-kind-{kind}")
             if desc:
@@ -359,7 +360,7 @@ class ComposeView:
         on_remove: Optional[Callable[[object], None]],
     ) -> None:
         """Render the attachment-pill strip. Each entry is
-        `(label, mime, key)` — the pill shows `label` and, on ✕,
+        `(label, mime, key)` — the pill shows `label` and, on 󰅖,
         fires `on_remove(key)` so the caller can resolve the
         original `PromptAttachment` without us leaking its type
         here. Empty list hides the strip."""
@@ -373,7 +374,7 @@ class ComposeView:
             self._attachment_flow.set_visible(False)
             return
         for label, mime, key in entries:
-            btn = Gtk.Button(label=f"{label} ✕")
+            btn = Gtk.Button(label=f"{label} 󰅖")
             btn.add_css_class("pilot-compose-attachment")
             mime_kind = (mime or "").split("/", 1)[0] or "blob"
             btn.add_css_class(f"attachment-kind-{mime_kind}")
@@ -411,10 +412,10 @@ class ComposeView:
 class QueueRow(Gtk.ListBoxRow):
     """A queued turn rendered as a full-width card. The message wraps
     freely (no truncation preview) and three labelled buttons live in
-    an action strip at the bottom: `✎ edit` toggles an inline multi-line
-    editor, `⏎ send` promotes the message to the next slot, `✕ drop`
+    an action strip at the bottom: `󰏫 edit` toggles an inline multi-line
+    editor, `󰌑 send` promotes the message to the next slot, `󰅖 drop`
     removes it. In edit mode, Ctrl+Enter commits; the edit button
-    relabels to `✓ save` while editing."""
+    relabels to `󰄬 save` while editing."""
 
     def __init__(
         self,
@@ -459,19 +460,19 @@ class QueueRow(Gtk.ListBoxRow):
         )
         actions.add_css_class("pilot-queue-actions")
 
-        self._edit_btn = Gtk.Button(label="✎ edit")
+        self._edit_btn = Gtk.Button(label="󰏫 edit")
         self._edit_btn.add_css_class("pilot-queue-edit")
         self._edit_btn.set_tooltip_text("Edit this message")
         self._edit_btn.connect("clicked", lambda _b: self._toggle_edit())
         actions.append(self._edit_btn)
 
-        send_btn = Gtk.Button(label="⏎ send")
+        send_btn = Gtk.Button(label="󰌑 send")
         send_btn.add_css_class("pilot-queue-send")
         send_btn.set_tooltip_text("Promote and dispatch this message now")
         send_btn.connect("clicked", lambda _b: self._on_send(self))
         actions.append(send_btn)
 
-        remove_btn = Gtk.Button(label="✕ drop")
+        remove_btn = Gtk.Button(label="󰅖 drop")
         remove_btn.add_css_class("pilot-queue-remove")
         remove_btn.set_tooltip_text("Remove this message from the queue")
         remove_btn.connect("clicked", lambda _b: self._on_remove(self))
@@ -537,7 +538,7 @@ class QueueRow(Gtk.ListBoxRow):
         textview.grab_focus()
         self._edit_scroller = scroller
         self._edit_textview = textview
-        self._edit_btn.set_label("✓ save")
+        self._edit_btn.set_label("󰄬 save")
 
     def _on_edit_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and (
@@ -563,7 +564,7 @@ class QueueRow(Gtk.ListBoxRow):
             self._display = new_text
         self._label.set_label(self._display)
         self._card.prepend(self._label)
-        self._edit_btn.set_label("✎ edit")
+        self._edit_btn.set_label("󰏫 edit")
         self._on_edit_commit(self, self._text)
 
 def _make_markdown_label(
@@ -685,10 +686,10 @@ class TurnCard:
     layout pass (TextView doesn't, which used to leave user cards
     collapsed until the assistant reply forced a re-layout)."""
 
-    THINKING_LABEL_STREAMING = "🧠 thinking…"
-    THINKING_LABEL_DONE = "🧠 thinking"
-    PLAN_LABEL_STREAMING = "📋 plan"
-    PLAN_LABEL_DONE = "📋 plan · done"
+    THINKING_LABEL_STREAMING = "󰧮 thinking…"
+    THINKING_LABEL_DONE = "󰧮 thinking"
+    PLAN_LABEL_STREAMING = "󰃃 plan"
+    PLAN_LABEL_DONE = "󰃃 plan · done"
 
     # Per-status glyph on each tool bubble. Intentionally text-only so
     # these render at the card font size without Pango fighting an
@@ -696,9 +697,9 @@ class TurnCard:
     _TOOL_STATUS_GLYPHS = {
         "pending": "⋯",
         "running": "⋯",
-        "completed": "✓",
-        "failed": "⚠",
-        "cancelled": "✕",
+        "completed": "󰄬",
+        "failed": "󰀦",
+        "cancelled": "󰅖",
     }
 
     def __init__(
@@ -920,7 +921,7 @@ class TurnCard:
         tint. Feeds straight into Pango markup — we don't need the
         full markdown pipeline for this."""
         glyph_for_status = {
-            "completed": "✓",
+            "completed": "󰄬",
             "in_progress": "◐",
             "pending": "○",
         }
@@ -1233,11 +1234,11 @@ class PermissionRow(Gtk.ListBoxRow):
     queue. Mirrors `QueueRow`'s structure: a wrapping body + an action
     strip with three buttons. Buttons are:
 
-    * `✓ allow`  — dismiss the row; the call already happened server-
+    * `󰄬 allow`  — dismiss the row; the call already happened server-
                    side / in-CLI, this just acknowledges it.
     * ` trust`  — add this tool name to the session allowlist so
                    future invocations skip the row entirely.
-    * `✕ deny`   — cancel the in-flight turn (same path as Ctrl+D) and
+    * `󰅖 deny`   — cancel the in-flight turn (same path as Ctrl+D) and
                    stamp the assistant card with a cancelled marker.
 
     The UI is visibility-only: we don't have a protocol for gating the
@@ -1302,7 +1303,9 @@ class PermissionRow(Gtk.ListBoxRow):
         # is bounded only by the sidebar width (no line cap). When
         # `tool_formatters` wasn't handed in (auditor paths not tied
         # to a specific adapter), fall back to the baseline.
-        formatters = tool_formatters if tool_formatters is not None else ToolFormatters()
+        formatters = (
+            tool_formatters if tool_formatters is not None else ToolFormatters()
+        )
         md_body = formatters.format(call.name or "", call.arguments or "")
         args_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
@@ -1331,7 +1334,7 @@ class PermissionRow(Gtk.ListBoxRow):
         )
         actions.add_css_class("pilot-permission-actions")
 
-        self._allow_btn = Gtk.Button(label="✓ allow")
+        self._allow_btn = Gtk.Button(label="󰄬 allow")
         self._allow_btn.add_css_class("pilot-permission-allow")
         self._allow_btn.set_tooltip_text("Dismiss this tool-use notification")
         self._allow_btn.connect("clicked", lambda _b: self._on_allow(self))
@@ -1346,20 +1349,20 @@ class PermissionRow(Gtk.ListBoxRow):
         trust_btn.connect("clicked", lambda _b: self._on_trust(self))
         actions.append(trust_btn)
 
-        self._deny_btn = Gtk.Button(label="✕ deny")
+        self._deny_btn = Gtk.Button(label="󰅖 deny")
         self._deny_btn.add_css_class("pilot-permission-deny")
         self._deny_btn.set_tooltip_text("Cancel the current turn")
         self._deny_btn.connect("clicked", lambda _b: self._on_deny(self))
         actions.append(self._deny_btn)
 
-        # ⛔ auto-reject — symmetric to trust but for the auto-reject
+        # 󰂭 auto-reject — symmetric to trust but for the auto-reject
         # list: future calls for this tool short-circuit to `deny`
         # without surfacing a row, AND the current turn is cancelled
         # so the model stops mid-sentence. Red-tinted like deny to
         # signal "this is destructive in both directions".
         self._auto_reject_btn: Optional[Gtk.Button] = None
         if on_auto_reject is not None:
-            self._auto_reject_btn = Gtk.Button(label="⛔ auto-reject")
+            self._auto_reject_btn = Gtk.Button(label="󰂭 auto-reject")
             self._auto_reject_btn.add_css_class("pilot-permission-autoreject")
             self._auto_reject_btn.set_tooltip_text(
                 "Cancel this turn AND auto-reject every future call to "
@@ -1374,7 +1377,7 @@ class PermissionRow(Gtk.ListBoxRow):
         self.set_child(card)
 
     def focus_allow(self) -> None:
-        """Grab focus on the `✓ allow` button so keyboard users can
+        """Grab focus on the `󰄬 allow` button so keyboard users can
         accept without mousing. Tab cycles to trust / deny peers via
         GTK's default focus chain (all three buttons are focusable)."""
         self._allow_btn.grab_focus()
@@ -1384,7 +1387,7 @@ class PermissionRow(Gtk.ListBoxRow):
         """Canonical tool identifier used for trust / auto-reject set
         membership. Prefers `call.name` when it looks programmatic (a
         single token, or the `mcp__server__tool` wire shape), otherwise
-        falls back to the ACP `kind` so clicking ✓ trust on Claude's
+        falls back to the ACP `kind` so clicking 󰄬 trust on Claude's
         `"Read README.md"` row trusts ALL future Read calls via the
         `read` kind — not just the specific README invocation."""
         name = (self._call.name or "").strip()
@@ -1583,7 +1586,9 @@ class PilotWindow(LayerOverlayWindow):
         self._palette: Optional[CommandPalette] = None
         self._permissions_palette: Optional[CommandPalette] = None
         self._mcp_palette: Optional[CommandPalette] = None
+        self._models_palette: Optional[CommandPalette] = None
         self._sessions_palette: Optional[CommandPalette] = None
+        self._keybindings_palette: Optional[CommandPalette] = None
         # Root palette (Ctrl+Space) — single-select index that opens
         # one of the leaf palettes (skills / MCPs / sessions) on
         # commit. Leaf palettes keep their own widgets because each
@@ -1620,26 +1625,51 @@ class PilotWindow(LayerOverlayWindow):
         # path overflows.
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("pilot-header")
+        self._header = header
         self._provider_label = Gtk.Label(label=self._header_title(), xalign=0.0)
         self._provider_label.add_css_class("pilot-provider")
         self._provider_label.add_css_class("idle")
         header.append(self._provider_label)
 
-        self._session_label = Gtk.Label(
-            label=self._session_subtitle(),
-            xalign=0.0,
+        # Breadcrumb — one row of pills (cwd / mcps / skills /
+        # restored). Kept as Gtk.Box not Label so each segment can get
+        # its own CSS tint (`restored` glows yellow so it stands out).
+        self._session_pills = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
             hexpand=True,
         )
-        self._session_label.add_css_class("pilot-session")
-        self._session_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
-        header.append(self._session_label)
+        self._session_pills.add_css_class("pilot-session")
+        self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
+        header.append(self._session_pills)
 
-        close_btn = Gtk.Button(label="✕")
+        close_btn = Gtk.Button(label="󰅖")
         close_btn.add_css_class("pilot-close")
         close_btn.connect("clicked", lambda _b: self.close())
         header.append(close_btn)
         root.append(header)
+
+        # Dismissable error toast — hidden until an ACP-side failure
+        # fires `show_error`. Ctrl+E clears it. Sits right below the
+        # header so errors never push the conversation scroller down.
+        self._toast = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+            visible=False,
+        )
+        self._toast.add_css_class("pilot-toast")
+        self._toast_label = Gtk.Label(xalign=0.0, hexpand=True)
+        self._toast_label.set_wrap(True)
+        self._toast_label.set_wrap_mode(2)  # WORD_CHAR
+        self._toast_label.set_max_width_chars(1)
+        self._toast_label.add_css_class("pilot-toast-text")
+        self._toast.append(self._toast_label)
+        toast_close = Gtk.Button(label="󰅖")
+        toast_close.add_css_class("pilot-toast-close")
+        toast_close.set_tooltip_text("Dismiss (Ctrl+E)")
+        toast_close.connect("clicked", lambda _b: self.dismiss_error())
+        self._toast.append(toast_close)
+        root.append(self._toast)
 
         # Conversation: a vertical box of TurnCard widgets inside a
         # scroller. Each card is its own markdown-rendered surface.
@@ -2026,19 +2056,9 @@ class PilotWindow(LayerOverlayWindow):
         return f"…/{tail}"
 
     def _session_subtitle(self, *, verbose: bool = False) -> str:
-        """Single-line breadcrumb next to the provider pill:
-        `@ ~/notes  +3 mcps  +skills  ↻ restored`. `verbose` swaps the
-        truncated cwd for the full untruncated path so the tooltip can
-        show the absolute path on hover.
-
-        The `↻ restored` tag only appears once the adapter has
-        bootstrapped a session AND `load_session` succeeded; a fresh
-        `new_session` leaves it off. That way the user can tell at a
-        glance whether the current conversation is resuming a prior
-        session off disk or starting from scratch. `start_fresh_session`
-        forces the flag off by tearing the old session down before the
-        next bootstrap — no stale "restored" tag after a Ctrl+S reset.
-        """
+        """Single-line textual breadcrumb — used as the pill-row
+        tooltip so hover shows the full path + segments at once.
+        `verbose` swaps the truncated cwd for the untruncated one."""
         cwd = self._cwd or os.getcwd() if verbose else self._pretty_cwd()
         parts = [f"@ {cwd}"]
         if self._mcp_server_names:
@@ -2046,15 +2066,100 @@ class PilotWindow(LayerOverlayWindow):
         if self._skills_dir:
             parts.append("+skills")
         if getattr(self._adapter, "session_resumed", False):
-            parts.append("↻ restored")
+            parts.append("󰑐 restored")
         return "  ".join(parts)
 
     def _refresh_session_label(self) -> None:
-        """Re-render the breadcrumb — called on attach_session / every
-        config change that could flip one of the three segments."""
-        if hasattr(self, "_session_label"):
-            self._session_label.set_label(self._session_subtitle())
-            self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
+        """Rebuild the header breadcrumb as a pill row.
+
+        Segments:
+          - `@ <cwd>`                muted pill
+          - `+N mcps` (if any)       muted pill
+          - `+skills` (if any)       muted pill
+          - `󰑐 restored` (if resumed) WARN pill — yellow so the user
+                                      notices resumed state without
+                                      reading the row character-by-
+                                      character.
+
+        Also pulls the adapter's current model onto `self._model` and
+        repaints the header pill (`Pilot - <provider> (<model>)`) so
+        `_reconcile_model` after a turn, `set_model` from the Models
+        palette, and session restores all land on the window title
+        without a full respawn."""
+        effective = (
+            getattr(self._adapter, "current_model_id", None)
+            or getattr(self._adapter, "model", None)
+            or ""
+        )
+        self._model = effective.strip() or None
+        # Repaint the provider pill — but only when it's not currently
+        # showing the `WORKING` spinner, so a model switch fired from
+        # the palette doesn't blow away the working-state label in
+        # the same tick. `_clear_working` restores the title itself.
+        if (
+            hasattr(self, "_provider_label")
+            and not self._provider_label.has_css_class("working")
+        ):
+            self._provider_label.set_label(self._header_title())
+
+        if not hasattr(self, "_session_pills"):
+            return
+        # Wipe + rebuild; cheaper than diffing. The row has 2-4 pills.
+        child = self._session_pills.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._session_pills.remove(child)
+            child = nxt
+
+        segments: list[tuple[str, str]] = [(f"@ {self._pretty_cwd()}", PillVariant.MUTED)]
+        if self._mcp_server_names:
+            segments.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
+        if self._skills_dir:
+            segments.append(("+skills", PillVariant.MUTED))
+        if getattr(self._adapter, "session_resumed", False):
+            segments.append(("󰑐 restored", PillVariant.WARN))
+
+        for label, variant in segments:
+            pill = make_pill(label, variant)
+            pill.set_sensitive(False)  # Breadcrumb is informational, not actionable.
+            self._session_pills.append(pill)
+        self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
+
+    # -- Working indicator -------------------------------------------------
+    #
+    # Some ACP RPCs (set_session_model, list_sessions, available_models)
+    # run synchronously on the GTK main thread and can block for a second
+    # or more. We swap the provider pill to a yellow "WORKING …" label
+    # + a working class on the whole header BEFORE the call, then force
+    # GTK to paint the new state via a MainContext iteration pump so the
+    # user sees the change even though the call is blocking.
+
+    _WORKING_SPINNER = "󰦖"  # nf-md-spin; paired with the working label.
+
+    def _set_working(self, label: str = "WORKING") -> None:
+        """Flash the header yellow with a spinner + `label`. Paints
+        synchronously so callers can invoke this immediately before a
+        blocking RPC and the user sees the state change."""
+        if not hasattr(self, "_header"):
+            return
+        self._header.add_css_class("working")
+        self._provider_label.set_label(f"{self._WORKING_SPINNER} {label}")
+        self._provider_label.add_css_class("working")
+        # Pump one round of the GTK main loop so the new state paints
+        # before the blocking call starts.
+        ctx = GLib.MainContext.default()
+        for _ in range(8):
+            if not ctx.pending():
+                break
+            ctx.iteration(False)
+
+    def _clear_working(self) -> None:
+        """Revert the working indicator to the normal provider pill."""
+        if not hasattr(self, "_header"):
+            return
+        self._header.remove_css_class("working")
+        self._provider_label.remove_css_class("working")
+        self._provider_label.set_label(self._header_title())
 
     def _assistant_title(self) -> str:
         if self._model:
@@ -2151,10 +2256,42 @@ class PilotWindow(LayerOverlayWindow):
                 return
             log.exception("turn failed: %s", e)
             GLib.idle_add(self._append_chunk, f"\n\n*error: {e}*\n")
+            GLib.idle_add(self.show_error, self._humanise_error(e))
         finally:
             log.info("run_turn: end streamed=%s", self._stream_started)
             if self._alive:
                 GLib.idle_add(self._mark_idle)
+
+    @staticmethod
+    def _humanise_error(exc: BaseException) -> str:
+        """Strip an ACP exception down to the human-readable line the
+        user actually needs. ACP errors come through as
+        `acp.RequestError('Internal error: Prompt is too long',
+        code=-32603)`; we surface `"Prompt is too long"` + the code."""
+        msg = str(exc).strip()
+        code = getattr(exc, "code", None)
+        if code is not None:
+            return f"{msg} (acp {code})"
+        return msg or exc.__class__.__name__
+
+    def show_error(self, message: str) -> bool:
+        """Surface `message` in the dismissable toast strip. Repeat
+        calls replace the text; no stacking (the user cares about the
+        latest failure, not a history). Ctrl+E dismisses. Safe to
+        call from the GTK main thread — for worker threads, wrap in
+        `GLib.idle_add(window.show_error, msg)`."""
+        if not hasattr(self, "_toast_label"):
+            return False
+        self._toast_label.set_label(message)
+        self._toast.set_visible(True)
+        return False
+
+    def dismiss_error(self) -> None:
+        """Hide the error toast and clear its text."""
+        if not hasattr(self, "_toast"):
+            return
+        self._toast.set_visible(False)
+        self._toast_label.set_label("")
 
     def _mark_idle(self) -> bool:
         # Only fire the "response finished" toast when we actually
@@ -2186,14 +2323,13 @@ class PilotWindow(LayerOverlayWindow):
         self._turn_cancelled = False
         self._active_assistant = None
         if self._alive:
-            # Compose was never disabled; just reclaim focus so the user
-            # can continue typing without clicking. Queued items stay
-            # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
             self._update_phase()
             # Session-resume flag is finalised by the time the first
-            # turn wraps; refresh the breadcrumb so `↻ restored` shows
-            # up (or stays hidden for a fresh new_session).
+            # turn wraps; refresh the breadcrumb so `󰑐 restored` shows
+            # up (or stays hidden for a fresh new_session). Model
+            # reconciliation in `_AcpConverseAdapter.turn` may have
+            # expanded `opus` → `opus[1m]` — this picks that up too.
             self._refresh_session_label()
             if streamed:
                 self._notify_finished()
@@ -2206,7 +2342,7 @@ class PilotWindow(LayerOverlayWindow):
         in which case `_update_phase` keeps the blue awaiting pill).
         Also refreshes the session breadcrumb — by now
         `_ensure_started` has run, so `session_resumed` is authoritative
-        and the `↻ restored` tag can surface."""
+        and the `󰑐 restored` tag can surface."""
         self._stream_started = True
         self._update_phase()
         self._refresh_session_label()
@@ -2338,9 +2474,9 @@ class PilotWindow(LayerOverlayWindow):
         return row.text()
 
     def _on_queue_send(self, row: QueueRow) -> None:
-        # Manual-drain policy: ⏎ dispatches this specific card only if
+        # Manual-drain policy: 󰌑 dispatches this specific card only if
         # nothing is currently streaming. While streaming, the button is
-        # a soft no-op — the user can wait or use the ⏎ on another
+        # a soft no-op — the user can wait or use the 󰌑 on another
         # card later. Keeps the conversation's pacing in their hands.
         if self._streaming:
             log.info("ignoring queue-send while streaming")
@@ -2354,10 +2490,10 @@ class PilotWindow(LayerOverlayWindow):
         self._start_turn(wire, display=display, attachments=attachments)
 
     def _send_next_queued(self) -> bool:
-        """Dispatch the oldest pending queue row — the Ctrl+⏎ keybind's
+        """Dispatch the oldest pending queue row — the Ctrl+󰌑 keybind's
         target. No-op when the queue is empty; reuses the per-row send
         path so the streaming guard behaves identically to clicking the
-        row's own ⏎ button. Returns True when a row was dispatched so
+        row's own 󰌑 button. Returns True when a row was dispatched so
         callers can propagate that as the keyboard-event handled flag."""
         if not self._queue:
             return False
@@ -2479,16 +2615,15 @@ class PilotWindow(LayerOverlayWindow):
         Belt-and-suspenders short-circuits: if the tool name is already
         in an auto list, we answer without surfacing a row so the UI
         stays consistent with the pill state."""
-        from lib.acp_adapter import select_option_id  # lazy import
 
         auto_kind = self._permission.decide(call.name or "", call.kind or "")
         if auto_kind is not None:
-            resolve(select_option_id(options, auto_kind))
+            resolve(AcpAdapter.select_option_id(options, auto_kind))
             return False
 
         def on_allow(r: PermissionRow) -> None:
             self._remove_permission_row(r)
-            resolve(select_option_id(options, "allow_once"))
+            resolve(AcpAdapter.select_option_id(options, "allow_once"))
 
         def on_trust(r: PermissionRow) -> None:
             tool_name = r.tool_name
@@ -2498,11 +2633,11 @@ class PilotWindow(LayerOverlayWindow):
             for existing in list(self._permissions):
                 if existing.tool_name == tool_name:
                     self._remove_permission_row(existing)
-            resolve(select_option_id(options, "allow_always"))
+            resolve(AcpAdapter.select_option_id(options, "allow_always"))
 
         def on_deny(r: PermissionRow) -> None:
             self._remove_permission_row(r)
-            resolve(select_option_id(options, "reject_once"))
+            resolve(AcpAdapter.select_option_id(options, "reject_once"))
 
         def on_auto_reject(r: PermissionRow) -> None:
             tool_name = r.tool_name or "tool"
@@ -2521,7 +2656,7 @@ class PilotWindow(LayerOverlayWindow):
             for existing in list(self._permissions):
                 if existing.tool_name == r.tool_name:
                     self._remove_permission_row(existing)
-            resolve(select_option_id(options, "reject_always"))
+            resolve(AcpAdapter.select_option_id(options, "reject_always"))
 
         row = PermissionRow(
             call,
@@ -2730,50 +2865,40 @@ class PilotWindow(LayerOverlayWindow):
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
-        resource_open = self._palette is not None and self._palette.is_open()
-        permissions_open = (
-            self._permissions_palette is not None
-            and self._permissions_palette.is_open()
-        )
-        mcp_open = self._mcp_palette is not None and self._mcp_palette.is_open()
-        sessions_open = (
-            self._sessions_palette is not None and self._sessions_palette.is_open()
-        )
-        root_open = (
-            self._root_palette is not None and self._root_palette.is_open()
-        )
+        palettes = {
+            "resource": self._palette,
+            "permissions": self._permissions_palette,
+            "mcp": self._mcp_palette,
+            "models": self._models_palette,
+            "sessions": self._sessions_palette,
+            "root": self._root_palette,
+            "keybindings": self._keybindings_palette,
+        }
+        opens = {name: p is not None and p.is_open() for name, p in palettes.items()}
+        any_palette_open = any(opens.values())
         if ctrl and keyval == Gdk.KEY_space:
-            # Single entry point — opens the root dispatcher palette
-            # from which the user picks Skills / MCPs / Sessions.
-            # When any leaf palette is already open we still let the
-            # user bounce back out via Ctrl+Space closing the stack;
-            # otherwise Ctrl+Space would silently open a second
-            # palette over the first.
-            if root_open:
-                self._root_palette.close()
-            elif resource_open:
-                self._palette.close()
-            elif mcp_open:
-                self._mcp_palette.close()
-            elif sessions_open:
-                self._sessions_palette.close()
+            # Single entry point for panel-style actions. Closes any
+            # open palette (root or leaf) so Ctrl+Space also acts as
+            # "escape the palette stack"; otherwise opens the root.
+            if any_palette_open:
+                for name, p in palettes.items():
+                    if opens[name] and p is not None:
+                        p.close()
             else:
                 self._open_root_palette()
             return True
         if ctrl and keyval == Gdk.KEY_k:
-            if permissions_open:
-                self._permissions_palette.close()
+            # Ctrl+K is the keybindings palette — flat list of every
+            # binding; Enter triggers the chosen action. Permissions
+            # moved into the root Ctrl+Space dispatcher.
+            if opens["keybindings"] and self._keybindings_palette is not None:
+                self._keybindings_palette.close()
             else:
-                self._open_permissions_palette()
+                self._open_keybindings_palette()
             return True
-        # Esc when any palette is open should dismiss only the palette.
-        any_palette_open = (
-            resource_open
-            or permissions_open
-            or mcp_open
-            or sessions_open
-            or root_open
-        )
+        if ctrl and keyval == Gdk.KEY_e:
+            self.dismiss_error()
+            return True
         if any_palette_open and keyval == Gdk.KEY_Escape:
             return False
         if ctrl and keyval == Gdk.KEY_q:
@@ -2803,15 +2928,15 @@ class PilotWindow(LayerOverlayWindow):
         if ctrl and keyval == Gdk.KEY_o:
             self._open_last_plan()
             return True
-        # Ctrl+⏎ dispatches the next queued turn. Declared AFTER the
+        # Ctrl+󰌑 dispatches the next queued turn. Declared AFTER the
         # other ctrl-combos so a focused compose TextView (which
-        # treats plain ⏎ as "submit") still gets first crack at the
+        # treats plain 󰌑 as "submit") still gets first crack at the
         # naked Return key; only the ctrl-modified form comes here.
         if ctrl and keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if self._send_next_queued():
                 return True
         # Ctrl+Backspace discards the head of the queue — pairs with
-        # Ctrl+⏎ (send next) so both keyboard-only queue actions live
+        # Ctrl+󰌑 (send next) so both keyboard-only queue actions live
         # on the same modifier set.
         if ctrl and keyval == Gdk.KEY_BackSpace:
             if self._discard_next_queued():
@@ -2926,7 +3051,7 @@ class PilotWindow(LayerOverlayWindow):
 
     @staticmethod
     def _attachment_label(att: PromptAttachment) -> str:
-        """Short human label for the pill. Images say `📎 image/png` with
+        """Short human label for the pill. Images say `󰁨 image/png` with
         the byte size so the user knows what they're about to send."""
         mime = att.mime_type or "blob"
         if att.data is not None:
@@ -2937,10 +3062,10 @@ class PilotWindow(LayerOverlayWindow):
                 size_str = f"{size / 1024:.1f}KB"
             else:
                 size_str = f"{size}B"
-            return f"📎 {mime} · {size_str}"
+            return f"󰁨 {mime} · {size_str}"
         if att.uri:
-            return f"📎 {mime} · {att.uri}"
-        return f"📎 {mime}"
+            return f"󰁨 {mime} · {att.uri}"
+        return f"󰁨 {mime}"
 
     def _on_pending_attachment_remove(self, key: object) -> None:
         self._pending_attachments = [
@@ -2966,24 +3091,11 @@ class PilotWindow(LayerOverlayWindow):
         self._root_palette.preseed_active(set())
         self._root_palette.open(
             [
-                (
-                    "skills",
-                    "Skills",
-                    "attach skills as resources on the next turn",
-                    "skills",
-                ),
-                (
-                    "mcps",
-                    "MCPs",
-                    "toggle MCP servers for this session",
-                    "mcps",
-                ),
-                (
-                    "sessions",
-                    "Sessions",
-                    "restore a previous session or start fresh",
-                    "sessions",
-                ),
+                ("skills", "Skills", "attach skills as resources on the next turn", "skills"),
+                ("mcps", "MCPs", "toggle MCP servers for this session", "mcps"),
+                ("models", "Models", "switch the agent's active model", "models"),
+                ("permissions", "Permissions", "review / revoke trusted tools", "permissions"),
+                ("sessions", "Sessions", "restore a previous session or start fresh", "sessions"),
             ]
         )
 
@@ -2991,20 +3103,20 @@ class PilotWindow(LayerOverlayWindow):
         """Root-palette commit handler. Opens the chosen leaf palette
         on the next idle tick (the root has already detached by the
         time `on_commit` fires, so raising the child directly is
-        safe). Unknown kinds just refocus the compose — a defensive
-        no-op so a future entry typo doesn't hang the palette."""
+        safe). Unknown kinds just refocus the compose."""
         if not entries:
             self._compose.focus()
             return
         kind = entries[0][0]
-        if kind == "skills":
-            self._open_resource_palette()
-        elif kind == "mcps":
-            self._open_mcp_palette()
-        elif kind == "sessions":
-            self._open_sessions_palette()
-        else:
-            self._compose.focus()
+        dispatch = {
+            "skills": self._open_resource_palette,
+            "mcps": self._open_mcp_palette,
+            "models": self._open_models_palette,
+            "permissions": self._open_permissions_palette,
+            "sessions": self._open_sessions_palette,
+        }
+        handler = dispatch.get(kind, self._compose.focus)
+        handler()
 
     def _open_resource_palette(self) -> None:
         """Raise the resource (skills) palette over the compose area
@@ -3062,12 +3174,11 @@ class PilotWindow(LayerOverlayWindow):
         self._refresh_resource_pills()
 
     def _open_permissions_palette(self) -> None:
-        """Ctrl+K: raise a palette listing every trusted / auto-
-        approved / auto-rejected tool. Tab ticks rows, Enter drops
-        each ticked tool from its bucket. Exists because the compose-
-        bar pill strip overflows past a dozen or so entries — a
-        filterable list scales better and keeps the compose area
-        clear."""
+        """Reached via Ctrl+Space → Permissions. Lists every trusted
+        / auto-approved / auto-rejected tool; Tab ticks rows, Enter
+        drops each ticked tool from its bucket. The compose-bar pill
+        strip overflows past a dozen entries — a filterable list
+        scales better and keeps the compose area clear."""
         if self._permissions_palette is None:
             self._permissions_palette = CommandPalette(
                 host_overlay=self._compose_overlay,
@@ -3080,6 +3191,96 @@ class PilotWindow(LayerOverlayWindow):
         self._size_palette(self._permissions_palette)
         self._permissions_palette.preseed_active(set())
         self._permissions_palette.open(self._collect_permission_entries())
+
+    # ── Keybindings palette (Ctrl+K) ─────────────────────────────
+    #
+    # Flat list of every window-level binding. Select-mode — Enter
+    # fires the chosen action on the next idle tick (palette has
+    # already detached by the time the callback runs, so raising
+    # another palette directly is safe).
+    #
+    # Entries are `(kind, key-label, action-description, action-id)`.
+    # `action-id` maps onto `_KEYBINDING_ACTIONS` below for dispatch.
+
+    _KEYBINDINGS: tuple[tuple[str, str, str], ...] = (
+        ("Ctrl+Space", "open the command palette (skills · mcps · models · permissions · sessions)", "root_palette"),
+        ("Ctrl+K", "show this keybindings list", "keybindings"),
+        ("Ctrl+E", "dismiss the error toast", "dismiss_error"),
+        ("Ctrl+F", "focus the compose box", "focus_compose"),
+        ("Ctrl+P", "paste clipboard into compose (image-aware)", "paste_clipboard"),
+        ("Ctrl+D", "cancel the current turn", "cancel_turn"),
+        ("Ctrl+Y", "yank the last assistant message", "yank_assistant"),
+        ("Ctrl+G", "accept the first pending permission", "accept_permission"),
+        ("Ctrl+R", "reject the first pending permission", "reject_permission"),
+        ("Ctrl+T", "toggle the last thinking expander", "toggle_thinking"),
+        ("Ctrl+O", "reopen the last plan card", "open_plan"),
+        ("Ctrl+󰌑", "send the next queued turn", "send_next_queued"),
+        ("Ctrl+⌫", "discard the next queued turn", "discard_next_queued"),
+        ("Ctrl+Q", "close pilot", "close"),
+        ("Home", "scroll to top of the conversation", "scroll_top"),
+        ("End", "scroll to bottom of the conversation", "scroll_bottom"),
+        ("PgUp", "scroll the conversation up one page", "scroll_page_up"),
+        ("PgDn", "scroll the conversation down one page", "scroll_page_down"),
+        ("Esc", "hide the overlay (session stays alive)", "hide"),
+    )
+
+    def _open_keybindings_palette(self) -> None:
+        """Raise the keybindings palette (Ctrl+K). Single-select —
+        Enter fires the chosen action."""
+        if self._keybindings_palette is None:
+            self._keybindings_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_keybinding_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Keybindings — Enter runs · Esc cancels",
+            )
+        self._size_palette(self._keybindings_palette)
+        self._keybindings_palette.preseed_active(set())
+        self._keybindings_palette.open(
+            [("key", key, desc, action) for key, desc, action in self._KEYBINDINGS]
+        )
+
+    def _commit_keybinding_choice(self, entries) -> None:
+        """Dispatch the picked keybinding to its handler. The dispatch
+        table is built lazily per-call so it binds to this instance's
+        current methods (not a class-level snapshot that might drift
+        if a subclass overrides one)."""
+        if not entries:
+            self._compose.focus()
+            return
+        action = entries[0][3]
+        dispatch = {
+            "root_palette": self._open_root_palette,
+            "keybindings": self._open_keybindings_palette,
+            "dismiss_error": self.dismiss_error,
+            "focus_compose": self._compose.focus,
+            "paste_clipboard": self._paste_clipboard_into_compose,
+            "cancel_turn": self._cancel_current_turn,
+            "yank_assistant": self._yank_last_assistant,
+            "accept_permission": self._accept_first_permission,
+            "reject_permission": self._reject_first_permission,
+            "toggle_thinking": self._toggle_last_thinking,
+            "open_plan": self._open_last_plan,
+            "send_next_queued": self._send_next_queued,
+            "discard_next_queued": self._discard_next_queued,
+            "close": self.close,
+            "scroll_top": lambda: self._scroll_to(0.0),
+            "scroll_bottom": lambda: self._scroll_to(1.0),
+            "scroll_page_up": lambda: self._scroll_page(-1),
+            "scroll_page_down": lambda: self._scroll_page(1),
+            "hide": lambda: self.set_visible(False),
+        }
+        handler = dispatch.get(action)
+        if handler is None:
+            log.warning("keybindings palette: unknown action %r", action)
+            self._compose.focus()
+            return
+        try:
+            handler()
+        except Exception as e:
+            log.error("keybinding action %s raised: %s", action, e)
+            self.show_error(f"Action {action} failed: {e}")
 
     def _size_palette(self, palette) -> None:
         """Size the floating palette panel to roughly 70% width × 60%
@@ -3147,23 +3348,17 @@ class PilotWindow(LayerOverlayWindow):
 
     def _open_sessions_palette(self) -> None:
         """Sessions palette (reached via the root palette's
-        `Sessions` row). Lists every ACP session the agent is
-        willing to resume, plus a `new session` sentinel. Select-mode
-        palette — Enter restores the highlighted row (swaps the
-        adapter's session_id and wipes the transcript), Ctrl+D drops
-        pilot's pointer file if it resolves to the highlighted
-        session (next launch would otherwise still auto-resume into
-        it)."""
+        `Sessions` row). Lists every ACP session the agent is willing
+        to resume, plus a `new session` sentinel. Select-mode — Enter
+        restores the highlighted row, wipes the transcript, and
+        queues a `load_session` for the next turn."""
         if self._sessions_palette is None:
             self._sessions_palette = CommandPalette(
                 host_overlay=self._compose_overlay,
                 on_commit=self._commit_session_restore,
                 on_cancel=self._compose.focus,
-                on_delete=self._forget_session_entry,
                 select_mode=True,
-                placeholder=(
-                    "Restore session — Enter loads · Ctrl+D forgets · Esc cancels"
-                ),
+                placeholder="Restore session — Enter loads · Esc cancels",
             )
         self._size_palette(self._sessions_palette)
         self._sessions_palette.preseed_active(set())
@@ -3188,11 +3383,14 @@ class PilotWindow(LayerOverlayWindow):
             ("new-session", "new session", "start a fresh ACP session", "new"),
         ]
         current = getattr(self._adapter, "session_id", None)
+        self._set_working("LISTING SESSIONS")
         try:
             sessions = self._adapter.list_sessions()
         except Exception as e:
             log.warning("list_sessions raised: %s", e)
             sessions = []
+        finally:
+            self._clear_working()
         for s in sessions:
             sid = s.get("session_id", "") or ""
             if not sid:
@@ -3226,25 +3424,72 @@ class PilotWindow(LayerOverlayWindow):
             self._restore_session(preview)
         self._compose.focus()
 
-    def _forget_session_entry(self, entry) -> None:
-        """Ctrl+D inside the sessions palette. Only affects pilot's
-        own pointer file — the agent's on-disk session record stays
-        untouched, so the same session is still selectable from the
-        palette next time if the user wants to load it manually.
+    def _open_models_palette(self) -> None:
+        """Models palette (reached via the root palette's `Models`
+        row). Select-mode list of the models the agent exposes for
+        this session; Enter calls `adapter.set_model`. Empty list
+        when the agent doesn't ship a `SessionModelState` (ACP still
+        marks the block unstable) — rendered as a single `no models`
+        sentinel so the user gets feedback instead of an empty panel."""
+        if self._models_palette is None:
+            self._models_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_model_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Switch model — Enter selects · Esc cancels",
+            )
+        self._size_palette(self._models_palette)
+        self._models_palette.preseed_active(set())
+        self._models_palette.open(self._collect_model_entries())
 
-        The `new-session` sentinel isn't a session to forget; ignore
-        Ctrl+D on it so the user can't accidentally wipe something
-        unrelated."""
-        kind, _name, _desc, preview = entry
-        if kind != "session" or not preview:
-            return
-        forgotten = False
+    def _collect_model_entries(self) -> list[tuple[str, str, str, str]]:
+        models = []
+        self._set_working("LOADING MODELS")
         try:
-            forgotten = self._adapter.forget_session(preview)
+            models = self._adapter.available_models
         except Exception as e:
-            log.warning("forget_session raised: %s", e)
-        if forgotten:
+            log.warning("available_models raised: %s", e)
+        finally:
+            self._clear_working()
+        if not models:
+            return [("empty", "no models", "agent did not expose a model list", "")]
+        current = getattr(self._adapter, "current_model_id", None)
+        out: list[tuple[str, str, str, str]] = []
+        for m in models:
+            tag = "current · " if m.model_id == current else ""
+            desc = f"{tag}{m.description}" if m.description else (tag + m.model_id)
+            out.append(("model", m.name or m.model_id, desc, m.model_id))
+        return out
+
+    def _commit_model_choice(self, entries) -> None:
+        """Fire ACP `session/set_session_model` so the agent swaps
+        models on the existing session. The agent handles context
+        trimming / fallback itself — if the new model's window is too
+        small, it surfaces the error through the normal turn-error
+        path (which the toast picks up)."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind, _name, _desc, model_id = entries[0]
+        if kind != "model" or not model_id:
+            self._compose.focus()
+            return
+        ok = False
+        self._set_working(f"SWITCHING → {model_id}")
+        try:
+            ok = self._adapter.set_model(model_id)
+        except Exception as e:
+            log.error("set_model raised: %s", e)
+            self.show_error(f"Model switch failed: {e}")
+        finally:
+            self._clear_working()
+        if ok:
+            log.info("switched model to %s", model_id)
             self._refresh_session_label()
+        else:
+            self.show_error(f"Model switch to {model_id} rejected by agent")
+        self._compose.focus()
 
     def _restore_session(self, session_id: str) -> None:
         """Swap the adapter onto `session_id` and wipe the visible
@@ -3256,11 +3501,14 @@ class PilotWindow(LayerOverlayWindow):
         if not session_id:
             return
         log.info("_restore_session: switching to id=%s", session_id)
+        self._set_working(f"LOADING {session_id[:8]}")
         try:
             self._adapter.select_session(session_id)
         except Exception as e:
             log.warning("adapter select_session raised: %s", e)
+            self._clear_working()
             return
+        self._clear_working()
 
         # Same housekeeping as `start_fresh_session` — the old
         # transcript, queue, and pending UI state belonged to the
@@ -3382,7 +3630,7 @@ class PilotWindow(LayerOverlayWindow):
 
         self._update_phase()
         # `_adapter.reset()` zeroed `session_resumed`; refresh the
-        # breadcrumb so the `↻ restored` tag drops in the same frame
+        # breadcrumb so the `󰑐 restored` tag drops in the same frame
         # as the transcript wipe.
         self._refresh_session_label()
         _signal_waybar_safe()
@@ -3415,7 +3663,7 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _accept_first_permission(self) -> None:
-        """Ctrl+G: click the `✓ allow` button on the oldest pending
+        """Ctrl+G: click the `󰄬 allow` button on the oldest pending
         permission row. Keyboard-only accept for the row that grabbed
         focus when it appeared — saves the user a Tab-to-allow + Enter
         dance when they just want to approve and move on. Silent no-op
@@ -3425,7 +3673,7 @@ class PilotWindow(LayerOverlayWindow):
         self._permissions[0]._allow_btn.emit("clicked")
 
     def _reject_first_permission(self) -> None:
-        """Ctrl+R: click the `✕ deny` button on the oldest pending
+        """Ctrl+R: click the `󰅖 deny` button on the oldest pending
         permission row — symmetric to Ctrl+G. Cancels the current
         turn and drops the tool from trust if it was there. Silent
         no-op when the panel is empty."""
@@ -3526,68 +3774,68 @@ class PilotWindow(LayerOverlayWindow):
         pilot_css_path = os.path.join(os.path.dirname(__file__), "pilot.css")
         load_css_from_path(pilot_css_path, tag="pilot.css")
 
-def _is_live() -> bool:
-    """Probe the session socket without sending a command. Returns True if
-    a server accepted our connect, False if the file is stale / absent."""
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(1)
-    try:
-        probe.connect(_PATHS.socket_path)
-
-        return True
-    except ConnectionRefusedError, FileNotFoundError:
-        return False
-    except OSError as e:
-        log.warning("socket probe failed: %s", e)
-
-        return False
-    finally:
-        probe.close()
-
-def _send(cmd: str, **kwargs) -> Optional[dict]:
-    """Send a one-shot JSON command to the running session.
-
-    Returns the parsed response dict, or None when no session answers.
-    Stale socket files from a crashed session are unlinked so the next
-    invocation can bind fresh."""
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(2)
-    try:
-        sock.connect(_PATHS.socket_path)
-    except FileNotFoundError, ConnectionRefusedError:
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        return None
-    except OSError as e:
-        log.warning("socket connect failed: %s", e)
-        return None
-
-    try:
-        payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
-        sock.sendall(payload.encode())
-        chunks = []
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                break
-            chunks.append(data)
-        raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            log.warning("bad response from session: %s (raw=%r)", e, raw)
-            return None
-    finally:
-        sock.close()
-
 class Session:
     """Owns the Unix socket for a live pilot window. A background thread
     accepts connections from forwarder invocations and dispatches their
     `turn` / `status` commands back onto the GTK main thread."""
+
+    @staticmethod
+    def is_live() -> bool:
+        """Probe the session socket. True if a server accepted our
+        connect, False when the file is stale / absent."""
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(1)
+        try:
+            probe.connect(_PATHS.socket_path)
+            return True
+        except (ConnectionRefusedError, FileNotFoundError):
+            return False
+        except OSError as e:
+            log.warning("socket probe failed: %s", e)
+            return False
+        finally:
+            probe.close()
+
+    @staticmethod
+    def send(cmd: str, **kwargs) -> Optional[dict]:
+        """Send a one-shot JSON command to the running session.
+
+        Returns the parsed response dict, or None when no session
+        answers. Stale socket files from a crashed session get
+        unlinked so the next invocation can bind fresh."""
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect(_PATHS.socket_path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            try:
+                os.unlink(_PATHS.socket_path)
+            except FileNotFoundError:
+                pass
+            return None
+        except OSError as e:
+            log.warning("socket connect failed: %s", e)
+            return None
+
+        try:
+            payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
+            sock.sendall(payload.encode())
+            chunks = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+            raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                log.warning("bad response from session: %s (raw=%r)", e, raw)
+                return None
+        finally:
+            sock.close()
 
     def __init__(self, window: PilotWindow, provider: ConversationProvider):
         self._window = window
@@ -3603,7 +3851,7 @@ class Session:
             if e.errno != errno.EADDRINUSE:
                 sock.close()
                 raise
-            if _is_live():
+            if Session.is_live():
                 sock.close()
                 raise RuntimeError(
                     f"another pilot session is already running at {path}"
@@ -3650,7 +3898,7 @@ class Session:
             response = self._dispatch(raw)
             try:
                 conn.sendall(json.dumps(response).encode())
-            except BrokenPipeError, ConnectionResetError:
+            except (BrokenPipeError, ConnectionResetError):  # noqa
                 # Client went away before reading our reply. Common and
                 # expected: forwarders that fire-and-forget, kill
                 # commands that tear everything down before the response
@@ -3697,9 +3945,6 @@ class Session:
                     "session": _PATHS.suffix,
                     "session_id": getattr(adapter, "session_id", None) or "",
                     "session_resumed": bool(getattr(adapter, "session_resumed", False)),
-                    "session_store_path": (
-                        getattr(adapter, "session_store_path", None) or ""
-                    ),
                 }
             case "kill":
                 # Tear down from the GTK main thread so close-request handlers
@@ -3723,7 +3968,7 @@ _PILOT_MCP_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lib", "mcp_server.py"
 )
 
-def _build_pilot_mcp_server(skills_dir: Optional[str]) -> "McpServerStdio":
+def _build_pilot_mcp_server(skills_dir: Optional[str]) -> McpServerStdio:
     """Construct the `system` ACP server pilot ships itself. Kept in
     pilot.py (not `lib.mcp_servers`) so the env — currently just
     `PILOT_SKILLS_DIR` — is resolved from pilot's own argparse state
@@ -3861,22 +4106,13 @@ def _build_permission_handler(window):
 
 _MCP_SPLIT_RE = re.compile(r"[\s,]+")
 
-def _default_mcp_names() -> list[str]:
-    """Full MCP catalog used when `--mcp` is omitted. `system` first
-    (pilot's own server, always ships), then every external entry the
-    mcphub JSON produced."""
-    return [_PILOT_MCP_SERVER_NAME, *DEFAULT_SERVER_NAMES]
-
 def _resolve_mcp(args) -> list[str]:
     """De-dupe `--mcp NAME` flags into an ordered list. Each flag
-    value may itself be a comma- or whitespace-separated list —
-    `--mcp git,memory` and `--mcp git --mcp memory` produce identical
-    output. Omitting the flag falls through to the full catalog;
-    `--mcp ""` disables everything. Unknown names survive to
-    `_acp_mcp_servers` which logs and skips."""
+    value may itself be comma- or whitespace-separated. Omitting the
+    flag picks the full catalog; `--mcp ""` disables everything."""
     raw_values = getattr(args, "mcp", None)
     if raw_values is None:
-        return _default_mcp_names()
+        return [_PILOT_MCP_SERVER_NAME, *DEFAULT_SERVER_NAMES]
     out: list[str] = []
     seen: set[str] = set()
     for raw in raw_values:
@@ -3888,9 +4124,7 @@ def _resolve_mcp(args) -> list[str]:
     return out
 
 def _read_agents_md(path: Optional[str]) -> str:
-    """Return the AGENTS.md contents (or empty string if missing / not
-    configured). Any read error degrades to "" + a warning — we never
-    block `toggle` on a missing bootstrap file."""
+    """AGENTS.md contents (or empty string on missing / unreadable)."""
     if not path:
         log.info("agents-md: no path configured; injection disabled")
         return ""
@@ -3907,40 +4141,23 @@ def _read_agents_md(path: Optional[str]) -> str:
     log.info("agents-md %s: loaded %d chars", expanded, len(contents))
     return contents
 
-def _compose_system_prompt(base: str, agents_md: str) -> str:
-    """Prepend `agents_md` to `base`, separated by a blank line, iff
-    `agents_md` has content. Otherwise return `base` unchanged so we
-    don't introduce a leading newline into the default prompt."""
-    if not agents_md:
-        return base
-
-    return f"{agents_md}\n\n{base}"
-
 def _build_adapter(args) -> ConversationAdapter:
     provider = ConversationProvider(args.converse_provider)
     cwd = getattr(args, "cwd", None)
-    agents_md_path = getattr(args, "agents_md", None)
     skills_dir = os.path.expanduser(getattr(args, "skills_dir", "") or "") or None
     mcp_servers = _acp_mcp_servers(
         mcp=_resolve_mcp(args),
         skills_dir=skills_dir,
     )
-    system_prompt = _compose_system_prompt(
-        AI_SYSTEM_PROMPT,
-        _read_agents_md(agents_md_path),
-    )
-    session_store_path = _session_store_path(
-        suffix=_PATHS.suffix,
-        provider=provider,
-        model=args.converse_model,
-        cwd=cwd,
+    agents_md = _read_agents_md(getattr(args, "agents_md", None))
+    system_prompt = (
+        f"{agents_md}\n\n{AI_SYSTEM_PROMPT}" if agents_md else AI_SYSTEM_PROMPT
     )
     log.info(
-        "_build_adapter: provider=%s model=%s cwd=%s session_store=%s",
+        "_build_adapter: provider=%s model=%s cwd=%s",
         provider.value,
         args.converse_model,
         cwd,
-        session_store_path,
     )
     match provider:
         case ConversationProvider.CLAUDE:
@@ -3949,7 +4166,6 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
-                session_store_path=session_store_path,
             )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
@@ -3957,64 +4173,9 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
-                session_store_path=session_store_path,
             )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
-
-_MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
-
-def _model_tag(model: Optional[str]) -> str:
-    """Slugify `--converse-model` into a filesystem-safe token so it can
-    ride in the session-store filename. `glm-5.1:cloud` → `glm-5-1-cloud`,
-    None / empty → `default`. Keeps store paths predictable for the
-    sessions palette's Ctrl+D / restore flow."""
-    if not model:
-        return "default"
-    slug = _MODEL_TAG_RE.sub("-", model.lower()).strip("-")
-    return slug or "default"
-
-def _session_store_path(
-    *,
-    suffix: str,
-    provider: "ConversationProvider",
-    model: Optional[str],
-    cwd: Optional[str],
-) -> str:
-    """Derive the on-disk path where the ACP `session_id` for this
-    (suffix, provider, model, cwd) quadruple is persisted. Kept under
-    `$XDG_STATE_HOME/pilot/sessions/` so uninstalling pilot cleans up
-    with the rest of user state.
-
-    The key encodes:
-      - `suffix` — `--session` flag (e.g. "plan"); scopes sessions per
-        overlay so "plan" and "ask" don't collide.
-      - `provider` — Claude and OpenCode sessions aren't
-        interchangeable; different agents store different ids.
-      - `model` — resumed sessions keep whichever model they were
-        created with (opencode / claude-agent-acp don't reapply
-        `--model` to `load_session`). Including the model in the key
-        makes `--converse-model glm-5.1:cloud` vs `sonnet` spawn
-        *distinct* stored sessions so changing the flag actually
-        changes the model.
-      - `cwd` — the same `--session plan` launched against `~/notes`
-        vs `~/work` should resume INTO the corresponding project;
-        hashing cwd into the key splits them cleanly.
-
-    The cwd is hashed rather than path-embedded so filesystem-unsafe
-    characters in long paths (colons, slashes) don't leak into the
-    filename."""
-    import hashlib
-
-    state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
-        "~/.local/state"
-    )
-    root = os.path.join(state_home, "pilot", "sessions")
-    suffix_tag = suffix or "default"
-    cwd_key = cwd or os.getcwd()
-    cwd_hash = hashlib.sha1(cwd_key.encode("utf-8")).hexdigest()[:10]
-    filename = f"{suffix_tag}-{provider.value}-{_model_tag(model)}-{cwd_hash}.session"
-    return os.path.join(root, filename)
 
 def _read_input(mode: InputMode) -> str:
     match mode:
@@ -4035,7 +4196,7 @@ def _read_input(mode: InputMode) -> str:
 
     return (text or "").strip()
 
-def _cmd_toggle(args) -> None:
+def _toggle(args) -> None:
     """Unified toggle. Three behaviours, chosen from context:
 
     1. No session + any input     -> open a new session.
@@ -4052,17 +4213,17 @@ def _cmd_toggle(args) -> None:
     # press-2 of `speech.py toggle --output stdout | pilot.py toggle`).
     piped_empty = args.input == InputMode.STDIN and not sys.stdin.isatty()
 
-    status = _send("status")
+    status = Session.send("status")
     if status and status.get("ok"):
         if initial:
-            _send("turn", text=initial)
+            Session.send("turn", text=initial)
             return
         if piped_empty:
             # Fire-and-forget callers (speech press-2) — don't touch
             # the visibility; the payload-bearing sibling pipe will
             # reach the session on its own.
             return
-        _send("toggle-window")
+        Session.send("toggle-window")
 
         return
 
@@ -4139,249 +4300,157 @@ def _cmd_toggle(args) -> None:
             server.stop()
         _signal_waybar_safe()
 
-def _cmd_status() -> None:
-    """Waybar custom-module payload. Compact icon-only text (provider lives
-    in the tooltip); class picks the state colour (idle green / pending red
-    / streaming yellow / awaiting blue); queue depth renders as a Pango
-    superscript badge so N pending turns show as `󱍊³` without stealing
-    horizontal space."""
-    resp = _send("status")
-    if not resp or not resp.get("ok"):
-        print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
+class Pilot:
+    """CLI dispatcher — all subcommands live here as methods."""
 
-        return
+    @dataclass
+    class ToggleArgs:
+        input: InputMode
+        converse_provider: str
+        converse_model: Optional[str]
+        cwd: Optional[str]
+        auto_approve: list[str]
+        auto_reject: list[str]
+        agents_md: str
+        skills_dir: str
+        mcp: Optional[list[str]]
 
-    provider = resp.get("provider", "")
-    phase = resp.get("phase", "idle")
-    queue = int(resp.get("queue", 0) or 0)
-    session = resp.get("session") or _PATHS.suffix
-    session_tag = f" ({session})" if session else ""
-    icon = "󱍊"
-    badge = f"<sup>{queue}</sup>" if queue > 0 else ""
-    text = f"{icon}{session_tag}{badge}"
-    label = f"Pilot{' ' + session_tag if session_tag else ''}"
-    match phase:
-        case "streaming":
-            tooltip = f"{label}: streaming via {provider}"
-        case "pending":
-            tooltip = f"{label}: waiting on first chunk from {provider}"
-        case "awaiting":
-            tooltip = f"{label}: waiting on user input ({provider})"
-        case _:
-            tooltip = f"{label}: {provider} idle"
-    if queue > 0:
-        tooltip += f"  ({queue} queued)"
-    print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
-
-def _cmd_is_running() -> None:
-    """Waybar `exec-if` gate. Exit 0 when a session socket is live so the
-    custom module shows, otherwise exit 1 and stay hidden."""
-    sys.exit(0 if _is_live() else 1)
-
-def _cmd_kill() -> None:
-    """End the running pilot session (if any) and return immediately. Matches
-    `speech.py kill` so recording-mode bindings can terminate either."""
-    resp = _send("kill")
-    if not resp:
-        # No live session answered — clear a stale socket file so the next
-        # toggle starts clean.
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-    _signal_waybar_safe()
-
-def main():
-    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help=(
-            "enable DEBUG logging — includes the raw JSON-RPC wire for "
-            "every ACP frame (both directions) plus the agent subprocess "
-            "stderr. Use when a turn misbehaves (e.g. opencode not "
-            "asking for tool permission) and you need to see whether "
-            "the method is actually firing over the protocol."
-        ),
-    )
-    # Session suffix: when set, rewrites every user-visible runtime path
-    # (main socket, MCP socket, adapter config files) plus the GTK
-    # app-id to include `-<suffix>`. Lets multiple pilot overlays coexist
-    # (e.g. the default "ask" pilot and a dedicated "plan" pilot). Empty
-    # string keeps the shipped paths byte-for-byte identical, so no-flag
-    # behaviour is unchanged.
-    parser.add_argument(
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    @click.option(
         "--session",
+        "session_suffix",
         default="",
         metavar="SUFFIX",
-        help=(
-            "session suffix — appended to socket / config-file / app-id "
-            "names so multiple pilot overlays can coexist. Empty (default) "
-            "keeps the original paths."
-        ),
+        help="Session suffix.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    def cli(verbose: bool, session_suffix: str):
+        """Conversational AI sidebar overlay."""
+        create_logger(verbose)
+        global _PATHS
+        _PATHS = PilotPaths.from_suffix(session_suffix or "")
 
-    toggle_parser = subparsers.add_parser(
-        "toggle",
-        help="open the overlay (or forward a turn to a running session)",
-    )
-    toggle_parser.add_argument(
+    @cli.command("toggle")
+    @click.option(
         "--input",
-        type=InputMode,
-        choices=[InputMode.STDIN, InputMode.CLIPBOARD],
-        default=InputMode.STDIN,
-        help="Source of the initial user turn",
+        "input_",
+        type=click.Choice([m.value for m in (InputMode.STDIN, InputMode.CLIPBOARD)]),
+        default=InputMode.STDIN.value,
+        help="Initial user-turn source.",
     )
-    toggle_parser.add_argument(
+    @click.option(
         "--converse-provider",
-        choices=list(ConversationProvider),
-        default=DEFAULT_CONVERSE_ADAPTER,
+        type=click.Choice([p.value for p in ConversationProvider]),
+        default=DEFAULT_CONVERSE_ADAPTER.value,
     )
-    # None → per-adapter default (`sonnet` for Claude, whatever
-    # opencode picks for OpenCode).
-    toggle_parser.add_argument("--converse-model", default=None)
-    # Working directory for the spawned ACP agent subprocess. Default
-    # = a fresh `mkdtemp` so each session runs in a clean-room sandbox.
-    toggle_parser.add_argument(
+    @click.option("--converse-model", default=None, help="Per-adapter model override.")
+    @click.option(
         "--cwd",
         default=None,
         metavar="PATH",
-        help=(
-            "working directory for the spawned AI CLI. Defaults to a "
-            "fresh tempdir (tempfile.mkdtemp(prefix='pilot-'))."
-        ),
+        help="Agent working dir; defaults to a fresh tempdir.",
     )
-    # Auto-approve: tool names whose ACP permission requests are
-    # short-circuited to `allow` without surfacing a row in the
-    # overlay. Repeatable, matches case-insensitively and treats
-    # `-` / `_` as equivalent (so `Read`, `read`, `read-file`,
-    # `read_file` all canonicalise the same). Rendered as green pills
-    # on the submit bar; click a pill to drop the tool back into the
-    # normal approval flow.
-    toggle_parser.add_argument(
+    @click.option(
         "--auto-approve",
-        action="append",
-        dest="auto_approve",
-        default=[],
-        metavar="TOOL_NAME",
-        help=(
-            "Tool name to auto-approve without prompting the user. "
-            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
-            "corresponding green pill in the compose bar to revoke."
-        ),
+        "auto_approve",
+        multiple=True,
+        metavar="TOOL",
+        help="Auto-approve a tool; repeatable.",
     )
-    # Auto-reject: mirror of `--auto-approve` — tool names whose
-    # permission requests short-circuit to `deny`. Repeatable, same
-    # normalisation rules. Rendered as red pills; click to drop the
-    # tool back into the normal approval flow.
-    toggle_parser.add_argument(
+    @click.option(
         "--auto-reject",
-        action="append",
-        dest="auto_reject",
-        default=[],
-        metavar="TOOL_NAME",
-        help=(
-            "Tool name to auto-reject without prompting the user. "
-            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
-            "corresponding red pill in the compose bar to revoke."
-        ),
+        "auto_reject",
+        multiple=True,
+        metavar="TOOL",
+        help="Auto-reject a tool; repeatable.",
     )
-    # Bootstrap-rules injection. When set (and the file exists) the
-    # contents are PREPENDED to the provider's system prompt on the
-    # first turn, AND registered as `mcp__pilot__resource__agents` so
-    # the model can re-read the canonical source mid-session. Default
-    # matches the nvim config's AGENTS.md path; set to empty string to
-    # disable injection entirely.
-    toggle_parser.add_argument(
+    @click.option(
         "--agents-md",
-        dest="agents_md",
         default="~/.config/nvim/utils/agents/AGENTS.md",
         metavar="PATH",
-        help=(
-            "Path to AGENTS.md. When the file exists its contents are "
-            "prepended to the system prompt and exposed as an MCP "
-            "resource tool so the model can re-read it on demand. "
-            "Empty string disables injection. "
-            "Default: ~/.config/nvim/utils/agents/AGENTS.md"
-        ),
+        help="Path to AGENTS.md; empty disables injection.",
     )
-    # Skills directory. When set (and the dir exists) the subprocess
-    # registers `list_skills` + `load_skill` MCP tools backed by the
-    # `*/SKILL.md` layout from mcphub-nvim. Default matches the nvim
-    # config; set to "" to skip.
-    toggle_parser.add_argument(
+    @click.option(
         "--skills-dir",
-        dest="skills_dir",
         default="~/.config/nvim/utils/agents/skills",
         metavar="DIR",
-        help=(
-            "Path to the agent skills root. Each subdirectory must "
-            "contain a SKILL.md with `---`-delimited YAML frontmatter "
-            "(name + description). Empty string disables the skills "
-            "MCP capability. "
-        ),
+        help="Agent skills root; empty disables.",
     )
-    # MCP servers to register alongside pilot. Repeatable; each value
-    # may itself be comma- or whitespace-separated so shell helpers
-    # can pass bulk lists (`--mcp git,memory`). Names resolve against
-    # `lib.mcp_servers.DEFAULT_SERVERS` (nvim form like `argocd/kilic`
-    # accepted too). Omitting the flag entirely picks the full
-    # catalog; pass `--mcp ""` explicitly to opt everything out.
-    toggle_parser.add_argument(
+    @click.option(
         "--mcp",
-        action="append",
-        dest="mcp",
-        default=None,
+        multiple=True,
         metavar="NAME",
-        help=(
-            "MCP server to register. Repeatable; accepts comma / "
-            "whitespace-separated lists. Omit to enable the full "
-            "catalog; pass an empty value to disable."
-        ),
+        help="MCP server; repeatable, accepts comma/space lists.",
     )
+    def cmd_toggle(
+        input_,
+        converse_provider,
+        converse_model,
+        cwd,
+        auto_approve,
+        auto_reject,
+        agents_md,
+        skills_dir,
+        mcp,
+    ):
+        """Open the overlay, or forward a turn to the live session."""
+        _toggle(
+            Pilot.ToggleArgs(
+                input=InputMode(input_),
+                converse_provider=converse_provider,
+                converse_model=converse_model,
+                cwd=os.path.expanduser(cwd) if cwd else None,
+                auto_approve=list(auto_approve),
+                auto_reject=list(auto_reject),
+                agents_md=agents_md,
+                skills_dir=skills_dir,
+                mcp=list(mcp) if mcp else None,
+            )
+        )
 
-    subparsers.add_parser("status", help="print waybar-shaped JSON status")
-    subparsers.add_parser(
-        "is-running",
-        help="exit 0 if a session is live, non-zero otherwise",
-    )
-    subparsers.add_parser("kill", help="terminate the running session (if any)")
+    @cli.command("status")
+    def cmd_status():
+        """Print waybar-shaped status JSON."""
+        resp = Session.send("status")
+        if not resp or not resp.get("ok"):
+            print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
+            return
+        provider = resp.get("provider", "")
+        phase = resp.get("phase", "idle")
+        queue = int(resp.get("queue", 0) or 0)
+        session = resp.get("session") or _PATHS.suffix
+        session_tag = f" ({session})" if session else ""
+        badge = f"<sup>{queue}</sup>" if queue > 0 else ""
+        text = f"󱍊{session_tag}{badge}"
+        label = f"Pilot{' ' + session_tag if session_tag else ''}"
+        tooltips = {
+            "streaming": f"{label}: streaming via {provider}",
+            "pending": f"{label}: waiting on first chunk from {provider}",
+            "awaiting": f"{label}: waiting on user input ({provider})",
+        }
+        tooltip = tooltips.get(phase, f"{label}: {provider} idle")
+        if queue > 0:
+            tooltip += f"  ({queue} queued)"
+        print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
 
-    args = parser.parse_args()
+    @cli.command("is-running")
+    def cmd_is_running():
+        """Exit 0 if a session is live."""
+        sys.exit(0 if Session.is_live() else 1)
 
-    # Always log to stderr — stdout belongs to waybar-style status
-    # subcommands (`status` emits JSON) and to any future pipe consumer.
-    # INFO default so the key event-points (spawn, session-id, prompt
-    # shape, permission round-trips, MCP server chatter) surface
-    # without needing `-v`; `-v` bumps to DEBUG which adds per-chunk
-    # and per-RPC detail.
-    logging.basicConfig(
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        stream=sys.stderr,
-    )
+    @cli.command("kill")
+    def cmd_kill():
+        """Terminate the running session."""
+        if not Session.send("kill"):
+            try:
+                os.unlink(_PATHS.socket_path)
+            except FileNotFoundError:
+                pass
+        _signal_waybar_safe()
 
-    global _PATHS
-    _PATHS = PilotPaths.from_suffix(args.session or "")
-
-    # Expand `~` in user-supplied `--cwd`. The None → mkdtemp default is
-    # deferred into `_cmd_toggle` so status / kill / forwarding turns
-    # never leak a stray tempdir.
-    if args.command == "toggle" and args.cwd:
-        args.cwd = os.path.expanduser(args.cwd)
-
-    match args.command:
-        case "toggle":
-            _cmd_toggle(args)
-        case "status":
-            _cmd_status()
-        case "is-running":
-            _cmd_is_running()
-        case "kill":
-            _cmd_kill()
+# Early shebang scan expects the literal "toggle" token somewhere in argv
+# — we only LD_PRELOAD gtk4-layer-shell when the window will actually
+# render. Click's subcommand name matches this, so nothing else to wire.
 
 if __name__ == "__main__":
-    main()
+    Pilot.cli()

@@ -1,10 +1,7 @@
 #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
-# The `sh -c` trampoline lets us run `uv run --project <fixed dir>` no
-# matter where the invoking shell's CWD happens to sit — keyboard binds
-# and waybar modules hand us whatever their compositor's working dir is.
-# See pyproject.toml for the full rationale.
 
-import argparse
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -12,148 +9,119 @@ import signal
 import sys
 from typing import Optional
 
+import click
 import psutil
 
 from lib import (
     DEFAULT_ENRICH_ADAPTER,
-    InputAdapterClipboard,
-    OutputAdapterClipboard,
     EnrichAdapter,
     EnrichAdapterClaude,
     EnrichAdapterHttp,
     EnrichAdapterOpenCode,
     EnrichProvider,
     InputAdapter,
+    InputAdapterClipboard,
+    InputAdapterStdin,
     InputMode,
     OutputAdapter,
-    OutputMode,
-    InputAdapterStdin,
+    OutputAdapterClipboard,
     OutputAdapterStdout,
     OutputAdapterType,
+    OutputMode,
+    create_logger,
     load_prompt,
     notify,
     signal_waybar,
 )
 
-WAYBAR_MODULE = "copywriter"
-ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
-
-log = logging.getLogger("copywriter")
-
-SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
-USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
-
 class Copywriter:
+    WAYBAR_MODULE = "copywriter"
+    ICON = (
+        "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
+    )
+    SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
+    USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
+
+    log = logging.getLogger("copywriter")
+
     def __init__(
         self,
-        args,
         input: Optional[InputAdapter] = None,
         enricher: Optional[EnrichAdapter] = None,
         output: Optional[OutputAdapter] = None,
     ):
-        self.args = args
         self._input = input
         self._enricher = enricher
         self._output = output
 
-    def run(self):
-        cmd = self.args.command
-        if cmd == "run":
-            self._run()
-        elif cmd == "kill":
-            self._kill()
-        elif cmd == "status":
-            print(self._get_status_json())
-        elif cmd == "is-running":
-            sys.exit(0 if self._is_running() else 1)
+    # ── core ──────────────────────────────────────────────────────
 
     def _notify(self, message, timeout=None):
-        notify("Copywriter", message, ICON, timeout)
+        notify("Copywriter", message, self.ICON, timeout)
 
-    def _find_workers(self):
-        """Live copywriter.py `run` workers, excluding self.
+    def _find_workers(self) -> list[psutil.Process]:
+        """Live `run` workers, excluding self.
 
-        The uv shebang spawns TWO processes per invocation: the python
-        worker (which we want) and a persistent `uv run ...` wrapper
-        parent (which we DON'T). The wrapper's cmdline happens to
-        contain both `__file__` (as the script path it forwards) and
-        the literal "run" (from `uv run`), so a naive `"run" in
-        cmdline` substring test false-matches EVERY subcommand —
-        `is-running` included, which makes every invocation think
-        something is already running.
-
-        Two filters to keep only real workers:
-          * Skip processes named "uv" — they're the shebang wrapper.
-            Crucial: `_kill` calls `os.killpg(p.pid, SIGKILL)`
-            assuming each worker is its own session leader (set up by
-            `os.setsid()` in `_run`). The uv wrapper is NOT a session
-            leader, so passing its PID to `killpg` would SIGKILL
-            whatever group uv was launched in (shell, waybar, etc.).
-          * Match the subcommand at the cmdline tail (`cmdline[-1] ==
-            "run"`) instead of anywhere in cmdline, so the filter
-            actually distinguishes `run` from `is-running` / `status`
-            / `kill`.
-
-        Script path comparison uses `endswith(basename)` so a
-        stow-symlink invocation and a real-path invocation still
-        count as the same script."""
+        Skips the `uv run` shebang wrapper so `kill` never passes a
+        non-session-leader PID to `killpg`. Matches the `run`
+        subcommand *positionally* — it's the argument immediately
+        after the script path, not the tail, since `run stdout
+        --model haiku …` puts the subcommand at index N+1 with
+        unrelated options after it."""
         current = os.getpid()
         basename = os.path.basename(__file__)
-        workers = []
+        workers: list[psutil.Process] = []
         for p in psutil.process_iter(["pid", "cmdline", "name"]):
             if p.info["pid"] == current:
                 continue
             if p.info.get("name") == "uv":
                 continue
             cmdline = p.info["cmdline"] or []
-            if not cmdline or cmdline[-1] != "run":
+            script_idx = next(
+                (i for i, arg in enumerate(cmdline) if arg and arg.endswith(basename)),
+                -1,
+            )
+            if script_idx < 0:
                 continue
-            if not any(arg and arg.endswith(basename) for arg in cmdline):
+            if cmdline[script_idx + 1 : script_idx + 2] != ["run"]:
                 continue
             workers.append(p)
-
         return workers
 
-    def _is_running(self):
+    def is_running(self) -> bool:
         return bool(self._find_workers())
 
-    def _run(self):
+    def run_once(self) -> None:
         assert self._input is not None, "run requires an input adapter"
         assert self._enricher is not None, "run requires an enrich adapter"
         assert self._output is not None, "run requires an output adapter"
 
-        if self._is_running():
+        if self.is_running():
+            self.log.info("another copywriter is already running; bailing")
             self._notify("Copywriter is already running")
-
             return
 
-        # Synchronous for stdout (user wants it in their terminal); fork for
-        # background sinks so the keybind returns fast. The child inherits
-        # argv, so _find_workers keeps detecting it as the live worker.
         if self._output.mode is OutputMode.STDOUT:
             self._execute()
-            signal_waybar(WAYBAR_MODULE)
-
+            signal_waybar(self.WAYBAR_MODULE)
             return
 
-        pid = os.fork()
-        if pid > 0:
+        if os.fork() > 0:
             self._notify(
                 f"Refining {self._input.mode.value} → {self._output.mode.value}...",
                 timeout=2000,
             )
-            signal_waybar(WAYBAR_MODULE)
-
+            signal_waybar(self.WAYBAR_MODULE)
             return
 
         os.setsid()
         try:
             self._execute()
         finally:
-            signal_waybar(WAYBAR_MODULE)
+            signal_waybar(self.WAYBAR_MODULE)
             os._exit(0)
 
-    def _execute(self):
+    def _execute(self) -> None:
         assert (
             self._input is not None
             and self._enricher is not None
@@ -161,166 +129,163 @@ class Copywriter:
         )
         text = self._input.read()
         if not text or not text.strip():
+            self.log.warning("%s was empty", self._input.mode.value)
             self._notify(f"{self._input.mode.value.capitalize()} is empty")
-
             return
 
-        log.info("%s text: %d chars", self._input.mode.value, len(text))
+        self.log.info("%s text: %d chars", self._input.mode.value, len(text))
         result = self._enricher.enrich(text)
-
         if not result or not result.strip():
-            self._notify(
-                f"Refinement failed, {self._output.mode.value} unchanged",
+            self.log.warning(
+                "enrichment empty; leaving %s unchanged", self._output.mode.value
             )
-
+            self._notify(f"Refinement failed, {self._output.mode.value} unchanged")
             return
 
         self._output.write(result.strip())
+        self.log.info(
+            "refined %s → %s (%d chars)",
+            self._input.mode.value,
+            self._output.mode.value,
+            len(result),
+        )
         self._notify(
             f"Refined {self._input.mode.value} → {self._output.mode.value}",
             timeout=3000,
         )
-        log.info("done")
 
-    def _kill(self):
+    def kill(self) -> None:
         workers = self._find_workers()
         if not workers:
             self._notify("Copywriter is not running")
-
             return
-
-        # Each worker is its own session/group leader (see `os.setsid()` in
-        # `_run`), so its PID doubles as a PGID. SIGKILL on the group takes
-        # the worker AND any enrichment subprocess (claude/codex/wl-copy)
-        # down together.
         for p in workers:
-            log.info("killing copywriter worker group pgid=%d", p.pid)
+            self.log.info("killing worker pgid=%d", p.pid)
             try:
                 os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError, PermissionError:
-                pass
+            except (ProcessLookupError, PermissionError) as e:
+                self.log.debug("killpg %d: %s", p.pid, e)
         self._notify("Copywriter killed")
-        signal_waybar(WAYBAR_MODULE)
+        signal_waybar(self.WAYBAR_MODULE)
 
-    def _get_status_json(self):
-        if not self._is_running():
+    def status_json(self) -> str:
+        if not self.is_running():
             return json.dumps(
                 {"class": "idle", "text": "", "tooltip": "Copywriter ready"}
             )
-
         return json.dumps(
-            {
-                "class": "working",
-                "text": "󰼭 󰧑",
-                "tooltip": "Refining clipboard...",
-            }
+            {"class": "working", "text": "󰼭 󰧑", "tooltip": "Refining clipboard..."}
         )
 
-def main():
-    parser = argparse.ArgumentParser(description="Refine clipboard text through AI")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    # ── CLI ───────────────────────────────────────────────────────
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    def cli(verbose: bool):
+        """Refine clipboard text through AI."""
+        create_logger(verbose)
 
-    run_parser = subparsers.add_parser("run")
-    run_parser.add_argument(
+    @cli.command("run")
+    @click.argument(
         "output",
-        nargs="?",
-        type=OutputMode,
-        choices=list(OutputMode),
-        default=OutputMode.CLIPBOARD,
-        help="Output sink for the refined text",
+        type=click.Choice([m.value for m in OutputMode], case_sensitive=False),
+        default=OutputMode.CLIPBOARD.value,
     )
-    run_parser.add_argument(
+    @click.option(
         "--input",
-        dest="input",
-        type=InputMode,
-        choices=list(InputMode),
-        default=InputMode.CLIPBOARD,
-        help="Where to read the text from (default: clipboard)",
+        "input_",
+        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        default=InputMode.CLIPBOARD.value,
+        help="Text source.",
     )
-    run_parser.add_argument(
+    @click.option(
         "--provider",
-        type=EnrichProvider,
-        choices=list(EnrichProvider),
-        default=DEFAULT_ENRICH_ADAPTER,
+        type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
+        default=DEFAULT_ENRICH_ADAPTER.value,
+        help="Enrichment backend.",
     )
-    run_parser.add_argument("--base-url", default="https://ai.kilic.dev/api/v1")
-    # Per-provider default — each adapter picks its own when unset.
-    run_parser.add_argument("--model", default=None)
-    run_parser.add_argument("--temperature", type=float)
-    run_parser.add_argument("--top-p", type=float)
-    run_parser.add_argument(
+    @click.option(
+        "--base-url",
+        default="https://ai.kilic.dev/api/v1",
+        help="HTTP backend base URL.",
+    )
+    @click.option("--model", default=None, help="Provider-specific model.")
+    @click.option("--temperature", type=float, default=None)
+    @click.option("--top-p", type=float, default=None)
+    @click.option(
         "--thinking",
-        nargs="?",
-        const="high",
+        type=click.Choice(["high", "medium", "low", "none"]),
         default="none",
-        choices=["high", "medium", "low", "none"],
+        help="Reasoning depth.",
     )
-    run_parser.add_argument("--num-ctx", type=int)
-
-    subparsers.add_parser("kill")
-    subparsers.add_parser("status")
-    subparsers.add_parser("is-running")
-
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        format="%(name)s: %(message)s",
-        level=logging.DEBUG if args.verbose else logging.WARNING,
-    )
-
-    input_adapter: Optional[InputAdapter] = None
-    enricher: Optional[EnrichAdapter] = None
-    output: Optional[OutputAdapter] = None
-    if args.command == "run":
-        match args.input:
+    @click.option("--num-ctx", type=int, default=None)
+    def cmd_run(
+        output, input_, provider, base_url, model, temperature, top_p, thinking, num_ctx
+    ):
+        """Refine once and emit to the chosen sink."""
+        input_mode = InputMode(input_)
+        match input_mode:
             case InputMode.CLIPBOARD:
-                input_adapter = InputAdapterClipboard()
+                input_adapter: InputAdapter = InputAdapterClipboard()
             case InputMode.STDIN:
                 input_adapter = InputAdapterStdin()
             case _:
-                raise ValueError(f"unknown input mode: {args.input!r}")
+                raise click.UsageError(f"unknown input mode: {input_mode!r}")
 
-        # Adapters collapse None → per-provider default via
-        # `kwargs.get(name) or DEFAULT` internally, so we pass args straight
-        # through.
-        match args.provider:
+        model_kw = {"model": model} if model else {}
+        provider_enum = EnrichProvider(provider)
+        match provider_enum:
             case EnrichProvider.HTTP:
-                enricher = EnrichAdapterHttp(
-                    SYSTEM_PROMPT,
-                    USER_PROMPT,
-                    base_url=args.base_url,
-                    model=args.model,
+                enricher: EnrichAdapter = EnrichAdapterHttp(
+                    Copywriter.SYSTEM_PROMPT,
+                    Copywriter.USER_PROMPT,
+                    base_url=base_url,
                     api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    thinking=args.thinking,
-                    num_ctx=args.num_ctx,
+                    temperature=temperature,
+                    top_p=top_p,
+                    thinking=thinking,
+                    num_ctx=num_ctx,
                     user_agent="copywriter/1.0",
+                    **model_kw,
                 )
             case EnrichProvider.CLAUDE:
                 enricher = EnrichAdapterClaude(
-                    SYSTEM_PROMPT, USER_PROMPT, model=args.model
+                    Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT, **model_kw
                 )
             case EnrichProvider.OPENCODE:
                 enricher = EnrichAdapterOpenCode(
-                    SYSTEM_PROMPT, USER_PROMPT, model=args.model
+                    Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT, **model_kw
                 )
             case _:
-                raise ValueError(f"unknown enrich provider: {args.provider!r}")
+                raise click.UsageError(f"unknown enrich provider: {provider_enum!r}")
 
-        match args.output:
+        output_mode = OutputMode(output)
+        match output_mode:
             case OutputMode.CLIPBOARD:
-                output = OutputAdapterClipboard()
+                output_adapter: OutputAdapter = OutputAdapterClipboard()
             case OutputMode.TYPE:
-                output = OutputAdapterType()
+                output_adapter = OutputAdapterType()
             case OutputMode.STDOUT:
-                output = OutputAdapterStdout()
+                output_adapter = OutputAdapterStdout()
             case _:
-                raise ValueError(f"unknown output mode: {args.output!r}")
+                raise click.UsageError(f"unknown output mode: {output_mode!r}")
 
-    Copywriter(args, input_adapter, enricher, output).run()
+        Copywriter(input_adapter, enricher, output_adapter).run_once()
+
+    @cli.command("kill")
+    def cmd_kill():
+        """Terminate the running worker."""
+        Copywriter().kill()
+
+    @cli.command("status")
+    def cmd_status():
+        """Print waybar-shaped status JSON."""
+        sys.stdout.write(Copywriter().status_json() + "\n")
+
+    @cli.command("is-running")
+    def cmd_is_running():
+        """Exit 0 if a worker is live."""
+        sys.exit(0 if Copywriter().is_running() else 1)
 
 if __name__ == "__main__":
-    main()
+    Copywriter.cli()

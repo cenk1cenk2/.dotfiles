@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional
 # inherit pilot's sys.path, so we extend it here.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from lib.cli import create_logger  # noqa: E402
 from lib.skills import (  # noqa: E402
     load_references,
     load_skill_references,
@@ -32,15 +33,11 @@ from lib.skills import (  # noqa: E402
     read_reference,
 )
 
-# Route ALL logs to stderr. stdout is the MCP JSON-RPC channel — any
-# byte that lands there outside a `_write()` call corrupts the agent's
-# connection and tears the whole session down. Keeping the handler on
-# stderr + never using `print()` keeps the protocol pure.
-logging.basicConfig(
-    level=logging.INFO,
-    format="[pilot-mcp] %(levelname)s %(name)s: %(message)s",
-    stream=sys.stderr,
-)
+# stdout is the MCP JSON-RPC channel — any byte that lands there
+# outside a `_write()` call corrupts the agent's connection and tears
+# the session down. `create_logger` routes through rich on stderr so
+# we're safe.
+create_logger(os.environ.get("PILOT_MCP_VERBOSE") == "1")
 log = logging.getLogger("pilot.mcp")
 
 PROTOCOL_VERSION = "2024-11-05"
