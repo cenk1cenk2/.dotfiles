@@ -545,7 +545,7 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `model` is Protocol-typed as `str`; coerce None → "" so an
         # unset --model flag doesn't bleed a None into the header /
         # waybar status renderers that expect a string.
-        self.model: str = kwargs.get("model") or "minimax-m2.7:cloud"
+        self.model: str = kwargs.get("model") or "glm-5.1:cloud"
         self.mode = kwargs.get("mode")
         self.provider_name = kwargs.get("provider_name") or "kilic"
         self.config_path = kwargs.get("config_path") or os.path.expanduser(
