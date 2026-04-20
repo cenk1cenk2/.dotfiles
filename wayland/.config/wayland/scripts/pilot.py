@@ -1584,6 +1584,12 @@ class PilotWindow(LayerOverlayWindow):
         self._permissions_palette: Optional[CommandPalette] = None
         self._mcp_palette: Optional[CommandPalette] = None
         self._sessions_palette: Optional[CommandPalette] = None
+        # Root palette (Ctrl+Space) — single-select index that opens
+        # one of the leaf palettes (skills / MCPs / sessions) on
+        # commit. Leaf palettes keep their own widgets because each
+        # has bespoke commit / delete wiring; the root is just a
+        # dispatcher that picks which leaf to raise next.
+        self._root_palette: Optional[CommandPalette] = None
         # Resources the user has attached via the palette but hasn't
         # submitted yet. Each `(kind, name, description)` renders as a
         # pill above the compose hint; `dispatch_turn` inlines them at
@@ -2733,11 +2739,26 @@ class PilotWindow(LayerOverlayWindow):
         sessions_open = (
             self._sessions_palette is not None and self._sessions_palette.is_open()
         )
+        root_open = (
+            self._root_palette is not None and self._root_palette.is_open()
+        )
         if ctrl and keyval == Gdk.KEY_space:
-            if resource_open:
+            # Single entry point — opens the root dispatcher palette
+            # from which the user picks Skills / MCPs / Sessions.
+            # When any leaf palette is already open we still let the
+            # user bounce back out via Ctrl+Space closing the stack;
+            # otherwise Ctrl+Space would silently open a second
+            # palette over the first.
+            if root_open:
+                self._root_palette.close()
+            elif resource_open:
                 self._palette.close()
+            elif mcp_open:
+                self._mcp_palette.close()
+            elif sessions_open:
+                self._sessions_palette.close()
             else:
-                self._open_resource_palette()
+                self._open_root_palette()
             return True
         if ctrl and keyval == Gdk.KEY_k:
             if permissions_open:
@@ -2745,21 +2766,13 @@ class PilotWindow(LayerOverlayWindow):
             else:
                 self._open_permissions_palette()
             return True
-        if ctrl and keyval == Gdk.KEY_m:
-            if mcp_open:
-                self._mcp_palette.close()
-            else:
-                self._open_mcp_palette()
-            return True
-        if ctrl and keyval == Gdk.KEY_s:
-            if sessions_open:
-                self._sessions_palette.close()
-            else:
-                self._open_sessions_palette()
-            return True
         # Esc when any palette is open should dismiss only the palette.
         any_palette_open = (
-            resource_open or permissions_open or mcp_open or sessions_open
+            resource_open
+            or permissions_open
+            or mcp_open
+            or sessions_open
+            or root_open
         )
         if any_palette_open and keyval == Gdk.KEY_Escape:
             return False
@@ -2935,12 +2948,71 @@ class PilotWindow(LayerOverlayWindow):
         ]
         self._refresh_attachment_pills()
 
+    def _open_root_palette(self) -> None:
+        """Ctrl+Space entry point. A select-mode palette listing the
+        three leaf palettes — Enter on one closes the root and opens
+        that leaf. Kept minimal: no fuzzy search value beyond the
+        three options, no preseed, no delete hook. Functions purely
+        as a keyboard-navigable dispatcher."""
+        if self._root_palette is None:
+            self._root_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_root_palette,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Command palette — Enter opens · Esc cancels",
+            )
+        self._size_palette(self._root_palette)
+        self._root_palette.preseed_active(set())
+        self._root_palette.open(
+            [
+                (
+                    "skills",
+                    "Skills",
+                    "attach skills as resources on the next turn",
+                    "skills",
+                ),
+                (
+                    "mcps",
+                    "MCPs",
+                    "toggle MCP servers for this session",
+                    "mcps",
+                ),
+                (
+                    "sessions",
+                    "Sessions",
+                    "restore a previous session or start fresh",
+                    "sessions",
+                ),
+            ]
+        )
+
+    def _commit_root_palette(self, entries) -> None:
+        """Root-palette commit handler. Opens the chosen leaf palette
+        on the next idle tick (the root has already detached by the
+        time `on_commit` fires, so raising the child directly is
+        safe). Unknown kinds just refocus the compose — a defensive
+        no-op so a future entry typo doesn't hang the palette."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind = entries[0][0]
+        if kind == "skills":
+            self._open_resource_palette()
+        elif kind == "mcps":
+            self._open_mcp_palette()
+        elif kind == "sessions":
+            self._open_sessions_palette()
+        else:
+            self._compose.focus()
+
     def _open_resource_palette(self) -> None:
-        """Ctrl+Space: raise the resource palette over the compose area
-        with a freshly-collected resource list. Lazy-constructs the
-        palette on first call, re-uses the same widget on subsequent
-        opens — state (search input, active toggles) resets every
-        `open()` call so stale ticks don't leak across sessions.
+        """Raise the resource (skills) palette over the compose area
+        with a freshly-collected resource list. Reached via the root
+        palette's `Skills` row. Lazy-constructs the widget on first
+        call, re-uses it on subsequent opens — state (search input,
+        active toggles) resets every `open()` call so stale ticks
+        don't leak across sessions.
 
         `CommandPalette` from `lib.overlay` handles the list + key
         wiring; `_preseed_resource_active_from_compose` and
@@ -3032,7 +3104,8 @@ class PilotWindow(LayerOverlayWindow):
         self._compose.focus()
 
     def _open_mcp_palette(self) -> None:
-        """Ctrl+M: view-only palette listing every MCP server the
+        """MCP palette (reached via the root palette's `MCPs` row).
+        View-only list of every MCP server the
         adapter's ACP session attached. Commit is a no-op — this is
         a cheat-sheet for "what can the agent actually call right
         now", not an editor."""
@@ -3073,7 +3146,8 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _open_sessions_palette(self) -> None:
-        """Ctrl+S: palette listing every ACP session the agent is
+        """Sessions palette (reached via the root palette's
+        `Sessions` row). Lists every ACP session the agent is
         willing to resume, plus a `new session` sentinel. Select-mode
         palette — Enter restores the highlighted row (swaps the
         adapter's session_id and wipes the transcript), Ctrl+D drops

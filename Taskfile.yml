@@ -12,6 +12,11 @@ vars:
   verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
 
 tasks:
+  install:
+    desc: Install necessary dependencies.
+    deps:
+      - wayland-scripts:bootstrap
+
   plan:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
     desc: Plan to target.
@@ -53,35 +58,6 @@ tasks:
       generated `.venv/` stays local to the target machine.
     dir: "{{ .HOME }}/.config/wayland/scripts"
     cmds:
-      # Refuse to run before `task deploy:linux` has stowed the
-      # pyproject.toml into place — bootstrapping against a missing
-      # symlink would create an empty project at the destination and
-      # diverge it from the dotfiles copy.
-      - |
-        if [ ! -L pyproject.toml ]; then
-          echo "wayland/scripts not stowed yet — run \`task deploy:linux\` first" >&2
-          exit 1
-        fi
-      # `--python /usr/bin/python3` pins to the distro interpreter so
-      # the venv's site-packages overlay sees pacman's python-gobject;
-      # `--system-site-packages` turns that overlay on so PyGObject is
-      # inherited from the system install instead of compiled from the
-      # PyPI sdist on every bootstrap. `uv sync` afterwards layers the
-      # pure-Python deps from pyproject.toml on top without disturbing
-      # the system-package passthrough and updates `uv.lock` through
-      # the stow symlink so the change lands back in the dotfiles repo.
-      #
-      # Idempotent: if the existing venv already has
-      # `include-system-site-packages = true`, keep it and just sync.
-      # Otherwise rebuild from scratch — `uv run` races a venv creation
-      # without the flag on first shebang invocation (see issue #5737),
-      # so stale venvs need resetting rather than updating in place.
-      - |
-        if [ -f .venv/pyvenv.cfg ] && grep -q '^include-system-site-packages = true' .venv/pyvenv.cfg; then
-          echo "venv already has system-site-packages; skipping recreate"
-        else
-          uv venv --clear --python /usr/bin/python3 --system-site-packages
-        fi
       - uv sync
 
   deploy:linux:
