@@ -113,7 +113,7 @@
       "left": {
         "band0": {
           "frequency": 130.0,
-          "gain": 4.0,
+          "gain": 2.5,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 0.9,
@@ -165,7 +165,7 @@
       "right": {
         "band0": {
           "frequency": 130.0,
-          "gain": 4.0,
+          "gain": 2.5,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 0.9,
