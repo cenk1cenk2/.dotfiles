@@ -10,7 +10,11 @@ layer-shell imports are heavy and useless to headless callers
 consumer) imports directly via `from lib.overlay import …`."""
 
 from .acp_adapter import ModelChoice as ModelChoice
-from .cli import create_logger as create_logger
+from .cli import (
+    RunResult as RunResult,
+    create_logger as create_logger,
+    run as run,
+)
 from .converse import (
     DEFAULT_CONVERSE_ADAPTER as DEFAULT_CONVERSE_ADAPTER,
     ConversationAdapter as ConversationAdapter,
@@ -22,6 +26,7 @@ from .converse import (
     SessionInfoChunk as SessionInfoChunk,
     ThinkingChunk as ThinkingChunk,
     ToolCall as ToolCall,
+    UserMessageChunk as UserMessageChunk,
 )
 from .enrich import (
     DEFAULT_ENRICH_ADAPTER as DEFAULT_ENRICH_ADAPTER,

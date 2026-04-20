@@ -87,7 +87,18 @@ class SessionInfoChunk:
     title: str
     updated_at: str = ""
 
-TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk, SessionInfoChunk]
+@dataclass
+class UserMessageChunk:
+    """Replayed user message text from `session/load`.
+
+    Agents push these as `session/update` notifications while
+    rehydrating a resumed session so the client can repaint the full
+    transcript. Live turns never yield this (the client already owns
+    what the user typed)."""
+
+    text: str
+
+TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk, SessionInfoChunk, UserMessageChunk]
 
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
@@ -187,6 +198,8 @@ class _AcpConverseAdapter(AcpAdapter):
             title = getattr(payload, "title", "") or ""
             updated_at = getattr(payload, "updated_at", "") or ""
             return SessionInfoChunk(title=title, updated_at=updated_at)
+        if kind == "user_message":
+            return UserMessageChunk(text=str(payload))
         return None
 
     def turn(
