@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
 """pilot — GTK4 layer-shell sidebar that streams a conversational AI response.
 
 Right-side full-height overlay with a markdown scroller and a compose entry
@@ -39,6 +39,8 @@ from lib import (
     InputAdapterClipboard,
     InputAdapterStdin,
     InputMode,
+    CodeBlock,
+    MarkdownBlock,
     MarkdownMarkup,
     OutputAdapterClipboard,
     PermissionState,
@@ -46,7 +48,7 @@ from lib import (
     PromptAttachment,
     ThinkingChunk,
     ToolCall,
-    format_tool_args_md,
+    ToolFormatters,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
     load_prompt,
@@ -563,6 +565,117 @@ class QueueRow(Gtk.ListBoxRow):
         self._edit_btn.set_label("✎ edit")
         self._on_edit_commit(self, self._text)
 
+def _make_markdown_label(
+    markup: str,
+    *,
+    css_classes: tuple[str, ...] = (),
+    on_link=None,
+    wrap_mode: Pango.WrapMode = Pango.WrapMode.WORD_CHAR,
+    selectable: bool = True,
+) -> Gtk.Label:
+    """Build a Pango-markup-rendering `Gtk.Label` with the wrap / yalign /
+    hexpand flags the rest of the overlay expects. Centralised so the
+    widget builder below and the legacy call sites that still use a
+    single label share one configuration."""
+    label = Gtk.Label(
+        xalign=0.0,
+        yalign=0.0,
+        hexpand=True,
+        wrap=True,
+        wrap_mode=wrap_mode,
+        natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+        use_markup=True,
+        selectable=selectable,
+    )
+    label.set_markup(markup)
+    for cls in css_classes:
+        label.add_css_class(cls)
+    if on_link is not None:
+        label.connect("activate-link", lambda _lbl, uri: (on_link(uri), True)[1])
+    return label
+
+def _make_code_block_widget(block: CodeBlock) -> Gtk.Box:
+    """Wrap a `CodeBlock` from `MarkdownMarkup.render_blocks` into a
+    full-width Gtk.Box with:
+
+      - a header strip that carries the language hint as a small pill
+        floated on the right (empty string → no header rendered);
+      - a body label with monospace syntax-highlighted Pango markup
+        that word-wraps to the container's allocated width so the
+        whole block has a continuous gutter instead of shading only
+        the glyph bounds.
+
+    The box itself owns the `.pilot-code-block` CSS class, which
+    paints the gutter. Header + body have their own classes so the
+    stylesheet can tune padding / font independently."""
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+    box.add_css_class("pilot-code-block")
+
+    lang = (block.language or "").strip()
+    if lang:
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True)
+        header.add_css_class("pilot-code-block-header")
+        # Spacer pushes the pill to the right edge. A plain-empty label
+        # with hexpand does the trick without pulling in `Gtk.Separator`
+        # which would paint a line we don't want.
+        spacer = Gtk.Label(label="", xalign=0.0, hexpand=True)
+        header.append(spacer)
+        pill = Gtk.Label(label=lang, xalign=1.0)
+        pill.add_css_class("pilot-code-block-lang")
+        header.append(pill)
+        box.append(header)
+
+    body = Gtk.Label(
+        xalign=0.0,
+        yalign=0.0,
+        hexpand=True,
+        wrap=True,
+        wrap_mode=Pango.WrapMode.WORD_CHAR,
+        natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+        use_markup=True,
+        selectable=True,
+    )
+    body.add_css_class("pilot-code-block-body")
+    body.set_markup(f'<span font_family="monospace">{block.markup}</span>')
+    body.set_tooltip_text(block.source)
+    box.append(body)
+    return box
+
+def _rebuild_markdown_body(
+    container: Gtk.Box,
+    blocks: list[MarkdownBlock],
+    *,
+    text_css_classes: tuple[str, ...] = (),
+    on_link=None,
+) -> None:
+    """Rebuild `container` as one widget per `MarkdownBlock`: text runs
+    land in a single `Gtk.Label` each (carrying the Pango markup
+    produced by `MarkdownMarkup._walk`), code blocks land in the
+    dedicated `_make_code_block_widget` box so they can render with a
+    full-width background + language pill.
+
+    Existing children are removed first so callers can call this on
+    every streamed chunk. Gtk handles the rebuild cost well within the
+    sizes agent replies reach; a dedicated diffing pass would buy
+    little at the cost of a noticeably more complex consumer."""
+    while True:
+        child = container.get_first_child()
+        if child is None:
+            break
+        container.remove(child)
+
+    for block in blocks:
+        if isinstance(block, CodeBlock):
+            container.append(_make_code_block_widget(block))
+        else:
+            container.append(
+                _make_markdown_label(
+                    block.markup,
+                    css_classes=text_css_classes,
+                    on_link=on_link,
+                )
+            )
+
 class TurnCard:
     """One turn in the conversation. `role` is 'user' or 'assistant'.
     User cards get populated once via `set_text`; assistant cards stream
@@ -587,7 +700,13 @@ class TurnCard:
         "cancelled": "✕",
     }
 
-    def __init__(self, role: str, title: str, on_link):
+    def __init__(
+        self,
+        role: str,
+        title: str,
+        on_link,
+        tool_formatters: Optional[ToolFormatters] = None,
+    ):
         self.role = role
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
         self.widget.add_css_class("pilot-card")
@@ -600,6 +719,14 @@ class TurnCard:
 
         self._md = MarkdownMarkup()
         self._on_link = on_link
+        # Per-adapter formatter instance. None → use a plain
+        # `ToolFormatters()` with baseline defaults; consumers that
+        # know which adapter produced the call pass
+        # `adapter.tool_formatters` so opencode-specific tools
+        # (codesearch, lsp, skill, question) render properly.
+        self._tool_formatters: ToolFormatters = (
+            tool_formatters if tool_formatters is not None else ToolFormatters()
+        )
         self._text = ""
         self._thinking_text = ""
         # Lazily built when the first ThinkingChunk arrives — assistant
@@ -629,26 +756,38 @@ class TurnCard:
         self._tool_bubbles: dict[str, dict] = {}
         self._tool_bubbles_frozen = False
 
-        self._label = Gtk.Label(
-            xalign=0.0,
-            yalign=0.0,
-            hexpand=True,
-            wrap=True,
-            wrap_mode=Pango.WrapMode.WORD_CHAR,
-            use_markup=True,
-            selectable=True,
-            natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
+        # Replaces the single `Gtk.Label` that used to own the card
+        # body. The body is now a vertical box rebuilt on every
+        # `append` / `set_text` from `MarkdownMarkup.render_blocks`
+        # output — each text run lands in its own Label (so Pango
+        # layout stays cheap) and each fenced code block becomes a
+        # `_make_code_block_widget` box with a full-width background
+        # and a right-aligned language pill. `pilot-card-text` still
+        # adds horizontal padding to the surrounding container so
+        # prose text keeps the old inset look.
+        self._body = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
         )
-        self._label.add_css_class("pilot-card-text")
-        # Fire the window's link handler when the user clicks a rendered
-        # `<a href="…">`. Return True to tell GTK "we handled it" — we
-        # don't want the default xdg-open path because the handler may
-        # want to route through a compositor-specific opener.
-        self._label.connect(
-            "activate-link",
-            lambda _lbl, uri: (on_link(uri), True)[1],
+        self._body.add_css_class("pilot-card-body")
+        self.widget.append(self._body)
+        # Link callback stashed so `_rebuild_markdown_body` can connect
+        # each emitted text Label through it — user clicks on a
+        # rendered `<a href="…">` should still fire the compositor-
+        # specific opener rather than the default xdg-open path.
+        self._on_link_cb = on_link
+
+    def _render_body(self) -> None:
+        """Re-walk `self._text` and rebuild the card body widgets in
+        place. Cheap enough to run on every streamed chunk at the
+        sizes agent responses reach; a diffing pass would buy little
+        complexity savings given Gtk's measure-on-allocate path."""
+        blocks = self._md.render_blocks(self._text)
+        _rebuild_markdown_body(
+            self._body,
+            blocks,
+            text_css_classes=("pilot-card-text",),
+            on_link=self._on_link_cb,
         )
-        self.widget.append(self._label)
 
     def append(self, chunk: str) -> None:
         # First visible reply chunk — auto-collapse any thinking block
@@ -663,11 +802,11 @@ class TurnCard:
             self._thinking_expander.set_label(self.THINKING_LABEL_DONE)
             self._thinking_collapsed = True
         self._text += chunk
-        self._label.set_markup(self._md.render(self._text))
+        self._render_body()
 
     def set_text(self, text: str) -> None:
         self._text = text
-        self._label.set_markup(self._md.render(text))
+        self._render_body()
 
     def append_thinking(self, chunk: str) -> None:
         """Append a reasoning chunk to the card's thinking section,
@@ -890,35 +1029,52 @@ class TurnCard:
 
     def _render_bubble_details(self, slot: dict) -> None:
         """Write the args preview + result text into the slot's
-        detail label. Called lazily when the panel becomes visible
-        (initial toggle) and on every subsequent status/result
-        update so the panel stays in sync.
+        detail panel. Called lazily when the revealer opens and on
+        every subsequent status/result update so the panel stays in
+        sync.
 
-        Args render through `format_tool_args_md` + the shared
-        markdown-to-Pango pipeline so Bash commands, file diffs,
-        and JSON payloads land in proper fenced code blocks instead
-        of a single escaped `<tt>` line."""
-        label: Gtk.Label = slot["details_label"]
+        Args + result run through `ToolFormatters.format` +
+        `MarkdownMarkup.render_blocks` so code blocks emerge as
+        stand-alone widgets with a full-width background + language
+        pill instead of an inline Pango span that only shades the
+        glyph bounds."""
+        header_label: Gtk.Label = slot["details_header"]
+        body_box: Gtk.Box = slot["details_body"]
         name = slot.get("name") or ""
+        title = slot.get("title") or ""
+        # Header prefers the agent title (more context for Claude's
+        # "Read README.md", still readable for opencode's "edit"); the
+        # canonical `name` runs next to it in monospace when the two
+        # differ so the user can see the programmatic identifier.
+        display = title or name or "tool"
+        if name and title and name.lower() != title.lower():
+            header_label.set_markup(
+                f"<b>{GLib.markup_escape_text(display)}</b> "
+                f"<tt>({GLib.markup_escape_text(name)})</tt>"
+            )
+        else:
+            header_label.set_markup(f"<b>{GLib.markup_escape_text(display)}</b>")
+
         args = slot.get("arguments") or ""
-        md_body = format_tool_args_md(name, args)
-        header = f"<b>{GLib.markup_escape_text(name)}</b>"
-        try:
-            args_markup = self._md.render(md_body) if md_body else ""
-        except Exception as e:
-            log.warning("bubble markdown render failed: %s", e)
-            args_markup = GLib.markup_escape_text(md_body)
-        parts = [header]
-        if args_markup:
-            parts.append(args_markup)
+        md_body = self._tool_formatters.format(name, args)
         result = slot.get("result")
         if result:
-            try:
-                result_markup = self._md.render(str(result))
-            except Exception:
-                result_markup = GLib.markup_escape_text(str(result))
-            parts.append(f"<i>result:</i>\n{result_markup}")
-        label.set_markup("\n\n".join(parts))
+            # Separate the args block from the result with a small
+            # `_result:_` marker so the two run visibly distinct in the
+            # revealer. `result` renders through the same pipeline so a
+            # tool that emits fenced output also gets a proper code
+            # block with a language pill.
+            md_body = f"{md_body}\n\n*result:*\n\n{result}"
+        try:
+            blocks = self._md.render_blocks(md_body) if md_body else []
+        except Exception as e:
+            log.warning("bubble markdown render failed: %s", e)
+            blocks = []
+        _rebuild_markdown_body(
+            body_box,
+            blocks,
+            text_css_classes=("pilot-tool-bubble-details",),
+        )
 
     def _on_bubble_clicked(self, _button, tool_id: str) -> None:
         slot = self._tool_bubbles.get(tool_id)
@@ -954,12 +1110,20 @@ class TurnCard:
 
         button = Gtk.Button()
         button.add_css_class("pilot-tool-bubble")
-        button.set_tooltip_text(call.name or "")
+        # Tooltip prefers the human-readable title (Claude's
+        # "Read README.md", opencode's "edit"); falls back to the
+        # canonical name when the agent didn't supply one. Helps users
+        # distinguish several bubbles for the same tool at a glance.
+        button.set_tooltip_text(call.title or call.name or "")
         button.set_can_focus(True)
 
         # Detail panel lives in the details_box (below the flow),
         # wrapped in a Revealer so toggling doesn't reshuffle layout.
-        details_label = Gtk.Label(
+        # The Revealer now wraps a vertical `Gtk.Box` (header label +
+        # body widgets) instead of a single Label, so code blocks can
+        # render as their own full-width boxes with a language pill
+        # — a single Pango span only shades the glyph bounds.
+        details_header = Gtk.Label(
             xalign=0.0,
             yalign=0.0,
             hexpand=True,
@@ -969,23 +1133,35 @@ class TurnCard:
             selectable=True,
             natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
         )
-        details_label.add_css_class("pilot-tool-bubble-details")
+        details_header.add_css_class("pilot-tool-bubble-details")
+        details_body = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
+        )
+        details_body.add_css_class("pilot-tool-bubble-details-body")
+        details_container = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
+        )
+        details_container.append(details_header)
+        details_container.append(details_body)
         revealer = Gtk.Revealer()
         revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         revealer.set_reveal_child(False)
-        revealer.set_child(details_label)
+        revealer.set_child(details_container)
         assert self._tool_details_box is not None
         self._tool_details_box.append(revealer)
 
         slot = {
             "tool_id": tool_id,
             "name": call.name or "",
+            "title": call.title or "",
+            "kind": call.kind or "",
             "arguments": call.arguments or "",
             "status": call.status or "pending",
             "result": None,
             "button": button,
             "revealer": revealer,
-            "details_label": details_label,
+            "details_header": details_header,
+            "details_body": details_body,
         }
         self._tool_bubbles[tool_id] = slot
         button.connect("clicked", self._on_bubble_clicked, tool_id)
@@ -1060,6 +1236,7 @@ class PermissionRow(Gtk.ListBoxRow):
         on_trust,
         on_deny,
         on_auto_reject=None,
+        tool_formatters: Optional[ToolFormatters] = None,
     ):
         super().__init__()
         self._call = call
@@ -1073,50 +1250,64 @@ class PermissionRow(Gtk.ListBoxRow):
         card.add_css_class("pilot-permission-card")
 
         # Tool name — accent-coloured header so it reads as a fresh
-        # event rather than another turn card. MCP tool names can be
-        # very long (`mcp__mcphub__linear_kilic-dev__save_issue`); we
-        # ellipsize from the LEFT so the leaf tool name (the
-        # actionable bit) is always visible, and the full identifier
-        # lives in the tooltip. 120-char cap keeps the row single-line
-        # on the narrowest sidebar widths we ship.
+        # event rather than another turn card. Prefer the agent-
+        # supplied title (Claude's "Read README.md" / "$ ls -la",
+        # opencode's "edit" / "bash" permission category) so the row
+        # carries the most specific signal available; the canonical
+        # `call.name` is the programmatic identifier used for trust
+        # and auto-approve, surfaced in the tooltip when it differs.
+        # The header word-wraps instead of ellipsising — permission
+        # prompts are short-lived and the user needs the FULL target
+        # (long MCP tool names, long diff headers) visible to decide,
+        # not a left-truncated teaser.
         full_name = call.name or "(unnamed tool)"
-        name_label = Gtk.Label(label=full_name, xalign=0.0, hexpand=True)
-        name_label.add_css_class("pilot-permission-tool-name")
-        name_label.set_ellipsize(Pango.EllipsizeMode.START)
-        name_label.set_max_width_chars(120)
-        name_label.set_tooltip_text(full_name)
-        card.append(name_label)
-
-        # Argument preview. Routes through `format_tool_args_md` so
-        # common tools (Bash / Read / Edit / …) land in fenced code
-        # blocks with appropriate language tags — the full command or
-        # diff is visible, word-wrapped, not truncated. The label
-        # width is capped via Pango's wrap-width so even a long Bash
-        # command fits cleanly inside the sidebar instead of pushing
-        # the row past the overlay bounds.
-        md_body = format_tool_args_md(call.name or "", call.arguments or "")
-        try:
-            markup = _PERMISSION_MD.render(md_body)
-        except Exception as e:
-            log.warning("permission markdown render failed: %s", e)
-            markup = GLib.markup_escape_text(md_body)
-        args_label = Gtk.Label(
+        header = (call.title or call.name or "(unnamed tool)").strip() or full_name
+        tooltip = full_name if full_name == header else f"{header}\n({full_name})"
+        name_label = Gtk.Label(
+            label=header,
             xalign=0.0,
-            yalign=0.0,
             hexpand=True,
             wrap=True,
             wrap_mode=Pango.WrapMode.WORD_CHAR,
             natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
-            use_markup=True,
             selectable=True,
         )
-        args_label.set_markup(markup)
-        args_label.add_css_class("pilot-permission-args")
+        name_label.add_css_class("pilot-permission-tool-name")
+        name_label.set_tooltip_text(tooltip)
+        card.append(name_label)
+
+        # Argument preview. Routes through the adapter's
+        # `ToolFormatters.format` so common tools (Bash / Read /
+        # Edit / …) land in fenced code blocks with appropriate
+        # language tags — the full command or diff is visible,
+        # word-wrapped, never truncated. Rendering goes through
+        # `_rebuild_markdown_body` so code blocks become dedicated
+        # widgets with a full-width background + language pill;
+        # pango-markup text runs land in their own labels whose wrap
+        # is bounded only by the sidebar width (no line cap). When
+        # `tool_formatters` wasn't handed in (auditor paths not tied
+        # to a specific adapter), fall back to the baseline.
+        formatters = tool_formatters if tool_formatters is not None else ToolFormatters()
+        md_body = formatters.format(call.name or "", call.arguments or "")
+        args_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
+        )
+        args_box.add_css_class("pilot-permission-args")
         # Tooltip keeps the raw (non-rendered) markdown — handy for
         # copy / paste when the user wants to round-trip the exact
         # argument payload elsewhere.
-        args_label.set_tooltip_text(md_body)
-        card.append(args_label)
+        args_box.set_tooltip_text(md_body)
+        try:
+            blocks = _PERMISSION_MD.render_blocks(md_body) if md_body else []
+        except Exception as e:
+            log.warning("permission markdown render failed: %s", e)
+            blocks = []
+        _rebuild_markdown_body(
+            args_box,
+            blocks,
+            text_css_classes=("pilot-permission-args-text",),
+        )
+        card.append(args_box)
 
         actions = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -1175,7 +1366,24 @@ class PermissionRow(Gtk.ListBoxRow):
 
     @property
     def tool_name(self) -> str:
-        return self._call.name or ""
+        """Canonical tool identifier used for trust / auto-reject set
+        membership. Prefers `call.name` when it looks programmatic (a
+        single token, or the `mcp__server__tool` wire shape), otherwise
+        falls back to the ACP `kind` so clicking ✓ trust on Claude's
+        `"Read README.md"` row trusts ALL future Read calls via the
+        `read` kind — not just the specific README invocation."""
+        name = (self._call.name or "").strip()
+        kind = (self._call.kind or "").strip()
+        if name.startswith("mcp__"):
+            return name
+        # Programmatic identifier heuristic: no whitespace / path
+        # separators / dot-qualified paths. Claude's built-in tool
+        # titles ("Read foo.py", "git status", "$ ls -la") always
+        # contain one of these characters, so they drop through to
+        # the kind fallback.
+        if name and not any(c in name for c in " \t\n\r/."):
+            return name
+        return kind or name
 
     @property
     def call(self) -> ToolCall:
@@ -1705,6 +1913,7 @@ class PilotWindow(LayerOverlayWindow):
             role="user",
             title=self.USER_TITLE,
             on_link=self._open_link,
+            tool_formatters=self._tool_formatters(),
         )
         self._cards.append(card)
         # Explicit user action → always pin-to-bottom and scroll, even
@@ -1719,11 +1928,23 @@ class PilotWindow(LayerOverlayWindow):
             role="assistant",
             title=self._assistant_title(),
             on_link=self._open_link,
+            tool_formatters=self._tool_formatters(),
         )
         self._cards.append(card)
         self._conv_box.append(card.widget)
         self._force_scroll_to_bottom()
         return card
+
+    def _tool_formatters(self) -> Optional[ToolFormatters]:
+        """Return the active adapter's `ToolFormatters` instance, or
+        None when the adapter hasn't loaded one (callers fall back
+        to a plain `ToolFormatters()` baseline). Factored out so
+        `TurnCard` + `PermissionRow` share the same lookup rather
+        than each digging into `self._adapter` on their own."""
+        adapter = getattr(self, "_adapter", None)
+        if adapter is None:
+            return None
+        return getattr(adapter, "tool_formatters", None)
 
     def _header_title(self) -> str:
         if self._model:
@@ -2068,6 +2289,27 @@ class PilotWindow(LayerOverlayWindow):
             return
         self._start_turn(wire, display=display, attachments=attachments)
 
+    def _send_next_queued(self) -> bool:
+        """Dispatch the oldest pending queue row — the Ctrl+⏎ keybind's
+        target. No-op when the queue is empty; reuses the per-row send
+        path so the streaming guard behaves identically to clicking the
+        row's own ⏎ button. Returns True when a row was dispatched so
+        callers can propagate that as the keyboard-event handled flag."""
+        if not self._queue:
+            return False
+        self._on_queue_send(self._queue[0])
+        return True
+
+    def _discard_next_queued(self) -> bool:
+        """Drop the oldest pending queue row — the Ctrl+Backspace keybind's
+        target. Mirrors clicking the row's own × button but without
+        requiring mouse focus, so users can flush a mistyped paste-and-
+        enter before it streams. Returns True when a row was removed."""
+        if not self._queue:
+            return False
+        self._remove_queue_row(self._queue[0])
+        return True
+
     def _on_queue_remove(self, row: QueueRow) -> None:
         self._remove_queue_row(row)
 
@@ -2117,7 +2359,7 @@ class PilotWindow(LayerOverlayWindow):
         """Main-thread sink for `ToolCall` events from `adapter.turn()`.
         Scheduled via `GLib.idle_add` from the worker thread — returns
         False so it fires once and detaches."""
-        if call.name and self._permission.decide(call.name) is not None:
+        if call.name and self._permission.decide(call.name, call.kind) is not None:
             log.debug("tool %r short-circuited by permission state", call.name)
             return False
         row = PermissionRow(
@@ -2125,6 +2367,7 @@ class PilotWindow(LayerOverlayWindow):
             on_allow=self._on_permission_allow,
             on_trust=self._on_permission_trust,
             on_deny=self._on_permission_deny,
+            tool_formatters=self._tool_formatters(),
             on_auto_reject=self._on_permission_auto_reject,
         )
         was_empty = not self._permissions
@@ -2174,7 +2417,7 @@ class PilotWindow(LayerOverlayWindow):
         stays consistent with the pill state."""
         from lib.acp_adapter import select_option_id  # lazy import
 
-        auto_kind = self._permission.decide(call.name or "")
+        auto_kind = self._permission.decide(call.name or "", call.kind or "")
         if auto_kind is not None:
             resolve(select_option_id(options, auto_kind))
             return False
@@ -2222,6 +2465,7 @@ class PilotWindow(LayerOverlayWindow):
             on_trust=on_trust,
             on_deny=on_deny,
             on_auto_reject=on_auto_reject,
+            tool_formatters=self._tool_formatters(),
         )
         was_empty = not self._permissions
         self._permissions.append(row)
@@ -2488,6 +2732,19 @@ class PilotWindow(LayerOverlayWindow):
         if ctrl and keyval == Gdk.KEY_o:
             self._open_last_plan()
             return True
+        # Ctrl+⏎ dispatches the next queued turn. Declared AFTER the
+        # other ctrl-combos so a focused compose TextView (which
+        # treats plain ⏎ as "submit") still gets first crack at the
+        # naked Return key; only the ctrl-modified form comes here.
+        if ctrl and keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            if self._send_next_queued():
+                return True
+        # Ctrl+Backspace discards the head of the queue — pairs with
+        # Ctrl+⏎ (send next) so both keyboard-only queue actions live
+        # on the same modifier set.
+        if ctrl and keyval == Gdk.KEY_BackSpace:
+            if self._discard_next_queued():
+                return True
         if keyval == Gdk.KEY_Home:
             self._scroll_to(0.0)
             return True
@@ -3033,7 +3290,7 @@ def _is_live() -> bool:
         probe.connect(_PATHS.socket_path)
 
         return True
-    except (ConnectionRefusedError, FileNotFoundError):
+    except ConnectionRefusedError, FileNotFoundError:
         return False
     except OSError as e:
         log.warning("socket probe failed: %s", e)
@@ -3052,7 +3309,7 @@ def _send(cmd: str, **kwargs) -> Optional[dict]:
     sock.settimeout(2)
     try:
         sock.connect(_PATHS.socket_path)
-    except (FileNotFoundError, ConnectionRefusedError):
+    except FileNotFoundError, ConnectionRefusedError:
         try:
             os.unlink(_PATHS.socket_path)
         except FileNotFoundError:
@@ -3148,7 +3405,7 @@ class Session:
             response = self._dispatch(raw)
             try:
                 conn.sendall(json.dumps(response).encode())
-            except (BrokenPipeError, ConnectionResetError):
+            except BrokenPipeError, ConnectionResetError:
                 # Client went away before reading our reply. Common and
                 # expected: forwarders that fire-and-forget, kill
                 # commands that tear everything down before the response
@@ -3300,13 +3557,18 @@ def _build_permission_handler(window):
 
         # ACP gives us a ToolCallSummary; adapt to the ToolCall the
         # PermissionRow already renders. Status=running signals
-        # "awaiting approval, tool hasn't executed yet".
+        # "awaiting approval, tool hasn't executed yet". `title` and
+        # `kind` travel through so the row can show the agent's
+        # human-readable header (Claude: "Read README.md", opencode:
+        # "edit") on top of the canonical `name` used for trust.
         tool_call = _ToolCall(
             tool_id=call.tool_id,
             name=call.name,
             arguments=call.arguments,
             status="running",
             audit=False,
+            title=call.title,
+            kind=call.kind,
         )
         event = threading.Event()
         result: dict[str, Optional[str]] = {"option_id": None}
@@ -3759,7 +4021,18 @@ def _cmd_session_info() -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help=(
+            "enable DEBUG logging — includes the raw JSON-RPC wire for "
+            "every ACP frame (both directions) plus the agent subprocess "
+            "stderr. Use when a turn misbehaves (e.g. opencode not "
+            "asking for tool permission) and you need to see whether "
+            "the method is actually firing over the protocol."
+        ),
+    )
     # Session suffix: when set, rewrites every user-visible runtime path
     # (main socket, MCP socket, adapter config files) plus the GTK
     # app-id to include `-<suffix>`. Lets multiple pilot overlays coexist

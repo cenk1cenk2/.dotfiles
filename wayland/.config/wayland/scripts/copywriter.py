@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+# The `sh -c` trampoline lets us run `uv run --project <fixed dir>` no
+# matter where the invoking shell's CWD happens to sit — keyboard binds
+# and waybar modules hand us whatever their compositor's working dir is.
+# See pyproject.toml for the full rationale.
 
 import argparse
 import json
@@ -162,7 +166,7 @@ class Copywriter:
             log.info("killing copywriter worker group pgid=%d", p.pid)
             try:
                 os.killpg(p.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
+            except ProcessLookupError, PermissionError:
                 pass
         self._notify("Copywriter killed")
         signal_waybar(WAYBAR_MODULE)

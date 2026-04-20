@@ -38,7 +38,7 @@ from .input import (
     InputMode,
 )
 from .layer_shell import ensure_layer_shell_preload
-from .markup import MarkdownMarkup, highlight_code
+from .markup import CodeBlock, MarkdownBlock, MarkdownMarkup, TextBlock, highlight_code
 from .notify import notify
 from .output import (
     OutputAdapter,
@@ -49,7 +49,7 @@ from .output import (
 )
 from .permissions import PermissionKind, PermissionState, normalise_tool_name
 from .prompts import load_prompt, load_relative_file
-from .tool_format import format_tool_args, format_tool_args_md
+from .tools import ToolFormatters
 from .waybar import signal_waybar
 
 _OVERLAY_EXPORTS = frozenset(
@@ -101,7 +101,10 @@ __all__ = [
     "InputAdapterStdin",
     "InputMode",
     "LayerOverlayWindow",
+    "CodeBlock",
+    "MarkdownBlock",
     "MarkdownMarkup",
+    "TextBlock",
     "OutputAdapter",
     "OutputAdapterClipboard",
     "OutputAdapterStdout",
@@ -118,8 +121,7 @@ __all__ = [
     "ensure_layer_shell_preload",
     "focused_gdk_monitor",
     "focused_monitor_name",
-    "format_tool_args",
-    "format_tool_args_md",
+    "ToolFormatters",
     "get_permission_seeds",
     "get_server",
     "highlight_code",

@@ -1,7 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+# The `sh -c` trampoline lets us run `uv run --project <fixed dir>` no
+# matter where the invoking shell's CWD happens to sit. See
+# pyproject.toml for the full rationale.
 
 import argparse
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -9,6 +13,16 @@ import time
 import psutil
 
 from lib import notify, signal_waybar
+
+# obsws-python + its websocket-client dependency log full tracebacks
+# via `logger.exception()` whenever a connection is refused. waybar
+# polls `recorder.py status` every tick, so a plain "OBS isn't
+# running" state used to spam the compositor journal with two
+# multi-line traceback blocks per second. Muting both loggers here
+# (before we even try importing obsws-python) keeps the journal
+# quiet; any real diagnostic goes through our own `log.debug` path.
+logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
+logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
 try:
     import obsws_python as obs
@@ -19,6 +33,7 @@ except ImportError:
 
 ICON = "/usr/share/icons/Adwaita/scalable/devices/camera-web.svg"
 WAYBAR_MODULE = "recorder"
+log = logging.getLogger("recorder")
 
 class Recorder:
     def __init__(self, args):
@@ -50,6 +65,14 @@ class Recorder:
         signal_waybar(WAYBAR_MODULE)
 
     def _get_obs_connection(self, retry=3, wait=1, silent=False):
+        """Open an obs-websocket connection. The `silent` path is
+        tuned for waybar's `status` tick — no retries, no user-facing
+        "couldn't connect" toast — because waybar polls constantly
+        and OBS not being up is the common case, not an error.
+
+        Interactive callers (`_start_recording`, `_stop_recording`)
+        keep the default retry/wait so a transient start-up race
+        doesn't abort a user-driven toggle."""
         if not OBS_AVAILABLE:
             if not silent:
                 self._notify(
@@ -57,14 +80,28 @@ class Recorder:
                 )
             return None
 
-        for attempt in range(retry):
+        # Fast out when OBS isn't even running — saves a TCP RST
+        # round-trip and keeps the websocket traceback noise out of
+        # the journal for the common waybar idle tick.
+        if not self._is_obs_running():
+            if not silent:
+                self._notify("OBS is not running")
+            return None
+
+        attempts = 1 if silent else max(1, retry)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
             try:
                 return obs.ReqClient(host="localhost", port=4455, password="")
             except Exception as e:
-                if attempt < retry - 1:
+                last_error = e
+                if attempt < attempts - 1:
                     time.sleep(wait)
-                elif not silent:
-                    self._notify(f"Failed to connect to OBS: {e}")
+        if last_error is not None:
+            if silent:
+                log.debug("obs connection failed (silent): %s", last_error)
+            else:
+                self._notify(f"Failed to connect to OBS: {last_error}")
 
         return None
 
@@ -79,7 +116,9 @@ class Recorder:
 
         try:
             return ws.get_record_status()
-        except Exception:
+        except Exception as e:
+            if silent:
+                log.debug("get_record_status failed (silent): %s", e)
             return None
 
     def _is_recording(self, silent=False):
@@ -185,37 +224,47 @@ class Recorder:
             self._signal_waybar()
 
     def _get_status_json(self):
-        status = self._get_record_status(silent=True)
+        # Cheapest path first: if OBS isn't even up, skip the
+        # websocket round-trip entirely. Waybar polls this frequently
+        # and the common steady state is "idle", so opening a socket
+        # every tick just to have it refused is wasted work (and
+        # noisy — see the logger-muting block at module top).
+        obs_up = self._is_obs_running()
+        if not obs_up:
+            return json.dumps(
+                {"class": "idle", "text": "", "tooltip": "Not recording"}
+            )
 
+        status = self._get_record_status(silent=True)
         if status and status.output_active:
             paused = getattr(status, "output_paused", False)
-            state = "paused" if paused else "recording"
-            status_map = {
-                "paused": (
-                    "recording paused",
-                    "⏸",
-                    "Recording paused - Click to toggle",
-                ),
-                "recording": (
-                    "recording",
-                    "⏺",
-                    "Recording active - Click to stop",
-                ),
-            }
-            cls, text, tooltip = status_map[state]
-
-            return json.dumps({"class": cls, "text": text, "tooltip": tooltip})
-
-        if self._is_obs_running():
+            if paused:
+                return json.dumps(
+                    {
+                        "class": "recording paused",
+                        "text": "⏸",
+                        "tooltip": "Recording paused - Click to toggle",
+                    }
+                )
             return json.dumps(
                 {
-                    "class": "ready",
-                    "text": "⏹",
-                    "tooltip": "OBS ready - Click to start recording",
+                    "class": "recording",
+                    "text": "⏺",
+                    "tooltip": "Recording active - Click to stop",
                 }
             )
 
-        return json.dumps({"class": "idle", "text": "", "tooltip": "Not recording"})
+        # OBS is running but either the websocket is unreachable
+        # (auth config mismatch, plugin disabled) or it's simply not
+        # recording yet. Either way the user action is the same —
+        # click to start — so don't differentiate.
+        return json.dumps(
+            {
+                "class": "ready",
+                "text": "⏹",
+                "tooltip": "OBS ready - Click to start recording",
+            }
+        )
 
 def main():
     parser = argparse.ArgumentParser(

@@ -561,6 +561,7 @@ class CommandPalette(Gtk.Box):
             self._host_overlay.add_overlay(self)
             self._attached = True
         self.set_visible(True)
+
         # Idle-add the focus so GTK has finished the overlay
         # attachment by the time we reach for the entry. The Entry
         # re-selects its text on a plain `grab_focus()`, so use
@@ -627,7 +628,7 @@ class CommandPalette(Gtk.Box):
             if first < 0:
                 first = hi
             if last >= 0:
-                score += (hi - last - 1)
+                score += hi - last - 1
             last = hi
             hi += 1
         return first + score
@@ -761,6 +762,7 @@ class CommandPalette(Gtk.Box):
         row is intentionally non-focusable — drive the vadjustment
         directly. `idle_add` defers the computation to the next tick
         so GTK has finished laying out any just-appended children."""
+
         def _scroll() -> bool:
             adj = self._scroller.get_vadjustment()
             if adj is None:

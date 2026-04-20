@@ -52,12 +52,17 @@ ACP agents that emit `AgentPlanUpdate` (claude-agent-acp and opencode-acp both d
 
 ### Tool permissions
 
-Every non-read tool call either resolves via pilot's permission state (seeded from mcphub's `autoApprove` / `disabled_tools` lists + any `--auto-approve` / `--auto-reject` CLI flags) OR surfaces an in-overlay `PermissionRow` the user has to click through (`✓ allow` / `✓ trust` / `✕ deny` / `⛔ auto-reject`). Consequences:
+**Built-in bash calls** may or may not surface a `PermissionRow` depending on what the command actually tries to do. A `touch` in a path the user already owns (e.g. `~/notes`) goes straight through; a command that hits a privileged path (`/root/`, `sudo`, device nodes, etc.) triggers the prompt. The permission system appears to gate on the _effective_ operation — not the syntactic tool name — so one `bash` call can be allowed while the next is denied depending on what it attempts to do.
 
-- Do not batch destructive operations assuming they'll all pass through. Describe each step first when the blast radius is large.
-- Cancelled tools surface as `*— cancelled (denied: <tool>) —*` in the transcript. If you see that marker in the history, treat it as a hard stop: the user rejected that path on purpose.
-- Trust is a per-process allow-list; it evaporates on pilot close. `Ctrl+K` opens a palette that LISTS current trusts + auto-approves + auto-rejects and lets the user drop entries — it does NOT add new ones. Adding happens via the `✓ trust` / `⛔ auto-reject` buttons on a pending permission row.
-- Don't lean on an earlier trust decision as an invariant for the rest of the session; a user can yank it via `Ctrl+K` at any time.
+**MCP tool calls** always present a `PermissionRow` unless the tool is already in the session's explicit allow-list.
+
+Practical consequences:
+
+- Do not assume a prior `bash` call autorises a subsequent one, even with identical arguments — what the command _does_ matters.
+- If no `PermissionRow` appears for a tool call, treat it as normal (the system didn't flag it as sensitive) — not a bug.
+- Destructive operations (`rm`, `kill`, `dd`, network calls to unfamiliar hosts) are especially sensitive — surface them clearly and individually.
+- Cancelled tools surface as `*— cancelled (denied: <tool>) —*` in the transcript. If you see that marker, treat it as a hard stop.
+- Trust is a per-process allow-list; it evaporates on pilot close. `Ctrl+K` opens a palette listing current trusts + auto-approves + auto-rejects and lets the user drop entries — it does NOT add new ones. Adding happens via the `✓ trust` / `⛔ auto-reject` buttons on a pending `PermissionRow`.
 
 ### Working directory & headers
 

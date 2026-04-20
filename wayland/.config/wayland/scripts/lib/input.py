@@ -52,7 +52,7 @@ class InputAdapterClipboard:
                 text=True,
                 check=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             return []
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 

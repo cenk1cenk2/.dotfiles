@@ -160,6 +160,48 @@
   min-height: 2em;
 }
 
+/* Code blocks split out of the surrounding markdown so they can render
+ * with a full-width gutter (the box paints the whole row, not just the
+ * glyph bounds a pango <span background=…> would cover) and a small
+ * language pill floated on the top-right. The block itself is a
+ * vertical Gtk.Box; the header strip inside carries the pill; the code
+ * label sits below with monospace + syntax-highlighted pango markup. */
+.overlay box.pilot-code-block {
+  background-color: #17191e;
+  background-image: none;
+  border: 1px solid alpha(@pilot_border_soft, 0.6);
+  border-radius: 6px;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.overlay box.pilot-code-block-header {
+  background-color: alpha(black, 0.25);
+  background-image: none;
+  padding: 2px 8px;
+  min-height: 18px;
+  border-bottom: 1px solid alpha(@pilot_border_soft, 0.35);
+}
+
+.overlay label.pilot-code-block-lang {
+  font-family: monospace;
+  font-size: 0.72em;
+  letter-spacing: 0.05em;
+  color: @pilot_fg_dim;
+  padding: 1px 8px;
+  background-color: alpha(@pilot_fg_dim, 0.12);
+  border-radius: 3px;
+}
+
+.overlay label.pilot-code-block-body {
+  font-family: monospace;
+  font-size: 0.92em;
+  color: @pilot_fg;
+  padding: 8px 12px;
+  background-color: transparent;
+  background-image: none;
+}
+
 /* Collapsible reasoning section. Sister to the card-text reply: same
  * bg[200] text surface, slightly smaller + italic + dimmed foreground
  * so the reply remains the visual anchor. Header row lives on the

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from html import escape as _xml_escape
 from io import StringIO
-from typing import Optional
+from typing import Optional, Union
 
 from markdown_it import MarkdownIt
 from pygments import highlight  # type: ignore[import-not-found]
@@ -91,14 +92,6 @@ _COLORS = {
 
 _DEFAULT_FG = "#abb2bf"
 
-def _token_color(ttype) -> str:
-    """Walk the pygments TokenType chain up toward `Token` until we find
-    a colour mapping. Returns the fallback foreground when nothing in
-    the chain is registered — pygments' type tree is comprehensive so
-    this is rare for mainstream languages."""
-    while ttype not in _COLORS and getattr(ttype, "parent", None) is not None:
-        ttype = ttype.parent
-    return _COLORS.get(ttype, _DEFAULT_FG)
 
 class PangoFormatter(Formatter):
     """Pygments Formatter that builds a single flat string of `<span
@@ -111,11 +104,22 @@ class PangoFormatter(Formatter):
     aliases = ["pango"]
     filenames: list[str] = []
 
+    @staticmethod
+    def _token_color(ttype) -> str:
+        """Walk the pygments TokenType chain up toward `Token` until
+        we find a colour mapping. Returns the fallback foreground
+        when nothing in the chain is registered — pygments' type
+        tree is comprehensive so this is rare for mainstream
+        languages."""
+        while ttype not in _COLORS and getattr(ttype, "parent", None) is not None:
+            ttype = ttype.parent
+        return _COLORS.get(ttype, _DEFAULT_FG)
+
     def format(self, tokensource, outfile):  # type: ignore[override]
         for ttype, value in tokensource:
             if not value:
                 continue
-            colour = _token_color(ttype)
+            colour = self._token_color(ttype)
             outfile.write(f'<span foreground="{colour}">{_xml_escape(value)}</span>')
 
 def highlight_code(
@@ -160,6 +164,29 @@ def highlight_code(
 
 # ── CommonMark → Pango markup ───────────────────────────────────────
 
+@dataclass(frozen=True)
+class TextBlock:
+    """A contiguous run of markdown rendered to Pango markup, destined
+    for a single `Gtk.Label.set_markup` call."""
+
+    markup: str
+
+@dataclass(frozen=True)
+class CodeBlock:
+    """A fenced / indented code block split out from the surrounding
+    markup so consumers can render it as its own widget (styled with a
+    block-level background, language pill, etc.). `markup` is the
+    pygments-highlighted Pango span ready to drop into
+    `Gtk.Label.set_markup`; `source` is the raw text (for copy / tooltip
+    behaviours); `language` is the fence's language hint (empty string
+    when the block is indented / unlabelled)."""
+
+    language: str
+    source: str
+    markup: str
+
+MarkdownBlock = Union[TextBlock, CodeBlock]
+
 class MarkdownMarkup:
     """Render CommonMark to a Pango markup string for `Gtk.Label.set_markup`.
 
@@ -197,6 +224,62 @@ class MarkdownMarkup:
         out: list[str] = []
         self._walk(tokens, out, list_stack=[], table_state=[])
         return "".join(out).rstrip(" \n\t")
+
+    def render_blocks(self, text: str) -> list[MarkdownBlock]:
+        """Split `text` into a widget-friendly sequence of blocks.
+
+        Returns an ordered list alternating between `TextBlock`
+        (consecutive inline / paragraph / list / table markup destined
+        for a single `Gtk.Label`) and `CodeBlock` (a fenced / indented
+        code block carrying language + highlighted Pango markup). The
+        code blocks are meant to render as their own standalone widgets
+        so the caller can style them with a full-width CSS background
+        plus a language pill — inline Pango `<span background="…">`
+        only shades the actual text glyphs, not the gutter, so block-
+        level visual treatment requires real widget boundaries.
+
+        Callers that don't need widgetised code blocks should keep
+        using `render()` — it still produces a single Pango markup
+        string (code blocks fall back to the inline shaded span)."""
+        tokens = self._md.parse(text)
+        buf: list[str] = []
+        blocks: list[MarkdownBlock] = []
+
+        def flush() -> None:
+            joined = "".join(buf).rstrip(" \n\t")
+            if joined:
+                blocks.append(TextBlock(markup=joined))
+            buf.clear()
+
+        self._walk_blocks(tokens, buf, blocks, flush, list_stack=[], table_state=[])
+        flush()
+        return blocks
+
+    def _walk_blocks(
+        self,
+        tokens,
+        buf: list[str],
+        blocks: list[MarkdownBlock],
+        flush,
+        list_stack,
+        table_state,
+    ) -> None:
+        for tok in tokens:
+            if tok.type in ("fence", "code_block"):
+                flush()
+                content = tok.content.rstrip("\n")
+                info = (getattr(tok, "info", "") or "").strip().split()
+                language = info[0] if info else None
+                highlighted = highlight_code(content, language, background=None)
+                blocks.append(
+                    CodeBlock(
+                        language=language or "",
+                        source=content,
+                        markup=highlighted,
+                    )
+                )
+                continue
+            self._handle(tok, buf, list_stack, table_state)
 
     @staticmethod
     def _esc(text: str) -> str:
@@ -316,7 +399,7 @@ class MarkdownMarkup:
             case "th_open" | "td_open":
                 if table_state:
                     table_state[-1]["_cell_start"] = len(out)
-                    align = (tok.attrGet("style") or "")
+                    align = tok.attrGet("style") or ""
                     if "text-align:right" in align:
                         table_state[-1]["_cell_align"] = "right"
                     elif "text-align:center" in align:
@@ -330,7 +413,10 @@ class MarkdownMarkup:
                     cell_markup = "".join(out[start:])
                     del out[start:]
                     state["current"].append(
-                        {"markup": cell_markup, "align": state.pop("_cell_align", "left")}
+                        {
+                            "markup": cell_markup,
+                            "align": state.pop("_cell_align", "left"),
+                        }
                     )
             case _:
                 log.debug("unhandled token: %s", tok.type)

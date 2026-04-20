@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
 """Pilot's own stdio MCP server — `system` namespace.
 
 Thin desktop-integration layer for agents: one tool today (`open`,
@@ -59,28 +59,22 @@ RESOURCE_SCHEME = "pilot"
 SKILLS_DIR = os.environ.get("PILOT_SKILLS_DIR", "")
 log.info("mcp_server starting: pid=%s SKILLS_DIR=%r", os.getpid(), SKILLS_DIR)
 
-
 def _write(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
-
 
 def _error(req_id: Any, code: int, message: str) -> None:
     _write(
         {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
     )
 
-
 def _result(req_id: Any, result: dict) -> None:
     _write({"jsonrpc": "2.0", "id": req_id, "result": result})
-
 
 def _tool_result(text: str, *, is_error: bool = False) -> dict:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
-
 # ── Tools ────────────────────────────────────────────────────────────
-
 
 def _tool_open(args: dict) -> dict:
     path = (args or {}).get("path")
@@ -102,7 +96,6 @@ def _tool_open(args: dict) -> dict:
         stderr = proc.stderr.strip() or f"exit {proc.returncode}"
         return _tool_result(f"xdg-open failed: {stderr}", is_error=True)
     return _tool_result(f"Opened {target}")
-
 
 _TOOLS: list[dict] = [
     {
@@ -130,7 +123,6 @@ _HANDLERS: dict[str, Callable[[dict], dict]] = {
     "open": _tool_open,
 }
 
-
 # ── Resources: skills + references ───────────────────────────────────
 #
 # URI scheme mirrors mcphub-nvim's layout, scoped under `pilot://` so
@@ -147,14 +139,11 @@ _HANDLERS: dict[str, Callable[[dict], dict]] = {
 # clients that cached the pre-scheme URIs) and the new `pilot://`
 # form, so upgrades are transparent.
 
-
 def _skill_uri(name: str) -> str:
     return f"{RESOURCE_SCHEME}://skill/{name}"
 
-
 def _reference_uri(name: str) -> str:
     return f"{RESOURCE_SCHEME}://reference/{name}"
-
 
 def _parse_resource_uri(uri: str) -> Optional[tuple[str, str]]:
     """Map either scheme variant into `(kind, tail)`. Returns None for
@@ -163,12 +152,11 @@ def _parse_resource_uri(uri: str) -> Optional[tuple[str, str]]:
     if not uri:
         return None
     prefix = f"{RESOURCE_SCHEME}://"
-    body = uri[len(prefix):] if uri.startswith(prefix) else uri
+    body = uri[len(prefix) :] if uri.startswith(prefix) else uri
     for kind in ("skill/", "reference/"):
         if body.startswith(kind):
-            return kind[:-1], body[len(kind):]
+            return kind[:-1], body[len(kind) :]
     return None
-
 
 def _list_resources() -> list[dict]:
     if not SKILLS_DIR:
@@ -204,7 +192,6 @@ def _list_resources() -> list[dict]:
     )
     return out
 
-
 def _list_resource_templates() -> list[dict]:
     if not SKILLS_DIR:
         return []
@@ -216,7 +203,6 @@ def _list_resource_templates() -> list[dict]:
             "mimeType": "text/markdown",
         }
     ]
-
 
 def _read_resource(uri: str) -> Optional[dict]:
     if not SKILLS_DIR:
@@ -248,14 +234,10 @@ def _read_resource(uri: str) -> Optional[dict]:
         skill_md = os.path.join(SKILLS_DIR, skill_name, "SKILL.md")
         skill = parse_skill(skill_md, fallback_name=skill_name)
         if skill is None:
-            log.warning(
-                "resources/read: skill %r missing at %s", skill_name, skill_md
-            )
+            log.warning("resources/read: skill %r missing at %s", skill_name, skill_md)
             return None
         body = f"--- {skill.name} ---\n{skill.body}"
-        log.info(
-            "resources/read: skill %r -> %d bytes", skill_name, len(body)
-        )
+        log.info("resources/read: skill %r -> %d bytes", skill_name, len(body))
         return {"uri": uri, "mimeType": "text/markdown", "text": body}
     if kind == "reference":
         name = tail
@@ -271,9 +253,7 @@ def _read_resource(uri: str) -> Optional[dict]:
         return {"uri": uri, "mimeType": "text/markdown", "text": text}
     return None
 
-
 # ── Dispatcher ───────────────────────────────────────────────────────
-
 
 def _dispatch(req: dict) -> None:
     method = req.get("method")
@@ -336,7 +316,6 @@ def _dispatch(req: dict) -> None:
         log.warning("method not found: %s", method)
         _error(req_id, -32601, f"method not found: {method!r}")
 
-
 def main() -> int:
     log.info("mcp_server ready on stdin/stdout")
     for line in sys.stdin:
@@ -357,7 +336,6 @@ def main() -> int:
                 _error(req_id, -32603, str(e))
     log.info("mcp_server exiting (stdin closed)")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -31,7 +31,7 @@ import queue
 import threading
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, ClassVar, Iterator, Optional
 
 import acp
 from acp import (
@@ -69,22 +69,13 @@ from acp.schema import (
 
 log = logging.getLogger(__name__)
 
-# Raises asyncio's default 64KB line-buffer ceiling. ACP agents emit
-# newline-delimited JSON-RPC frames that routinely cross the default
-# on turns that stream a tool with a large `raw_input` / `raw_output`
-# (file reads, image blocks already base64-encoded, long diff patches),
-# and the SDK surfaces that as `LimitOverrunError` inside the receive
-# loop — which tears the connection down and leaves the UI stuck on a
-# half-delivered reply. Anthropic's streaming payloads stay well under
-# 16MB per line, so bumping the ceiling to that buys headroom without
-# making us buffer anything we wouldn't have already. If an agent ever
-# ships a single frame larger than this, the right fix is on the agent
-# side — we'd rather crash here than silently wedge."""
-_ACP_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
-
 # Preference order per PermissionRow action. When the agent didn't ship
 # the exact kind we'd like (opencode offers only `allow_once / allow_always
 # / reject_once`, no `reject_always`), fall through to the closest match.
+# Module-level because `AcpAdapter.select_option_id` below is a
+# staticmethod that has to read it without an instance — moving it onto
+# the class as a ClassVar works too but buys nothing; it's a tiny lookup
+# table, not a policy to override per-adapter.
 _KIND_FALLBACK: dict[str, tuple[str, ...]] = {
     "allow_once": ("allow_once", "allow_always"),
     "allow_always": ("allow_always", "allow_once"),
@@ -92,15 +83,18 @@ _KIND_FALLBACK: dict[str, tuple[str, ...]] = {
     "reject_always": ("reject_always", "reject_once"),
 }
 
-@dataclass(frozen=True)
-class ToolCallSummary:
-    """Lightweight snapshot of an ACP ToolCallUpdate shaped for the
-    permission-handler callback."""
+AcpMcpServer = HttpMcpServer | SseMcpServer | McpServerStdio
 
-    tool_id: str
-    name: str
-    arguments: str
-    status: str
+ToolNameExtractor = Callable[[Any], Optional[str]]
+"""Hook for agent-specific canonical tool-name extraction.
+
+Gets handed a `ToolCallUpdate` / `ToolCallStart` / `ToolCallProgress`
+and returns the programmatic tool name if the agent surfaced one
+through an out-of-band channel (Claude ships it in
+`_meta.claudeCode.toolName`), or None to fall back to the ACP
+`title` / `kind` fields. Wired onto `AcpSession` / `AcpAdapter` so
+backend-specific logic (like the Claude hook) lives in the adapter
+that owns it, not in the transport core."""
 
 
 @dataclass(frozen=True)
@@ -115,9 +109,21 @@ class PromptAttachment:
     data: Optional[bytes] = None
     uri: Optional[str] = None
 
+    @classmethod
+    def image(
+        cls, data: bytes, mime_type: str = "image/png"
+    ) -> PromptAttachment:
+        """Shorthand for an inline-bytes image attachment. Lives on
+        the dataclass so tests + callers can build one without
+        fishing through the module for a free-standing helper."""
+        return cls(mime_type=mime_type, data=data)
+
 
 def image_attachment(data: bytes, mime_type: str = "image/png") -> PromptAttachment:
-    return PromptAttachment(mime_type=mime_type, data=data)
+    """Back-compat free function — forwards to
+    `PromptAttachment.image`. Kept so existing
+    `from lib import image_attachment` imports don't break."""
+    return PromptAttachment.image(data, mime_type)
 
 
 @dataclass(frozen=True)
@@ -130,50 +136,89 @@ class PlanItem:
     status: str  # "pending" | "in_progress" | "completed"
     priority: str  # "low" | "medium" | "high"
 
+
+@dataclass(frozen=True)
+class ToolCallSummary:
+    """Lightweight snapshot of an ACP ToolCallUpdate shaped for the
+    permission-handler callback.
+
+    `name` is the canonical programmatic tool name used for permission
+    set membership and formatter dispatch. `title` is the human-readable
+    line the agent wants surfaced in UI, and `kind` is the ACP `ToolKind`
+    enum (`read` / `edit` / `execute` / `search` / `fetch` / …).
+
+    The split matters because ACP's `ToolCall` / `ToolCallUpdate` carry
+    only `title` + `kind` on the wire. Claude's `claude-agent-acp` tucks
+    the real tool name into `_meta.claudeCode.toolName` on session
+    updates; opencode puts its lowercase permission category in `title`
+    directly. We pull whichever is most accurate into `name` so trust /
+    auto-approve decisions survive across calls with varying titles."""
+
+    # ACP `status` values → the pilot UI's compact vocabulary. Lives
+    # on the dataclass because `from_acp_update` is the sole consumer.
+    _STATUS_MAP: ClassVar[dict[str, str]] = {
+        "pending": "pending",
+        "in_progress": "running",
+        "completed": "completed",
+        "failed": "failed",
+    }
+
+    tool_id: str
+    name: str
+    title: str
+    kind: str
+    arguments: str
+    status: str
+
+    @classmethod
+    def from_acp_update(
+        cls,
+        update: ToolCallUpdate | ToolCallStart | ToolCallProgress,
+        *,
+        tool_name_extractor: Optional[ToolNameExtractor] = None,
+    ) -> ToolCallSummary:
+        """Collapse an ACP tool_call message into the pilot-side
+        summary. Backend-specific `tool_name_extractor` (see Claude's
+        `_meta.claudeCode.toolName` hook) gets first pick at the
+        canonical tool name; we fall through to `title` and `kind` so
+        there's always something stable to hand to the permission
+        engine."""
+        tool_id = update.tool_call_id or ""
+        title = (update.title or "").strip()
+        kind = (update.kind or "").strip()
+        name: Optional[str] = None
+        if tool_name_extractor is not None:
+            try:
+                name = tool_name_extractor(update)
+            except Exception as e:
+                log.warning("tool_name_extractor raised: %s", e)
+                name = None
+        if not name:
+            name = title or kind or "tool"
+        raw = update.raw_input
+        if isinstance(raw, (dict, list)):
+            try:
+                args = json.dumps(raw)
+            except TypeError, ValueError:
+                args = str(raw)
+        elif raw is None:
+            args = ""
+        else:
+            args = str(raw)
+        return cls(
+            tool_id=tool_id,
+            name=str(name),
+            title=title or str(name),
+            kind=kind,
+            arguments=args,
+            status=cls._STATUS_MAP.get(update.status or "", "pending"),
+        )
+
+
 PermissionHandler = Callable[[ToolCallSummary, list[PermissionOption]], Optional[str]]
 """Invoked from the ACP worker thread when the agent asks for
 permission. MUST block until the user decides and return the
 `option_id` to send back — or None to cancel the prompt."""
-
-def select_option_id(options: list[PermissionOption], want_kind: str) -> Optional[str]:
-    """Pick the option_id matching `want_kind` (or its fallback chain).
-    Returns None when nothing sensible is on offer so callers can decide
-    whether to send `cancelled` or fall back to whatever the agent
-    declared first.
-
-    Logs at WARN when the fallback chain exhausts and we have to pick
-    the first option blindly — that's the signal that `_KIND_FALLBACK`
-    is missing a translation for the agent version we're talking to."""
-    if not options:
-        return None
-    by_kind: dict[str, str] = {}
-    for opt in options:
-        if opt.kind and opt.option_id:
-            by_kind.setdefault(opt.kind, opt.option_id)
-    for candidate in _KIND_FALLBACK.get(want_kind, (want_kind,)):
-        if candidate in by_kind:
-            return by_kind[candidate]
-    chosen = options[0].option_id
-    log.warning(
-        "select_option_id: want_kind=%s not in agent options %s; "
-        "falling back to first option_id=%s",
-        want_kind,
-        list(by_kind.keys()),
-        chosen,
-    )
-    return chosen
-
-def _content_text(content: Any) -> Optional[str]:
-    """ACP content blocks are a discriminated union; we only surface
-    the text variant (chat + thought chunks)."""
-    if isinstance(content, TextContentBlock):
-        return content.text or None
-    text = getattr(content, "text", None)
-    if isinstance(text, str):
-        return text or None
-    return None
-
-AcpMcpServer = HttpMcpServer | SseMcpServer | McpServerStdio
 
 def build_mcp_servers(
     servers: dict[str, dict] | None,
@@ -225,65 +270,6 @@ def build_mcp_servers(
             )
     return out
 
-_ACP_STATUS_MAP: dict[str, str] = {
-    "pending": "pending",
-    "in_progress": "running",
-    "completed": "completed",
-    "failed": "failed",
-}
-
-def _build_prompt_blocks(
-    user_message: str,
-    attachments: list[PromptAttachment],
-) -> list:
-    """Compose the ACP prompt payload. Attachments prefix the text so
-    their content is visible BEFORE the prose (matches how agents
-    typically quote images in responses). A text block always comes
-    out last — even an empty prose turn keeps the content array
-    non-empty which the ACP spec requires."""
-    blocks: list = []
-    for att in attachments:
-        if att.data is not None:
-            blocks.append(
-                image_block(
-                    data=base64.b64encode(att.data).decode("ascii"),
-                    mime_type=att.mime_type,
-                    uri=att.uri,
-                )
-            )
-        elif att.uri is not None:
-            # No inline bytes; reference the URI directly. `uri` alone
-            # on an image_block is the "server-resolved" shape from
-            # MCP `resources/read` results.
-            blocks.append(
-                image_block(data="", mime_type=att.mime_type, uri=att.uri)
-            )
-    blocks.append(text_block(user_message))
-    return blocks
-
-
-def _summarise_tool_call(
-    update: ToolCallUpdate | ToolCallStart | ToolCallProgress,
-) -> ToolCallSummary:
-    tool_id = update.tool_call_id or ""
-    name = update.title or update.kind or "tool"
-    raw = update.raw_input
-    if isinstance(raw, (dict, list)):
-        try:
-            args = json.dumps(raw)
-        except (TypeError, ValueError):
-            args = str(raw)
-    elif raw is None:
-        args = ""
-    else:
-        args = str(raw)
-    return ToolCallSummary(
-        tool_id=tool_id,
-        name=str(name),
-        arguments=args,
-        status=_ACP_STATUS_MAP.get(update.status or "", "pending"),
-    )
-
 @dataclass
 class _Sentinel:
     """Pushed onto the session queue when the in-flight prompt resolves
@@ -306,9 +292,36 @@ class AcpClient(Client):
         self,
         queue_lookup: Callable[[], Optional[queue.Queue[tuple[str, Any] | _Sentinel]]],
         permission_handler_lookup: Callable[[], Optional[PermissionHandler]],
+        tool_name_extractor_lookup: Callable[
+            [], Optional[ToolNameExtractor]
+        ] = lambda: None,
     ):
         self._queue_lookup = queue_lookup
         self._permission_handler_lookup = permission_handler_lookup
+        self._tool_name_extractor_lookup = tool_name_extractor_lookup
+
+    @staticmethod
+    def _content_text(content: Any) -> Optional[str]:
+        """ACP content blocks are a discriminated union; we only
+        surface the text variant (chat + thought chunks). Lives here
+        (not at module scope) because `session_update` is the only
+        caller — embedding keeps the acp-content-envelope logic next
+        to the place it's unpacked."""
+        if isinstance(content, TextContentBlock):
+            return content.text or None
+        text = getattr(content, "text", None)
+        if isinstance(text, str):
+            return text or None
+        return None
+
+    def _summarise(self, update: Any) -> ToolCallSummary:
+        """Build a `ToolCallSummary` using the adapter's current tool-
+        name extractor. Thin wrapper so `session_update` and
+        `request_permission` don't each duplicate the extractor
+        lookup."""
+        return ToolCallSummary.from_acp_update(
+            update, tool_name_extractor=self._tool_name_extractor_lookup()
+        )
 
     def _put(self, item: tuple[str, Any] | _Sentinel) -> None:
         q = self._queue_lookup()
@@ -318,17 +331,17 @@ class AcpClient(Client):
     async def session_update(self, session_id: str, update: Any, **_: Any) -> None:
         try:
             if isinstance(update, AgentMessageChunk):
-                text = _content_text(update.content)
+                text = self._content_text(update.content)
                 if text:
                     log.debug("acp update: text chunk len=%d", len(text))
                     self._put(("text", text))
             elif isinstance(update, AgentThoughtChunk):
-                text = _content_text(update.content)
+                text = self._content_text(update.content)
                 if text:
                     log.debug("acp update: thinking chunk len=%d", len(text))
                     self._put(("thinking", text))
             elif isinstance(update, (ToolCallStart, ToolCallProgress)):
-                summary = _summarise_tool_call(update)
+                summary = self._summarise(update)
                 log.info(
                     "acp update: tool %s name=%s status=%s",
                     "start" if isinstance(update, ToolCallStart) else "progress",
@@ -351,9 +364,7 @@ class AcpClient(Client):
             elif isinstance(update, UserMessageChunk):
                 return
             else:
-                log.debug(
-                    "acp update: dropped kind=%s", type(update).__name__
-                )
+                log.debug("acp update: dropped kind=%s", type(update).__name__)
             # Usage / mode updates intentionally dropped.
         except Exception as e:  # pragma: no cover — defensive
             log.warning("session_update dispatch failed: %s", e)
@@ -366,7 +377,7 @@ class AcpClient(Client):
         **_: Any,
     ) -> RequestPermissionResponse:
         handler = self._permission_handler_lookup()
-        summary = _summarise_tool_call(tool_call)
+        summary = self._summarise(tool_call)
         kinds = [opt.kind for opt in options if opt.kind]
         log.info(
             "acp request_permission: tool=%s options=%s",
@@ -457,6 +468,126 @@ class AcpSession:
         opencode-acp can spin them up on the agent side.
     """
 
+    # Raises asyncio's default 64KB line-buffer ceiling. ACP agents
+    # emit newline-delimited JSON-RPC frames that routinely cross the
+    # default on turns that stream a tool with a large `raw_input` /
+    # `raw_output` (file reads, image blocks already base64-encoded,
+    # long diff patches), and the SDK surfaces that as
+    # `LimitOverrunError` inside the receive loop — which tears the
+    # connection down and leaves the UI stuck on a half-delivered
+    # reply. Anthropic's streaming payloads stay well under 16MB per
+    # line, so bumping the ceiling to that buys headroom without
+    # making us buffer anything we wouldn't have already.
+    STREAM_LIMIT_BYTES: ClassVar[int] = 16 * 1024 * 1024
+
+    # Cap the size of a single raw-wire log line so a 10MB edit
+    # payload doesn't flood the terminal when running `pilot -v`.
+    # Still enough to see a full permission envelope.
+    WIRE_LOG_LIMIT: ClassVar[int] = 4096
+
+    @staticmethod
+    def _build_prompt_blocks(
+        user_message: str, attachments: list[PromptAttachment]
+    ) -> list:
+        """Compose the ACP prompt payload. Attachments prefix the text
+        so their content is visible BEFORE the prose (matches how
+        agents typically quote images in responses). A text block
+        always comes out last — even an empty prose turn keeps the
+        content array non-empty which the ACP spec requires."""
+        blocks: list = []
+        for att in attachments:
+            if att.data is not None:
+                blocks.append(
+                    image_block(
+                        data=base64.b64encode(att.data).decode("ascii"),
+                        mime_type=att.mime_type,
+                        uri=att.uri,
+                    )
+                )
+            elif att.uri is not None:
+                # No inline bytes; reference the URI directly. `uri`
+                # alone on an image_block is the "server-resolved"
+                # shape from MCP `resources/read` results.
+                blocks.append(
+                    image_block(data="", mime_type=att.mime_type, uri=att.uri)
+                )
+        blocks.append(text_block(user_message))
+        return blocks
+
+    @classmethod
+    def _summarise_wire_payload(cls, message: dict) -> str:
+        """Render a JSON-RPC message (request / response /
+        notification) as a compact debug line. Keeps method + id on
+        the prefix and a best-effort dump of the params/result
+        payload — truncated at `WIRE_LOG_LIMIT` so one huge payload
+        doesn't wedge the logger."""
+        method = message.get("method")
+        msg_id = message.get("id")
+        if method is not None:
+            prefix = f"{method}"
+            if msg_id is not None:
+                prefix += f" id={msg_id}"
+            body = message.get("params")
+        else:
+            prefix = f"response id={msg_id}"
+            body = (
+                message.get("result")
+                if "result" in message
+                else message.get("error")
+            )
+        try:
+            dumped = json.dumps(body, ensure_ascii=False, default=str)
+        except TypeError, ValueError:
+            dumped = repr(body)
+        if len(dumped) > cls.WIRE_LOG_LIMIT:
+            dumped = (
+                dumped[: cls.WIRE_LOG_LIMIT]
+                + f"…(+{len(dumped) - cls.WIRE_LOG_LIMIT})"
+            )
+        return f"{prefix}  {dumped}"
+
+    @classmethod
+    def _make_wire_observer(cls):
+        """Return a `StreamObserver` (from `acp.connection`) that logs
+        every inbound / outbound JSON-RPC frame at DEBUG. Returns
+        synchronously so the observer doesn't queue extra coroutines
+        on the hot path."""
+        from acp.connection import StreamDirection
+
+        summarise = cls._summarise_wire_payload
+
+        def observer(event) -> None:
+            if not log.isEnabledFor(logging.DEBUG):
+                return
+            arrow = "←" if event.direction == StreamDirection.INCOMING else "→"
+            try:
+                line = summarise(event.message)
+            except Exception as e:
+                line = f"(wire log failed: {e}) {event.message!r}"
+            log.debug("acp wire %s %s", arrow, line)
+
+        return observer
+
+    @staticmethod
+    async def _drain_stderr(stream, tag: str) -> None:
+        """Forward each line of the ACP agent's stderr to our logger
+        at DEBUG. `tag` is the executable basename so the user can
+        tell claude-agent-acp output apart from opencode's when
+        multiple subprocesses are alive. Silently exits once the
+        stream closes (subprocess died or stderr was redirected)."""
+        try:
+            while True:
+                line = await stream.readline()
+                if not line:
+                    return
+                text = line.rstrip(b"\n").decode("utf-8", errors="replace")
+                if text:
+                    log.debug("acp agent[%s] stderr: %s", tag, text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("acp stderr drain for %s ended: %s", tag, e)
+
     def __init__(self, **kwargs: Any):
         self.command: str = kwargs.get("command") or ""
         if not self.command:
@@ -511,6 +642,13 @@ class AcpSession:
         # path fired without having to parse logs.
         self._resumed_from_store: bool = False
         self._permission_handler: Optional[PermissionHandler] = None
+        # Per-session hook for canonical tool-name extraction.
+        # Subclasses (e.g. `ConversationAdapterClaude`) register a
+        # function here when their backend embeds the SDK tool name in
+        # an out-of-band field like `_meta.claudeCode.toolName`. The
+        # base transport layer treats this as opaque — all agent-
+        # specific knowledge lives in the adapter that set it.
+        self._tool_name_extractor: Optional[ToolNameExtractor] = None
         # Rebound by `prompt()` so a single long-lived `AcpClient` can
         # drain events into whichever turn is currently in flight.
         self._current_queue: Optional[queue.Queue[tuple[str, Any] | _Sentinel]] = None
@@ -525,6 +663,14 @@ class AcpSession:
         an active session). The client looks it up lazily per request,
         so late wiring is fine."""
         self._permission_handler = handler
+
+    def set_tool_name_extractor(self, extractor: Optional[ToolNameExtractor]) -> None:
+        """Install a canonical tool-name extractor (see `ToolNameExtractor`).
+        Adapters call this from their constructor when the backend
+        embeds a programmatic tool name in a non-standard field. Late
+        binding is fine — `AcpClient._summarise` looks the hook up
+        lazily on every event."""
+        self._tool_name_extractor = extractor
 
     def _read_stored_session_id(self) -> Optional[str]:
         """Return the previously-saved `session_id` for this session
@@ -601,6 +747,7 @@ class AcpSession:
             client = AcpClient(
                 lambda: self._current_queue,
                 lambda: self._permission_handler,
+                lambda: self._tool_name_extractor,
             )
             log.info(
                 "acp spawn: %s %s cwd=%s mcp=%s",
@@ -615,12 +762,32 @@ class AcpSession:
                 *self.args,
                 env=self.env,
                 cwd=self.cwd,
-                transport_kwargs={"limit": _ACP_STREAM_LIMIT_BYTES},
+                transport_kwargs={"limit": self.STREAM_LIMIT_BYTES},
+                # Raw wire-log observer — enabled when the pilot module
+                # logger is below DEBUG (i.e. `pilot -v toggle …`) so
+                # we can diagnose protocol issues like "opencode never
+                # sends session/request_permission" by inspecting the
+                # actual JSON-RPC frames both directions. No-op at
+                # INFO+, so normal operation pays no log-format cost.
+                observers=[self._make_wire_observer()],
             )
             conn, process = await cm.__aenter__()
             self._process_cm = cm
             self._conn = conn
             self._process = process
+            # Drain the agent subprocess's stderr in the background.
+            # Agents routinely log over stderr (opencode prints its
+            # internal permission state, claude-agent-acp surfaces
+            # hook activity + SDK warnings); piping those through our
+            # logger at DEBUG keeps them out of the way by default but
+            # visible with `-v`, which is critical when diagnosing
+            # permission-flow asymmetries between backends.
+            if process.stderr is not None:
+                asyncio.create_task(
+                    self._drain_stderr(
+                        process.stderr, os.path.basename(self.command)
+                    )
+                )
             caps = ClientCapabilities(
                 fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
                 auth=AuthCapabilities(terminal=False),
@@ -728,7 +895,7 @@ class AcpSession:
                 f"<SYSTEM_AGENTS>\n{prefix}\n</SYSTEM_AGENTS>{sep}{user_message}"
             )
             self._agents_file = ""
-        blocks = _build_prompt_blocks(effective_message, attachments or [])
+        blocks = self._build_prompt_blocks(effective_message, attachments or [])
         log.info(
             "acp prompt: session=%s text_len=%d attachments=%d",
             session_id,
@@ -786,9 +953,11 @@ class AcpSession:
                     process.returncode,
                 )
                 event_queue.put(
-                    _Sentinel(error=RuntimeError(
-                        f"acp agent exited (rc={process.returncode})"
-                    ))
+                    _Sentinel(
+                        error=RuntimeError(
+                            f"acp agent exited (rc={process.returncode})"
+                        )
+                    )
                 )
                 try:
                     drive_future.cancel()
@@ -919,8 +1088,48 @@ class AcpAdapter:
     def __init__(self, **kwargs: Any):
         self._session = AcpSession(**kwargs)
 
+    @staticmethod
+    def select_option_id(
+        options: list[PermissionOption], want_kind: str
+    ) -> Optional[str]:
+        """Pick the option_id matching `want_kind` (or its fallback
+        chain). Returns None when nothing sensible is on offer so
+        callers can decide whether to send `cancelled` or fall back
+        to whatever the agent declared first.
+
+        Logs at WARN when the fallback chain exhausts and we have to
+        pick the first option blindly — that's the signal that
+        `_KIND_FALLBACK` is missing a translation for the agent
+        version we're talking to."""
+        if not options:
+            return None
+        by_kind: dict[str, str] = {}
+        for opt in options:
+            if opt.kind and opt.option_id:
+                by_kind.setdefault(opt.kind, opt.option_id)
+        for candidate in _KIND_FALLBACK.get(want_kind, (want_kind,)):
+            if candidate in by_kind:
+                return by_kind[candidate]
+        chosen = options[0].option_id
+        log.warning(
+            "select_option_id: want_kind=%s not in agent options %s; "
+            "falling back to first option_id=%s",
+            want_kind,
+            list(by_kind.keys()),
+            chosen,
+        )
+        return chosen
+
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
         self._session.set_permission_handler(handler)
+
+    def set_tool_name_extractor(self, extractor: Optional[ToolNameExtractor]) -> None:
+        """Forward to the underlying session. Subclasses call this from
+        their constructor (or late from higher-level wiring) when their
+        backend carries the canonical tool name in an extension field —
+        e.g. `ConversationAdapterClaude` pulls it from
+        `_meta.claudeCode.toolName`."""
+        self._session.set_tool_name_extractor(extractor)
 
     def reset(self) -> None:
         """Drop the current ACP session + restart fresh on the next
@@ -979,9 +1188,7 @@ class AcpAdapter:
 
         def driver() -> None:
             try:
-                self._session.prompt(
-                    user_message, event_queue, attachments=attachments
-                )
+                self._session.prompt(user_message, event_queue, attachments=attachments)
             except BaseException as e:  # pragma: no cover
                 error_holder["error"] = e
 
@@ -1006,3 +1213,9 @@ class AcpAdapter:
 
     def close(self) -> None:
         self._session.close()
+
+
+# Module-level alias so existing `from lib.acp_adapter import
+# select_option_id` imports in pilot.py don't need to change. The
+# canonical home is `AcpAdapter.select_option_id`.
+select_option_id = AcpAdapter.select_option_id

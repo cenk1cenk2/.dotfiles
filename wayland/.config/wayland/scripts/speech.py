@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+# The `sh -c` trampoline lets us run `uv run --project <fixed dir>` no
+# matter where the invoking shell's CWD happens to sit. See
+# pyproject.toml for the full rationale.
 
 from __future__ import annotations
 

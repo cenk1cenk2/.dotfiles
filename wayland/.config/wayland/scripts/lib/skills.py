@@ -36,7 +36,6 @@ from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
-
 @dataclass(frozen=True)
 class Skill:
     name: str
@@ -56,7 +55,6 @@ class Skill:
         if isinstance(raw, list):
             return [r for r in raw if isinstance(r, str)]
         return []
-
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Split `---`-delimited YAML frontmatter from body. Returns
@@ -118,7 +116,6 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     body = "\n".join(lines[end_idx + 1 :]).strip()
     return fm, body
 
-
 def parse_skill(path: str, *, fallback_name: Optional[str] = None) -> Optional[Skill]:
     """Read and parse `SKILL.md` at `path`. Returns None on IO errors
     or when the body is empty (matches mcphub-nvim's pruning)."""
@@ -142,7 +139,6 @@ def parse_skill(path: str, *, fallback_name: Optional[str] = None) -> Optional[S
         frontmatter=fm,
     )
 
-
 def load_skills(skills_dir: str) -> list[Skill]:
     """Enumerate every `<skills_dir>/<slug>/SKILL.md` and return the
     parsed skills, sorted by name. Silent on any IO failure — missing
@@ -163,7 +159,6 @@ def load_skills(skills_dir: str) -> list[Skill]:
         if skill is not None:
             out.append(skill)
     return out
-
 
 def load_references(skills_dir: str) -> list[tuple[str, str]]:
     """Return `(name, path)` for every `<skills_dir>/references/*.md`
@@ -186,7 +181,6 @@ def load_references(skills_dir: str) -> list[tuple[str, str]]:
             out.append((entry[:-3], path))
     return out
 
-
 def read_reference(skills_dir: str, name: str) -> Optional[str]:
     """Return the full contents of a shared reference, or None if the
     name doesn't resolve to a real file under `references/`."""
@@ -202,7 +196,6 @@ def read_reference(skills_dir: str, name: str) -> Optional[str]:
         log.debug("reference read failed %s: %s", candidate, e)
         return None
 
-
 @dataclass(frozen=True)
 class SkillListing:
     """One palette row's worth of info. Deliberately slim — the full
@@ -212,7 +205,6 @@ class SkillListing:
     name: str
     description: str
     uri: str
-
 
 def list_skills_via_mcp(
     mcp_server_script: str,
@@ -276,7 +268,7 @@ def list_skills_via_mcp(
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         send({"jsonrpc": "2.0", "id": 2, "method": "resources/list"})
         resp = recv() or {}
-        resources = ((resp.get("result") or {}).get("resources") or [])
+        resources = (resp.get("result") or {}).get("resources") or []
     except (BrokenPipeError, OSError) as e:
         log.warning("skills mcp roundtrip failed: %s", e)
     finally:
@@ -299,11 +291,11 @@ def list_skills_via_mcp(
         body = uri
         for prefix in ("pilot://", ""):
             if prefix and body.startswith(prefix):
-                body = body[len(prefix):]
+                body = body[len(prefix) :]
                 break
         if not body.startswith("skill/"):
             continue
-        tail = body[len("skill/"):]
+        tail = body[len("skill/") :]
         if "/" in tail:
             continue
         out.append(
@@ -319,7 +311,6 @@ def list_skills_via_mcp(
         len(out),
     )
     return out
-
 
 def load_skill_references(skills_dir: str, skill_name: str) -> Optional[str]:
     """Inline every reference declared in `<skill_name>`'s frontmatter.
@@ -353,4 +344,6 @@ def load_skill_references(skills_dir: str, skill_name: str) -> Optional[str]:
         missing.append(rel)
     if missing:
         results.append(f"\n--- NOT FOUND: {', '.join(missing)} ---")
-    return "\n\n".join(results) if results else f"No readable references for {skill_name}."
+    return (
+        "\n\n".join(results) if results else f"No readable references for {skill_name}."
+    )

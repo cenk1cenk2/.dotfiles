@@ -88,7 +88,6 @@ pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
-python-obsws
 qt5-styleplugins
 qt5-wayland
 rclone

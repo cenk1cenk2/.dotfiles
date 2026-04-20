@@ -1,3 +1,94 @@
+# Dependency manifest for the wayland/scripts package.
+#
+# Runtime model: each executable script (pilot.py, copywriter.py,
+# recorder.py, speech.py, lib/mcp_server.py) shebangs to `uv run` via a
+# small `sh -c` trampoline so invocation works from any CWD (compositor
+# keybinds don't cd into the scripts dir before spawning):
+#
+#     #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+#
+# `$0` is the script path the kernel hands us at shebang-time, so
+# `$(dirname "$0")` resolves to whichever directory the script is
+# actually sitting in (stow destination when invoked through the
+# symlink, dotfiles repo when running directly). `uv run --project`
+# walks UP the tree from there to locate this pyproject.toml, so
+# `lib/mcp_server.py` lands on the same project as its siblings one
+# level up. No hardcoded `$HOME` — the path travels with the script.
+#
+# `uv run` resolves the dependency set below, ensures `.venv/` matches,
+# and executes the requested script inside that env. No `.venv/`
+# commits go into git — the Taskfile bootstrap provisions it with
+# `--system-site-packages` pointing at the system Python (see notes
+# under [tool.uv]).
+#
+# PEP 723 inline metadata was ruled out: `uv run --script` deliberately
+# ignores the project's dependency set (see
+# https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file),
+# which would force us to copy the dep list into every entry script.
+
+[project]
+name = "wayland-scripts"
+version = "0.1.0"
+description = "Pilot overlay, speech capture, recorder and copywriter glue for the Wayland dotfiles."
+# Floor matches the Arch `python` package currently on the target box;
+# bumping past the distro's stable Python would force uv to install a
+# managed interpreter from the astral mirror and lose the
+# `--system-site-packages` handoff that makes PyGObject visible (see
+# [tool.uv] below).
+requires-python = ">=3.14"
+dependencies = [
+  # Agent Client Protocol SDK — pilot's ACP adapter talks to
+  # claude-agent-acp + opencode acp via this library.
+  "agent-client-protocol>=0.9",
+  # Markdown → Pango pipeline (lib/markup.py). `markdown-it-py`
+  # imports as `markdown_it`.
+  "markdown-it-py>=4.0",
+  # Pygments drives the syntax highlighting that backs the fenced
+  # code-block widgets in the overlay.
+  "pygments>=2.19",
+  # psutil powers pilot's singleton detection + waybar's process
+  # chatter in copywriter.py.
+  "psutil>=7.0",
+  # obs-websocket bindings for recorder.py's remote-control path
+  # into OBS Studio.
+  "obsws-python>=1.8",
+]
+
+# PyGObject (import name: `gi`) is NOT listed under `dependencies`
+# above on purpose:
+#
+#   1. PyPI ships pygobject as an sdist only — no binary wheels — so
+#      `uv sync` would compile against system GLib / GObject headers on
+#      every fresh venv. Slow (~minute) and flaky if meson / ninja /
+#      gobject-introspection dev packages aren't present.
+#   2. Arch already ships `python-gobject` as a first-class system
+#      package tracking the same GTK4 / gobject-introspection ABIs the
+#      overlay needs.
+#
+# Instead the bootstrap task provisions the venv with
+# `--system-site-packages` + `--python /usr/bin/python3` so `gi` is
+# inherited from the distro install:
+#
+#     task wayland-scripts:bootstrap
+#
+# or, directly:
+#
+#     uv venv --python /usr/bin/python3 --system-site-packages
+#     uv sync
+#
+# `python-preference = "only-system"` below wires this in for every
+# subsequent `uv run` invocation so new venvs (e.g. after `rm -rf .venv`)
+# re-pick up the system interpreter without the user needing to pass
+# `--python` by hand.
+
+[tool.uv]
+# Pin to the distro python so PyGObject (which lives in the system's
+# site-packages) is importable after the bootstrap adds
+# --system-site-packages. Without this, uv would default to its own
+# managed interpreter (currently 3.13.11) and the `gi` module from
+# pacman's python-gobject wouldn't be visible inside the venv.
+python-preference = "only-system"
+
 [tool.ty.environment]
 extra-paths = ["."]
 
