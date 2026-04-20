@@ -49,6 +49,7 @@ from acp.schema import (
     AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
+    AvailableCommandsUpdate,
     CurrentModeUpdate,
     AuthCapabilities,
     ClientCapabilities,
@@ -189,6 +190,22 @@ class SessionModeState:
 
     current_mode_id: str = ""
     available_modes: tuple[ModeChoice, ...] = ()
+
+
+@dataclass(frozen=True)
+class CommandChoice:
+    """One entry in the agent's slash-command list. Mirrors ACP's
+    `AvailableCommand` (schema.py) but shaped for the palette UI so
+    pilot doesn't have to import the ACP schema.
+
+    `hint` is the `AvailableCommandInput.hint` — agents use it as
+    placeholder text for the slash-command argument (e.g. `/web`
+    hints "query to search for"). Empty when the command takes no
+    input."""
+
+    name: str
+    description: str = ""
+    hint: str = ""
 
 @dataclass(frozen=True)
 class ToolCallSummary:
@@ -451,6 +468,31 @@ class AcpClient(Client):
                             available_modes=existing.available_modes,
                         )
                     log.info("acp update: current_mode -> %s", new_mode)
+            elif isinstance(update, AvailableCommandsUpdate):
+                # Agents advertise slash commands (`/compact`, `/web`,
+                # `/plan`, …) via this notification. Per the ACP spec
+                # the client invokes them by sending a regular prompt
+                # text starting with `/<name>` — no separate RPC, the
+                # agent parses the prefix. We just cache the list so
+                # the palette UI can present them.
+                self._available_commands = tuple(
+                    CommandChoice(
+                        name=(cmd.name or "").strip(),
+                        description=(cmd.description or "").strip(),
+                        hint=(
+                            (cmd.input.hint or "").strip()
+                            if getattr(cmd, "input", None)
+                            and getattr(cmd.input, "hint", None)
+                            else ""
+                        ),
+                    )
+                    for cmd in (getattr(update, "available_commands", None) or [])
+                    if getattr(cmd, "name", None)
+                )
+                log.info(
+                    "acp update: available_commands -> %d entries",
+                    len(self._available_commands),
+                )
             else:
                 log.debug("acp update: dropped kind=%s", type(update).__name__)
             # Usage updates intentionally dropped.
@@ -734,6 +776,14 @@ class AcpAdapter:
         # Same pattern for ACP session modes (plan / accept-edits /
         # default / …). Read off new_session / load_session responses.
         self._mode_state: Optional[SessionModeState] = None
+        # Agent-advertised slash commands (`/compact`, `/web`, …).
+        # Populated by `AvailableCommandsUpdate` session updates;
+        # empty until the agent decides to share its list (some
+        # agents send it on-first-turn, some on-new-session, some
+        # never). Tuple is immutable → we re-assign rather than
+        # mutate in-place so the palette sees a consistent snapshot
+        # while it's open.
+        self._available_commands: tuple[CommandChoice, ...] = ()
         # Events that streamed in during `load_session` — agents may
         # replay prior turns as `session/update` notifications before
         # the load response comes back. `consume_replay()` drains this
@@ -1440,6 +1490,16 @@ class AcpAdapter:
         instead of minting a fresh session. Flips back to False on
         `reset()` or after a subsequent fresh `new_session`."""
         return self._session_loaded
+
+    @property
+    def available_commands(self) -> list[CommandChoice]:
+        """Slash commands the agent has advertised for this session
+        via `AvailableCommandsUpdate`. Empty until the agent pushes
+        at least one update (some send on first-turn, some on
+        new_session, some never). Commands are invoked by sending a
+        regular prompt with text `/<name> [args]` — the agent parses
+        the prefix server-side."""
+        return list(self._available_commands)
 
     @staticmethod
     def select_option_id(

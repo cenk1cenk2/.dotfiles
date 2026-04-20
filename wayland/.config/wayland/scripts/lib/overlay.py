@@ -167,10 +167,19 @@ class LayerOverlayWindow(Gtk.ApplicationWindow):
         self._namespace = namespace
         self._layer = layer if layer is not None else Gtk4LayerShell.Layer.TOP
         self._anchors = tuple(anchors)
+        # `ON_DEMAND` — overlay only grabs keyboard focus when the user
+        # clicks onto it. Typing in other windows works normally even
+        # while the overlay is visible, and clicks outside the
+        # overlay's anchored rect (most of the screen, since we only
+        # occupy a side strip) route to whatever's underneath. `EXCLUSIVE`
+        # would steal all keyboard input globally for as long as the
+        # overlay is on screen — the pattern SwayNotificationCenter and
+        # similar GTK4/layer-shell overlays use for the "visible but
+        # not modal" behaviour we want here.
         self._keyboard_mode = (
             keyboard_mode
             if keyboard_mode is not None
-            else Gtk4LayerShell.KeyboardMode.EXCLUSIVE
+            else Gtk4LayerShell.KeyboardMode.ON_DEMAND
         )
         self._width_fraction = float(width_fraction)
         self._min_width = int(min_width)

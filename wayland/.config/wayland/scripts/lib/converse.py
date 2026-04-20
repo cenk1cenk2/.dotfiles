@@ -16,6 +16,7 @@ from typing import Any, Iterator, Optional, Protocol, Union
 
 from .acp_adapter import (  # noqa: F401
     AcpAdapter,
+    CommandChoice,
     ModeChoice,
     ModelChoice,
     PromptAttachment,
@@ -145,6 +146,9 @@ class ConversationAdapter(Protocol):
     def current_mode_id(self) -> str | None: ...
 
     def set_mode(self, mode_id: str) -> bool: ...
+
+    @property
+    def available_commands(self) -> list[CommandChoice]: ...
 
     @property
     def tool_formatters(self) -> ToolFormatters:

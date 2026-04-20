@@ -402,6 +402,20 @@ class ComposeView:
             self._on_submit(text)
 
     def _on_key(self, _controller, keyval, _keycode, state) -> bool:
+        if keyval == Gdk.KEY_Escape:
+            # Esc with the compose focused: collapse any active text
+            # selection but keep focus on the TextView. GTK's
+            # built-in Esc on TextView is a no-op by default, so
+            # we implement the "standard editor" behaviour
+            # explicitly: if there IS a selection, clear it; if
+            # there isn't, let Esc propagate (window handler treats
+            # it as fall-through — no-op unless a palette's open).
+            buf = self._textview.get_buffer()
+            if buf.get_has_selection():
+                cursor = buf.get_iter_at_mark(buf.get_insert())
+                buf.place_cursor(cursor)
+                return True
+            return False
         if keyval not in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             return False
         if state & Gdk.ModifierType.SHIFT_MASK:
@@ -1639,6 +1653,7 @@ class PilotWindow(LayerOverlayWindow):
         self._mcp_palette: Optional[CommandPalette] = None
         self._models_palette: Optional[CommandPalette] = None
         self._modes_palette: Optional[CommandPalette] = None
+        self._commands_palette: Optional[CommandPalette] = None
         self._sessions_palette: Optional[CommandPalette] = None
         self._cwd_palette: Optional[CommandPalette] = None
         self._keybindings_palette: Optional[CommandPalette] = None
@@ -3152,16 +3167,16 @@ class PilotWindow(LayerOverlayWindow):
             # pilot process down). Requires Shift on top of Ctrl so
             # a muscle-memory Ctrl+Q doesn't nuke the session by
             # accident — the common "oops I meant Ctrl+W" typo is
-            # now a no-op instead of a full teardown.
+            # now a hide instead of a full teardown.
             self.close()
             return True
-        if ctrl and keyval == Gdk.KEY_w:
-            # Ctrl+W toggles the overlay's visibility (hide without
-            # tearing the session down). Ctrl+Shift+Q still does the
-            # hard close. Was on Escape previously, but that
-            # swallowed the key before focused children could use it
-            # for their default behaviour (TextView / Label
-            # selection clear).
+        if ctrl and keyval in (Gdk.KEY_q, Gdk.KEY_w):
+            # Ctrl+Q and Ctrl+W both hide the overlay without
+            # tearing the session down. Ctrl+Q is the conventional
+            # app-close shortcut so we honour muscle memory, while
+            # Ctrl+Shift+Q is reserved for the hard teardown above.
+            # Ctrl+W stays as an alternative for users who still
+            # think of pilot as a "tab" to close.
             self.set_visible(False)
             return True
         if ctrl and keyval == Gdk.KEY_p:
@@ -3362,6 +3377,12 @@ class PilotWindow(LayerOverlayWindow):
                 ("models", "Models", "switch the agent's active model", "models"),
                 ("modes", "Modes", "switch the agent's session mode", "modes"),
                 (
+                    "commands",
+                    "Slash Commands",
+                    "run one of the agent's advertised slash commands",
+                    "commands",
+                ),
+                (
                     "cwd",
                     "Current Working Directory",
                     "browse + pick a new working directory",
@@ -3396,6 +3417,7 @@ class PilotWindow(LayerOverlayWindow):
             "mcps": self._open_mcp_palette,
             "models": self._open_models_palette,
             "modes": self._open_modes_palette,
+            "commands": self._open_commands_palette,
             "cwd": self._open_cwd_palette,
             "permissions": self._open_permissions_palette,
             "sessions": self._open_sessions_palette,
@@ -3506,7 +3528,8 @@ class PilotWindow(LayerOverlayWindow):
         ("Ctrl+󰌑", "send the next queued turn", "send_next_queued"),
         ("Ctrl+⌫", "discard the next queued turn", "discard_next_queued"),
         ("Ctrl+Shift+Q", "close pilot (tears the session down)", "close"),
-        ("Ctrl+W", "hide the overlay (session stays alive)", "hide"),
+        ("Ctrl+Q", "hide the overlay (session stays alive)", "hide"),
+        ("Ctrl+W", "hide the overlay (alias for Ctrl+Q)", "hide"),
         ("Home", "scroll to top of the conversation", "scroll_top"),
         ("End", "scroll to bottom of the conversation", "scroll_bottom"),
         ("PgUp", "scroll the conversation up one page", "scroll_page_up"),
@@ -3847,6 +3870,90 @@ class PilotWindow(LayerOverlayWindow):
             self._refresh_session_label()
         else:
             self.show_error(f"Mode switch to {mode_id} rejected by agent")
+        self._compose.focus()
+
+    # ── Slash-commands palette ───────────────────────────────────
+    #
+    # Commands come off the ACP `available_commands_update` notification.
+    # Per the ACP slash-commands spec, the client invokes them by
+    # sending a regular prompt text starting with `/<name> [args]`;
+    # the agent parses the prefix server-side. No separate RPC.
+    #
+    # Commit flow: stage `/<name> ` (plus a trailing space when the
+    # command declares an `input.hint`, so the user's next keystrokes
+    # naturally become the argument) into the compose box and focus
+    # it. That matches pilot's "external input is staged, user
+    # presses Enter to send" invariant, and lets users edit / add
+    # args / abandon the command before firing it.
+
+    def _open_commands_palette(self) -> None:
+        """Slash-commands palette (reached via root palette → Slash
+        Commands). Select-mode list built from the adapter's current
+        `available_commands` snapshot. Empty list drops a sentinel
+        row so the user gets feedback when the agent hasn't
+        advertised any commands (common on agents that only push the
+        list after the first turn)."""
+        if self._commands_palette is None:
+            self._commands_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_command_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Run slash command — Enter stages · Esc cancels",
+            )
+        self._size_palette(self._commands_palette)
+        self._commands_palette.preseed_active(set())
+        self._commands_palette.open(self._collect_command_entries())
+
+    def _collect_command_entries(self) -> list[tuple[str, str, str, str]]:
+        """Build `(kind, name, description, hint)` rows for the
+        commands palette. `hint` is stashed in the preview slot so
+        the commit handler knows whether to stage a trailing space
+        for user input."""
+        commands: list = []
+        try:
+            commands = self._adapter.available_commands
+        except Exception as e:
+            log.warning("available_commands raised: %s", e)
+        if not commands:
+            return [
+                (
+                    "empty",
+                    "no commands",
+                    "agent has not advertised any slash commands yet",
+                    "",
+                )
+            ]
+        out: list[tuple[str, str, str, str]] = []
+        for cmd in commands:
+            label = f"/{cmd.name}"
+            desc = cmd.description or ""
+            if cmd.hint:
+                # Append the input hint so the palette preview reads
+                # e.g. "Search the web for information · query to
+                # search for".
+                desc = f"{desc} · {cmd.hint}" if desc else cmd.hint
+            out.append(("command", label, desc, cmd.hint or ""))
+        return out
+
+    def _commit_command_choice(self, entries) -> None:
+        """Stage the picked slash command into the compose box so the
+        user can add arguments (if the command takes them) and press
+        Enter to dispatch. Never auto-sends — matches pilot's
+        invariant that external input always waits for confirmation."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind, label, _desc, hint = entries[0]
+        if kind != "command" or not label:
+            self._compose.focus()
+            return
+        # `label` is already `/name` from `_collect_command_entries`.
+        # Append a trailing space for commands that take input — the
+        # next keystroke lands in the argument position without the
+        # user having to space first.
+        payload = f"{label} " if hint else label
+        self._compose.stage_text(payload)
         self._compose.focus()
 
     # ── CWD palette ──────────────────────────────────────────────
