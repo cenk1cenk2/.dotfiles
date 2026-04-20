@@ -71,17 +71,48 @@ class Copywriter:
         notify("Copywriter", message, ICON, timeout)
 
     def _find_workers(self):
-        """Live copywriter.py run processes, excluding self."""
-        current = os.getpid()
+        """Live copywriter.py `run` workers, excluding self.
 
-        return [
-            p
-            for p in psutil.process_iter(["pid", "cmdline"])
-            if p.info["pid"] != current
-            and p.info["cmdline"]
-            and __file__ in p.info["cmdline"]
-            and "run" in p.info["cmdline"]
-        ]
+        The uv shebang spawns TWO processes per invocation: the python
+        worker (which we want) and a persistent `uv run ...` wrapper
+        parent (which we DON'T). The wrapper's cmdline happens to
+        contain both `__file__` (as the script path it forwards) and
+        the literal "run" (from `uv run`), so a naive `"run" in
+        cmdline` substring test false-matches EVERY subcommand —
+        `is-running` included, which makes every invocation think
+        something is already running.
+
+        Two filters to keep only real workers:
+          * Skip processes named "uv" — they're the shebang wrapper.
+            Crucial: `_kill` calls `os.killpg(p.pid, SIGKILL)`
+            assuming each worker is its own session leader (set up by
+            `os.setsid()` in `_run`). The uv wrapper is NOT a session
+            leader, so passing its PID to `killpg` would SIGKILL
+            whatever group uv was launched in (shell, waybar, etc.).
+          * Match the subcommand at the cmdline tail (`cmdline[-1] ==
+            "run"`) instead of anywhere in cmdline, so the filter
+            actually distinguishes `run` from `is-running` / `status`
+            / `kill`.
+
+        Script path comparison uses `endswith(basename)` so a
+        stow-symlink invocation and a real-path invocation still
+        count as the same script."""
+        current = os.getpid()
+        basename = os.path.basename(__file__)
+        workers = []
+        for p in psutil.process_iter(["pid", "cmdline", "name"]):
+            if p.info["pid"] == current:
+                continue
+            if p.info.get("name") == "uv":
+                continue
+            cmdline = p.info["cmdline"] or []
+            if not cmdline or cmdline[-1] != "run":
+                continue
+            if not any(arg and arg.endswith(basename) for arg in cmdline):
+                continue
+            workers.append(p)
+
+        return workers
 
     def _is_running(self):
         return bool(self._find_workers())

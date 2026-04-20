@@ -676,12 +676,20 @@ class CommandPalette(Gtk.Box):
         (subsequence) against the search input. Case-insensitive;
         searches `name + kind + description` concatenated.
 
-        Multi-select palettes sort active entries to the top so the
-        user's current picks stay visible as they narrow the search —
-        otherwise a filter query that doesn't match an active entry
-        would hide it, forcing the user to clear the box before they
-        could untick. Select-mode palettes skip this reorder because
-        there's no active set."""
+        Multi-select palettes **pin** active entries to the top of
+        the list: they sort above the filter-matched results AND stay
+        in the list even when the search query wouldn't otherwise
+        match, so the user can always see + untick their current
+        picks without clearing the search box. Select-mode palettes
+        skip this entirely because there's no active set.
+
+        Row ordering:
+          0. Active rows that match the query (best scored first).
+          1. Active rows that DON'T match the query (pinned at the
+             end of the active section — they stay visible so the
+             user can find and untick them).
+          2. Inactive rows that match the query.
+          Inactive non-matching rows are dropped from the list."""
         child = self._listbox.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
@@ -689,18 +697,27 @@ class CommandPalette(Gtk.Box):
             child = nxt
 
         query = (self._search.get_text() or "").strip().lower()
+        # Sentinel score for pinned-but-unmatched rows: large enough
+        # to sort below every real match within the active section,
+        # but tied to `idx` so the relative order between pinned
+        # unmatched rows matches their original insertion order.
+        _PINNED_UNMATCHED_SCORE = 10**9
         scored: list[tuple[int, int, int, CommandPaletteEntry]] = []
         for idx, entry in enumerate(self._entries):
             kind, name, desc, _preview = entry
+            is_active = (kind, name) in self._active
             haystack = f"{name} {kind} {desc}".lower()
             score = self._fuzzy_score(query, haystack)
             if score is None:
-                continue
-            # First sort key is 0 for active rows, 1 for inactive, so
-            # actives bubble to the top regardless of score. In select
-            # mode nothing ever enters `_active`, so this collapses
-            # into a no-op priority of 1 for every row.
-            priority = 0 if (kind, name) in self._active else 1
+                # Non-matching rows: drop unless pinned (i.e. active
+                # in a multi-select palette). In select mode
+                # `_active` is always empty, so every non-match
+                # still gets dropped there.
+                if not is_active:
+                    continue
+                score = _PINNED_UNMATCHED_SCORE
+            # priority 0 = active (bubble to top); 1 = inactive.
+            priority = 0 if is_active else 1
             scored.append((priority, score, idx, entry))
         scored.sort(key=lambda t: (t[0], t[1], t[2]))
         self._filtered = [e for _p, _s, _i, e in scored]
@@ -760,16 +777,25 @@ class CommandPalette(Gtk.Box):
             f'<span weight="bold">{GLib.markup_escape_text(name)}</span>'
             f' <span alpha="60%">({GLib.markup_escape_text(kind)})</span>'
         )
+        # Wrap long titles instead of stretching the palette past its
+        # `set_size_request` width. `set_max_width_chars(1)` is the
+        # standard GTK trick to tell the layout system "don't use my
+        # natural content width for sizing" — otherwise the label
+        # would demand enough width to fit the entire string on one
+        # line, which would push the palette off-screen. Pango wrap
+        # mode int 2 == `WORD_CHAR` (wrap on word boundary, fall back
+        # to character boundary for ultra-long tokens).
+        title.set_wrap(True)
+        title.set_wrap_mode(2)
+        title.set_max_width_chars(1)
         title.add_css_class("overlay-palette-name")
         title.add_css_class("pilot-palette-name")
         text_box.append(title)
         if desc:
-            # `Pango.EllipsizeMode.END` is the normal way to write this,
-            # but we avoid importing Pango at module import — callers
-            # may have their own pinned gi versions. The int value 3
-            # matches `PANGO_ELLIPSIZE_END`.
-            desc_label = Gtk.Label(label=desc, xalign=0.0)
-            desc_label.set_ellipsize(3)
+            desc_label = Gtk.Label(label=desc, xalign=0.0, hexpand=True)
+            desc_label.set_wrap(True)
+            desc_label.set_wrap_mode(2)
+            desc_label.set_max_width_chars(1)
             desc_label.add_css_class("overlay-palette-desc")
             desc_label.add_css_class("pilot-palette-desc")
             text_box.append(desc_label)

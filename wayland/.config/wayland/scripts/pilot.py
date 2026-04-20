@@ -3306,7 +3306,8 @@ class PilotWindow(LayerOverlayWindow):
 
     def start_fresh_session(self) -> None:
         """Hard reset: drop the ACP session + wipe the visible
-        conversation. Used by Ctrl+S's "new session" sentinel.
+        conversation. Used by the sessions palette's "new session"
+        sentinel.
 
         Actions:
           1. `_adapter.reset()` — tears down subprocess, unlinks the
