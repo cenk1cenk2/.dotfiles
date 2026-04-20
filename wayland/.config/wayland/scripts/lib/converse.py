@@ -542,12 +542,8 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `OPENCODE_SYSTEM_PROMPT` env var isn't honoured by opencode,
         # so we deliver `system_prompt` as a first-turn prefix instead.
         self.system_prompt = system_prompt
-        # `model` is Protocol-typed as `str`; coerce None → "" so an
-        # unset --model flag doesn't bleed a None into the header /
-        # waybar status renderers that expect a string.
-        self.model: str = kwargs.get("model") or "glm-5.1:cloud"
+        self.model: str = kwargs.get("model") or "kilic/glm-5.1:cloud"
         self.mode = kwargs.get("mode")
-        self.provider_name = kwargs.get("provider_name") or "kilic"
         self.config_path = kwargs.get("config_path") or os.path.expanduser(
             "~/.config/nvim/utils/agents/opencode/kilic.json"
         )
@@ -561,7 +557,7 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         if os.path.exists(self.config_path):
             env["OPENCODE_CONFIG"] = self.config_path
         if self.model:
-            env["OPENCODE_MODEL"] = f"{self.provider_name}/{self.model}"
+            env["OPENCODE_MODEL"] = f"{self.model}"
         kwargs["env"] = env
         kwargs["command"] = kwargs.get("command") or "opencode"
         # DO NOT pass `--model` to `opencode acp` as a CLI flag. yargs
