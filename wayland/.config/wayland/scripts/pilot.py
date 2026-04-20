@@ -2053,7 +2053,18 @@ class PilotWindow(LayerOverlayWindow):
 
     def _refresh_session_label(self) -> None:
         """Re-render the breadcrumb — called on attach_session / every
-        config change that could flip one of the three segments."""
+        config change that could flip one of the three segments.
+
+        Also pulls the adapter's current model back onto `self._model`
+        so model switches (`set_model` RPC + `_reconcile_model` after
+        each turn) propagate to the assistant card header without a
+        window restart."""
+        effective = (
+            getattr(self._adapter, "current_model_id", None)
+            or getattr(self._adapter, "model", None)
+            or ""
+        )
+        self._model = effective.strip() or None
         if hasattr(self, "_session_label"):
             self._session_label.set_label(self._session_subtitle())
             self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
