@@ -315,8 +315,7 @@ class TranscriptionAdapterHttp:
         words = data.get("words", [])
         if words:
             return [
-                TimedWord(text=w["word"], start=w["start"], end=w["end"])
-                for w in words
+                TimedWord(text=w["word"], start=w["start"], end=w["end"]) for w in words
             ]
 
         segments = data.get("segments", [])
@@ -346,7 +345,9 @@ class TranscriptionAdapterHttp:
         return []
 
 class Analyzer:
-    def __init__(self, noise, duration, stt_adapter: Optional[TranscriptionAdapter] = None):
+    def __init__(
+        self, noise, duration, stt_adapter: Optional[TranscriptionAdapter] = None
+    ):
         self.noise = noise
         self.duration = duration
         self.stt_adapter = stt_adapter
@@ -1454,7 +1455,7 @@ def main():
     parser.add_argument(
         "--mode",
         choices=["fancy", "fast"],
-        default="fancy",
+        default="fast",
         help="encoding mode: fancy (crossfade/filter_complex) or fast (smart-cut)",
     )
     parser.add_argument(
