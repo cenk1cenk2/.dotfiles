@@ -267,9 +267,6 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
 
     provider = ConversationProvider.CLAUDE
 
-    DEFAULT_COMMAND = "bunx"
-    DEFAULT_ARGS: tuple[str, ...] = ("--bun", "@agentclientprotocol/claude-agent-acp")
-
     # Claude's tool shapes are what the default registry was modelled
     # on, so there's nothing to override. The inherited
     # `_AcpConverseAdapter.tool_formatters` is fine as-is.
@@ -378,8 +375,10 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
         if self.mode:
             env["CLAUDE_PERMISSION_MODE"] = self.mode
         kwargs["env"] = env
-        kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
-        kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
+        kwargs["command"] = kwargs.get("command") or "bunx"
+        kwargs["args"] = list(
+            kwargs.get("args") or ("--bun", "@agentclientprotocol/claude-agent-acp")
+        )
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-claude"
         kwargs["agents_file"] = self.system_prompt
         log.info(
@@ -536,12 +535,6 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
 
     provider = ConversationProvider.OPENCODE
 
-    DEFAULT_COMMAND = "opencode"
-    DEFAULT_ARGS: tuple[str, ...] = ("acp",)
-    DEFAULT_CONFIG_PATH = os.path.expanduser(
-        "~/.config/nvim/utils/agents/opencode/kilic.json"
-    )
-
     FORMATTERS_CLASS = OpenCodeToolFormatters
 
     def __init__(self, system_prompt: str, **kwargs: Any):
@@ -552,10 +545,12 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `model` is Protocol-typed as `str`; coerce None → "" so an
         # unset --model flag doesn't bleed a None into the header /
         # waybar status renderers that expect a string.
-        self.model: str = kwargs.get("model") or ""
+        self.model: str = kwargs.get("model") or "minimax-m2.7:cloud"
         self.mode = kwargs.get("mode")
         self.provider_name = kwargs.get("provider_name") or "kilic"
-        self.config_path = kwargs.get("config_path") or self.DEFAULT_CONFIG_PATH
+        self.config_path = kwargs.get("config_path") or os.path.expanduser(
+            "~/.config/nvim/utils/agents/opencode/kilic.json"
+        )
         env = dict(kwargs.get("env") or os.environ)
         # FORCE the config + model into env, not `setdefault`. The shell
         # env frequently carries leftover `OPENCODE_MODEL` entries from
@@ -568,7 +563,7 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         if self.model:
             env["OPENCODE_MODEL"] = f"{self.provider_name}/{self.model}"
         kwargs["env"] = env
-        kwargs["command"] = kwargs.get("command") or self.DEFAULT_COMMAND
+        kwargs["command"] = kwargs.get("command") or "opencode"
         # DO NOT pass `--model` to `opencode acp` as a CLI flag. yargs
         # bails out with the help text and never actually starts the
         # ACP server when a top-level option appears alongside the
@@ -576,7 +571,7 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `opencode --model kilic/glm-5.1:cloud acp` → prints help).
         # We rely on `OPENCODE_MODEL` env (set above) + the user's
         # `opencode.json` default to pin the model instead.
-        kwargs["args"] = list(kwargs.get("args") or self.DEFAULT_ARGS)
+        kwargs["args"] = list(kwargs.get("args") or ("acp",))
         kwargs["client_name"] = kwargs.get("client_name") or "pilot-opencode"
         kwargs["agents_file"] = self.system_prompt
         log.info(
