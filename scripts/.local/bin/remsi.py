@@ -564,8 +564,23 @@ class Analyzer:
 
 # ── Encoder adapters ─────────────────────────────────────────────────
 
-class EncoderMode(StrEnum):
-    FAST = "fast"
+class EncoderKind(StrEnum):
+    """Dispatch token for the `--encoder` flag.
+
+    * `cut`       — pure concat-demuxer stream-copy, plus a single
+                    re-encode pass for the audio track so stitch
+                    points get a proper afade. Video is bit-for-bit
+                    the source; cuts snap to keyframes.
+    * `smart-cut` — keyframe-aware stream-copy for the middle of
+                    each segment, re-encode the GOP lead-in /
+                    lead-out. Frame-accurate at the cost of some
+                    re-encoding.
+    * `fancy`     — full filter_complex with xfade / acrossfade.
+                    One ffmpeg pass, nicest transitions, slowest.
+    """
+
+    CUT = "cut"
+    SMART_CUT = "smart-cut"
     FANCY = "fancy"
 
 class Encoder:
@@ -965,38 +980,48 @@ class FancyEncoder(Encoder):
             cmd.append(str(output_file))
             return self._run(cmd)
 
-class SmartCutEncoder(Encoder):
-    """Keyframe-aware smart-cut: stream-copy the cuttable parts,
-    re-encode only segments that don't align to keyframes. Much
-    faster than FancyEncoder for long videos at the cost of a one-
-    sample afade at the stitch points."""
+class CutEncoder(Encoder):
+    """Stream-copy video + fade audio. Simpler cousin of
+    `SmartCutEncoder`: no video re-encode anywhere.
+
+    Two ffmpeg calls per input:
+      1. Stream-copy each (keyframe-snapped) segment via the concat
+         demuxer into a video-only intermediate.
+      2. Re-encode the audio track in one filter_complex pass —
+         `atrim` + `asetpts` per segment, `afade` at every internal
+         boundary, `concat` the lot. Mux the result with the video
+         from step 1 and the source stays bit-for-bit identical on
+         the video side.
+
+    Tradeoffs vs the other encoders:
+      * Video is keyframe-snapped OUTWARD: the kept content is
+        always fully preserved, but up to one GOP of silence may
+        survive at each cut boundary. Shorter source GOPs = more
+        cut precision. Two adjacent segments whose outward snaps
+        overlap merge into one copy range.
+      * Audio cuts are frame-accurate with real fades; no clicks.
+      * Much faster than `fancy` (video not touched) and gentler
+        than `smart-cut` (no GOP-edge re-encode)."""
 
     def __init__(
         self,
         gpu: Optional[str],
         codec: Optional[str],
         fade_time: float,
-        fade_curve: str,
         force: bool = False,
     ):
         super().__init__(gpu, codec, force)
         self.fade_time = fade_time
-        self.fade_curve = fade_curve
 
     @staticmethod
     def _probe_keyframes(input_file: Path) -> list[float]:
         cmd = [
             "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-skip_frame",
-            "nokey",
-            "-show_entries",
-            "frame=pts_time",
-            "-of",
-            "csv=p=0",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-skip_frame", "nokey",
+            "-show_entries", "frame=pts_time",
+            "-of", "csv=p=0",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -1015,190 +1040,397 @@ class SmartCutEncoder(Encoder):
         return keyframes
 
     @staticmethod
-    def _split_at_keyframes(
-        seg_start: float, seg_end: float, keyframes: list[float]
-    ) -> list[tuple[float, float, bool]]:
+    def _snap_outward(
+        segments: list[Segment], keyframes: list[float], total: float
+    ) -> list[tuple[float, float]]:
+        """Expand each segment's `[start, end]` outward to the nearest
+        enclosing keyframes (`kf_before <= start`, `kf_after > end`),
+        clamp to `[0, total]`, then merge overlaps.
+
+        Overlap merges = silences too short to land on a GOP
+        boundary. They stay in the output (we can't cut them
+        losslessly); the merger surfaces that as one bigger copy
+        range rather than two glued-together ones with a bad seam."""
         if not keyframes:
-            return [(seg_start, seg_end, True)]
+            return [(seg.start, seg.end) for seg in segments]
 
-        idx_start = bisect.bisect_left(keyframes, seg_start)
-        kf_start = keyframes[idx_start] if idx_start < len(keyframes) else None
-        idx_end = bisect.bisect_right(keyframes, seg_end) - 1
-        kf_end = keyframes[idx_end] if idx_end >= 0 else None
+        expanded: list[tuple[float, float]] = []
+        for seg in segments:
+            idx_before = bisect.bisect_right(keyframes, seg.start) - 1
+            kf_before = keyframes[idx_before] if idx_before >= 0 else 0.0
+            idx_after = bisect.bisect_right(keyframes, seg.end)
+            kf_after = keyframes[idx_after] if idx_after < len(keyframes) else total
+            expanded.append((max(0.0, kf_before), min(total, kf_after)))
 
-        if kf_start is None or kf_end is None or kf_start >= seg_end:
-            return [(seg_start, seg_end, True)]
+        expanded.sort(key=lambda r: r[0])
+        merged: list[tuple[float, float]] = [expanded[0]]
+        for a, b in expanded[1:]:
+            pa, pb = merged[-1]
+            if a <= pb:
+                merged[-1] = (pa, max(pb, b))
+            else:
+                merged.append((a, b))
+        return merged
 
-        parts: list[tuple[float, float, bool]] = []
-        if kf_start > seg_start:
-            parts.append((seg_start, kf_start, True))
-        if kf_end > kf_start:
-            parts.append((kf_start, kf_end, False))
-        elif kf_start < seg_end:
-            parts.append((kf_start, seg_end, True))
-            return parts
-        if seg_end > kf_end:
-            parts.append((kf_end, seg_end, True))
-        return parts if parts else [(seg_start, seg_end, True)]
-
-    @staticmethod
-    def _encode_part(
-        input_file: Path,
-        part_path: Path,
-        start: float,
-        end: float,
-        video_args: list[str],
-        audio_args: list[str],
-        fade_time: float = 0,
-        fade_curve: str = "log",
-        fade_in: bool = False,
-        fade_out: bool = False,
+    def _copy_video_part(
+        self, input_file: Path, output_part: Path, start: float, end: float
     ) -> subprocess.CompletedProcess:
-        duration = end - start
+        """`-ss X -i input -to Y` stream-copies packets in the input
+        timeline range `[X, Y]`. `-ss` before `-i` is fast container
+        seek; both X and Y are keyframes in our case so the seek is
+        exact. `-an` drops audio — we'll render it separately."""
         cmd = [
             "ffmpeg",
             "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-ss",
-            str(start),
-            "-i",
-            str(input_file),
-            "-t",
-            str(duration),
+            "-loglevel", "warning",
+            "-ss", str(start),
+            "-to", str(end),
+            "-i", str(input_file),
+            "-c", "copy",
+            "-an",
+            "-avoid_negative_ts", "make_zero",
+            "-y", str(output_part),
         ]
-        cmd.extend(video_args)
-        af_parts: list[str] = []
-        if fade_in and fade_time > 0 and duration > fade_time:
-            af_parts.append(f"afade=t=in:d={fade_time}:curve={fade_curve}")
-        if fade_out and fade_time > 0 and duration > fade_time:
-            af_parts.append(
-                f"afade=t=out:st={duration - fade_time}:d={fade_time}:curve={fade_curve}"
-            )
-        if af_parts:
-            cmd.extend(["-af", ",".join(af_parts)])
-        cmd.extend(audio_args)
-        cmd.extend(["-y", str(part_path)])
-        log.info("spawn: %s", " ".join(cmd))
-        return subprocess.run(cmd)
+        return self._run(cmd)
 
-    def _encode_segments(  # noqa: C901
+    def _build_audio_filter(
+        self, ranges: list[tuple[float, float]]
+    ) -> tuple[str, list[str]]:
+        """Build the audio-only filter_complex that atrims each
+        range, afades at every internal boundary, and concats the
+        lot. Returns (script_content, output_label_args)."""
+        lines: list[str] = []
+        for i, (a, b) in enumerate(ranges):
+            duration = b - a
+            chain = [f"atrim=start={a}:end={b}", "asetpts=PTS-STARTPTS"]
+            if self.fade_time > 0 and duration > 2 * self.fade_time:
+                # Skip fade-in on first range (start of file = already
+                # silent) and fade-out on last range (end of file =
+                # same). Every internal boundary gets both so neither
+                # side of a cut has a raw edge.
+                if i > 0:
+                    chain.append(
+                        f"afade=t=in:d={self.fade_time}:curve=log"
+                    )
+                if i < len(ranges) - 1:
+                    chain.append(
+                        f"afade=t=out:st={duration - self.fade_time}"
+                        f":d={self.fade_time}:curve=log"
+                    )
+            lines.append(f"[0:a]{','.join(chain)}[a{i}]")
+        concat_inputs = "".join(f"[a{i}]" for i in range(len(ranges)))
+        lines.append(f"{concat_inputs}concat=n={len(ranges)}:v=0:a=1[aout]")
+        return ";\n".join(lines), ["-map", "[aout]"]
+
+    def encode(
+        self,
+        input_file: Path,
+        output_file: Path,
+        segments: list[Segment],
+        media: Optional[MediaInfo] = None,
+    ) -> subprocess.CompletedProcess:
+        """Override parent's single-segment fast path too — raw
+        `seg.start` / `seg.end` from the analyzer aren't keyframes,
+        and `-c copy` needs keyframe boundaries."""
+        media = media or MediaInfo()
+        keyframes = self._probe_keyframes(input_file)
+        if not keyframes:
+            log.error("no keyframes found in input; cut encoder needs them")
+            return subprocess.CompletedProcess(args=[], returncode=1)
+
+        total = max((seg.end for seg in segments), default=0.0)
+        ranges = self._snap_outward(segments, keyframes, total)
+        kept = sum(b - a for a, b in ranges)
+        requested = sum(seg.end - seg.start for seg in segments)
+        console.print(
+            f"snap: [yellow]{len(segments)}[/] segments → "
+            f"[green]{len(ranges)}[/] copy range(s); "
+            f"kept [green]{kept:.1f}s[/] "
+            f"(requested {requested:.1f}s, "
+            f"[dim]+{kept - requested:.1f}s from GOP alignment[/])"
+        )
+        for i, (a, b) in enumerate(ranges, 1):
+            log.info(
+                "  %d. %s → %s (%.1fs)",
+                i,
+                format_timestamp(a),
+                format_timestamp(b),
+                b - a,
+            )
+
+        audio_args = self._audio_codec_args(media.audio)
+
+        with tempfile.TemporaryDirectory(prefix="remsi_cut_") as tmpdir_str:
+            tmpdir = Path(tmpdir_str)
+
+            # ── 1) stream-copy each range to a video-only part
+            console.rule("[bold yellow]Copy video[/]")
+            entries: list[str] = []
+            for i, (a, b) in enumerate(ranges):
+                part_path = tmpdir / f"part{i:04d}{input_file.suffix}"
+                result = self._copy_video_part(input_file, part_path, a, b)
+                if result.returncode != 0:
+                    return result
+                entries.append(f"file '{part_path}'\n")
+
+            # ── 2) concat the video parts (still pure stream-copy)
+            console.rule("[bold yellow]Concat video[/]")
+            concat_list = tmpdir / "concat.txt"
+            concat_list.write_text("".join(entries))
+            video_only = tmpdir / f"video{input_file.suffix}"
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-c", "copy",
+                "-an",
+                "-y", str(video_only),
+            ]
+            result = self._run(cmd)
+            if result.returncode != 0:
+                return result
+
+            # ── 3) build the faded audio in one filter_complex pass
+            console.rule("[bold yellow]Fade audio[/]")
+            script_content, audio_map = self._build_audio_filter(ranges)
+            script_path = tmpdir / "audio.filter"
+            script_path.write_text(script_content)
+            log.debug("audio filter_complex:\n%s", script_content)
+            audio_only = tmpdir / "audio.m4a"
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-i", str(input_file),
+                "-/filter_complex", str(script_path),
+                *audio_map,
+                *audio_args,
+                "-vn",
+                "-y", str(audio_only),
+            ]
+            result = self._run(cmd)
+            if result.returncode != 0:
+                return result
+
+            # ── 4) mux the two streams — both already final, just
+            #      wrap them together in the output container.
+            console.rule("[bold yellow]Mux[/]")
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-stats",
+                "-i", str(video_only),
+                "-i", str(audio_only),
+                "-c", "copy",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+            ]
+            if self.force:
+                cmd.append("-y")
+            cmd.append(str(output_file))
+            return self._run(cmd)
+
+    def _encode_segments(
         self,
         input_file: Path,
         output_file: Path,
         segments: list[Segment],
         media: MediaInfo,
     ) -> subprocess.CompletedProcess:
-        keyframes = self._probe_keyframes(input_file)
-        video_args = self._video_codec_args(media.video)
-        audio_args = self._audio_codec_args(media.audio)
+        return self.encode(input_file, output_file, segments, media)
 
-        all_parts: list[tuple[float, float, bool]] = []
+
+class SmartCutEncoder(Encoder):
+    """Pure stream-copy cut. Snaps each kept segment OUTWARD to the
+    surrounding keyframes, merges overlapping ranges, writes one
+    `ffmpeg -ss -to -c copy` part per range, stitches with concat-
+    demuxer. No re-encoding — the output re-uses the source's
+    exact video packets.
+
+    Tradeoffs:
+      * No audio crossfades. Each stitch point is a hard packet
+        boundary, may click slightly.
+      * A silence shorter than one GOP can't be cut: its cut
+        boundaries would land inside a GOP whose surrounding
+        keyframes fall outside the silence, so the outward snap
+        overlaps and the merger drops the cut. Shorter GOPs
+        (lower `-g` on the source encode) = more cut precision.
+      * Cuts may keep up to one GOP of silence at each boundary
+        (the kept content is always fully preserved).
+
+    For frame-accurate cuts with audio crossfades use FancyEncoder
+    instead (`--mode fancy`)."""
+
+    @staticmethod
+    def _probe_keyframes(input_file: Path) -> list[float]:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-skip_frame", "nokey",
+            "-show_entries", "frame=pts_time",
+            "-of", "csv=p=0",
+            str(input_file),
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        keyframes: list[float] = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                keyframes.append(float(line))
+            except ValueError:
+                continue
+        keyframes.sort()
+        log.info("probed %d keyframes", len(keyframes))
+        return keyframes
+
+    @staticmethod
+    def _snap_outward(
+        segments: list[Segment], keyframes: list[float], total: float
+    ) -> list[tuple[float, float]]:
+        """Expand each segment's `[start, end]` outward to the nearest
+        enclosing keyframes (`kf_before <= start`, `kf_after > end`),
+        clamp to `[0, total]`, then merge overlaps.
+
+        Two segments whose expansions collide (silence between them
+        is shorter than one GOP) merge into one copy range — the
+        silence stays in, because cutting it losslessly isn't
+        possible."""
+        if not keyframes:
+            return [(seg.start, seg.end) for seg in segments]
+
+        expanded: list[tuple[float, float]] = []
         for seg in segments:
-            sub = self._split_at_keyframes(seg.start, seg.end, keyframes)
-            for start, end, reencode in sub:
-                log.info(
-                    "  part %s → %s (%s)",
-                    format_timestamp(start),
-                    format_timestamp(end),
-                    "reencode" if reencode else "copy",
-                )
-            all_parts.extend(sub)
+            # Largest keyframe <= seg.start, or 0 if none precedes.
+            idx_before = bisect.bisect_right(keyframes, seg.start) - 1
+            kf_before = keyframes[idx_before] if idx_before >= 0 else 0.0
+            # Smallest keyframe > seg.end, or total if none follows.
+            idx_after = bisect.bisect_right(keyframes, seg.end)
+            kf_after = keyframes[idx_after] if idx_after < len(keyframes) else total
+            expanded.append((max(0.0, kf_before), min(total, kf_after)))
 
-        copy_dur = sum(e - s for s, e, r in all_parts if not r)
-        reencode_dur = sum(e - s for s, e, r in all_parts if r)
+        expanded.sort(key=lambda r: r[0])
+        merged: list[tuple[float, float]] = [expanded[0]]
+        for a, b in expanded[1:]:
+            pa, pb = merged[-1]
+            if a <= pb:
+                merged[-1] = (pa, max(pb, b))
+            else:
+                merged.append((a, b))
+        return merged
+
+    def _copy_range(
+        self,
+        input_file: Path,
+        output_file: Path,
+        start: float,
+        end: float,
+    ) -> subprocess.CompletedProcess:
+        """Stream-copy `[start, end]` (absolute input seconds) out to
+        `output_file`. `-ss` BEFORE `-i` is the fast container-level
+        seek; since `start` is a real keyframe the seek is exact.
+        `-to` with `-ss` before `-i` is an input-timeline absolute
+        end marker, so the packet range is well-defined."""
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-ss", str(start),
+            "-to", str(end),
+            "-i", str(input_file),
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            "-y", str(output_file),
+        ]
+        return self._run(cmd)
+
+    def encode(
+        self,
+        input_file: Path,
+        output_file: Path,
+        segments: list[Segment],
+        media: Optional[MediaInfo] = None,
+    ) -> subprocess.CompletedProcess:
+        """Override parent so the single-segment fast path also
+        snaps. The parent assumes raw `seg.start` / `seg.end` are
+        keyframes; for non-aligned cuts that produces garbage."""
+        keyframes = self._probe_keyframes(input_file)
+        if not keyframes:
+            log.error("no keyframes found in input; smart-cut impossible")
+            return subprocess.CompletedProcess(args=[], returncode=1)
+
+        total = max((seg.end for seg in segments), default=0.0)
+        ranges = self._snap_outward(segments, keyframes, total)
+        kept = sum(b - a for a, b in ranges)
+        requested = sum(seg.end - seg.start for seg in segments)
         console.print(
-            f"smart-cut: [green]{copy_dur:.1f}s[/] stream copy · "
-            f"[yellow]{reencode_dur:.1f}s[/] re-encode"
+            f"snap: [yellow]{len(segments)}[/] segments → "
+            f"[green]{len(ranges)}[/] copy range(s); "
+            f"kept [green]{kept:.1f}s[/] "
+            f"(requested {requested:.1f}s, "
+            f"[dim]+{kept - requested:.1f}s from GOP alignment[/])"
         )
+        for i, (a, b) in enumerate(ranges, 1):
+            log.info(
+                "  %d. %s → %s (%.1fs)",
+                i,
+                format_timestamp(a),
+                format_timestamp(b),
+                b - a,
+            )
 
-        with tempfile.TemporaryDirectory(prefix="remsi_fast_") as tmpdir_str:
+        # Single range: one ffmpeg call straight into the output.
+        if len(ranges) == 1:
+            a, b = ranges[0]
+            return self._copy_range(input_file, output_file, a, b)
+
+        # Multi-range: write each to a tmp file, then concat-demux.
+        with tempfile.TemporaryDirectory(prefix="remsi_copy_") as tmpdir_str:
             tmpdir = Path(tmpdir_str)
-            concat_entries: list[str] = []
-            reencode_idx = 0
-            n = len(all_parts)
-            for i, (start, end, reencode) in enumerate(all_parts, 1):
-                mode = "reencode" if reencode else "copy"
-                log.info(
-                    "  [%d/%d] %s → %s (%s)",
-                    i,
-                    n,
-                    format_timestamp(start),
-                    format_timestamp(end),
-                    mode,
-                )
-                if reencode:
-                    part_path = tmpdir / f"part{reencode_idx:04d}{input_file.suffix}"
-                    reencode_idx += 1
-                    idx = i - 1
-                    fade_in = idx > 0 and not all_parts[idx - 1][2]
-                    fade_out = idx < n - 1 and not all_parts[idx + 1][2]
-                    result = self._encode_part(
-                        input_file,
-                        part_path,
-                        start,
-                        end,
-                        video_args,
-                        audio_args,
-                        fade_time=self.fade_time,
-                        fade_curve=self.fade_curve,
-                        fade_in=fade_in,
-                        fade_out=fade_out,
-                    )
-                    if result.returncode != 0:
-                        return result
-                    concat_entries.append(f"file '{part_path}'\n")
-                else:
-                    part_path = tmpdir / f"part{reencode_idx:04d}{input_file.suffix}"
-                    reencode_idx += 1
-                    cmd = [
-                        "ffmpeg",
-                        "-hide_banner",
-                        "-loglevel",
-                        "warning",
-                        "-i",
-                        str(input_file),
-                        "-ss",
-                        str(start),
-                        "-t",
-                        str(end - start),
-                        "-c",
-                        "copy",
-                        "-avoid_negative_ts",
-                        "make_zero",
-                        "-y",
-                        str(part_path),
-                    ]
-                    result = self._run(cmd)
-                    if result.returncode != 0:
-                        return result
-                    concat_entries.append(f"file '{part_path}'\n")
+            entries: list[str] = []
+            for i, (a, b) in enumerate(ranges):
+                part_path = tmpdir / f"part{i:04d}{input_file.suffix}"
+                result = self._copy_range(input_file, part_path, a, b)
+                if result.returncode != 0:
+                    return result
+                entries.append(f"file '{part_path}'\n")
 
             console.rule("[bold yellow]Concat[/]")
             concat_list = tmpdir / "concat.txt"
-            with open(concat_list, "w") as f:
-                f.writelines(concat_entries)
+            concat_list.write_text("".join(entries))
 
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel",
-                "warning",
+                "-loglevel", "warning",
                 "-stats",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_list),
-                "-c:v",
-                "copy",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list),
+                "-c", "copy",
             ]
-            cmd.extend(audio_args)
             if self.force:
                 cmd.append("-y")
             cmd.append(str(output_file))
             return self._run(cmd)
+
+    def _encode_segments(
+        self,
+        input_file: Path,
+        output_file: Path,
+        segments: list[Segment],
+        media: MediaInfo,
+    ) -> subprocess.CompletedProcess:
+        # `encode()` is overridden; this is unreachable but the abstract
+        # contract requires an implementation. Delegate.
+        return self.encode(input_file, output_file, segments, media)
 
 # ── CLI orchestrator ─────────────────────────────────────────────────
 
@@ -1418,22 +1650,17 @@ class Remsi:
         "--fade-time",
         type=float,
         default=0.1,
-        help="Crossfade duration (s); 0 disables.",
+        help="Audio fade duration (s) at cut boundaries; 0 disables.",
     )
     @click.option(
         "--fade-video-filter",
         default="xfade:transition=fadefast",
-        help="Video crossfade filter spec.",
+        help="Video crossfade filter; fancy mode only.",
     )
     @click.option(
         "--fade-audio-filter",
         default="acrossfade:curve1=log:curve2=log",
-        help="Audio crossfade filter spec.",
-    )
-    @click.option(
-        "--fade-curve",
-        default="log",
-        help="afade curve for smart-cut stitch points.",
+        help="Audio crossfade filter; fancy mode only.",
     )
     @click.option("--suffix", default="silencer", help="Output filename suffix.")
     @click.option(
@@ -1469,10 +1696,10 @@ class Remsi:
         help="HTTP STT model name.",
     )
     @click.option(
-        "--mode",
-        type=click.Choice([m.value for m in EncoderMode]),
-        default=EncoderMode.FANCY.value,
-        help="Encoder mode.",
+        "--encoder",
+        type=click.Choice([k.value for k in EncoderKind]),
+        default=EncoderKind.CUT.value,
+        help="Encoder pipeline.",
     )
     @click.option(
         "--analyze",
@@ -1492,7 +1719,6 @@ class Remsi:
         fade_time,
         fade_video_filter,
         fade_audio_filter,
-        fade_curve,
         suffix,
         with_whisper,
         stt_provider,
@@ -1500,7 +1726,7 @@ class Remsi:
         whisper_cpp_model,
         http_base_url,
         http_model,
-        mode,
+        encoder,
         analyze,
         force,
         verbose,
@@ -1544,18 +1770,23 @@ class Remsi:
             case _:
                 resolved_gpu = gpu
 
-        encoder: Encoder
-        match EncoderMode(mode):
-            case EncoderMode.FAST:
-                encoder = SmartCutEncoder(
+        pipeline: Encoder
+        match EncoderKind(encoder):
+            case EncoderKind.CUT:
+                pipeline = CutEncoder(
                     gpu=resolved_gpu,
                     codec=codec,
                     fade_time=fade_time,
-                    fade_curve=fade_curve,
                     force=force,
                 )
-            case EncoderMode.FANCY:
-                encoder = FancyEncoder(
+            case EncoderKind.SMART_CUT:
+                pipeline = SmartCutEncoder(
+                    gpu=resolved_gpu,
+                    codec=codec,
+                    force=force,
+                )
+            case EncoderKind.FANCY:
+                pipeline = FancyEncoder(
                     gpu=resolved_gpu,
                     codec=codec,
                     fade_time=fade_time,
@@ -1564,13 +1795,13 @@ class Remsi:
                     force=force,
                 )
             case _:
-                raise click.UsageError(f"unknown encoder mode: {mode!r}")
+                raise click.UsageError(f"unknown encoder: {encoder!r}")
 
         analyzer = Analyzer(noise=noise, duration=duration, stt_adapter=stt_adapter)
 
         Remsi(
             analyzer=analyzer,
-            encoder=encoder,
+            encoder=pipeline,
             min_cut=min_cut,
             suffix=suffix,
             analyze_only=analyze,
