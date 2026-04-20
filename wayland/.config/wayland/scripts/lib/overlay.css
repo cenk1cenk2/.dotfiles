@@ -250,6 +250,18 @@
     0 2px 4px alpha(black, 0.4);
 }
 
+.overlay button.overlay-pill.warn {
+  color: @pilot_stream;
+  background-color: alpha(@pilot_stream, 0.18);
+  border: 1px solid alpha(@pilot_stream, 0.5);
+}
+
+.overlay button.overlay-pill.muted {
+  color: @pilot_fg_dim;
+  background-color: alpha(@pilot_fg_dim, 0.12);
+  border: 1px solid alpha(@pilot_fg_dim, 0.35);
+}
+
 /* ========================================================== Buttons
  * `make_button(label, variant)` emits a secondary button with the
  * shared shadow recipe; variant picks the hover tint. Used for

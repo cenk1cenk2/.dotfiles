@@ -97,7 +97,6 @@ through an out-of-band channel (Claude ships it in
 backend-specific logic (like the Claude hook) lives in the adapter
 that owns it, not in the transport core."""
 
-
 @dataclass(frozen=True)
 class PromptAttachment:
     """A non-text payload to prepend to a prompt. Used today for
@@ -111,21 +110,11 @@ class PromptAttachment:
     uri: Optional[str] = None
 
     @classmethod
-    def image(
-        cls, data: bytes, mime_type: str = "image/png"
-    ) -> PromptAttachment:
+    def image(cls, data: bytes, mime_type: str = "image/png") -> PromptAttachment:
         """Shorthand for an inline-bytes image attachment. Lives on
         the dataclass so tests + callers can build one without
         fishing through the module for a free-standing helper."""
         return cls(mime_type=mime_type, data=data)
-
-
-def image_attachment(data: bytes, mime_type: str = "image/png") -> PromptAttachment:
-    """Back-compat free function — forwards to
-    `PromptAttachment.image`. Kept so existing
-    `from lib import image_attachment` imports don't break."""
-    return PromptAttachment.image(data, mime_type)
-
 
 @dataclass(frozen=True)
 class PlanItem:
@@ -136,7 +125,6 @@ class PlanItem:
     content: str
     status: str  # "pending" | "in_progress" | "completed"
     priority: str  # "low" | "medium" | "high"
-
 
 @dataclass(frozen=True)
 class SessionInfo:
@@ -152,6 +140,29 @@ class SessionInfo:
     title: str = ""
     updated_at: str = ""
 
+@dataclass(frozen=True)
+class ModelChoice:
+    """One row in a session's available-model list. Mirrors ACP's
+    `ModelInfo` but dataclass-shaped so pilot's UI doesn't need to
+    import the ACP schema."""
+
+    model_id: str
+    name: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class SessionModelState:
+    """Effective model state for a session.
+
+    Populated from the agent's `NewSessionResponse.models` /
+    `LoadSessionResponse.models` block so the adapter tracks what the
+    agent actually selected, not what the client asked for. Claude's
+    ACP bridge is the classic case: you ask for `opus`, the agent
+    returns `opus[1m]` in `currentModelId`."""
+
+    current_model_id: str = ""
+    available_models: tuple[ModelChoice, ...] = ()
 
 @dataclass(frozen=True)
 class ToolCallSummary:
@@ -215,7 +226,7 @@ class ToolCallSummary:
         if isinstance(raw, (dict, list)):
             try:
                 args = json.dumps(raw)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 args = str(raw)
         elif raw is None:
             args = ""
@@ -229,7 +240,6 @@ class ToolCallSummary:
             arguments=args,
             status=cls._STATUS_MAP.get(update.status or "", "pending"),
         )
-
 
 PermissionHandler = Callable[[ToolCallSummary, list[PermissionOption]], Optional[str]]
 """Invoked from the ACP worker thread when the agent asks for
@@ -483,10 +493,14 @@ class AcpClient(Client):
             raise acp.RequestError.internal_error({"message": str(e)})
         return None
 
-class AcpSession:
-    """Owns the asyncio loop, the spawned agent subprocess, and the ACP
-    session. Reused across every turn on an adapter so the agent sees
-    one continuous conversation rather than per-turn cold starts.
+class AcpAdapter:
+    """ACP client: owns the asyncio loop, the spawned agent subprocess,
+    and the session. Reused across every turn so the agent sees one
+    continuous conversation rather than per-turn cold starts.
+
+    Subclasses (see `lib.converse`) set `provider` to a
+    `ConversationProvider` member + override `_extra_env` to layer in
+    backend-specific env munging.
 
     Config via `**kwargs`:
       - `command`: executable to spawn (required)
@@ -499,6 +513,8 @@ class AcpSession:
         are handed to the agent at `new_session` so claude-agent-acp /
         opencode-acp can spin them up on the agent side.
     """
+
+    provider: Any  # Subclasses set to a ConversationProvider member.
 
     # Raises asyncio's default 64KB line-buffer ceiling. ACP agents
     # emit newline-delimited JSON-RPC frames that routinely cross the
@@ -563,18 +579,15 @@ class AcpSession:
         else:
             prefix = f"response id={msg_id}"
             body = (
-                message.get("result")
-                if "result" in message
-                else message.get("error")
+                message.get("result") if "result" in message else message.get("error")
             )
         try:
             dumped = json.dumps(body, ensure_ascii=False, default=str)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             dumped = repr(body)
         if len(dumped) > cls.WIRE_LOG_LIMIT:
             dumped = (
-                dumped[: cls.WIRE_LOG_LIMIT]
-                + f"…(+{len(dumped) - cls.WIRE_LOG_LIMIT})"
+                dumped[: cls.WIRE_LOG_LIMIT] + f"…(+{len(dumped) - cls.WIRE_LOG_LIMIT})"
             )
         return f"{prefix}  {dumped}"
 
@@ -623,7 +636,7 @@ class AcpSession:
     def __init__(self, **kwargs: Any):
         self.command: str = kwargs.get("command") or ""
         if not self.command:
-            raise ValueError("AcpSession requires `command`")
+            raise ValueError("AcpAdapter requires `command`")
         self.args: list[str] = list(kwargs.get("args") or ())
         self.cwd: Optional[str] = kwargs.get("cwd")
         self.env: Optional[dict[str, str]] = kwargs.get("env")
@@ -650,16 +663,6 @@ class AcpSession:
         # first prompt.
         self._original_agents_file: str = (raw_prefix or "").strip()
         self._agents_file: str = self._original_agents_file
-        # Optional path to a plain-text file that holds the last ACP
-        # `session_id` this adapter obtained. When set, `_ensure_started`
-        # tries `conn.load_session(session_id, ...)` first — if the agent
-        # still has it, the conversation resumes from wherever it left
-        # off. On failure (agent forgot / file is stale / first launch)
-        # we fall through to `new_session` and overwrite the store with
-        # whatever id comes back. `close()` intentionally does NOT call
-        # `conn.close_session` — we want the session to outlive the
-        # subprocess so the NEXT launch can pick it back up.
-        self.session_store_path: Optional[str] = kwargs.get("session_store_path")
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
@@ -667,12 +670,26 @@ class AcpSession:
         self._process_cm: Any = None
         self._process: Any = None
         self._session_id: Optional[str] = None
-        # Whether the current session_id came from the on-disk store
-        # (True → `load_session` succeeded, False → we minted a fresh
-        # one via `new_session`). Exposed so `pilot --session X
-        # session-info` / the status socket can tell the user which
-        # path fired without having to parse logs.
-        self._resumed_from_store: bool = False
+        # Explicit-restore mechanism: `select_session(id)` sets this;
+        # the next `_ensure_started` calls `load_session(pending)`
+        # instead of `new_session`. Cleared on consume. No on-disk
+        # persistence — fresh pilot spawn = fresh session. The
+        # sessions palette pulls the list straight from the agent
+        # via `session/list` when the user wants to restore.
+        self._pending_session_id: Optional[str] = None
+        # True when the last bootstrap resumed via `load_session`.
+        # Flips back to False the moment a fresh `new_session` fires
+        # (including after `reset()`).
+        self._session_loaded: bool = False
+        # Agent-reported model selection snapshot (ACP `SessionModelState`).
+        # None until `_ensure_started` reads it off new_session /
+        # load_session. Consumers read via `current_model_id`.
+        self._model_state: Optional[SessionModelState] = None
+        # Events that streamed in during `load_session` — agents may
+        # replay prior turns as `session/update` notifications before
+        # the load response comes back. `consume_replay()` drains this
+        # so callers can repaint the chat history.
+        self._replay_queue: Optional[queue.Queue[tuple[str, Any] | _Sentinel]] = None
         self._permission_handler: Optional[PermissionHandler] = None
         # Per-session hook for canonical tool-name extraction.
         # Subclasses (e.g. `ConversationAdapterClaude`) register a
@@ -704,38 +721,6 @@ class AcpSession:
         lazily on every event."""
         self._tool_name_extractor = extractor
 
-    def _read_stored_session_id(self) -> Optional[str]:
-        """Return the previously-saved `session_id` for this session
-        slot, or None if the store path isn't configured / the file is
-        missing / the payload is empty."""
-        path = self.session_store_path
-        if not path:
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except FileNotFoundError:
-            return None
-        except OSError as e:
-            log.warning("session store read failed (%s): %s", path, e)
-            return None
-        return raw or None
-
-    def _write_stored_session_id(self, session_id: str) -> None:
-        """Persist `session_id` so the next launch can pick up where
-        this one leaves off. Any write failure is logged and swallowed
-        — a session still works without persistence, just without
-        cross-launch continuity."""
-        path = self.session_store_path
-        if not path:
-            return
-        try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(session_id)
-        except OSError as e:
-            log.warning("session store write failed (%s): %s", path, e)
-
     def _start_loop(self) -> None:
         if self._thread is not None:
             return
@@ -765,6 +750,99 @@ class AcpSession:
         )
         self._thread.start()
         ready.wait()
+
+    @staticmethod
+    def _extract_model_state(response: Any) -> Optional[SessionModelState]:
+        """Pull the `SessionModelState` off a new/load response, if any.
+
+        Agents are free to omit this block; the ACP schema marks it
+        UNSTABLE. Returns None when the agent didn't ship one."""
+        models = getattr(response, "models", None)
+        if models is None:
+            return None
+        current = getattr(models, "current_model_id", "") or ""
+        available: list[ModelChoice] = []
+        for m in getattr(models, "available_models", None) or []:
+            mid = getattr(m, "model_id", "") or ""
+            if not mid:
+                continue
+            available.append(
+                ModelChoice(
+                    model_id=mid,
+                    name=getattr(m, "name", "") or mid,
+                    description=getattr(m, "description", "") or "",
+                )
+            )
+        return SessionModelState(
+            current_model_id=current, available_models=tuple(available)
+        )
+
+    @property
+    def current_model_id(self) -> Optional[str]:
+        """Model the agent is actually using for this session.
+
+        Falls back to None when the agent doesn't ship a
+        `SessionModelState` — callers should keep whatever they
+        bootstrapped with."""
+        return self._model_state.current_model_id if self._model_state else None
+
+    @property
+    def available_models(self) -> list[ModelChoice]:
+        """Models the agent exposes for this session.
+
+        Bootstraps the session on first access so the models palette
+        has content before any turn has fired. Empty when the agent
+        doesn't ship a `SessionModelState` (the block is UNSTABLE in
+        the ACP spec) or when bootstrap fails."""
+        if self._model_state is None:
+            try:
+                self._ensure_started()
+            except Exception as e:
+                log.warning("available_models: ensure_started failed: %s", e)
+                return []
+        if self._model_state is None:
+            return []
+        return list(self._model_state.available_models)
+
+    def set_model(self, model_id: str) -> bool:
+        """Ask the agent to switch the active model for this session.
+
+        Bootstraps the ACP subprocess + session on first call (same
+        path `list_sessions` walks) so the user doesn't need a turn
+        in flight before picking a model. Returns True when the RPC
+        landed; False when bootstrap or the agent rejected."""
+        try:
+            self._ensure_started()
+        except Exception as e:
+            log.warning("set_model: ensure_started failed: %s", e)
+            return False
+        conn = self._conn
+        loop = self._loop
+        sid = self._session_id
+        if conn is None or loop is None or sid is None:
+            log.warning("set_model: no live session after bootstrap")
+            return False
+
+        async def _call() -> None:
+            await conn.set_session_model(model_id=model_id, session_id=sid)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_call(), loop)
+            fut.result(timeout=10)
+        except Exception as e:
+            log.error("set_model(%s) failed: %s", model_id, e)
+            return False
+        log.info("set_model: switched to %s", model_id)
+        # Optimistic update so header + replay palette reflect the
+        # choice before the agent pushes its own confirmation.
+        if self._model_state is not None:
+            self._model_state = SessionModelState(
+                current_model_id=model_id,
+                available_models=self._model_state.available_models,
+            )
+        else:
+            self._model_state = SessionModelState(current_model_id=model_id)
+        return True
 
     def _ensure_started(self) -> str:
         if self._session_id is not None:
@@ -816,9 +894,7 @@ class AcpSession:
             # permission-flow asymmetries between backends.
             if process.stderr is not None:
                 asyncio.create_task(
-                    self._drain_stderr(
-                        process.stderr, os.path.basename(self.command)
-                    )
+                    self._drain_stderr(process.stderr, os.path.basename(self.command))
                 )
             caps = ClientCapabilities(
                 fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
@@ -834,37 +910,46 @@ class AcpSession:
             )
             cwd = self.cwd or os.getcwd()
             mcp = list(self.mcp_servers)
-            # Two-phase session handshake:
-            #   1. If we have a stored session_id, try `load_session` —
-            #      the agent looks it up in its own on-disk store and
-            #      returns the conversation history to the client.
-            #   2. On any failure (no store, agent forgot, id mismatch
-            #      between providers) fall through to `new_session` and
-            #      overwrite the stored id.
-            # Claude's `claude-agent-acp` and `opencode acp` both
-            # implement load_session; other agents may not — the try/
-            # except keeps us portable.
-            stored_id = self._read_stored_session_id()
+            # Fresh spawn = fresh session. If the user explicitly
+            # restored one via `select_session`, the pending id fires
+            # `load_session` instead; any failure falls through to a
+            # new session. No on-disk session pointer — the agent
+            # owns session persistence; we just address one by id.
+            pending = self._pending_session_id
+            self._pending_session_id = None
             session_id: Optional[str] = None
-            resumed = False
-            if stored_id:
+            loaded = False
+            model_state: Optional[SessionModelState] = None
+            if pending:
                 try:
+                    log.info("acp load_session attempt: id=%s", pending)
+                    # Agents may push `session/update` notifications
+                    # DURING load_session to replay prior turns. Route
+                    # them into a dedicated queue so `consume_replay`
+                    # can hand them back to the UI.
+                    replay_queue: queue.Queue[tuple[str, Any] | _Sentinel] = (
+                        queue.Queue()
+                    )
+                    prior_queue = self._current_queue
+                    self._current_queue = replay_queue
+                    try:
+                        load_resp = await conn.load_session(
+                            cwd=cwd, session_id=pending, mcp_servers=mcp
+                        )
+                    finally:
+                        self._current_queue = prior_queue
+                    self._replay_queue = replay_queue
+                    session_id = pending
+                    loaded = True
+                    model_state = self._extract_model_state(load_resp)
                     log.info(
-                        "acp load_session attempt: id=%s store=%s",
-                        stored_id,
-                        self.session_store_path,
+                        "acp session resumed: id=%s current_model=%s replay_events=%d",
+                        session_id,
+                        model_state.current_model_id if model_state else "?",
+                        replay_queue.qsize(),
                     )
-                    await conn.load_session(
-                        cwd=cwd, session_id=stored_id, mcp_servers=mcp
-                    )
-                    session_id = stored_id
-                    resumed = True
-                    log.info("acp session resumed: id=%s", session_id)
                 except Exception as e:
-                    log.info(
-                        "acp load_session failed (%s); creating a fresh session",
-                        e,
-                    )
+                    log.info("acp load_session failed (%s); starting fresh", e)
             if session_id is None:
                 log.debug(
                     "acp new_session: cwd=%s mcp=%s",
@@ -873,13 +958,14 @@ class AcpSession:
                 )
                 session = await conn.new_session(cwd=cwd, mcp_servers=mcp)
                 session_id = session.session_id
+                model_state = self._extract_model_state(session)
                 log.info(
-                    "acp session established (fresh): id=%s store=%s",
+                    "acp session established (fresh): id=%s current_model=%s",
                     session_id,
-                    self.session_store_path,
+                    model_state.current_model_id if model_state else "?",
                 )
-            self._write_stored_session_id(session_id)
-            self._resumed_from_store = resumed
+            self._session_loaded = loaded
+            self._model_state = model_state
             return session_id
 
         fut = asyncio.run_coroutine_threadsafe(_bootstrap(), loop)
@@ -997,6 +1083,29 @@ class AcpSession:
                     pass
                 return
 
+    def consume_replay(self) -> list[tuple[str, Any]]:
+        """Drain events captured during `load_session`.
+
+        ACP agents may push `session/update` notifications while
+        replaying prior turns as part of the load handshake. We buffer
+        those so the UI can repaint the chat history on resume. Each
+        element is the same `(kind, payload)` tuple shape `iter_events`
+        yields. Empty list when the session was fresh or the agent
+        didn't replay."""
+        if self._replay_queue is None:
+            return []
+        events: list[tuple[str, Any]] = []
+        while True:
+            try:
+                item = self._replay_queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, _Sentinel):
+                continue
+            events.append(item)
+        self._replay_queue = None
+        return events
+
     def cancel(self) -> None:
         """Cancel the in-flight prompt. Sends `session/cancel` for
         agents that honour it AND aggressively terminates our local
@@ -1065,44 +1174,20 @@ class AcpSession:
 
     def reset(self) -> None:
         """Start a *fresh* ACP session without destroying the adapter.
-        Sequence:
 
-          1. Tear the current subprocess + asyncio loop down via
-             `close()` (same teardown used on pilot exit).
-          2. Unlink the on-disk session-id pointer so the next
-             `_ensure_started` can't resume the old session.
-          3. Re-arm the AGENTS.md prefix (`_agents_file`) from the
-             original blob — `prompt()` consumed it at first-turn, a
-             fresh session needs it re-injected.
-          4. Reset the lifecycle flags so the next `prompt()` walks the
-             bootstrap path again.
+        Tears the current subprocess + asyncio loop down, re-arms the
+        AGENTS.md prefix (consumed at first-turn), and zeroes the
+        lifecycle flags so the next `prompt()` walks the bootstrap
+        path against a brand-new `session_id` via `new_session`.
 
-        The adapter stays alive and keeps its config (command, args,
-        env, mcp_servers, session_store_path). The next turn spawns a
-        brand-new subprocess and mints a brand-new `session_id` via
-        `new_session` (never `load_session`, since the store is gone).
-        """
-        log.info(
-            "acp reset: dropping session + rearming fresh bootstrap (store=%s)",
-            self.session_store_path,
-        )
+        The adapter keeps its config (command, args, env,
+        mcp_servers); only the session + subprocess go."""
+        log.info("acp reset: dropping session + rearming fresh bootstrap")
         self.close()
-        if self.session_store_path:
-            try:
-                os.unlink(self.session_store_path)
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                log.warning(
-                    "session store unlink failed (%s): %s",
-                    self.session_store_path,
-                    e,
-                )
-        # Flip `_closed` back off + zero the cached session_id so
-        # `_ensure_started` walks the bootstrap branch on next turn.
         self._closed = False
         self._session_id = None
-        self._resumed_from_store = False
+        self._session_loaded = False
+        self._pending_session_id = None
         self._agents_file = self._original_agents_file
         self._current_queue = None
         self._in_flight = None
@@ -1153,88 +1238,53 @@ class AcpSession:
             return []
 
     def select_session(self, session_id: str) -> None:
-        """Swap the active session to `session_id`. Sequence:
+        """Queue `session_id` for the NEXT bootstrap to resume via
+        `load_session`. Tears the current subprocess down so the next
+        `prompt()` actually walks the bootstrap path.
 
-          1. `close()` the current subprocess + asyncio loop.
-          2. Write the new id to the pointer file so `_ensure_started`
-             picks it up on the next turn.
-          3. Re-arm the lifecycle flags the same way `reset()` does —
-             without unlinking the pointer first (that's the whole
-             point of this method; we want the NEXT bootstrap to
-             `load_session(new_id)`).
-
-        The agent may refuse to load the id (session doesn't exist on
-        its side, cwd mismatch, etc.); `_ensure_started` treats that
-        as a soft failure and falls back to `new_session`, which
-        mirrors the behaviour for a stale pointer file."""
+        The agent may refuse to load the id (session missing, cwd
+        mismatch, etc.); `_ensure_started` treats that as a soft
+        failure and falls back to `new_session`."""
         if not session_id:
             return
-        log.info("acp select_session: switching to id=%s", session_id)
+        log.info("acp select_session: will load id=%s on next turn", session_id)
         self.close()
-        self._write_stored_session_id(session_id)
         self._closed = False
         self._session_id = None
-        self._resumed_from_store = False
+        self._session_loaded = False
+        self._pending_session_id = session_id
         self._agents_file = self._original_agents_file
         self._current_queue = None
         self._in_flight = None
 
-    def forget_session(self, session_id: str) -> bool:
-        """Drop `session_id` from pilot's pointer file if it matches
-        the currently-stored id. Returns True when something was
-        actually unlinked, False when the stored id points elsewhere
-        (or no store is configured).
+    # ── public event stream / introspection ──────────────────────
 
-        This only clears the pilot-side bookmark — the agent keeps
-        its own on-disk session record. The user can still pick the
-        session through `list_sessions` until the agent prunes it."""
-        if not session_id or not self.session_store_path:
-            return False
-        stored = self._read_stored_session_id()
-        if stored != session_id:
-            return False
-        try:
-            os.unlink(self.session_store_path)
-        except FileNotFoundError:
-            return False
-        except OSError as e:
-            log.warning(
-                "session store unlink failed (%s): %s",
-                self.session_store_path,
-                e,
-            )
-            return False
-        if self._session_id == session_id:
-            self._session_id = None
-            self._resumed_from_store = False
-        return True
+    @property
+    def mcp_server_names(self) -> list[str]:
+        """Names of every MCP server handed to the agent at new_session."""
+        return [s.name for s in self.mcp_servers if s.name]
 
-class AcpAdapter:
-    """Base class for any `lib.converse` adapter that speaks ACP.
+    @property
+    def session_id(self) -> Optional[str]:
+        """Current ACP `session_id`, or None before the first turn."""
+        return self._session_id
 
-    Subclasses set `provider` + a default `command` / `args` and can
-    layer in backend-specific env munging. All kwargs flow through to
-    `AcpSession` using the `kwargs.get("x") or DEFAULT` idiom that
-    keeps argparse flags (None when unset) collapsing to defaults."""
-
-    provider: Any  # Subclasses set to a `ConversationProvider` member.
-
-    def __init__(self, **kwargs: Any):
-        self._session = AcpSession(**kwargs)
+    @property
+    def session_resumed(self) -> bool:
+        """True when the last bootstrap resumed via `load_session`
+        instead of minting a fresh session. Flips back to False on
+        `reset()` or after a subsequent fresh `new_session`."""
+        return self._session_loaded
 
     @staticmethod
     def select_option_id(
         options: list[PermissionOption], want_kind: str
     ) -> Optional[str]:
-        """Pick the option_id matching `want_kind` (or its fallback
-        chain). Returns None when nothing sensible is on offer so
-        callers can decide whether to send `cancelled` or fall back
-        to whatever the agent declared first.
+        """Pick the option_id matching `want_kind` or its fallback
+        chain. Returns None when nothing sensible is on offer.
 
-        Logs at WARN when the fallback chain exhausts and we have to
-        pick the first option blindly — that's the signal that
-        `_KIND_FALLBACK` is missing a translation for the agent
-        version we're talking to."""
+        Warns when the fallback chain exhausts — that's a sign
+        `_KIND_FALLBACK` needs a translation for a new agent version."""
         if not options:
             return None
         by_kind: dict[str, str] = {}
@@ -1254,119 +1304,43 @@ class AcpAdapter:
         )
         return chosen
 
-    def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
-        self._session.set_permission_handler(handler)
-
-    def set_tool_name_extractor(self, extractor: Optional[ToolNameExtractor]) -> None:
-        """Forward to the underlying session. Subclasses call this from
-        their constructor (or late from higher-level wiring) when their
-        backend carries the canonical tool name in an extension field —
-        e.g. `ConversationAdapterClaude` pulls it from
-        `_meta.claudeCode.toolName`."""
-        self._session.set_tool_name_extractor(extractor)
-
-    def reset(self) -> None:
-        """Drop the current ACP session + restart fresh on the next
-        turn. Keeps the adapter instance + its config alive; just
-        forgets the session_id (on disk + in memory) and tears the
-        subprocess down. See `AcpSession.reset` for the full teardown
-        sequence."""
-        self._session.reset()
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        """Ask the agent for every resumable session. See
-        `AcpSession.list_sessions` — returns a list of plain dicts
-        so the UI doesn't need to import the ACP schema."""
-        return self._session.list_sessions()
-
-    def select_session(self, session_id: str) -> None:
-        """Swap the active session to `session_id`; next turn will
-        load it via `load_session` instead of bootstrapping new.
-        See `AcpSession.select_session`."""
-        self._session.select_session(session_id)
-
-    def forget_session(self, session_id: str) -> bool:
-        """Clear pilot's pointer file if it currently resolves to
-        `session_id`. Returns True when the pointer was actually
-        unlinked. See `AcpSession.forget_session`."""
-        return self._session.forget_session(session_id)
-
-    @property
-    def mcp_server_names(self) -> list[str]:
-        """Names of every MCP server the session handed to the agent at
-        `new_session`. Exposed here so callers don't need to reach into
-        `adapter._session.mcp_servers` to build palette listings."""
-        return [s.name for s in self._session.mcp_servers if s.name]
-
-    @property
-    def session_id(self) -> Optional[str]:
-        """Current ACP `session_id`, or None before the first turn /
-        after `close()`. Surfaced for the `status` socket so the
-        waybar module can tell which conversation is live."""
-        return self._session._session_id
-
-    @property
-    def session_resumed(self) -> bool:
-        """True when the active session_id came from the on-disk store
-        (`load_session` succeeded), False when we just minted it via
-        `new_session`."""
-        return self._session._resumed_from_store
-
-    @property
-    def session_store_path(self) -> Optional[str]:
-        """Filesystem path the session_id is persisted to, or None
-        when persistence is disabled."""
-        return self._session.session_store_path
-
     def iter_events(
         self,
         user_message: str,
         *,
         attachments: Optional[list[PromptAttachment]] = None,
     ) -> Iterator[tuple[str, Any]]:
-        """Yields `(kind, payload)` tuples where `kind` is one of
-        `"text" | "thinking" | "tool" | "plan"`. `attachments` is
-        optional — pasted images or other binary blobs flow through
-        as ACP content blocks prefixed to the text prose.
-
-        Named `iter_events` (not `turn`) so `_AcpConverseAdapter.turn`
-        can define its own return type (`Iterator[TurnChunk]`) without
-        the override triggering a Liskov-violation on the raw-tuple
-        yield type here — this method is the low-level event stream
-        the converse layer wraps, not a user-facing API."""
+        """Drive a turn on a background thread; yield `(kind, payload)`
+        where kind is one of text / thinking / tool / plan / session_info.
+        `_AcpConverseAdapter.turn` wraps this with a typed chunk shape."""
         event_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
         error_holder: dict[str, BaseException] = {}
 
         def driver() -> None:
             try:
-                self._session.prompt(user_message, event_queue, attachments=attachments)
+                self.prompt(user_message, event_queue, attachments=attachments)
             except BaseException as e:  # pragma: no cover
                 error_holder["error"] = e
 
         t = threading.Thread(target=driver, name="acp-prompt-driver", daemon=True)
         t.start()
 
+        sentinel_error: Optional[BaseException] = None
         while True:
             item = event_queue.get()
             if isinstance(item, _Sentinel):
-                if item.error is not None:
-                    log.warning("ACP prompt errored: %s", item.error)
+                sentinel_error = item.error
                 break
             yield item
 
         t.join(timeout=1)
-        err = error_holder.get("error")
+        # `prompt()` catches its own ACP errors and parks them on the
+        # sentinel so the generator drains cleanly; `error_holder`
+        # only picks up exceptions that escaped `prompt()` entirely
+        # (bootstrap failures, thread-level asserts). Either way, re-
+        # raise so the caller's try/except fires and the toast shows.
+        err = sentinel_error or error_holder.get("error")
         if err is not None and not isinstance(err, asyncio.CancelledError):
+            log.warning("ACP prompt errored: %s", err)
             raise err
 
-    def cancel(self) -> None:
-        self._session.cancel()
-
-    def close(self) -> None:
-        self._session.close()
-
-
-# Module-level alias so existing `from lib.acp_adapter import
-# select_option_id` imports in pilot.py don't need to change. The
-# canonical home is `AcpAdapter.select_option_id`.
-select_option_id = AcpAdapter.select_option_id

@@ -9,8 +9,8 @@ import os
 import subprocess
 import urllib.error
 import urllib.request
-from typing import Any, Optional, Protocol
 from enum import StrEnum
+from typing import Any, Optional, Protocol
 
 class EnrichProvider(StrEnum):
     HTTP = "http"
@@ -127,27 +127,27 @@ class EnrichAdapterClaude:
         self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
-        proc = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--model",
-                self.model,
-                # `--permission-mode` is optional; skip the pair when
-                # unset so claude uses its user-level default.
-                *(["--permission-mode", self.mode] if self.mode else []),
-                "--system-prompt",
-                self.system_prompt,
-                self.user_prompt_template.format(text=text),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        cmd = [
+            "claude",
+            "-p",
+            "--model",
+            self.model,
+            *(["--permission-mode", self.mode] if self.mode else []),
+            "--system-prompt",
+            self.system_prompt,
+            self.user_prompt_template.format(text=text),
+        ]
+        log.info("claude enrichment: model=%s mode=%s", self.model, self.mode or "default")
+        log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        log.debug("claude stderr: %s", proc.stderr.strip())
         if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("claude enrichment failed (exit=%d)", proc.returncode)
+            log.error(
+                "claude enrichment failed (exit=%d) stderr=%s",
+                proc.returncode,
+                proc.stderr.strip(),
+            )
             return None
-
         return proc.stdout.strip()
 
 class EnrichAdapterOpenCode:
@@ -195,15 +195,15 @@ class EnrichAdapterOpenCode:
         if self.config_path and os.path.exists(self.config_path):
             env["OPENCODE_CONFIG"] = self.config_path
 
-        proc = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        log.info("opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default")
+        log.debug("spawn: %s", " ".join(argv))
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
+        log.debug("opencode stderr: %s", proc.stderr.strip())
         if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("opencode enrichment failed (exit=%d)", proc.returncode)
+            log.error(
+                "opencode enrichment failed (exit=%d) stderr=%s",
+                proc.returncode,
+                proc.stderr.strip(),
+            )
             return None
-
         return proc.stdout.strip()

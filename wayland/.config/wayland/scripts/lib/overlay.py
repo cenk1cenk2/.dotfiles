@@ -45,46 +45,25 @@ from gi.repository import (  # noqa: E402
 # ── Monitor helpers ─────────────────────────────────────────────
 
 def focused_monitor_name() -> Optional[str]:
-    """Ask the compositor for the connector name of the focused output
-    (e.g., 'DP-1', 'HDMI-A-1'). Returns None if neither Hyprland nor
-    sway is available or neither answers cleanly."""
-    try:
-        out = subprocess.run(
-            ["hyprctl", "monitors", "-j"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for m in json.loads(out):
-            if m.get("focused"):
-                return m.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-    try:
-        out = subprocess.run(
-            ["swaymsg", "-t", "get_outputs"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for o in json.loads(out):
-            if o.get("focused"):
-                return o.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-
+    """Connector name of the focused output ('DP-1', etc.), or None."""
+    for probe in (["hyprctl", "monitors", "-j"], ["swaymsg", "-t", "get_outputs"]):
+        log.debug("spawn: %s", " ".join(probe))
+        try:
+            out = subprocess.run(
+                probe, capture_output=True, text=True, check=True, timeout=1
+            ).stdout
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
+            continue
+        try:
+            for m in json.loads(out):
+                if m.get("focused"):
+                    return m.get("name")
+        except json.JSONDecodeError:
+            continue
     return None
 
 def focused_gdk_monitor():
@@ -270,11 +249,12 @@ class LayerOverlayWindow(Gtk.ApplicationWindow):
         self.queue_resize()
         self._on_monitor_bound(monitor)
 
-    def _on_monitor_bound(self, monitor) -> None:
+    def _on_monitor_bound(self, monitor) -> None:  # noqa: ARG002 — subclass hook
         """Subclass hook. Called after every `_bind_to_focused_monitor`
         resize with the resolved `GdkMonitor` (may be None if no output
         is discoverable). Default is a no-op. Pilot uses this to cap
         the compose scroller at 25% of the monitor height."""
+        del monitor
         return None
 
 # ── Card / collapsible / pill / button helpers ──────────────────
@@ -319,12 +299,16 @@ class PillVariant(str, Enum):
     ACCENT = "accent"
     APPROVE = "approve"
     REJECT = "reject"
+    WARN = "warn"
+    MUTED = "muted"
 
 def make_pill(label: str, variant: str = "accent") -> Gtk.Button:
     """Compose-style pill button. Variant picks the tint:
       * `accent`  — neutral highlight, pairs with hover-to-remove
       * `approve` — green (standing approval / success)
       * `reject`  — red (standing deny)
+      * `warn`    — yellow (heads-up state, e.g. session resumed)
+      * `muted`   — low-contrast neutral (informational breadcrumb)
     Each variant has a matching hover state defined in overlay.css."""
     btn = Gtk.Button(label=label)
     btn.add_css_class("overlay-pill")
@@ -389,7 +373,7 @@ class Header(Gtk.Box):
         self._label.add_css_class("overlay-provider")
         self._label.add_css_class("idle")
 
-        close_btn = Gtk.Button(label="✕")
+        close_btn = Gtk.Button(label="󰅖")
         close_btn.add_css_class("overlay-close")
         close_btn.connect("clicked", lambda _b: on_close())
 
@@ -765,7 +749,7 @@ class CommandPalette(Gtk.Box):
         if self._select_mode:
             row._palette_mark = None  # type: ignore[attr-defined]
         else:
-            mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
+            mark = Gtk.Label(label="󰄵" if (kind, name) in self._active else "󰄮")
             mark.add_css_class("overlay-palette-mark")
             mark.add_css_class("pilot-palette-mark")
             box.append(mark)
@@ -888,12 +872,12 @@ class CommandPalette(Gtk.Box):
             self._active.discard(key)
             row.remove_css_class("active")
             if mark is not None:
-                mark.set_label("☐")
+                mark.set_label("󰄮")
         else:
             self._active.add(key)
             row.add_css_class("active")
             if mark is not None:
-                mark.set_label("☑")
+                mark.set_label("󰄵")
 
     def _delete_current(self) -> None:
         """Ctrl+D — hand the highlighted entry to `on_delete` and
@@ -936,20 +920,3 @@ class CommandPalette(Gtk.Box):
             self._on_commit(active)
         except Exception:
             log.exception("palette on_commit raised")
-
-__all__ = [
-    "ButtonVariant",
-    "CommandPalette",
-    "CommandPaletteEntry",
-    "Header",
-    "LayerOverlayWindow",
-    "PillVariant",
-    "focused_gdk_monitor",
-    "focused_monitor_name",
-    "load_css_from_path",
-    "load_overlay_css",
-    "make_button",
-    "make_card",
-    "make_collapsible",
-    "make_pill",
-]
