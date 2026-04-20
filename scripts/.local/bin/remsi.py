@@ -27,11 +27,9 @@ import click
 from rich.console import Console
 from rich.logging import RichHandler
 
-
 # ── Logging ──────────────────────────────────────────────────────────
 
 _console: Optional[Console] = None
-
 
 def create_logger(verbose: bool) -> logging.Logger:
     """Install a rich handler on the root logger bound to stderr."""
@@ -59,12 +57,9 @@ def create_logger(verbose: bool) -> logging.Logger:
             h.setLevel(level)
     return logging.getLogger("remsi")
 
-
 log = logging.getLogger("remsi")
 
-
 # ── Domain types ─────────────────────────────────────────────────────
-
 
 class RegionKind(StrEnum):
     SILENCE = "silence"
@@ -94,13 +89,11 @@ class RegionKind(StrEnum):
             self.SPEECH: "green",
         }[self]
 
-
 @dataclass
 class Region:
     start: float
     end: float
     kind: RegionKind
-
 
 @dataclass
 class Segment:
@@ -109,13 +102,11 @@ class Segment:
     left: Region | None = field(default=None, repr=False)
     right: Region | None = field(default=None, repr=False)
 
-
 @dataclass
 class TimedWord:
     text: str
     start: float
     end: float
-
 
 @dataclass
 class VideoInfo:
@@ -148,7 +139,6 @@ class VideoInfo:
             parts.append(f"{self.bitrate // 1000}k")
         return " ".join(parts) or "?"
 
-
 @dataclass
 class AudioInfo:
     codec: str | None = None
@@ -168,7 +158,6 @@ class AudioInfo:
             parts.append(f"{self.bitrate // 1000}k")
         return " ".join(parts) or "?"
 
-
 @dataclass
 class MediaInfo:
     video: VideoInfo = field(default_factory=VideoInfo)
@@ -187,13 +176,11 @@ class MediaInfo:
             return f"{self.size / 1024:.1f} KB"
         return f"{self.size} B"
 
-
 def format_timestamp(seconds: float) -> str:
     s = float(seconds)
     m, s = divmod(s, 60)
     h, m = divmod(m, 60)
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
-
 
 FILLER_PATTERN = re.compile(
     r"^("
@@ -206,18 +193,21 @@ FILLER_PATTERN = re.compile(
     r")$"
 )
 
-
 # ── Transcription adapters ───────────────────────────────────────────
-
 
 def _extract_wav(input_file: Path, output_path: str) -> None:
     cmd = [
         "ffmpeg",
-        "-i", str(input_file),
-        "-ar", "16000",
-        "-ac", "1",
-        "-f", "wav",
-        "-y", output_path,
+        "-i",
+        str(input_file),
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-f",
+        "wav",
+        "-y",
+        output_path,
     ]
     log.info("spawn: %s", " ".join(cmd))
     result = subprocess.run(
@@ -230,11 +220,9 @@ def _extract_wav(input_file: Path, output_path: str) -> None:
         log.error("ffmpeg stderr:\n%s", result.stderr)
         raise RuntimeError("failed to extract audio for transcription")
 
-
 class TranscriptionProvider(StrEnum):
     WHISPER_CPP = "whisper-cpp"
     HTTP = "http"
-
 
 class TranscriptionAdapter(Protocol):
     """Turns an audio/video file into word-level timestamps."""
@@ -242,7 +230,6 @@ class TranscriptionAdapter(Protocol):
     name: str
 
     def transcribe(self, input_file: Path) -> list[TimedWord]: ...
-
 
 class TranscriptionAdapterWhisperCpp:
     """Local whisper.cpp via the `whisper-cli` binary."""
@@ -257,12 +244,15 @@ class TranscriptionAdapterWhisperCpp:
             _extract_wav(input_file, tmp.name)
             cmd = [
                 "whisper-cli",
-                "-m", str(self.model_path),
+                "-m",
+                str(self.model_path),
                 "-pp",
-                "--max-len", "1",
+                "--max-len",
+                "1",
                 "--split-on-word",
                 "-oj",
-                "-of", tmp.name,
+                "-of",
+                tmp.name,
                 tmp.name,
             ]
             log.info("spawn: %s", " ".join(cmd))
@@ -289,7 +279,6 @@ class TranscriptionAdapterWhisperCpp:
             )
             for seg in data.get("transcription", [])
         ]
-
 
 class TranscriptionAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint returning
@@ -371,9 +360,7 @@ class TranscriptionAdapterHttp:
         log.warning("HTTP STT returned no words or segments")
         return []
 
-
 # ── Analyzer ─────────────────────────────────────────────────────────
-
 
 class Analyzer:
     def __init__(
@@ -390,9 +377,12 @@ class Analyzer:
     def get_duration(input_file: Path) -> Optional[float]:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -406,10 +396,14 @@ class Analyzer:
     def detect_silence(self, input_file: Path, total: float) -> list[Region]:
         cmd = [
             "ffmpeg",
-            "-i", str(input_file),
+            "-i",
+            str(input_file),
             "-hide_banner",
-            "-af", f"silencedetect=n={self.noise}:d={self.duration}",
-            "-f", "null", "-",
+            "-af",
+            f"silencedetect=n={self.noise}:d={self.duration}",
+            "-f",
+            "null",
+            "-",
         ]
         log.info("spawn: %s", " ".join(cmd))
         proc = subprocess.Popen(
@@ -525,9 +519,7 @@ class Analyzer:
         return regions
 
     @staticmethod
-    def merge_regions(
-        silences: list[Region], fillers: list[Region]
-    ) -> list[Region]:
+    def merge_regions(silences: list[Region], fillers: list[Region]) -> list[Region]:
         regions = list(silences) + list(fillers)
         regions.sort(key=lambda r: r.start)
         if not regions:
@@ -545,9 +537,7 @@ class Analyzer:
         return merged
 
     @staticmethod
-    def regions_to_segments(
-        regions: list[Region], total: float
-    ) -> list[Segment]:
+    def regions_to_segments(regions: list[Region], total: float) -> list[Segment]:
         segments: list[Segment] = []
         pos = 0.0
         for region in regions:
@@ -562,14 +552,11 @@ class Analyzer:
             segments.append(Segment(start=pos, end=total, left=left))
         return segments
 
-
 # ── Encoder adapters ─────────────────────────────────────────────────
-
 
 class EncoderMode(StrEnum):
     FAST = "fast"
     FANCY = "fancy"
-
 
 class Encoder:
     GPU_ENCODERS = {
@@ -602,10 +589,14 @@ class Encoder:
     ) -> dict[str, Any]:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", f"{stream_type}:0",
-            "-show_entries", f"stream={','.join(fields)}",
-            "-of", "json",
+            "-v",
+            "error",
+            "-select_streams",
+            f"{stream_type}:0",
+            "-show_entries",
+            f"stream={','.join(fields)}",
+            "-of",
+            "json",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -614,7 +605,7 @@ class Encoder:
             streams = json.loads(result.stdout).get("streams", [])
             if streams:
                 return streams[0]
-        except (json.JSONDecodeError, IndexError):
+        except json.JSONDecodeError, IndexError:
             log.debug("ffprobe parse failed: %s", result.stderr.strip())
         return {}
 
@@ -623,7 +614,7 @@ class Encoder:
         try:
             num, den = (r_frame_rate or "").split("/")
             return round(int(num) / int(den), 3)
-        except (ValueError, ZeroDivisionError, AttributeError):
+        except ValueError, ZeroDivisionError, AttributeError:
             return None
 
     @classmethod
@@ -632,8 +623,15 @@ class Encoder:
             input_file,
             "v",
             [
-                "codec_name", "bit_rate", "width", "height", "r_frame_rate",
-                "pix_fmt", "color_space", "color_transfer", "color_primaries",
+                "codec_name",
+                "bit_rate",
+                "width",
+                "height",
+                "r_frame_rate",
+                "pix_fmt",
+                "color_space",
+                "color_transfer",
+                "color_primaries",
                 "color_range",
             ],
         )
@@ -644,7 +642,7 @@ class Encoder:
         def _int(v: Any) -> Optional[int]:
             try:
                 return int(v) if v else None
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return None
 
         try:
@@ -695,19 +693,29 @@ class Encoder:
                 match self.gpu:
                     case "vaapi":
                         args = [
-                            "-vaapi_device", "/dev/dri/renderD128",
-                            "-c:v", hw_enc,
-                            "-qp", "20",
+                            "-vaapi_device",
+                            "/dev/dri/renderD128",
+                            "-c:v",
+                            hw_enc,
+                            "-qp",
+                            "20",
                         ]
                     case "nvidia":
                         args = [
-                            "-c:v", hw_enc,
-                            "-preset", "p5",
-                            "-tune", "hq",
-                            "-rc", "constqp",
-                            "-qp", "20",
-                            "-multipass", "qres",
-                            "-bf", "2",
+                            "-c:v",
+                            hw_enc,
+                            "-preset",
+                            "p5",
+                            "-tune",
+                            "hq",
+                            "-rc",
+                            "constqp",
+                            "-qp",
+                            "20",
+                            "-multipass",
+                            "qres",
+                            "-bf",
+                            "2",
                         ]
                     case _:
                         args = ["-c:v", hw_enc, "-qp", "20"]
@@ -759,13 +767,19 @@ class Encoder:
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
+                "-loglevel",
+                "warning",
                 "-stats",
-                "-ss", str(seg.start),
-                "-to", str(seg.end),
-                "-i", str(input_file),
-                "-c:v", "copy",
-                "-c:a", "copy",
+                "-ss",
+                str(seg.start),
+                "-to",
+                str(seg.end),
+                "-i",
+                str(input_file),
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
             ]
             if self.force:
                 cmd.append("-y")
@@ -781,7 +795,6 @@ class Encoder:
         media: MediaInfo,
     ) -> subprocess.CompletedProcess:
         raise NotImplementedError
-
 
 class FancyEncoder(Encoder):
     """filter_complex xfade/acrossfade path. Single ffmpeg pass."""
@@ -923,12 +936,17 @@ class FancyEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
+                "-loglevel",
+                "warning",
                 "-stats",
-                "-i", str(input_file),
-                "-/filter_complex", script_path,
-                "-map", "[vout]",
-                "-map", "[aout]",
+                "-i",
+                str(input_file),
+                "-/filter_complex",
+                script_path,
+                "-map",
+                "[vout]",
+                "-map",
+                "[aout]",
             ]
             if self.force:
                 cmd.append("-y")
@@ -936,7 +954,6 @@ class FancyEncoder(Encoder):
             cmd.extend(self._audio_codec_args(media.audio))
             cmd.append(str(output_file))
             return self._run(cmd)
-
 
 class SmartCutEncoder(Encoder):
     """Keyframe-aware smart-cut: stream-copy the cuttable parts,
@@ -960,11 +977,16 @@ class SmartCutEncoder(Encoder):
     def _probe_keyframes(input_file: Path) -> list[float]:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-skip_frame", "nokey",
-            "-show_entries", "frame=pts_time",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-show_entries",
+            "frame=pts_time",
+            "-of",
+            "csv=p=0",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -1026,10 +1048,14 @@ class SmartCutEncoder(Encoder):
         cmd = [
             "ffmpeg",
             "-hide_banner",
-            "-loglevel", "warning",
-            "-ss", str(start),
-            "-i", str(input_file),
-            "-t", str(duration),
+            "-loglevel",
+            "warning",
+            "-ss",
+            str(start),
+            "-i",
+            str(input_file),
+            "-t",
+            str(duration),
         ]
         cmd.extend(video_args)
         af_parts: list[str] = []
@@ -1119,13 +1145,20 @@ class SmartCutEncoder(Encoder):
                     cmd = [
                         "ffmpeg",
                         "-hide_banner",
-                        "-loglevel", "warning",
-                        "-i", str(input_file),
-                        "-ss", str(start),
-                        "-t", str(end - start),
-                        "-c", "copy",
-                        "-avoid_negative_ts", "make_zero",
-                        "-y", str(part_path),
+                        "-loglevel",
+                        "warning",
+                        "-i",
+                        str(input_file),
+                        "-ss",
+                        str(start),
+                        "-t",
+                        str(end - start),
+                        "-c",
+                        "copy",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-y",
+                        str(part_path),
                     ]
                     result = self._run(cmd)
                     if result.returncode != 0:
@@ -1140,12 +1173,17 @@ class SmartCutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
+                "-loglevel",
+                "warning",
                 "-stats",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_list),
-                "-c:v", "copy",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c:v",
+                "copy",
             ]
             cmd.extend(audio_args)
             if self.force:
@@ -1153,9 +1191,7 @@ class SmartCutEncoder(Encoder):
             cmd.append(str(output_file))
             return self._run(cmd)
 
-
 # ── CLI orchestrator ─────────────────────────────────────────────────
-
 
 class Remsi:
     """Removes silent + filler regions from video files via ffmpeg."""
@@ -1337,16 +1373,23 @@ class Remsi:
         type=click.Path(path_type=Path, exists=False),
     )
     @click.option(
-        "-o", "--output", type=click.Path(path_type=Path),
+        "-o",
+        "--output",
+        type=click.Path(path_type=Path),
         help="Output path; single-input only.",
     )
     @click.option("-n", "--noise", default="-45dB", help="Silence threshold.")
     @click.option(
-        "-d", "--duration", type=float, default=0.8,
+        "-d",
+        "--duration",
+        type=float,
+        default=0.8,
         help="Minimum silence duration (s).",
     )
     @click.option(
-        "--min-cut", type=float, default=0.1,
+        "--min-cut",
+        type=float,
+        default=0.1,
         help="Smallest region we'll cut (keeps shorter ones intact).",
     )
     @click.option(
@@ -1357,7 +1400,9 @@ class Remsi:
     )
     @click.option("--codec", default=None, help="Force video codec.")
     @click.option(
-        "--fade-time", type=float, default=0.1,
+        "--fade-time",
+        type=float,
+        default=0.1,
         help="Crossfade duration (s); 0 disables.",
     )
     @click.option(
@@ -1377,7 +1422,9 @@ class Remsi:
     )
     @click.option("--suffix", default="silencer", help="Output filename suffix.")
     @click.option(
-        "-w", "--with-whisper", is_flag=True,
+        "-w",
+        "--with-whisper",
+        is_flag=True,
         help="Enable filler-word detection via STT.",
     )
     @click.option(
@@ -1402,17 +1449,19 @@ class Remsi:
         help="HTTP STT base URL.",
     )
     @click.option(
-        "--http-model", default="distil-large-v3",
+        "--http-model",
+        default="distil-large-v3",
         help="HTTP STT model name.",
     )
     @click.option(
         "--mode",
         type=click.Choice([m.value for m in EncoderMode]),
-        default=EncoderMode.FAST.value,
+        default=EncoderMode.FANCY.value,
         help="Encoder mode.",
     )
     @click.option(
-        "--analyze", is_flag=True,
+        "--analyze",
+        is_flag=True,
         help="Analyze only; skip encoding.",
     )
     @click.option("-f", "--force", is_flag=True, help="Overwrite existing output.")
@@ -1451,7 +1500,9 @@ class Remsi:
         if with_whisper:
             match TranscriptionProvider(stt_provider):
                 case TranscriptionProvider.WHISPER_CPP:
-                    model_path = Path(whisper_cpp_model_dir).expanduser() / whisper_cpp_model
+                    model_path = (
+                        Path(whisper_cpp_model_dir).expanduser() / whisper_cpp_model
+                    )
                     if not model_path.exists():
                         raise click.UsageError(f"model not found at {model_path}")
                     stt_adapter = TranscriptionAdapterWhisperCpp(model_path=model_path)
@@ -1509,7 +1560,6 @@ class Remsi:
             suffix=suffix,
             analyze_only=analyze,
         ).run(list(inputs), output)
-
 
 if __name__ == "__main__":
     try:
