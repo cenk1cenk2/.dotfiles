@@ -16,6 +16,7 @@ from typing import Any, Iterator, Optional, Protocol, Union
 
 from .acp_adapter import (  # noqa: F401
     AcpAdapter,
+    ModelChoice,
     PromptAttachment,
     build_mcp_servers,
 )
@@ -120,6 +121,11 @@ class ConversationAdapter(Protocol):
 
     @property
     def session_store_path(self) -> str | None: ...
+
+    @property
+    def available_models(self) -> list[ModelChoice]: ...
+
+    def set_model(self, model_id: str) -> bool: ...
 
     @property
     def tool_formatters(self) -> ToolFormatters:

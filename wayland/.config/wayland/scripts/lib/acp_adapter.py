@@ -141,17 +141,28 @@ class SessionInfo:
     updated_at: str = ""
 
 @dataclass(frozen=True)
+class ModelChoice:
+    """One row in a session's available-model list. Mirrors ACP's
+    `ModelInfo` but dataclass-shaped so pilot's UI doesn't need to
+    import the ACP schema."""
+
+    model_id: str
+    name: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class SessionModelState:
     """Effective model state for a session.
 
     Populated from the agent's `NewSessionResponse.models` /
-    `LoadSessionResponse.models` block (ACP `SessionModelState`) so the
-    adapter tracks what the agent actually selected, not what the client
-    asked for. Claude's ACP bridge is the classic case: you ask for
-    `opus`, the agent returns `opus[1m]` in `currentModelId`."""
+    `LoadSessionResponse.models` block so the adapter tracks what the
+    agent actually selected, not what the client asked for. Claude's
+    ACP bridge is the classic case: you ask for `opus`, the agent
+    returns `opus[1m]` in `currentModelId`."""
 
     current_model_id: str = ""
-    available_model_ids: tuple[str, ...] = ()
+    available_models: tuple[ModelChoice, ...] = ()
 
 @dataclass(frozen=True)
 class ToolCallSummary:
@@ -787,12 +798,20 @@ class AcpAdapter:
         if models is None:
             return None
         current = getattr(models, "current_model_id", "") or ""
-        available = tuple(
-            getattr(m, "model_id", "") or ""
-            for m in (getattr(models, "available_models", None) or [])
-        )
+        available: list[ModelChoice] = []
+        for m in getattr(models, "available_models", None) or []:
+            mid = getattr(m, "model_id", "") or ""
+            if not mid:
+                continue
+            available.append(
+                ModelChoice(
+                    model_id=mid,
+                    name=getattr(m, "name", "") or mid,
+                    description=getattr(m, "description", "") or "",
+                )
+            )
         return SessionModelState(
-            current_model_id=current, available_model_ids=available
+            current_model_id=current, available_models=tuple(available)
         )
 
     @property
@@ -803,6 +822,51 @@ class AcpAdapter:
         `SessionModelState` — callers should keep whatever they
         bootstrapped with."""
         return self._model_state.current_model_id if self._model_state else None
+
+    @property
+    def available_models(self) -> list[ModelChoice]:
+        """Models the agent exposes for this session.
+
+        Empty when the agent doesn't ship a `SessionModelState` (spec
+        marks it UNSTABLE) or before `_ensure_started` has run."""
+        if self._model_state is None:
+            return []
+        return list(self._model_state.available_models)
+
+    def set_model(self, model_id: str) -> bool:
+        """Ask the agent to switch the active model for this session.
+
+        Returns True when the RPC landed cleanly; False when there's
+        no session yet, no conn, or the agent rejected / errored.
+        Updates `self._model_state` optimistically so callers reading
+        `current_model_id` see the new value immediately."""
+        conn = self._conn
+        loop = self._loop
+        sid = self._session_id
+        if conn is None or loop is None or sid is None:
+            log.warning("set_model: no live session")
+            return False
+
+        async def _call() -> None:
+            await conn.set_session_model(model_id=model_id, session_id=sid)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_call(), loop)
+            fut.result(timeout=10)
+        except Exception as e:
+            log.error("set_model(%s) failed: %s", model_id, e)
+            return False
+        log.info("set_model: switched to %s", model_id)
+        # Optimistic update so header + replay palette reflect the
+        # choice before the agent pushes its own confirmation.
+        if self._model_state is not None:
+            self._model_state = SessionModelState(
+                current_model_id=model_id,
+                available_models=self._model_state.available_models,
+            )
+        else:
+            self._model_state = SessionModelState(current_model_id=model_id)
+        return True
 
     def _ensure_started(self) -> str:
         if self._session_id is not None:

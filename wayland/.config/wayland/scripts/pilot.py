@@ -1583,6 +1583,7 @@ class PilotWindow(LayerOverlayWindow):
         self._palette: Optional[CommandPalette] = None
         self._permissions_palette: Optional[CommandPalette] = None
         self._mcp_palette: Optional[CommandPalette] = None
+        self._models_palette: Optional[CommandPalette] = None
         self._sessions_palette: Optional[CommandPalette] = None
         # Root palette (Ctrl+Space) — single-select index that opens
         # one of the leaf palettes (skills / MCPs / sessions) on
@@ -2971,6 +2972,12 @@ class PilotWindow(LayerOverlayWindow):
                     "mcps",
                 ),
                 (
+                    "models",
+                    "Models",
+                    "switch the agent's active model",
+                    "models",
+                ),
+                (
                     "sessions",
                     "Sessions",
                     "restore a previous session or start fresh",
@@ -2993,6 +3000,8 @@ class PilotWindow(LayerOverlayWindow):
             self._open_resource_palette()
         elif kind == "mcps":
             self._open_mcp_palette()
+        elif kind == "models":
+            self._open_models_palette()
         elif kind == "sessions":
             self._open_sessions_palette()
         else:
@@ -3216,6 +3225,59 @@ class PilotWindow(LayerOverlayWindow):
             self.start_fresh_session()
         elif kind == "session" and preview:
             self._restore_session(preview)
+        self._compose.focus()
+
+    def _open_models_palette(self) -> None:
+        """Models palette (reached via the root palette's `Models`
+        row). Select-mode list of the models the agent exposes for
+        this session; Enter calls `adapter.set_model`. Empty list
+        when the agent doesn't ship a `SessionModelState` (ACP still
+        marks the block unstable) — rendered as a single `no models`
+        sentinel so the user gets feedback instead of an empty panel."""
+        if self._models_palette is None:
+            self._models_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_model_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Switch model — Enter selects · Esc cancels",
+            )
+        self._size_palette(self._models_palette)
+        self._models_palette.preseed_active(set())
+        self._models_palette.open(self._collect_model_entries())
+
+    def _collect_model_entries(self) -> list[tuple[str, str, str, str]]:
+        models = []
+        try:
+            models = self._adapter.available_models
+        except Exception as e:
+            log.warning("available_models raised: %s", e)
+        if not models:
+            return [("empty", "no models", "agent did not expose a model list", "")]
+        current = getattr(self._adapter, "current_model_id", None)
+        out: list[tuple[str, str, str, str]] = []
+        for m in models:
+            tag = "current · " if m.model_id == current else ""
+            desc = f"{tag}{m.description}" if m.description else (tag + m.model_id)
+            out.append(("model", m.name or m.model_id, desc, m.model_id))
+        return out
+
+    def _commit_model_choice(self, entries) -> None:
+        if not entries:
+            self._compose.focus()
+            return
+        kind, _name, _desc, model_id = entries[0]
+        if kind != "model" or not model_id:
+            self._compose.focus()
+            return
+        ok = False
+        try:
+            ok = self._adapter.set_model(model_id)
+        except Exception as e:
+            log.error("set_model raised: %s", e)
+        if ok:
+            log.info("switched model to %s", model_id)
+            self._refresh_session_label()
         self._compose.focus()
 
     def _forget_session_entry(self, entry) -> None:
@@ -4027,7 +4089,7 @@ def _read_input(mode: InputMode) -> str:
 
     return (text or "").strip()
 
-def _cmd_toggle(args) -> None:
+def _toggle(args) -> None:
     """Unified toggle. Three behaviours, chosen from context:
 
     1. No session + any input     -> open a new session.
@@ -4131,58 +4193,6 @@ def _cmd_toggle(args) -> None:
             server.stop()
         _signal_waybar_safe()
 
-def _cmd_status() -> None:
-    """Waybar custom-module payload. Compact icon-only text (provider lives
-    in the tooltip); class picks the state colour (idle green / pending red
-    / streaming yellow / awaiting blue); queue depth renders as a Pango
-    superscript badge so N pending turns show as `󱍊³` without stealing
-    horizontal space."""
-    resp = _send("status")
-    if not resp or not resp.get("ok"):
-        print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
-
-        return
-
-    provider = resp.get("provider", "")
-    phase = resp.get("phase", "idle")
-    queue = int(resp.get("queue", 0) or 0)
-    session = resp.get("session") or _PATHS.suffix
-    session_tag = f" ({session})" if session else ""
-    icon = "󱍊"
-    badge = f"<sup>{queue}</sup>" if queue > 0 else ""
-    text = f"{icon}{session_tag}{badge}"
-    label = f"Pilot{' ' + session_tag if session_tag else ''}"
-    match phase:
-        case "streaming":
-            tooltip = f"{label}: streaming via {provider}"
-        case "pending":
-            tooltip = f"{label}: waiting on first chunk from {provider}"
-        case "awaiting":
-            tooltip = f"{label}: waiting on user input ({provider})"
-        case _:
-            tooltip = f"{label}: {provider} idle"
-    if queue > 0:
-        tooltip += f"  ({queue} queued)"
-    print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
-
-def _cmd_is_running() -> None:
-    """Waybar `exec-if` gate. Exit 0 when a session socket is live so the
-    custom module shows, otherwise exit 1 and stay hidden."""
-    sys.exit(0 if _is_live() else 1)
-
-def _cmd_kill() -> None:
-    """End the running pilot session (if any) and return immediately. Matches
-    `speech.py kill` so recording-mode bindings can terminate either."""
-    resp = _send("kill")
-    if not resp:
-        # No live session answered — clear a stale socket file so the next
-        # toggle starts clean.
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-    _signal_waybar_safe()
-
 class Pilot:
     """CLI dispatcher — all subcommands live here as methods."""
 
@@ -4277,7 +4287,7 @@ class Pilot:
         mcp,
     ):
         """Open the overlay, or forward a turn to the live session."""
-        _cmd_toggle(
+        _toggle(
             Pilot.ToggleArgs(
                 input=InputMode(input_),
                 converse_provider=converse_provider,
@@ -4294,17 +4304,42 @@ class Pilot:
     @cli.command("status")
     def cmd_status():
         """Print waybar-shaped status JSON."""
-        _cmd_status()
+        resp = _send("status")
+        if not resp or not resp.get("ok"):
+            print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
+            return
+        provider = resp.get("provider", "")
+        phase = resp.get("phase", "idle")
+        queue = int(resp.get("queue", 0) or 0)
+        session = resp.get("session") or _PATHS.suffix
+        session_tag = f" ({session})" if session else ""
+        badge = f"<sup>{queue}</sup>" if queue > 0 else ""
+        text = f"󱍊{session_tag}{badge}"
+        label = f"Pilot{' ' + session_tag if session_tag else ''}"
+        tooltips = {
+            "streaming": f"{label}: streaming via {provider}",
+            "pending": f"{label}: waiting on first chunk from {provider}",
+            "awaiting": f"{label}: waiting on user input ({provider})",
+        }
+        tooltip = tooltips.get(phase, f"{label}: {provider} idle")
+        if queue > 0:
+            tooltip += f"  ({queue} queued)"
+        print(json.dumps({"class": phase, "text": text, "tooltip": tooltip}))
 
     @cli.command("is-running")
     def cmd_is_running():
         """Exit 0 if a session is live."""
-        _cmd_is_running()
+        sys.exit(0 if _is_live() else 1)
 
     @cli.command("kill")
     def cmd_kill():
         """Terminate the running session."""
-        _cmd_kill()
+        if not _send("kill"):
+            try:
+                os.unlink(_PATHS.socket_path)
+            except FileNotFoundError:
+                pass
+        _signal_waybar_safe()
 
 # Early shebang scan expects the literal "toggle" token somewhere in argv
 # — we only LD_PRELOAD gtk4-layer-shell when the window will actually
