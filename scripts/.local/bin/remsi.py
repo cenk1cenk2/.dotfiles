@@ -1413,17 +1413,31 @@ class SmartCutEncoder(Encoder):
 
     @staticmethod
     def _encoder_closed_gop_args(encoder: str) -> list[str]:
-        """Flags that force every output frame to be an IDR.
+        """Flags that make each seam piece decoder-independent.
 
-        Seam pieces butt directly against stream-copied middles; any
-        B/P reference leaking outside a piece's boundary would break
-        decoding. Each encoder family spells closed-GOP differently —
-        NVENC needs `-no-scenecut 1 -forced-idr 1` (its `-g 1` alone
-        still lets scenecut inject open GOPs); AMF wants
-        `-header_insertion_mode idr`; VAAPI respects `-g 1` directly."""
-        base = ["-g", "1", "-bf", "0"]
+        All we actually need is for the FIRST frame of every piece to
+        be an IDR — splice-time the middle starts with its own IDR
+        (the source keyframe we cut to) and the lead-out starts with
+        its own IDR, so every decoder reference buffer gets reset at
+        each piece boundary regardless of what's inside the piece.
+        Every encoder emits an IDR at encode start, so the job here
+        is just:
+
+          * `-bf 0` — no B-frames leaking past the piece end.
+          * disable scenecut IDRs so the encoder doesn't churn out
+            extra keyframes mid-piece (wastes bits; doesn't break
+            correctness).
+
+        libx264/x265 still get `-g 1` because short GOPs cost them
+        nothing and historically that was the conservative setting.
+        Hardware encoders reject `g=1` when `bf=0` (NVENC: `Gop
+        Length should be greater than number of B frames + 1`, AMF /
+        VAAPI spit similar validation errors), so they use a large
+        GOP — the first-frame-IDR guarantee still holds because the
+        encoder opens the session with an IDR regardless of `-g`."""
         if encoder in ("libx264", "libx265"):
-            return [*base, "-keyint_min", "1", "-sc_threshold", "0"]
+            return ["-g", "1", "-keyint_min", "1", "-bf", "0", "-sc_threshold", "0"]
+        base = ["-g", "250", "-bf", "0"]
         if encoder.endswith("_nvenc"):
             return [*base, "-no-scenecut", "1", "-forced-idr", "1"]
         if encoder.endswith("_amf"):
