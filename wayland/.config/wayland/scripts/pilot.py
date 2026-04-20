@@ -618,14 +618,17 @@ def _make_code_block_widget(block: CodeBlock) -> Gtk.Box:
 
       - a header strip that carries the language hint as a small pill
         floated on the right (empty string → no header rendered);
-      - a body label with monospace syntax-highlighted Pango markup
-        that word-wraps to the container's allocated width so the
-        whole block has a continuous gutter instead of shading only
-        the glyph bounds.
+      - a `Gtk.TextView` body that renders the token stream with
+        per-token `Gtk.TextTag` foregrounds. TextView (not Label) so
+        `set_pixels_above_lines` / `set_pixels_below_lines` /
+        `set_pixels_inside_wrap` give us real per-line pixel spacing
+        — Pango-in-Label clips the top of the first glyph row because
+        ascenders on mixed-metric monospace spans overshoot the line
+        box computed from the surrounding label's font metrics.
 
     The box itself owns the `.pilot-code-block` CSS class, which
     paints the gutter. Header + body have their own classes so the
-    stylesheet can tune padding / font independently."""
+    stylesheet can tune typography independently."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
     box.add_css_class("pilot-code-block")
 
@@ -643,20 +646,39 @@ def _make_code_block_widget(block: CodeBlock) -> Gtk.Box:
         header.append(pill)
         box.append(header)
 
-    body = Gtk.Label(
-        xalign=0.0,
-        yalign=0.0,
+    view = Gtk.TextView(
+        editable=False,
+        cursor_visible=False,
+        monospace=True,
+        wrap_mode=Gtk.WrapMode.WORD_CHAR,
         hexpand=True,
-        wrap=True,
-        wrap_mode=Pango.WrapMode.WORD_CHAR,
-        natural_wrap_mode=Gtk.NaturalWrapMode.WORD,
-        use_markup=True,
-        selectable=True,
     )
-    body.add_css_class("pilot-code-block-body")
-    body.set_markup(f'<span font_family="monospace">{block.markup}</span>')
-    body.set_tooltip_text(block.source)
-    box.append(body)
+    view.set_pixels_above_lines(2)
+    view.set_pixels_below_lines(2)
+    view.set_pixels_inside_wrap(2)
+    view.set_left_margin(12)
+    view.set_right_margin(12)
+    view.set_top_margin(8)
+    view.set_bottom_margin(8)
+    view.add_css_class("pilot-code-block-body")
+
+    buf = view.get_buffer()
+    # Cache one TextTag per foreground color so tokens with the same
+    # colour reuse the same tag instead of churning the tag table.
+    color_tags: dict[str, Gtk.TextTag] = {}
+
+    def _tag_for(color: str) -> Gtk.TextTag:
+        tag = color_tags.get(color)
+        if tag is None:
+            tag = buf.create_tag(None, foreground=color)
+            color_tags[color] = tag
+        return tag
+
+    for text, color in block.tokens:
+        buf.insert_with_tags(buf.get_end_iter(), text, _tag_for(color))
+
+    view.set_tooltip_text(block.source)
+    box.append(view)
     return box
 
 def _rebuild_markdown_body(

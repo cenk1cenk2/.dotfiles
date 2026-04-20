@@ -121,6 +121,24 @@ class PangoFormatter(Formatter):
             colour = self._token_color(ttype)
             outfile.write(f'<span foreground="{colour}">{_xml_escape(value)}</span>')
 
+def _resolve_lexer(source: str, language: Optional[str]):
+    """Pick a pygments lexer for `source`. Honours an explicit language
+    hint, then falls back to `guess_lexer`, then to `TextLexer`. Kept as
+    a shared helper so the Pango-markup and token-stream code paths can
+    agree on lexer resolution."""
+    lexer = None
+    if language:
+        try:
+            lexer = get_lexer_by_name(language, stripnl=False)
+        except ClassNotFound:
+            lexer = None
+    if lexer is None:
+        try:
+            lexer = guess_lexer(source)
+        except ClassNotFound:
+            lexer = TextLexer(stripnl=False)
+    return lexer
+
 def highlight_code(
     source: str,
     language: Optional[str],
@@ -135,18 +153,7 @@ def highlight_code(
     pygments chokes. Output is safe to splice into a larger Pango
     markup document — every text run is escaped before emission."""
 
-    lexer = None
-    if language:
-        try:
-            lexer = get_lexer_by_name(language, stripnl=False)
-        except ClassNotFound:
-            lexer = None
-    if lexer is None:
-        try:
-            lexer = guess_lexer(source)
-        except ClassNotFound:
-            lexer = TextLexer(stripnl=False)
-
+    lexer = _resolve_lexer(source, language)
     buf = StringIO()
     try:
         highlight(source, lexer, PangoFormatter(), buf)
@@ -161,6 +168,28 @@ def highlight_code(
         return f'<span background="{_xml_escape(background)}">{body}</span>'
     return body
 
+def highlight_code_tokens(
+    source: str,
+    language: Optional[str],
+) -> list[tuple[str, str]]:
+    """Return `source` as a list of `(text, color_hex)` tuples, one per
+    pygments token. Meant for GTK `TextView` rendering where each token
+    becomes a buffer insert with a foreground `TextTag` — bypasses Pango
+    markup entirely so glyph ascender clipping in mixed-metric spans no
+    longer applies. Falls back to a single-tuple list with default fg
+    when pygments chokes on malformed input."""
+    lexer = _resolve_lexer(source, language)
+    try:
+        tokens = list(lexer.get_tokens(source))
+    except Exception:
+        return [(source, _DEFAULT_FG)]
+    out: list[tuple[str, str]] = []
+    for ttype, value in tokens:
+        if not value:
+            continue
+        out.append((value, PangoFormatter._token_color(ttype)))
+    return out
+
 # ── CommonMark → Pango markup ───────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -174,15 +203,24 @@ class TextBlock:
 class CodeBlock:
     """A fenced / indented code block split out from the surrounding
     markup so consumers can render it as its own widget (styled with a
-    block-level background, language pill, etc.). `markup` is the
-    pygments-highlighted Pango span ready to drop into
-    `Gtk.Label.set_markup`; `source` is the raw text (for copy / tooltip
-    behaviours); `language` is the fence's language hint (empty string
-    when the block is indented / unlabelled)."""
+    block-level background, language pill, etc.).
+
+    - `markup` — pygments-highlighted Pango span, drop-in for
+      `Gtk.Label.set_markup`. Kept for callers that render into a
+      label (e.g. headless previews / tests).
+    - `tokens` — `[(text, color_hex)]` per pygments token, drop-in for
+      `Gtk.TextView` rendering where each tuple becomes a buffer
+      insert with a foreground `TextTag`. The pilot overlay uses this
+      path because TextView gives us real per-line pixel spacing via
+      `set_pixels_above_lines`, which Pango-in-Label can't.
+    - `source` — raw text, for copy / tooltip behaviours.
+    - `language` — fence's language hint (empty string when the block
+      is indented / unlabelled)."""
 
     language: str
     source: str
     markup: str
+    tokens: tuple[tuple[str, str], ...]
 
 MarkdownBlock = Union[TextBlock, CodeBlock]
 
@@ -270,11 +308,13 @@ class MarkdownMarkup:
                 info = (getattr(tok, "info", "") or "").strip().split()
                 language = info[0] if info else None
                 highlighted = highlight_code(content, language, background=None)
+                token_stream = highlight_code_tokens(content, language)
                 blocks.append(
                     CodeBlock(
                         language=language or "",
                         source=content,
                         markup=highlighted,
+                        tokens=tuple(token_stream),
                     )
                 )
                 continue
