@@ -3238,23 +3238,17 @@ class PilotWindow(LayerOverlayWindow):
 
     def _open_sessions_palette(self) -> None:
         """Sessions palette (reached via the root palette's
-        `Sessions` row). Lists every ACP session the agent is
-        willing to resume, plus a `new session` sentinel. Select-mode
-        palette — Enter restores the highlighted row (swaps the
-        adapter's session_id and wipes the transcript), Ctrl+D drops
-        pilot's pointer file if it resolves to the highlighted
-        session (next launch would otherwise still auto-resume into
-        it)."""
+        `Sessions` row). Lists every ACP session the agent is willing
+        to resume, plus a `new session` sentinel. Select-mode — Enter
+        restores the highlighted row, wipes the transcript, and
+        queues a `load_session` for the next turn."""
         if self._sessions_palette is None:
             self._sessions_palette = CommandPalette(
                 host_overlay=self._compose_overlay,
                 on_commit=self._commit_session_restore,
                 on_cancel=self._compose.focus,
-                on_delete=self._forget_session_entry,
                 select_mode=True,
-                placeholder=(
-                    "Restore session — Enter loads · Ctrl+D forgets · Esc cancels"
-                ),
+                placeholder="Restore session — Enter loads · Esc cancels",
             )
         self._size_palette(self._sessions_palette)
         self._sessions_palette.preseed_active(set())
@@ -3353,13 +3347,11 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _commit_model_choice(self, entries) -> None:
-        """Swap the adapter's configured model and start a fresh
-        session. Skipping the ACP `session/set_session_model` RPC and
-        going straight to teardown + respawn is intentional — the
-        current agent session already holds the previous model's
-        context, and continuing it under a smaller window usually
-        trips the "prompt too long" response from the new model.
-        Cleaner UX: model change → clean slate."""
+        """Fire ACP `session/set_session_model` so the agent swaps
+        models on the existing session. The agent handles context
+        trimming / fallback itself — if the new model's window is too
+        small, it surfaces the error through the normal turn-error
+        path (which the toast picks up)."""
         if not entries:
             self._compose.focus()
             return
@@ -3367,43 +3359,18 @@ class PilotWindow(LayerOverlayWindow):
         if kind != "model" or not model_id:
             self._compose.focus()
             return
-        log.info("model change → %s (tearing down session)", model_id)
-        # Rebind the adapter's spawn-time model so the next bootstrap
-        # uses it. The ACP subprocess picks `self.model` up through
-        # `--model` / env vars at spawn time, not via an on-the-wire
-        # switch, so respawning is the real way to change it.
+        ok = False
         try:
-            self._adapter.model = model_id
+            ok = self._adapter.set_model(model_id)
         except Exception as e:
-            log.error("setting adapter.model raised: %s", e)
-            self._compose.focus()
-            return
-        # `start_fresh_session` tears the subprocess + session down,
-        # wipes the transcript, clears pending queue / permissions /
-        # resource pills / attachments. Next turn bootstraps fresh
-        # with the new model.
-        self.start_fresh_session()
-        self._compose.focus()
-
-    def _forget_session_entry(self, entry) -> None:
-        """Ctrl+D inside the sessions palette. Only affects pilot's
-        own pointer file — the agent's on-disk session record stays
-        untouched, so the same session is still selectable from the
-        palette next time if the user wants to load it manually.
-
-        The `new-session` sentinel isn't a session to forget; ignore
-        Ctrl+D on it so the user can't accidentally wipe something
-        unrelated."""
-        kind, _name, _desc, preview = entry
-        if kind != "session" or not preview:
-            return
-        forgotten = False
-        try:
-            forgotten = self._adapter.forget_session(preview)
-        except Exception as e:
-            log.warning("forget_session raised: %s", e)
-        if forgotten:
+            log.error("set_model raised: %s", e)
+            self.show_error(f"Model switch failed: {e}")
+        if ok:
+            log.info("switched model to %s", model_id)
             self._refresh_session_label()
+        else:
+            self.show_error(f"Model switch to {model_id} rejected by agent")
+        self._compose.focus()
 
     def _restore_session(self, session_id: str) -> None:
         """Swap the adapter onto `session_id` and wipe the visible
@@ -3856,9 +3823,6 @@ class Session:
                     "session": _PATHS.suffix,
                     "session_id": getattr(adapter, "session_id", None) or "",
                     "session_resumed": bool(getattr(adapter, "session_resumed", False)),
-                    "session_store_path": (
-                        getattr(adapter, "session_store_path", None) or ""
-                    ),
                 }
             case "kill":
                 # Tear down from the GTK main thread so close-request handlers
@@ -4067,18 +4031,11 @@ def _build_adapter(args) -> ConversationAdapter:
     system_prompt = (
         f"{agents_md}\n\n{AI_SYSTEM_PROMPT}" if agents_md else AI_SYSTEM_PROMPT
     )
-    session_store_path = _session_store_path(
-        suffix=_PATHS.suffix,
-        provider=provider,
-        model=args.converse_model,
-        cwd=cwd,
-    )
     log.info(
-        "_build_adapter: provider=%s model=%s cwd=%s session_store=%s",
+        "_build_adapter: provider=%s model=%s cwd=%s",
         provider.value,
         args.converse_model,
         cwd,
-        session_store_path,
     )
     match provider:
         case ConversationProvider.CLAUDE:
@@ -4087,7 +4044,6 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
-                session_store_path=session_store_path,
             )
         case ConversationProvider.OPENCODE:
             return ConversationAdapterOpenCode(
@@ -4095,37 +4051,9 @@ def _build_adapter(args) -> ConversationAdapter:
                 model=args.converse_model,
                 cwd=cwd,
                 mcp_servers=mcp_servers,
-                session_store_path=session_store_path,
             )
         case _:
             raise ValueError(f"unknown converse provider: {provider!r}")
-
-_MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
-
-def _session_store_path(
-    *,
-    suffix: str,
-    provider: ConversationProvider,
-    model: Optional[str],
-    cwd: Optional[str],
-) -> str:
-    """Filesystem path where the ACP `session_id` for this
-    (suffix, provider, model, cwd) quadruple is persisted.
-
-    Encoding each dimension into the key means: `--session plan`
-    against `~/notes` vs `~/work` splits stores; switching providers
-    or models spawns a fresh session instead of clobbering the last.
-    The cwd is sha1-hashed rather than path-embedded so colons /
-    slashes in long paths don't leak into the filename."""
-    import hashlib
-
-    state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
-        "~/.local/state"
-    )
-    model_slug = _MODEL_TAG_RE.sub("-", (model or "").lower()).strip("-") or "default"
-    cwd_hash = hashlib.sha1((cwd or os.getcwd()).encode("utf-8")).hexdigest()[:10]
-    filename = f"{suffix or 'default'}-{provider.value}-{model_slug}-{cwd_hash}.session"
-    return os.path.join(state_home, "pilot", "sessions", filename)
 
 def _read_input(mode: InputMode) -> str:
     match mode:
