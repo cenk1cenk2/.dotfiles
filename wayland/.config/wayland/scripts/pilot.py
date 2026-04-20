@@ -3146,8 +3146,23 @@ class PilotWindow(LayerOverlayWindow):
             return True
         if any_palette_open and keyval == Gdk.KEY_Escape:
             return False
-        if ctrl and keyval == Gdk.KEY_q:
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        if ctrl and shift and keyval in (Gdk.KEY_q, Gdk.KEY_Q):
+            # Ctrl+Shift+Q: hard close (tears the ACP session + the
+            # pilot process down). Requires Shift on top of Ctrl so
+            # a muscle-memory Ctrl+Q doesn't nuke the session by
+            # accident — the common "oops I meant Ctrl+W" typo is
+            # now a no-op instead of a full teardown.
             self.close()
+            return True
+        if ctrl and keyval == Gdk.KEY_w:
+            # Ctrl+W toggles the overlay's visibility (hide without
+            # tearing the session down). Ctrl+Shift+Q still does the
+            # hard close. Was on Escape previously, but that
+            # swallowed the key before focused children could use it
+            # for their default behaviour (TextView / Label
+            # selection clear).
+            self.set_visible(False)
             return True
         if ctrl and keyval == Gdk.KEY_p:
             self._paste_clipboard_into_compose()
@@ -3198,9 +3213,10 @@ class PilotWindow(LayerOverlayWindow):
         if keyval == Gdk.KEY_Page_Down:
             self._scroll_page(1)
             return True
-        if keyval == Gdk.KEY_Escape:
-            self.set_visible(False)
-            return True
+        # Escape falls through untouched — GTK's default handlers on
+        # focused widgets (TextView clears its selection, Entry
+        # discards preedit, etc.) get to fire. Toggling the overlay
+        # off moved to `Ctrl+W`.
 
         return False
 
@@ -3489,12 +3505,13 @@ class PilotWindow(LayerOverlayWindow):
         ("Ctrl+O", "reopen the last plan card", "open_plan"),
         ("Ctrl+󰌑", "send the next queued turn", "send_next_queued"),
         ("Ctrl+⌫", "discard the next queued turn", "discard_next_queued"),
-        ("Ctrl+Q", "close pilot", "close"),
+        ("Ctrl+Shift+Q", "close pilot (tears the session down)", "close"),
+        ("Ctrl+W", "hide the overlay (session stays alive)", "hide"),
         ("Home", "scroll to top of the conversation", "scroll_top"),
         ("End", "scroll to bottom of the conversation", "scroll_bottom"),
         ("PgUp", "scroll the conversation up one page", "scroll_page_up"),
         ("PgDn", "scroll the conversation down one page", "scroll_page_down"),
-        ("Esc", "hide the overlay (session stays alive)", "hide"),
+        ("Esc", "clear widget selection / close open palette", "noop"),
     )
 
     def _open_keybindings_palette(self) -> None:
@@ -3543,6 +3560,11 @@ class PilotWindow(LayerOverlayWindow):
             "scroll_page_up": lambda: self._scroll_page(-1),
             "scroll_page_down": lambda: self._scroll_page(1),
             "hide": lambda: self.set_visible(False),
+            # `Esc` no longer routes through the window's key handler
+            # (it's allowed to fall through to focused children so
+            # TextView selection-clear et al. keep working); the
+            # palette entry is informational only.
+            "noop": lambda: None,
         }
         handler = dispatch.get(action)
         if handler is None:
