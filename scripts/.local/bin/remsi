@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Thin wrapper so `remsi` stays the command name. The real script is
-# `remsi.py` next to this file — renaming to `.py` is the only way to
-# keep uv from re-interpreting the shebang and recursing when the
-# entrypoint has no extension.
-set -e
-HERE="$(dirname "$(readlink -f "$0")")"
-exec uv run --project "$HERE" python "$HERE/remsi.py" "$@"

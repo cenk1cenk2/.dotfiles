@@ -1,10 +1,10 @@
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
 """Remove silent + filler regions from video via ffmpeg.
 
-Invoked through the `remsi` bash wrapper sitting next to this
-file, which calls `uv run --project <this-dir> python remsi.py
-"$@"`. The wrapper exists because naming the entry `remsi` (no
-`.py`) makes uv re-interpret the shebang on every invocation and
-recurse. With the `.py` suffix uv runs it as a regular module."""
+Same shebang pattern as the wayland scripts — `sh -c` trampoline
+so `uv run --project <this-dir>` resolves regardless of the
+shell's cwd. The `.py` extension is load-bearing: without it, uv
+re-interprets the shebang on invocation and recurses."""
 
 from __future__ import annotations
 
@@ -1513,9 +1513,7 @@ class Remsi:
 
 if __name__ == "__main__":
     try:
-        # `prog_name=` overrides the `remsi.py` click derives from
-        # sys.argv[0]. Matches what the user actually typed.
-        Remsi.cli(prog_name="remsi")
+        Remsi.cli()
     except KeyboardInterrupt:
         log.error("interrupted")
         sys.exit(130)
