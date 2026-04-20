@@ -164,6 +164,31 @@ class SessionModelState:
     current_model_id: str = ""
     available_models: tuple[ModelChoice, ...] = ()
 
+
+@dataclass(frozen=True)
+class ModeChoice:
+    """One row in a session's available-mode list. Mirrors ACP's
+    `SessionMode` but dataclass-shaped so pilot's UI doesn't need to
+    import the ACP schema."""
+
+    mode_id: str
+    name: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class SessionModeState:
+    """Effective mode state for a session.
+
+    Populated from the agent's `NewSessionResponse.modes` /
+    `LoadSessionResponse.modes` block so the adapter tracks what the
+    agent actually selected. Different agents ship different mode
+    lists: Claude exposes plan / accept-edits / default, opencode
+    ships its own plan-mode flavour."""
+
+    current_mode_id: str = ""
+    available_modes: tuple[ModeChoice, ...] = ()
+
 @dataclass(frozen=True)
 class ToolCallSummary:
     """Lightweight snapshot of an ACP ToolCallUpdate shaped for the
@@ -688,6 +713,9 @@ class AcpAdapter:
         # None until `_ensure_started` reads it off new_session /
         # load_session. Consumers read via `current_model_id`.
         self._model_state: Optional[SessionModelState] = None
+        # Same pattern for ACP session modes (plan / accept-edits /
+        # default / …). Read off new_session / load_session responses.
+        self._mode_state: Optional[SessionModeState] = None
         # Events that streamed in during `load_session` — agents may
         # replay prior turns as `session/update` notifications before
         # the load response comes back. `consume_replay()` drains this
@@ -780,6 +808,36 @@ class AcpAdapter:
             current_model_id=current, available_models=tuple(available)
         )
 
+    @staticmethod
+    def _extract_mode_state(response: Any) -> Optional[SessionModeState]:
+        """Pull the `SessionModeState` off a new/load response, if any.
+
+        Mirrors `_extract_model_state`. Agents that don't ship modes
+        (older claude-agent-acp versions, opencode builds before mode
+        support landed) return None — consumers then show an empty
+        palette so the user still gets feedback."""
+        modes = getattr(response, "modes", None)
+        if modes is None:
+            return None
+        current = getattr(modes, "current_mode_id", "") or ""
+        available: list[ModeChoice] = []
+        for m in getattr(modes, "available_modes", None) or []:
+            # ACP's `SessionMode` calls the identifier `id`, not
+            # `mode_id` — mirror that access.
+            mid = getattr(m, "id", "") or ""
+            if not mid:
+                continue
+            available.append(
+                ModeChoice(
+                    mode_id=mid,
+                    name=getattr(m, "name", "") or mid,
+                    description=getattr(m, "description", "") or "",
+                )
+            )
+        return SessionModeState(
+            current_mode_id=current, available_modes=tuple(available)
+        )
+
     @property
     def current_model_id(self) -> Optional[str]:
         """Model the agent is actually using for this session.
@@ -845,6 +903,70 @@ class AcpAdapter:
             )
         else:
             self._model_state = SessionModelState(current_model_id=model_id)
+        return True
+
+    @property
+    def current_mode_id(self) -> Optional[str]:
+        """Mode the agent is currently operating in.
+
+        None when the agent doesn't ship a `SessionModeState` — mode
+        support is a per-agent opt-in."""
+        return self._mode_state.current_mode_id if self._mode_state else None
+
+    @property
+    def available_modes(self) -> list[ModeChoice]:
+        """Modes the agent exposes for this session.
+
+        Bootstraps the session on first access so the modes palette
+        has content before any turn has fired. Empty list when the
+        agent doesn't ship a `SessionModeState` or when bootstrap
+        fails."""
+        if self._mode_state is None:
+            try:
+                self._ensure_started()
+            except Exception as e:
+                log.warning("available_modes: ensure_started failed: %s", e)
+                return []
+        if self._mode_state is None:
+            return []
+        return list(self._mode_state.available_modes)
+
+    def set_mode(self, mode_id: str) -> bool:
+        """Ask the agent to switch the active mode for this session.
+
+        Mirrors `set_model`. Bootstraps the ACP subprocess + session on
+        first call so the palette can switch mode without needing a
+        turn in flight. Returns True when the RPC landed; False when
+        bootstrap or the agent rejected."""
+        try:
+            self._ensure_started()
+        except Exception as e:
+            log.warning("set_mode: ensure_started failed: %s", e)
+            return False
+        conn = self._conn
+        loop = self._loop
+        sid = self._session_id
+        if conn is None or loop is None or sid is None:
+            log.warning("set_mode: no live session after bootstrap")
+            return False
+
+        async def _call() -> None:
+            await conn.set_session_mode(mode_id=mode_id, session_id=sid)
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_call(), loop)
+            fut.result(timeout=10)
+        except Exception as e:
+            log.error("set_mode(%s) failed: %s", mode_id, e)
+            return False
+        log.info("set_mode: switched to %s", mode_id)
+        if self._mode_state is not None:
+            self._mode_state = SessionModeState(
+                current_mode_id=mode_id,
+                available_modes=self._mode_state.available_modes,
+            )
+        else:
+            self._mode_state = SessionModeState(current_mode_id=mode_id)
         return True
 
     def _ensure_started(self) -> str:
@@ -923,6 +1045,7 @@ class AcpAdapter:
             session_id: Optional[str] = None
             loaded = False
             model_state: Optional[SessionModelState] = None
+            mode_state: Optional[SessionModeState] = None
             if pending:
                 try:
                     log.info("acp load_session attempt: id=%s", pending)
@@ -945,10 +1068,13 @@ class AcpAdapter:
                     session_id = pending
                     loaded = True
                     model_state = self._extract_model_state(load_resp)
+                    mode_state = self._extract_mode_state(load_resp)
                     log.info(
-                        "acp session resumed: id=%s current_model=%s replay_events=%d",
+                        "acp session resumed: id=%s current_model=%s "
+                        "current_mode=%s replay_events=%d",
                         session_id,
                         model_state.current_model_id if model_state else "?",
+                        mode_state.current_mode_id if mode_state else "?",
                         replay_queue.qsize(),
                     )
                 except Exception as e:
@@ -962,13 +1088,17 @@ class AcpAdapter:
                 session = await conn.new_session(cwd=cwd, mcp_servers=mcp)
                 session_id = session.session_id
                 model_state = self._extract_model_state(session)
+                mode_state = self._extract_mode_state(session)
                 log.info(
-                    "acp session established (fresh): id=%s current_model=%s",
+                    "acp session established (fresh): id=%s current_model=%s "
+                    "current_mode=%s",
                     session_id,
                     model_state.current_model_id if model_state else "?",
+                    mode_state.current_mode_id if mode_state else "?",
                 )
             self._session_loaded = loaded
             self._model_state = model_state
+            self._mode_state = mode_state
             return session_id
 
         fut = asyncio.run_coroutine_threadsafe(_bootstrap(), loop)

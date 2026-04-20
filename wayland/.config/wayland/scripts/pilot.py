@@ -49,6 +49,7 @@ from lib import (
     ToolCall,
     ToolFormatters,
     UserMessageChunk,
+    background_tasks,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
     load_prompt,
@@ -1044,13 +1045,14 @@ class TurnCard:
         header_label: Gtk.Label = slot["details_header"]
         body_box: Gtk.Box = slot["details_body"]
         name = slot.get("name") or ""
-        title = slot.get("title") or ""
-        # Header prefers the agent title (more context for Claude's
-        # "Read README.md", still readable for opencode's "edit"); the
-        # canonical `name` runs next to it in monospace when the two
-        # differ so the user can see the programmatic identifier.
-        display = title or name or "tool"
-        if name and title and name.lower() != title.lower():
+        # Header shows the short verb from `ToolFormatters.short_header`
+        # (`Execute`, `Read`, `Edit`, …) rather than the verbose agent
+        # title — the title content shows up in the body verbatim, so
+        # the short header keeps the bubble panel readable instead of
+        # wrapping a long command twice. The programmatic tool name
+        # rides in a monospace suffix when it differs from the header.
+        display = self._tool_formatters.short_header(name) if name else "tool"
+        if name and name.lower() != display.lower():
             header_label.set_markup(
                 f"<b>{GLib.markup_escape_text(display)}</b> "
                 f"<tt>({GLib.markup_escape_text(name)})</tt>"
@@ -1246,6 +1248,15 @@ class PermissionRow(Gtk.ListBoxRow):
     actual tool execution in any of our backends. Documented in the
     plan; user-facing copy keeps the verbs honest."""
 
+    # Fraction of the overlay window height the per-row body scroller
+    # is allowed to take before scroll engages. 0.5 leaves the queue /
+    # compose strip visible even when a single row wants to show a
+    # massive pasted Bash command. Mirrors the `width_fraction=0.4`
+    # pattern `LayerOverlayWindow` uses for overlay width; the host
+    # calls `apply_height_fraction` with `get_allocated_height()` once
+    # the overlay has laid out.
+    BODY_HEIGHT_FRACTION = 0.5
+
     def __init__(
         self,
         call: ToolCall,
@@ -1266,19 +1277,18 @@ class PermissionRow(Gtk.ListBoxRow):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         card.add_css_class("pilot-permission-card")
 
-        # Tool name — accent-coloured header so it reads as a fresh
-        # event rather than another turn card. Prefer the agent-
-        # supplied title (Claude's "Read README.md" / "$ ls -la",
-        # opencode's "edit" / "bash" permission category) so the row
-        # carries the most specific signal available; the canonical
-        # `call.name` is the programmatic identifier used for trust
-        # and auto-approve, surfaced in the tooltip when it differs.
-        # The header word-wraps instead of ellipsising — permission
-        # prompts are short-lived and the user needs the FULL target
-        # (long MCP tool names, long diff headers) visible to decide,
-        # not a left-truncated teaser.
+        # Tool name — accent-coloured header. Shows the short verb-
+        # style header from `ToolFormatters.short_header` (`Execute`,
+        # `Read`, `Edit`, …) instead of the verbose `call.title` Claude
+        # ships — the title content re-appears inside the body below
+        # verbatim, so duplicating it in the header wastes real estate
+        # on wrapping a long command. The tooltip carries the canonical
+        # programmatic `call.name` so trust decisions stay traceable.
+        formatters = (
+            tool_formatters if tool_formatters is not None else ToolFormatters()
+        )
         full_name = call.name or "(unnamed tool)"
-        header = (call.title or call.name or "(unnamed tool)").strip() or full_name
+        header = formatters.short_header(full_name)
         tooltip = full_name if full_name == header else f"{header}\n({full_name})"
         name_label = Gtk.Label(
             label=header,
@@ -1301,12 +1311,10 @@ class PermissionRow(Gtk.ListBoxRow):
         # `_rebuild_markdown_body` so code blocks become dedicated
         # widgets with a full-width background + language pill;
         # pango-markup text runs land in their own labels whose wrap
-        # is bounded only by the sidebar width (no line cap). When
-        # `tool_formatters` wasn't handed in (auditor paths not tied
-        # to a specific adapter), fall back to the baseline.
-        formatters = (
-            tool_formatters if tool_formatters is not None else ToolFormatters()
-        )
+        # is bounded only by the sidebar width (no line cap). Wrapped
+        # in a ScrolledWindow capped at `BODY_HEIGHT_FRACTION` of the
+        # overlay window height so a long pasted Bash command can't
+        # push the row off-screen.
         md_body = formatters.format(call.name or "", call.arguments or "")
         args_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
@@ -1326,7 +1334,18 @@ class PermissionRow(Gtk.ListBoxRow):
             blocks,
             text_css_classes=("pilot-permission-args-text",),
         )
-        card.append(args_box)
+        self._args_scroller = Gtk.ScrolledWindow(hexpand=True)
+        self._args_scroller.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+        )
+        self._args_scroller.add_css_class("pilot-permission-args-scroller")
+        self._args_scroller.set_child(args_box)
+        # Until the host calls `apply_height_fraction` with the
+        # overlay's real height, shrink to natural content — better
+        # than guessing a fixed pixel cap that breaks on tall
+        # monitors.
+        self._args_scroller.set_propagate_natural_height(True)
+        card.append(self._args_scroller)
 
         actions = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -1382,6 +1401,19 @@ class PermissionRow(Gtk.ListBoxRow):
         accept without mousing. Tab cycles to trust / deny peers via
         GTK's default focus chain (all three buttons are focusable)."""
         self._allow_btn.grab_focus()
+
+    def apply_height_fraction(self, window_height_px: int) -> None:
+        """Cap the args-body scroller at `BODY_HEIGHT_FRACTION` of the
+        given window height. Host calls this after the overlay has
+        allocated so we have a real number to fraction against.
+        Idempotent — safe to call on every resize."""
+        if window_height_px <= 0:
+            return
+        cap = int(window_height_px * self.BODY_HEIGHT_FRACTION)
+        if cap <= 0:
+            return
+        self._args_scroller.set_max_content_height(cap)
+        self._args_scroller.set_propagate_natural_height(True)
 
     @property
     def tool_name(self) -> str:
@@ -1588,7 +1620,9 @@ class PilotWindow(LayerOverlayWindow):
         self._permissions_palette: Optional[CommandPalette] = None
         self._mcp_palette: Optional[CommandPalette] = None
         self._models_palette: Optional[CommandPalette] = None
+        self._modes_palette: Optional[CommandPalette] = None
         self._sessions_palette: Optional[CommandPalette] = None
+        self._cwd_palette: Optional[CommandPalette] = None
         self._keybindings_palette: Optional[CommandPalette] = None
         # Root palette (Ctrl+Space) — single-select index that opens
         # one of the leaf palettes (skills / MCPs / sessions) on
@@ -2299,9 +2333,7 @@ class PilotWindow(LayerOverlayWindow):
                 )
                 GLib.idle_add(self._apply_session_info, title)
 
-        threading.Thread(
-            target=_poll, name="pilot-verify-session", daemon=True
-        ).start()
+        background_tasks.submit("pilot-verify-session", _poll)
 
     @staticmethod
     def _humanise_error(exc: BaseException) -> str:
@@ -2611,6 +2643,16 @@ class PilotWindow(LayerOverlayWindow):
             tool_formatters=self._tool_formatters(),
             on_auto_reject=self._on_permission_auto_reject,
         )
+        self._install_permission_row(row)
+        return False
+
+    def _install_permission_row(self, row: PermissionRow) -> None:
+        """Add a freshly-built `PermissionRow` into the stack, cap its
+        body scroller to the overlay height, and focus it when it's
+        the sole pending row. Shared between the audit path
+        (`_on_tool_call`) and the blocking ACP path
+        (`show_permission_for_acp`)."""
+        row.apply_height_fraction(self.get_allocated_height())
         was_empty = not self._permissions
         self._permissions.append(row)
         self._permissions_listbox.append(row)
@@ -2623,9 +2665,8 @@ class PilotWindow(LayerOverlayWindow):
             # Deferred so focus lands after GTK has allocated the new
             # widget; grab_focus on a freshly-added button is a no-op.
             GLib.idle_add(row.focus_allow)
+        call = row.call
         self._notify_approval(call.name)
-
-        return False
 
     def _remove_permission_row(self, row: PermissionRow) -> None:
         if row not in self._permissions:
@@ -2707,15 +2748,7 @@ class PilotWindow(LayerOverlayWindow):
             on_auto_reject=on_auto_reject,
             tool_formatters=self._tool_formatters(),
         )
-        was_empty = not self._permissions
-        self._permissions.append(row)
-        self._permissions_listbox.append(row)
-        self._permissions_box.set_visible(True)
-        self._update_phase()
-        if was_empty:
-            GLib.idle_add(row.focus_allow)
-        self._notify_approval(call.name)
-
+        self._install_permission_row(row)
         return False
 
     def _on_permission_allow(self, row: PermissionRow) -> None:
@@ -2911,7 +2944,9 @@ class PilotWindow(LayerOverlayWindow):
             "permissions": self._permissions_palette,
             "mcp": self._mcp_palette,
             "models": self._models_palette,
+            "modes": self._modes_palette,
             "sessions": self._sessions_palette,
+            "cwd": self._cwd_palette,
             "root": self._root_palette,
             "keybindings": self._keybindings_palette,
         }
@@ -3140,6 +3175,13 @@ class PilotWindow(LayerOverlayWindow):
                 ),
                 ("mcps", "MCPs", "toggle MCP servers for this session", "mcps"),
                 ("models", "Models", "switch the agent's active model", "models"),
+                ("modes", "Modes", "switch the agent's session mode", "modes"),
+                (
+                    "cwd",
+                    " cwd",
+                    "browse + pick a new working directory",
+                    "cwd",
+                ),
                 (
                     "permissions",
                     "Permissions",
@@ -3168,6 +3210,8 @@ class PilotWindow(LayerOverlayWindow):
             "skills": self._open_resource_palette,
             "mcps": self._open_mcp_palette,
             "models": self._open_models_palette,
+            "modes": self._open_modes_palette,
+            "cwd": self._open_cwd_palette,
             "permissions": self._open_permissions_palette,
             "sessions": self._open_sessions_palette,
         }
@@ -3551,6 +3595,187 @@ class PilotWindow(LayerOverlayWindow):
             self.show_error(f"Model switch to {model_id} rejected by agent")
         self._compose.focus()
 
+    def _open_modes_palette(self) -> None:
+        """Modes palette (reached via the root palette's `Modes` row).
+        Select-mode list of the session-modes the agent ships with;
+        Enter calls `adapter.set_mode`. Empty list drops a `no modes`
+        sentinel row so the user gets feedback when the agent doesn't
+        expose any."""
+        if self._modes_palette is None:
+            self._modes_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_mode_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder="Switch mode — Enter selects · Esc cancels",
+            )
+        self._size_palette(self._modes_palette)
+        self._modes_palette.preseed_active(set())
+        self._modes_palette.open(self._collect_mode_entries())
+
+    def _collect_mode_entries(self) -> list[tuple[str, str, str, str]]:
+        modes = []
+        self._set_working("LOADING MODES")
+        try:
+            modes = self._adapter.available_modes
+        except Exception as e:
+            log.warning("available_modes raised: %s", e)
+        finally:
+            self._clear_working()
+        if not modes:
+            return [("empty", "no modes", "agent did not expose a mode list", "")]
+        current = getattr(self._adapter, "current_mode_id", None)
+        out: list[tuple[str, str, str, str]] = []
+        for m in modes:
+            tag = "current · " if m.mode_id == current else ""
+            desc = f"{tag}{m.description}" if m.description else (tag + m.mode_id)
+            out.append(("mode", m.name or m.mode_id, desc, m.mode_id))
+        return out
+
+    def _commit_mode_choice(self, entries) -> None:
+        """Fire ACP `session/set_session_mode` so the agent swaps its
+        working mode. Mirrors `_commit_model_choice`."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind, _name, _desc, mode_id = entries[0]
+        if kind != "mode" or not mode_id:
+            self._compose.focus()
+            return
+        ok = False
+        self._set_working(f"SWITCHING → {mode_id}")
+        try:
+            ok = self._adapter.set_mode(mode_id)
+        except Exception as e:
+            log.error("set_mode raised: %s", e)
+            self.show_error(f"Mode switch failed: {e}")
+        finally:
+            self._clear_working()
+        if ok:
+            log.info("switched mode to %s", mode_id)
+            self._refresh_session_label()
+        else:
+            self.show_error(f"Mode switch to {mode_id} rejected by agent")
+        self._compose.focus()
+
+    # ── CWD palette ──────────────────────────────────────────────
+    #
+    # Directory-browser palette. Each `open()` call renders one
+    # directory's immediate children plus a `..` parent row and an
+    # `accept this dir` sentinel; picking a child re-opens the palette
+    # on that dir. The commit row re-bootstraps the ACP session on the
+    # new cwd (no live `set_session_cwd` in ACP today) while keeping
+    # the pilot window and socket alive.
+
+    def _open_cwd_palette(self, start_dir: Optional[str] = None) -> None:
+        """Directory browser reachable via the root palette's `cwd`
+        row. `start_dir` defaults to the adapter's current cwd so
+        re-opens land where the user left off; navigating `..` /
+        picking a child recursively calls back in with the new path."""
+        if self._cwd_palette is None:
+            self._cwd_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_cwd_choice,
+                on_cancel=self._compose.focus,
+                select_mode=True,
+                placeholder=(
+                    "Pick cwd — Enter descends · Esc cancels · "
+                    "select the dir row to commit"
+                ),
+            )
+        current = start_dir or getattr(self._adapter, "cwd", None) or os.getcwd()
+        try:
+            current = os.path.abspath(current)
+        except Exception:
+            current = os.getcwd()
+        self._size_palette(self._cwd_palette)
+        self._cwd_palette.preseed_active(set())
+        self._cwd_palette.open(self._collect_cwd_entries(current))
+
+    def _collect_cwd_entries(self, directory: str) -> list[tuple[str, str, str, str]]:
+        """Build palette rows for `directory`:
+
+        * `cwd-accept` — sentinel committing the browsed dir as the
+          new adapter cwd. Appears first so Enter on an unfiltered
+          list commits without extra navigation.
+        * `cwd-parent` — `..` row. Renders as the parent path so the
+          user sees where they'd land.
+        * `cwd-dir` — one per immediate subdirectory, including
+          dotfiles (the user may want `.config` / `.cache`). Sorted
+          case-insensitively.
+        """
+        out: list[tuple[str, str, str, str]] = [
+            (
+                "cwd-accept",
+                f" use {directory}",
+                "commit this directory as the agent's cwd",
+                directory,
+            ),
+        ]
+        parent = os.path.dirname(directory.rstrip("/"))
+        if parent and parent != directory:
+            out.append(
+                (
+                    "cwd-parent",
+                    "..",
+                    f"go up to {parent}",
+                    parent,
+                )
+            )
+        try:
+            entries = sorted(os.listdir(directory), key=str.lower)
+        except OSError as e:
+            log.warning("cwd palette: listdir(%s) failed: %s", directory, e)
+            entries = []
+        for name in entries:
+            full = os.path.join(directory, name)
+            try:
+                is_dir = os.path.isdir(full)
+            except OSError:
+                is_dir = False
+            if not is_dir:
+                continue
+            out.append(("cwd-dir", name, full, full))
+        return out
+
+    def _commit_cwd_choice(self, entries) -> None:
+        """Select-mode commit: dispatches on the row's kind.
+
+        * `cwd-parent` / `cwd-dir` re-open the palette at the new
+          path — the user is still browsing.
+        * `cwd-accept` calls `_apply_cwd` which re-bootstraps the
+          adapter session at the new cwd while keeping the pilot
+          window + socket alive (equivalent to `start_fresh_session`
+          with a new cwd baked in)."""
+        if not entries:
+            self._compose.focus()
+            return
+        kind, _name, _desc, preview = entries[0]
+        if kind in ("cwd-parent", "cwd-dir") and preview:
+            self._open_cwd_palette(start_dir=preview)
+            return
+        if kind == "cwd-accept" and preview:
+            self._apply_cwd(preview)
+        self._compose.focus()
+
+    def _apply_cwd(self, new_cwd: str) -> None:
+        """Point the adapter at `new_cwd` and re-bootstrap the session.
+
+        ACP has no live `set_session_cwd`, so we mutate the adapter's
+        `cwd`, drop the current ACP session, and let `start_fresh_session`
+        wipe the transcript + re-arm the AGENTS.md prefix. The pilot
+        window + Unix socket stay alive — the keybinding stays
+        wired to the same pilot instance."""
+        if not new_cwd:
+            return
+        try:
+            resolved = os.path.abspath(new_cwd)
+        except Exception:
+            resolved = new_cwd
+        log.info("cwd: switching adapter cwd to %s", resolved)
+        self._adapter.cwd = resolved
+        self.start_fresh_session()
+
     def _restore_session(self, session_id: str) -> None:
         """Swap the adapter onto `session_id`, wipe the visible
         transcript, then repaint the replayed history the agent pushed
@@ -3862,9 +4087,15 @@ class PilotWindow(LayerOverlayWindow):
         """`LayerOverlayWindow` hook: called after every
         `_bind_to_focused_monitor` resize. We cap the compose scroller
         at 25% of the bound monitor's height so a tall conversation
-        can't push the compose box off-screen."""
-        if monitor is not None:
-            self._compose.set_max_content_fraction(monitor.get_geometry().height, 0.25)
+        can't push the compose box off-screen, and re-apply each
+        pending permission row's body fraction so a monitor hop
+        re-sizes long arg renders to the new overlay height."""
+        if monitor is None:
+            return
+        height = monitor.get_geometry().height
+        self._compose.set_max_content_fraction(height, 0.25)
+        for row in self._permissions:
+            row.apply_height_fraction(height)
 
     @staticmethod
     def _install_css() -> None:
@@ -4003,7 +4234,9 @@ class Session:
                 conn, _ = listener.accept()
             except OSError:
                 return
-            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+            background_tasks.submit(
+                "pilot-session-handler", lambda c=conn: self._handle(c)
+            )
 
     def _handle(self, conn: socket.socket) -> None:
         try:

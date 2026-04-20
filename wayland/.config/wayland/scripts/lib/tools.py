@@ -37,7 +37,16 @@ Two wrinkles drive dispatch:
 MCP tools follow the `mcp__<server>__<tool>` convention. Pilot's
 own MCP helpers have explicit registrations; anything else drops
 into `format_mcp_fallback` which emits the leaf tool name plus a
-JSON-fenced argument dump so no payload is silently swallowed."""
+per-key markdown dump so no payload is silently swallowed.
+
+## Short header vs body
+
+Each per-tool formatter is paired with a short verb-style header
+(`Execute`, `Read`, `Edit`, `Grep`, …) via `_SHORT_HEADERS`. The UI
+reads the short header through `short_header(name)` and renders the
+full argument detail separately — previously the bubble/card header
+used `ToolCall.title` verbatim which duplicated content that also
+appeared in the body below."""
 
 from __future__ import annotations
 
@@ -102,6 +111,66 @@ class ToolFormatters:
         ".hcl": "hcl",
         ".nix": "nix",
     }
+
+    # Canonical (normalised) tool name → short verb-style header the
+    # UI shows above the body. Kept flat instead of per-method so
+    # alias lookups (`bashoutput` / `bash_output`) resolve through the
+    # same table without duplicating entries on each alias. Subclasses
+    # extend via `_SHORT_HEADERS_EXTRA` in `_seed_defaults`.
+    _SHORT_HEADERS: ClassVar[dict[str, str]] = {
+        "bash": "Execute",
+        "bash_output": "Execute · output",
+        "kill_shell": "Execute · kill",
+        "read": "Read",
+        "write": "Write",
+        "edit": "Edit",
+        "multi_edit": "Edit",
+        "grep": "Grep",
+        "glob": "Search",
+        "web_fetch": "Fetch",
+        "web_search": "Search",
+        "task": "Task",
+        "todo_write": "Todo",
+        "notebook_edit": "Edit · notebook",
+        "plan_enter": "Plan",
+        "plan_exit": "Plan · exit",
+        "mcp__pilot__ask_question": "Question",
+        "mcp__pilot__open": "Open",
+        "mcp__pilot__load_skill": "Skill",
+    }
+
+    # Argument-field ordering hint for the per-key fallback. Fields
+    # not in this list come after, sorted alphabetically. Rough
+    # priority: identifier fields first, then content fields so the
+    # user sees what's being acted on before the payload.
+    _FALLBACK_KEY_ORDER: ClassVar[tuple[str, ...]] = (
+        "tool",
+        "name",
+        "id",
+        "uri",
+        "url",
+        "path",
+        "file_path",
+        "filePath",
+        "filepath",
+        "pattern",
+        "query",
+        "command",
+        "description",
+        "summary",
+        "header",
+        "title",
+        "question",
+        "prompt",
+        "create",
+        "count",
+        "limit",
+        "offset",
+        "content",
+        "body",
+        "text",
+        "data",
+    )
 
     def __init__(self):
         # Tool name (lowercased, `-` → `_`) → bound formatter method.
@@ -178,6 +247,15 @@ class ToolFormatters:
                 f"(known: {sorted(self._formatters)})"
             )
         self._formatters[alias_key] = fn
+        # Propagate the short-header mapping so UI lookups through the
+        # alias find the same verb. Subclass tables beat the base.
+        header = self._SHORT_HEADERS.get(target_key)
+        if header and alias_key not in self._SHORT_HEADERS:
+            # _SHORT_HEADERS is a ClassVar; mutate the instance-owned
+            # copy instead so sibling adapters don't see our aliases.
+            if "_SHORT_HEADERS" not in self.__dict__:
+                self._SHORT_HEADERS = dict(self._SHORT_HEADERS)
+            self._SHORT_HEADERS[alias_key] = header
 
     @staticmethod
     def _normalise_name(name: str) -> str:
@@ -191,18 +269,41 @@ class ToolFormatters:
 
     # ── Main dispatch ───────────────────────────────────────────────
 
+    def short_header(self, name: str) -> str:
+        """Return the short verb-style header for `name` — the UI
+        pairs this with the body returned by `format` so the bubble /
+        card reads as `<verb>` + `<args detail>` instead of duplicating
+        the same verbose string from `ToolCall.title`.
+
+        MCP tools without an explicit registration fall back to the
+        leaf tool name (`mcp__server__<leaf>`). Unknown built-ins
+        stringify through a light title-casing so `"bash_output"` →
+        `"Bash output"` rather than bleeding the raw identifier
+        through the UI."""
+        key = self._normalise_name(name)
+        header = self._SHORT_HEADERS.get(key)
+        if header:
+            return header
+        if key.startswith("mcp__"):
+            parts = key.split("__", 2)
+            leaf = parts[2] if len(parts) >= 3 else key
+            return leaf.replace("_", " ").strip().title() or leaf
+        if key:
+            return key.replace("_", " ").strip().title()
+        return name or "Tool"
+
     def format(self, name: str, arguments: Any) -> str:
         """Return a markdown-rendered summary of a tool-call
         invocation. Case-insensitive dispatch through
         `_formatters`; MCP fallback for unknown `mcp__*` names;
-        final JSON-fence fallback for anything else."""
+        final per-key markdown fallback for anything else."""
         parsed = self._coerce_args(arguments)
 
         formatter = self._formatters.get(self._normalise_name(name))
         if formatter is not None and isinstance(parsed, dict):
             # Shallow-copy so the caller's dict isn't mutated — the
             # method pops consumed keys from the copy, and whatever
-            # is left becomes the leftover JSON block.
+            # is left becomes the leftover per-key block.
             leftover = dict(parsed)
             try:
                 body = formatter(leftover)
@@ -218,11 +319,13 @@ class ToolFormatters:
             except Exception:
                 pass
 
-        # Non-MCP / non-dict: either render existing string as plain
-        # or dump JSON. Wrap in a code fence so the markdown renderer
-        # treats it as pre-formatted rather than trying to style
-        # punctuation.
-        if isinstance(parsed, (dict, list)):
+        # Non-MCP / non-dict: dict/list goes through the per-key
+        # fallback so the user sees one block per field (strings
+        # raw-fenced, dicts pretty-printed). Strings pass through; the
+        # remaining primitives stringify.
+        if isinstance(parsed, dict):
+            return self._format_key_blocks(parsed)
+        if isinstance(parsed, list):
             try:
                 return self._fence(
                     json.dumps(parsed, indent=2, ensure_ascii=False), "json"
@@ -316,64 +419,109 @@ class ToolFormatters:
         return cls._PATH_LANG_MAP.get(ext, "")
 
     @classmethod
+    def _ordered_fallback_keys(cls, args: dict) -> list[str]:
+        """Sort `args.keys()` so identifier + descriptor fields come
+        first (via `_FALLBACK_KEY_ORDER`) and everything else follows
+        alphabetically. Keeps the per-key fallback readable across
+        different tool shapes without per-tool custom ordering."""
+        priority = {key: idx for idx, key in enumerate(cls._FALLBACK_KEY_ORDER)}
+        return sorted(
+            args.keys(), key=lambda k: (priority.get(k, len(priority)), str(k).lower())
+        )
+
+    @classmethod
+    def _format_key_blocks(cls, args: dict) -> str:
+        """Render a dict as a sequence of `**key**` sections. Strings
+        land in a plain fenced block (newlines preserved); dict / list
+        values pretty-print through JSON; anything else stringifies.
+
+        Replaces the old single JSON-fence dump — one monolithic JSON
+        block hid the structure of large payloads (`data` strings
+        spanning dozens of lines interleaved with short identifier
+        fields). Per-key blocks keep both identifier and content
+        visible at a glance, and let the renderer apply proper code-
+        block styling to each."""
+        if not args:
+            return ""
+        parts: list[str] = []
+        for key in cls._ordered_fallback_keys(args):
+            value = args[key]
+            parts.append(f"**{key}**")
+            parts.append(cls._render_value_block(value))
+        return "\n\n".join(parts)
+
+    @classmethod
+    def _render_value_block(cls, value: Any) -> str:
+        """Fence one value for the per-key fallback. Strings render
+        raw so multi-line content doesn't JSON-escape into `\\n`
+        sequences; dicts/lists pretty-print as JSON so structure
+        stays readable."""
+        if isinstance(value, str):
+            return cls._fence(value)
+        if isinstance(value, bool) or value is None:
+            return cls._fence(str(value))
+        if isinstance(value, (int, float)):
+            return cls._fence(str(value))
+        try:
+            return cls._fence(json.dumps(value, indent=2, ensure_ascii=False), "json")
+        except (TypeError, ValueError):
+            return cls._fence(str(value))
+
+    @classmethod
     def _leftover_json_block(cls, leftover: dict) -> str:
-        """Serialise whatever a formatter didn't pop as a trailing
-        JSON code block. Empty when `leftover` is empty so well-
-        specified calls emit nothing; agent-specific extras
-        (opencode's `diagnostics`, `_meta` envelopes, tool-specific
-        knobs the formatter doesn't know about yet) land here instead
-        of being silently swallowed."""
+        """Render whatever a formatter didn't pop as trailing per-key
+        blocks. Empty when `leftover` is empty so well-specified calls
+        emit nothing; agent-specific extras (opencode's `diagnostics`,
+        `_meta` envelopes, tool-specific knobs the formatter doesn't
+        know about yet) land here in the same per-key shape as the
+        MCP / unknown fallback."""
         if not leftover:
             return ""
-        try:
-            body = json.dumps(leftover, indent=2, ensure_ascii=False)
-        except (TypeError, ValueError):
-            body = str(leftover)
-        return "\n\n" + cls._fence(body, "json")
+        return "\n\n" + cls._format_key_blocks(leftover)
 
     # ── Per-tool formatters ─────────────────────────────────────────
     #
     # Each method receives a mutable dict, pops the keys it consumes,
     # and returns markdown. Anything left in the dict after return is
-    # dumped as a trailing JSON code block by `format()` — so
-    # agent-specific extras stay visible instead of being silently
-    # dropped.
+    # dumped as trailing per-key blocks by `format()` — so agent-
+    # specific extras stay visible instead of being silently dropped.
 
     def format_bash(self, args: dict) -> str:
         command = self._pop_str(args, "command")
         description = self._pop_str(args, "description")
         run_in_background = self._pop(args, "run_in_background")
-        header_bits = ["**bash**"]
+        bits: list[str] = []
         if description:
-            header_bits.append(f"— {description}")
+            bits.append(description)
         if run_in_background:
-            header_bits.append("*(background)*")
-        header = " ".join(header_bits)
+            bits.append("*(background)*")
+        head = " — ".join(bits) if bits else ""
         if not command:
-            return header
-        return f"{header}\n\n{self._fence(command, 'bash')}"
+            return head
+        suffix = self._fence(command, "bash")
+        return f"{head}\n\n{suffix}" if head else suffix
 
     def format_bash_output(self, args: dict) -> str:
         shell_id = self._pop_str(args, "bash_id", "shell_id")
         filter_re = self._pop_str(args, "filter")
-        parts = [
-            f"📜 **bash output** `{shell_id}`" if shell_id else "📜 **bash output**"
-        ]
+        parts: list[str] = []
+        if shell_id:
+            parts.append(f"`{shell_id}`")
         if filter_re:
             parts.append(f"filter `{filter_re}`")
         return "  ".join(parts)
 
     def format_kill_shell(self, args: dict) -> str:
         shell_id = self._pop_str(args, "shell_id", "bash_id")
-        return (
-            f"☠️  **kill shell** `{shell_id}`" if shell_id else "☠️  **kill shell**"
-        )
+        return f"`{shell_id}`" if shell_id else ""
 
     def format_read(self, args: dict) -> str:
         path = self._pop_str(args, "file_path", "filePath", "filepath", "path")
         offset = self._pop(args, "offset")
         limit = self._pop(args, "limit")
-        parts = [f"📖 **read** `{path}`" if path else "📖 **read**"]
+        parts: list[str] = []
+        if path:
+            parts.append(f"`{path}`")
         if offset is not None and limit is not None:
             try:
                 parts.append(f"lines {int(offset)}..{int(offset) + int(limit)}")
@@ -386,12 +534,17 @@ class ToolFormatters:
     def format_write(self, args: dict) -> str:
         path = self._pop_str(args, "file_path", "filePath", "filepath", "path")
         content = self._pop_str(args, "content", "newString", "new_string")
-        head = f"📝 **write** `{path}`" if path else "📝 **write**"
+        parts: list[str] = []
+        if path:
+            parts.append(f"`{path}`")
         if content:
-            head += f"  *({len(content)} chars)*"
+            parts.append(f"*({len(content)} chars)*")
+        head = "  ".join(parts)
+        if content:
             preview = self._truncate(content, 2000)
             lang = self._lang_hint_for_path(path)
-            return head + "\n\n" + self._fence(preview, lang)
+            fenced = self._fence(preview, lang)
+            return f"{head}\n\n{fenced}" if head else fenced
         return head
 
     def format_edit(self, args: dict) -> str:
@@ -411,11 +564,14 @@ class ToolFormatters:
         new = self._pop_str(args, "new_string", "newString")
         diff = self._pop_str(args, "diff", "fileDiff", "filediff")
 
-        parts = [
-            f"✏️  **edit** `{path}`{replace_all}"
-            if path
-            else f"✏️  **edit**{replace_all}"
-        ]
+        parts: list[str] = []
+        head_bits: list[str] = []
+        if path:
+            head_bits.append(f"`{path}`")
+        if replace_all:
+            head_bits.append(replace_all.strip())
+        if head_bits:
+            parts.append("  ".join(head_bits))
         if diff and not (old or new):
             parts.append("**diff:**\n" + self._fence(diff, "diff"))
         else:
@@ -432,11 +588,11 @@ class ToolFormatters:
         # redundant.
         edits = self._pop(args, "edits") or []
         count = len(edits) if isinstance(edits, list) else 0
-        head = (
-            f"✏️  **multi-edit** `{path}`  *({count} edits)*"
-            if path
-            else f"✏️  **multi-edit** *({count} edits)*"
-        )
+        head_bits: list[str] = []
+        if path:
+            head_bits.append(f"`{path}`")
+        head_bits.append(f"*({count} edits)*")
+        head = "  ".join(head_bits)
         if not isinstance(edits, list) or not edits:
             return head
         lang = self._lang_hint_for_path(path)
@@ -463,7 +619,11 @@ class ToolFormatters:
     def format_grep(self, args: dict) -> str:
         pattern = self._pop_str(args, "pattern")
         path = self._pop_str(args, "path") or "."
-        parts = [f"🔍 **grep** `{pattern}` in `{path}`"]
+        parts: list[str] = []
+        if pattern:
+            parts.append(f"`{pattern}` in `{path}`")
+        else:
+            parts.append(f"in `{path}`")
         glob = self._pop_str(args, "glob", "include")
         if glob:
             parts.append(f"glob=`{glob}`")
@@ -482,20 +642,24 @@ class ToolFormatters:
         pattern = self._pop_str(args, "pattern")
         path = self._pop_str(args, "path")
         if path:
-            return f"📂 **glob** `{pattern}` in `{path}`"
-        return f"📂 **glob** `{pattern}`"
+            return f"`{pattern}` in `{path}`" if pattern else f"in `{path}`"
+        return f"`{pattern}`" if pattern else ""
 
     def format_web_fetch(self, args: dict) -> str:
         url = self._pop_str(args, "url", "uri")
         prompt = self._pop_str(args, "prompt")
-        body = f"🌐 **fetch** <{url}>" if url else "🌐 **fetch**"
+        parts: list[str] = []
+        if url:
+            parts.append(f"<{url}>")
         if prompt:
-            body += f"\n\n{self._truncate(prompt, 600)}"
-        return body
+            parts.append(self._truncate(prompt, 600))
+        return "\n\n".join(parts)
 
     def format_web_search(self, args: dict) -> str:
         query = self._pop_str(args, "query")
-        parts = [f"🔎 **search** `{query}`"] if query else ["🔎 **search**"]
+        parts: list[str] = []
+        if query:
+            parts.append(f"`{query}`")
         allowed = self._pop(args, "allowed_domains")
         if allowed is None:
             allowed = self._pop(args, "allowedDomains")
@@ -516,11 +680,10 @@ class ToolFormatters:
         subagent = self._pop_str(args, "subagent_type", "subagentType") or "agent"
         description = self._pop_str(args, "description")
         prompt = self._pop_str(args, "prompt")
-        header = (
-            f"🤖 **{subagent}** — {description}"
-            if description
-            else f"🤖 **{subagent}**"
-        )
+        header_bits = [f"**{subagent}**"]
+        if description:
+            header_bits.append(f"— {description}")
+        header = " ".join(header_bits)
         if prompt:
             header += "\n\n" + self._truncate(prompt, 800)
         return header
@@ -528,8 +691,8 @@ class ToolFormatters:
     def format_todo_write(self, args: dict) -> str:
         todos = self._pop(args, "todos") or []
         if not isinstance(todos, list) or not todos:
-            return "📋 **todos** *(0 items)*"
-        lines = [f"📋 **todos** *({len(todos)} items)*", ""]
+            return "*(0 items)*"
+        lines = [f"*({len(todos)} items)*", ""]
         marks = {"completed": "✅", "in_progress": "🟡", "pending": "⚪"}
         for todo in todos[:20]:
             if not isinstance(todo, dict):
@@ -551,23 +714,26 @@ class ToolFormatters:
             "filepath",
         )
         cell_id = self._pop_str(args, "cell_id", "cellId")
-        head = f"📓 `{path}`" if path else "📓 notebook"
+        parts: list[str] = []
+        if path:
+            parts.append(f"`{path}`")
         if cell_id:
-            head += f"  cell=`{cell_id}`"
+            parts.append(f"cell=`{cell_id}`")
         edit_mode = self._pop_str(args, "edit_mode", "editMode")
         if edit_mode:
-            head += f"  mode=`{edit_mode}`"
+            parts.append(f"mode=`{edit_mode}`")
+        head = "  ".join(parts)
         new_source = self._pop_str(args, "new_source", "newSource")
         if new_source:
-            head += "\n\n" + self._fence(self._truncate(new_source, 1500), "python")
+            fenced = self._fence(self._truncate(new_source, 1500), "python")
+            return f"{head}\n\n{fenced}" if head else fenced
         return head
 
     def format_plan_enter(self, args: dict) -> str:
         plan = self._pop_str(args, "plan")
-        head = "🗺️  **plan mode**"
         if plan:
-            head += "\n\n" + self._truncate(plan, 1200)
-        return head
+            return self._truncate(plan, 1200)
+        return ""
 
     def format_plan_exit(self, args: dict) -> str:
         # Claude's ExitPlanMode carries the final plan prose as
@@ -575,61 +741,35 @@ class ToolFormatters:
         # JSON-dump anything else the agent tacked on (a plan path,
         # agent metadata, etc.).
         plan = self._pop_str(args, "plan")
-        head = "🗺️  **exit plan mode**"
         if plan:
-            head += "\n\n" + self._truncate(plan, 1200)
-        return head
+            return self._truncate(plan, 1200)
+        return ""
 
     # ── Pilot-owned MCP helpers ─────────────────────────────────────
 
     def format_pilot_ask_question(self, args: dict) -> str:
         question = self._pop_str(args, "question")
-        return f"❓ **question**\n\n> {question}" if question else "❓ question"
+        return f"> {question}" if question else ""
 
     def format_pilot_open(self, args: dict) -> str:
         url = self._pop_str(args, "url", "uri")
-        return f"↗ **open** <{url}>" if url else "↗ open"
+        return f"<{url}>" if url else ""
 
     def format_pilot_load_skill(self, args: dict) -> str:
         name = self._pop_str(args, "name", "skill")
-        return f"🧠 **skill** `{name}`" if name else "🧠 skill"
+        return f"`{name}`" if name else ""
 
     # ── MCP fallback ─────────────────────────────────────────────────
 
     def format_mcp_fallback(self, name: str, args: Any) -> str:
-        """Markdown fallback for unknown MCP tools. Emits a header
-        with the leaf tool name and a JSON block with the full
-        argument payload so the user sees the whole request — no
-        silent truncation.
+        """Markdown fallback for unknown MCP tools. Emits the per-key
+        block layout so each argument is visible inline instead of
+        buried in a single JSON dump. `name` is still surfaced by the
+        short-header path; here we only render the argument payload.
 
-        Unlike the per-tool formatters, this one does NOT consume the
-        inline hint from `args`: the JSON dump below re-emits the
-        full payload verbatim, and popping would duplicate the
-        string inline AND under the code fence."""
-        parts = name.split("__", 2)
-        tail = parts[2] if len(parts) >= 3 else name
-        header = f"**{tail}**"
+        When `args` isn't a dict (agent shipped a raw scalar), stringify
+        it through the same value renderer so the output shape stays
+        consistent."""
         if isinstance(args, dict):
-            # Pick a short inline hint if one obvious field is set —
-            # keeps collapsed rows readable without needing to expand
-            # the JSON.
-            for key in (
-                "url",
-                "uri",
-                "query",
-                "question",
-                "path",
-                "name",
-                "pattern",
-                "text",
-                "command",
-            ):
-                value = args.get(key)
-                if isinstance(value, str) and value:
-                    header += f" — {self._truncate(value, 120)}"
-                    break
-        try:
-            body = json.dumps(args, indent=2, ensure_ascii=False)
-        except (TypeError, ValueError):
-            body = str(args)
-        return f"{header}\n\n{self._fence(body, 'json')}"
+            return self._format_key_blocks(args)
+        return self._render_value_block(args)

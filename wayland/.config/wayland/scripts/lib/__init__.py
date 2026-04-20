@@ -9,6 +9,7 @@ layer-shell imports are heavy and useless to headless callers
 (waybar status polls, MCP subprocess). Pilot (the only overlay
 consumer) imports directly via `from lib.overlay import …`."""
 
+from .acp_adapter import ModeChoice as ModeChoice
 from .acp_adapter import ModelChoice as ModelChoice
 from .cli import (
     RunResult as RunResult,
@@ -71,5 +72,9 @@ from .permissions import (
 )
 from .prompts import load_prompt as load_prompt
 from .prompts import load_relative_file as load_relative_file
+from .tasks import (
+    BackgroundTaskHandler as BackgroundTaskHandler,
+    background_tasks as background_tasks,
+)
 from .tools import ToolFormatters as ToolFormatters
 from .waybar import signal_waybar as signal_waybar

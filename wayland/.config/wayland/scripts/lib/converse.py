@@ -16,6 +16,7 @@ from typing import Any, Iterator, Optional, Protocol, Union
 
 from .acp_adapter import (  # noqa: F401
     AcpAdapter,
+    ModeChoice,
     ModelChoice,
     PromptAttachment,
     build_mcp_servers,
@@ -134,6 +135,14 @@ class ConversationAdapter(Protocol):
     def available_models(self) -> list[ModelChoice]: ...
 
     def set_model(self, model_id: str) -> bool: ...
+
+    @property
+    def available_modes(self) -> list[ModeChoice]: ...
+
+    @property
+    def current_mode_id(self) -> str | None: ...
+
+    def set_mode(self, mode_id: str) -> bool: ...
 
     @property
     def tool_formatters(self) -> ToolFormatters:
@@ -398,21 +407,36 @@ class OpenCodeToolFormatters(ToolFormatters):
         # without the underscore; routing both spellings at the map
         # level keeps the formatter single-source.
         self.alias("externaldirectory", "external_directory")
+        # Own the short-header table per instance so subclass aliases
+        # don't mutate the base class's ClassVar dict.
+        self._SHORT_HEADERS = dict(self._SHORT_HEADERS)
+        self._SHORT_HEADERS.update(
+            {
+                "codesearch": "Search",
+                "lsp": "LSP",
+                "skill": "Skill",
+                "question": "Question",
+                "external_directory": "External dir",
+                "externaldirectory": "External dir",
+            }
+        )
 
     def format_codesearch(self, args: dict) -> str:
         query = self._pop_str(args, "query")
         tokens = self._pop(args, "tokensNum")
-        header = f"🔎 **codesearch** `{query}`" if query else "🔎 **codesearch**"
+        parts: list[str] = []
+        if query:
+            parts.append(f"`{query}`")
         if isinstance(tokens, (int, float)) and tokens:
-            header += f"  *(tokens={int(tokens)})*"
-        return header
+            parts.append(f"*(tokens={int(tokens)})*")
+        return "  ".join(parts)
 
     def format_lsp(self, args: dict) -> str:
         operation = self._pop_str(args, "operation")
         path = self._pop_str(args, "filePath", "file_path", "path")
         line = self._pop(args, "line")
         character = self._pop(args, "character")
-        bits = ["🧭 **lsp**"]
+        bits: list[str] = []
         if operation:
             bits.append(f"`{operation}`")
         if path:
@@ -432,7 +456,7 @@ class OpenCodeToolFormatters(ToolFormatters):
         # which does the same job via a different route — we keep
         # both since they ride different dispatch buses.
         name = self._pop_str(args, "name")
-        return f"🧠 **skill** `{name}`" if name else "🧠 skill"
+        return f"`{name}`" if name else ""
 
     def format_question(self, args: dict) -> str:
         # Opencode emits `questions: [{question, options[], ...}, …]`
@@ -442,8 +466,8 @@ class OpenCodeToolFormatters(ToolFormatters):
         # answers to a closed set.
         questions = self._pop(args, "questions") or []
         if not isinstance(questions, list) or not questions:
-            return "❓ **question**"
-        parts = ["❓ **question**"]
+            return ""
+        parts: list[str] = []
         for idx, q in enumerate(questions[:3]):
             if not isinstance(q, dict):
                 continue
@@ -481,9 +505,7 @@ class OpenCodeToolFormatters(ToolFormatters):
 
     def format_external_directory(self, args: dict) -> str:
         path = self._pop_str(args, "path", "filePath")
-        return (
-            f"📂 **external directory** `{path}`" if path else "📂 external directory"
-        )
+        return f"`{path}`" if path else ""
 
 class ConversationAdapterOpenCode(_AcpConverseAdapter):
     """OpenCode via `opencode acp`.
