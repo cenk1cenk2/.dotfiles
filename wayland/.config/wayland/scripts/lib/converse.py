@@ -197,22 +197,18 @@ class _AcpConverseAdapter(AcpAdapter):
             chunk = self._translate_acp_chunk(kind, payload)
             if chunk is not None:
                 yield chunk
-        self._reconcile_model()
+        self.reconcile()
 
-    def _reconcile_model(self) -> None:
-        """Pull the agent's effective model back into `self.model`.
-
-        Claude's bridge expands aliases (`opus` → `opus[1m]`); other
-        agents may switch modes mid-session. Run after every turn so
-        the header + session-store path reflect reality."""
-        effective = self.current_model_id
-        if effective and effective != self.model:
+    def reconcile(self) -> None:
+        """Pull the agent's effective status into self."""
+        model = self.current_model_id
+        if model and model != self.model:
             log.info(
                 "reconciling model: requested=%s effective=%s",
                 self.model,
-                effective,
+                model,
             )
-            self.model = effective
+            self.model = model
 
     def replay_chunks(self) -> Iterator[TurnChunk]:
         """Yield TurnChunks captured during `session/load`.
@@ -224,7 +220,6 @@ class _AcpConverseAdapter(AcpAdapter):
             chunk = self._translate_acp_chunk(kind, payload)
             if chunk is not None:
                 yield chunk
-
 
 class ConversationAdapterClaude(_AcpConverseAdapter):
     """Claude Code via `bunx @agentclientprotocol/claude-agent-acp`.
@@ -462,7 +457,7 @@ class OpenCodeToolFormatters(ToolFormatters):
                             labels.append(str(label))
                 if labels:
                     lines.append(
-                        "> *options:* " + " · ".join(f"`{l}`" for l in labels)
+                        "> *options:* " + " · ".join(f"`{entry}`" for entry in labels)
                     )
             parts.append("\n".join(lines))
         if len(questions) > 3:
@@ -472,11 +467,8 @@ class OpenCodeToolFormatters(ToolFormatters):
     def format_external_directory(self, args: dict) -> str:
         path = self._pop_str(args, "path", "filePath")
         return (
-            f"📂 **external directory** `{path}`"
-            if path
-            else "📂 external directory"
+            f"📂 **external directory** `{path}`" if path else "📂 external directory"
         )
-
 
 class ConversationAdapterOpenCode(_AcpConverseAdapter):
     """OpenCode via `opencode acp`.

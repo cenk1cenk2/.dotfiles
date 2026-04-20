@@ -270,11 +270,12 @@ class LayerOverlayWindow(Gtk.ApplicationWindow):
         self.queue_resize()
         self._on_monitor_bound(monitor)
 
-    def _on_monitor_bound(self, monitor) -> None:
+    def _on_monitor_bound(self, monitor) -> None:  # noqa: ARG002 — subclass hook
         """Subclass hook. Called after every `_bind_to_focused_monitor`
         resize with the resolved `GdkMonitor` (may be None if no output
         is discoverable). Default is a no-op. Pilot uses this to cap
         the compose scroller at 25% of the monitor height."""
+        del monitor
         return None
 
 # ── Card / collapsible / pill / button helpers ──────────────────

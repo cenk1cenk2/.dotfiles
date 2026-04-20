@@ -1351,6 +1351,13 @@ class AcpAdapter:
     def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
         self._session.set_permission_handler(handler)
 
+    @property
+    def current_model_id(self) -> Optional[str]:
+        return self._session.current_model_id
+
+    def consume_replay(self) -> list[tuple[str, Any]]:
+        return self._session.consume_replay()
+
     def set_tool_name_extractor(self, extractor: Optional[ToolNameExtractor]) -> None:
         """Forward to the underlying session. Subclasses call this from
         their constructor (or late from higher-level wiring) when their

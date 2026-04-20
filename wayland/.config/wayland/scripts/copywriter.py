@@ -63,8 +63,11 @@ class Copywriter:
         """Live `run` workers, excluding self.
 
         Skips the `uv run` shebang wrapper so `kill` never passes a
-        non-session-leader PID to `killpg`. Matches the subcommand at
-        the cmdline tail so non-`run` invocations are excluded."""
+        non-session-leader PID to `killpg`. Matches the `run`
+        subcommand *positionally* — it's the argument immediately
+        after the script path, not the tail, since `run stdout
+        --model haiku …` puts the subcommand at index N+1 with
+        unrelated options after it."""
         current = os.getpid()
         basename = os.path.basename(__file__)
         workers: list[psutil.Process] = []
@@ -74,9 +77,13 @@ class Copywriter:
             if p.info.get("name") == "uv":
                 continue
             cmdline = p.info["cmdline"] or []
-            if not cmdline or cmdline[-1] != "run":
+            script_idx = next(
+                (i for i, arg in enumerate(cmdline) if arg and arg.endswith(basename)),
+                -1,
+            )
+            if script_idx < 0:
                 continue
-            if not any(arg and arg.endswith(basename) for arg in cmdline):
+            if cmdline[script_idx + 1 : script_idx + 2] != ["run"]:
                 continue
             workers.append(p)
         return workers
