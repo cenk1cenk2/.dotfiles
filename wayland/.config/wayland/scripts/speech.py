@@ -28,7 +28,7 @@ from lib import (
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
-    configure_logging,
+    create_logger,
     load_prompt,
     notify,
     signal_waybar,
@@ -483,7 +483,7 @@ class Speech:
     @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Socket-path suffix.")
     def cli(verbose: bool, session_suffix: str):
         """Control speech-to-text via an STT adapter."""
-        configure_logging(verbose)
+        create_logger(verbose)
         global _PATHS
         _PATHS = SpeechPaths.from_suffix(session_suffix or "")
 

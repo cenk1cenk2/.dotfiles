@@ -936,20 +936,3 @@ class CommandPalette(Gtk.Box):
             self._on_commit(active)
         except Exception:
             log.exception("palette on_commit raised")
-
-__all__ = [
-    "ButtonVariant",
-    "CommandPalette",
-    "CommandPaletteEntry",
-    "Header",
-    "LayerOverlayWindow",
-    "PillVariant",
-    "focused_gdk_monitor",
-    "focused_monitor_name",
-    "load_css_from_path",
-    "load_overlay_css",
-    "make_button",
-    "make_card",
-    "make_collapsible",
-    "make_pill",
-]

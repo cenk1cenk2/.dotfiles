@@ -28,16 +28,17 @@ from lib import (
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
-    configure_logging,
+    create_logger,
     load_prompt,
     notify,
     signal_waybar,
 )
 
-
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
-    ICON = "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
+    ICON = (
+        "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
+    )
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
@@ -114,7 +115,11 @@ class Copywriter:
             os._exit(0)
 
     def _execute(self) -> None:
-        assert self._input is not None and self._enricher is not None and self._output is not None
+        assert (
+            self._input is not None
+            and self._enricher is not None
+            and self._output is not None
+        )
         text = self._input.read()
         if not text or not text.strip():
             self.log.warning("%s was empty", self._input.mode.value)
@@ -124,7 +129,9 @@ class Copywriter:
         self.log.info("%s text: %d chars", self._input.mode.value, len(text))
         result = self._enricher.enrich(text)
         if not result or not result.strip():
-            self.log.warning("enrichment empty; leaving %s unchanged", self._output.mode.value)
+            self.log.warning(
+                "enrichment empty; leaving %s unchanged", self._output.mode.value
+            )
             self._notify(f"Refinement failed, {self._output.mode.value} unchanged")
             return
 
@@ -156,7 +163,9 @@ class Copywriter:
 
     def status_json(self) -> str:
         if not self.is_running():
-            return json.dumps({"class": "idle", "text": "", "tooltip": "Copywriter ready"})
+            return json.dumps(
+                {"class": "idle", "text": "", "tooltip": "Copywriter ready"}
+            )
         return json.dumps(
             {"class": "working", "text": "󰼭 󰧑", "tooltip": "Refining clipboard..."}
         )
@@ -167,7 +176,7 @@ class Copywriter:
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cli(verbose: bool):
         """Refine clipboard text through AI."""
-        configure_logging(verbose)
+        create_logger(verbose)
 
     @cli.command("run")
     @click.argument(
@@ -188,7 +197,11 @@ class Copywriter:
         default=DEFAULT_ENRICH_ADAPTER.value,
         help="Enrichment backend.",
     )
-    @click.option("--base-url", default="https://ai.kilic.dev/api/v1", help="HTTP backend base URL.")
+    @click.option(
+        "--base-url",
+        default="https://ai.kilic.dev/api/v1",
+        help="HTTP backend base URL.",
+    )
     @click.option("--model", default=None, help="Provider-specific model.")
     @click.option("--temperature", type=float, default=None)
     @click.option("--top-p", type=float, default=None)
@@ -199,7 +212,9 @@ class Copywriter:
         help="Reasoning depth.",
     )
     @click.option("--num-ctx", type=int, default=None)
-    def cmd_run(output, input_, provider, base_url, model, temperature, top_p, thinking, num_ctx):
+    def cmd_run(
+        output, input_, provider, base_url, model, temperature, top_p, thinking, num_ctx
+    ):
         """Refine once and emit to the chosen sink."""
         input_mode = InputMode(input_)
         match input_mode:
@@ -264,7 +279,6 @@ class Copywriter:
     def cmd_is_running():
         """Exit 0 if a worker is live."""
         sys.exit(0 if Copywriter().is_running() else 1)
-
 
 if __name__ == "__main__":
     Copywriter.cli()

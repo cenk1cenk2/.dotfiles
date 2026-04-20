@@ -1,6 +1,6 @@
 """Shared CLI + logging scaffolding for the wayland scripts.
 
-Every entry script wires its click root through `configure_logging`
+Every entry script wires its click root through `create_logger`
 so `--verbose` bumps to DEBUG and everything else stays INFO. All
 output lands on stderr — stdout is reserved for pipe-friendly
 command output (waybar JSON, stdout sinks)."""
@@ -18,17 +18,17 @@ from rich.logging import RichHandler
 
 _console: Optional[Console] = None
 
-def _stderr_console() -> Console:
-    global _console
-    if _console is None:
-        _console = Console(file=sys.stderr, stderr=True, force_terminal=None)
-    return _console
-
-def configure_logging(verbose: bool, *, name: Optional[str] = None) -> logging.Logger:
+def create_logger(verbose: bool, *, name: Optional[str] = None) -> logging.Logger:
     """Install a rich stderr handler once per process."""
     root = logging.getLogger()
     level = logging.DEBUG if verbose else logging.INFO
     root.setLevel(level)
+
+    def _stderr_console() -> Console:
+        global _console
+        if _console is None:
+            _console = Console(file=sys.stderr, stderr=True, force_terminal=None)
+        return _console
 
     has_rich = any(isinstance(h, RichHandler) for h in root.handlers)
     if not has_rich:

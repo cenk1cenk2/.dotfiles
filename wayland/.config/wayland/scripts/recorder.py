@@ -11,7 +11,7 @@ import time
 import click
 import psutil
 import obsws_python as obs
-from lib import configure_logging, notify, signal_waybar
+from lib import create_logger, notify, signal_waybar
 
 # obsws-python + websocket-client log full tracebacks via `logger.exception()`
 # on every refused connection. Waybar polls status on a tick, so without
@@ -178,7 +178,7 @@ class Recorder:
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cli(verbose: bool):
         """Control OBS recording via WebSocket."""
-        configure_logging(verbose)
+        create_logger(verbose)
 
     @cli.command("toggle")
     def cmd_toggle():

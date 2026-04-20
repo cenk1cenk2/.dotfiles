@@ -26,7 +26,7 @@ import click
 from acp.schema import McpServerStdio
 
 from lib import (
-    configure_logging,
+    create_logger,
     DEFAULT_CONVERSE_ADAPTER,
     DEFAULT_SERVER_NAMES,
     ConversationAdapter,
@@ -4207,7 +4207,7 @@ class Pilot:
     @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Session suffix.")
     def cli(verbose: bool, session_suffix: str):
         """Conversational AI sidebar overlay."""
-        configure_logging(verbose)
+        create_logger(verbose)
         global _PATHS
         _PATHS = PilotPaths.from_suffix(session_suffix or "")
 
