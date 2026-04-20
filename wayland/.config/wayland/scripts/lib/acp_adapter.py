@@ -404,7 +404,10 @@ class AcpClient(Client):
                 )
                 self._put(("session_info", info))
             elif isinstance(update, UserMessageChunk):
-                return
+                text = self._content_text(update.content)
+                if text:
+                    log.debug("acp update: user_message chunk len=%d", len(text))
+                    self._put(("user_message", text))
             else:
                 log.debug("acp update: dropped kind=%s", type(update).__name__)
             # Usage / mode updates intentionally dropped.
@@ -1191,6 +1194,20 @@ class AcpAdapter:
         self._agents_file = self._original_agents_file
         self._current_queue = None
         self._in_flight = None
+
+    def start(self) -> Optional[str]:
+        """Force the subprocess + session bootstrap now.
+
+        Normal flow is lazy — `prompt()` / `available_models` trigger
+        `_ensure_started` on first access. Callers that need replay
+        events from `load_session` available immediately (before any
+        turn fires) invoke this so `consume_replay` has something to
+        return. Returns the session_id on success, None on failure."""
+        try:
+            return self._ensure_started()
+        except Exception as e:
+            log.warning("start: ensure_started failed: %s", e)
+            return None
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Return every ACP session the agent is willing to resume.

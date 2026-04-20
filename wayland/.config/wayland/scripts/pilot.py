@@ -48,6 +48,7 @@ from lib import (
     ThinkingChunk,
     ToolCall,
     ToolFormatters,
+    UserMessageChunk,
     get_permission_seeds,
     get_server as _DEFAULT_SERVER_GET,
     load_prompt,
@@ -2262,6 +2263,45 @@ class PilotWindow(LayerOverlayWindow):
             log.info("run_turn: end streamed=%s", self._stream_started)
             if self._alive:
                 GLib.idle_add(self._mark_idle)
+                self._verify_session_info()
+
+    def _verify_session_info(self) -> None:
+        """Reconcile the UI's session title with the agent's authoritative
+        copy after a turn completes.
+
+        Agents SHOULD push `session_info_update` notifications when they
+        rename a session — but claude-agent-acp in particular sometimes
+        ships a title only at first-turn summary time and then stays
+        quiet on subsequent renames. Polling `session/list` once per
+        turn catches those drifts. Runs in a worker so the blocking RPC
+        doesn't stall the main thread."""
+
+        def _poll() -> None:
+            sid = getattr(self._adapter, "session_id", None)
+            if not sid:
+                return
+            try:
+                sessions = self._adapter.list_sessions()
+            except Exception as e:
+                log.debug("verify_session_info: list_sessions raised: %s", e)
+                return
+            match = next(
+                (s for s in sessions if s.get("session_id") == sid), None
+            )
+            if not match:
+                return
+            title = (match.get("title") or "").strip()
+            if title and title != self._session_title:
+                log.info(
+                    "verify_session_info: reconciling title %r -> %r",
+                    self._session_title,
+                    title,
+                )
+                GLib.idle_add(self._apply_session_info, title)
+
+        threading.Thread(
+            target=_poll, name="pilot-verify-session", daemon=True
+        ).start()
 
     @staticmethod
     def _humanise_error(exc: BaseException) -> str:
@@ -3512,18 +3552,26 @@ class PilotWindow(LayerOverlayWindow):
         self._compose.focus()
 
     def _restore_session(self, session_id: str) -> None:
-        """Swap the adapter onto `session_id` and wipe the visible
-        transcript so the replayed history (loaded lazily on the
-        agent side) starts fresh in the UI. Mirrors
-        `start_fresh_session` for in-memory cleanup — the only
-        difference is the adapter call (`select_session` vs
-        `reset`)."""
+        """Swap the adapter onto `session_id`, wipe the visible
+        transcript, then repaint the replayed history the agent pushed
+        during `session/load`. Mirrors `start_fresh_session` for in-
+        memory cleanup — the only differences are the adapter call
+        (`select_session` + `start` vs `reset`) and the replay pass at
+        the end."""
         if not session_id:
             return
         log.info("_restore_session: switching to id=%s", session_id)
         self._set_working(f"LOADING {session_id[:8]}")
         try:
             self._adapter.select_session(session_id)
+            # Force the bootstrap now so the agent's session/load replay
+            # (which streams `session/update` notifications BEFORE the
+            # load response returns) is buffered and drainable via
+            # `replay_chunks` immediately — without this the user has
+            # to send a follow-up turn before history appears.
+            start = getattr(self._adapter, "start", None)
+            if callable(start):
+                start()
         except Exception as e:
             log.warning("adapter select_session raised: %s", e)
             self._clear_working()
@@ -3571,6 +3619,51 @@ class PilotWindow(LayerOverlayWindow):
         if hasattr(self, "_provider_label"):
             self._provider_label.set_label(self._header_title())
         _signal_waybar_safe()
+        self._replay_session_history()
+
+    def _replay_session_history(self) -> None:
+        """Drain `replay_chunks` and paint each event onto a fresh
+        card stack.
+
+        UserMessageChunk rolls forward into a new user card and opens
+        a fresh assistant card to collect the next segment of agent
+        output. Agent text / thinking / tool / plan / session_info
+        chunks land on the currently-open assistant card.
+
+        No-op when the adapter can't replay (fresh session, or non-ACP
+        adapter)."""
+        replay = getattr(self._adapter, "replay_chunks", None)
+        if not callable(replay):
+            return
+        chunks = list(replay())
+        if not chunks:
+            return
+        log.info("replay: painting %d chunks", len(chunks))
+        assistant: Optional[TurnCard] = None
+        for chunk in chunks:
+            if isinstance(chunk, UserMessageChunk):
+                self._append_user_card(chunk.text)
+                assistant = self._append_assistant_card()
+                continue
+            if assistant is None:
+                # Agent-initiated replay with no preceding user turn
+                # (rare; covers agents that summarise their own state
+                # before the first user prompt).
+                assistant = self._append_assistant_card()
+            if isinstance(chunk, ToolCall):
+                assistant.append_tool_bubble(chunk)
+            elif isinstance(chunk, ThinkingChunk):
+                assistant.append_thinking(chunk.text)
+            elif isinstance(chunk, PlanChunk):
+                assistant.set_plan(chunk.items)
+                self._last_plan_card = assistant
+                self._last_plan_items = list(chunk.items)
+            elif isinstance(chunk, SessionInfoChunk):
+                self._apply_session_info(chunk.title)
+            else:
+                # Plain text chunk.
+                assistant.append(str(chunk))
+        self._force_scroll_to_bottom()
 
     def start_fresh_session(self) -> None:
         """Hard reset: drop the ACP session + wipe the visible
