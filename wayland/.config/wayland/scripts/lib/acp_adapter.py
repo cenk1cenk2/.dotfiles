@@ -226,7 +226,7 @@ class ToolCallSummary:
         if isinstance(raw, (dict, list)):
             try:
                 args = json.dumps(raw)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 args = str(raw)
         elif raw is None:
             args = ""
@@ -583,7 +583,7 @@ class AcpAdapter:
             )
         try:
             dumped = json.dumps(body, ensure_ascii=False, default=str)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             dumped = repr(body)
         if len(dumped) > cls.WIRE_LOG_LIMIT:
             dumped = (

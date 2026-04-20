@@ -3716,7 +3716,7 @@ class Session:
             response = self._dispatch(raw)
             try:
                 conn.sendall(json.dumps(response).encode())
-            except BrokenPipeError, ConnectionResetError:
+            except (BrokenPipeError, ConnectionResetError):  # noqa
                 # Client went away before reading our reply. Common and
                 # expected: forwarders that fire-and-forget, kill
                 # commands that tear everything down before the response
@@ -3971,7 +3971,9 @@ def _build_adapter(args) -> ConversationAdapter:
         skills_dir=skills_dir,
     )
     agents_md = _read_agents_md(getattr(args, "agents_md", None))
-    system_prompt = f"{agents_md}\n\n{AI_SYSTEM_PROMPT}" if agents_md else AI_SYSTEM_PROMPT
+    system_prompt = (
+        f"{agents_md}\n\n{AI_SYSTEM_PROMPT}" if agents_md else AI_SYSTEM_PROMPT
+    )
     session_store_path = _session_store_path(
         suffix=_PATHS.suffix,
         provider=provider,
@@ -4007,7 +4009,6 @@ def _build_adapter(args) -> ConversationAdapter:
 
 _MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
 
-
 def _session_store_path(
     *,
     suffix: str,
@@ -4028,9 +4029,7 @@ def _session_store_path(
     state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
         "~/.local/state"
     )
-    model_slug = (
-        _MODEL_TAG_RE.sub("-", (model or "").lower()).strip("-") or "default"
-    )
+    model_slug = _MODEL_TAG_RE.sub("-", (model or "").lower()).strip("-") or "default"
     cwd_hash = hashlib.sha1((cwd or os.getcwd()).encode("utf-8")).hexdigest()[:10]
     filename = f"{suffix or 'default'}-{provider.value}-{model_slug}-{cwd_hash}.session"
     return os.path.join(state_home, "pilot", "sessions", filename)

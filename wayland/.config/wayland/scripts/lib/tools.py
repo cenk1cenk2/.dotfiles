@@ -227,7 +227,7 @@ class ToolFormatters:
                 return self._fence(
                     json.dumps(parsed, indent=2, ensure_ascii=False), "json"
                 )
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
         if isinstance(parsed, str):
             return parsed
@@ -255,7 +255,7 @@ class ToolFormatters:
                 return {}
             try:
                 return json.loads(s)
-            except json.JSONDecodeError, ValueError:
+            except (json.JSONDecodeError, ValueError):
                 return arguments
         return arguments
 
@@ -327,7 +327,7 @@ class ToolFormatters:
             return ""
         try:
             body = json.dumps(leftover, indent=2, ensure_ascii=False)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             body = str(leftover)
         return "\n\n" + cls._fence(body, "json")
 
@@ -377,7 +377,7 @@ class ToolFormatters:
         if offset is not None and limit is not None:
             try:
                 parts.append(f"lines {int(offset)}..{int(offset) + int(limit)}")
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 pass
         elif offset is not None:
             parts.append(f"from line {offset}")
@@ -630,6 +630,6 @@ class ToolFormatters:
                     break
         try:
             body = json.dumps(args, indent=2, ensure_ascii=False)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             body = str(args)
         return f"{header}\n\n{self._fence(body, 'json')}"
