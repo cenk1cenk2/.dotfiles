@@ -62,6 +62,21 @@
   background-color: alpha(@pilot_awaiting, 0.22);
 }
 
+/* Blocking-RPC indicator. `_set_working()` flips this class on while
+ * a synchronous ACP call (list_sessions / set_model / …) holds the
+ * GTK main thread; the yellow wash makes it obvious the UI is busy
+ * even though the compose / conversation haven't grayed out. */
+.overlay label.pilot-provider.working {
+  color: @pilot_stream;
+  background-color: alpha(@pilot_stream, 0.28);
+  letter-spacing: 0.08em;
+}
+
+.overlay box.pilot-header.working {
+  background-color: alpha(@pilot_stream, 0.12);
+  border-bottom-color: alpha(@pilot_stream, 0.45);
+}
+
 /* Button shadows. Depth comes from a hairline top-highlight and a soft
  * drop below — presses invert the pair so the button reads "sunken". */
 .overlay button.pilot-close {

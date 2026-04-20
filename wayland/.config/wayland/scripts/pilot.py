@@ -1624,6 +1624,7 @@ class PilotWindow(LayerOverlayWindow):
         # path overflows.
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("pilot-header")
+        self._header = header
         self._provider_label = Gtk.Label(label=self._header_title(), xalign=0.0)
         self._provider_label.add_css_class("pilot-provider")
         self._provider_label.add_css_class("idle")
@@ -2111,6 +2112,42 @@ class PilotWindow(LayerOverlayWindow):
             pill.set_sensitive(False)  # Breadcrumb is informational, not actionable.
             self._session_pills.append(pill)
         self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
+
+    # -- Working indicator -------------------------------------------------
+    #
+    # Some ACP RPCs (set_session_model, list_sessions, available_models)
+    # run synchronously on the GTK main thread and can block for a second
+    # or more. We swap the provider pill to a yellow "WORKING …" label
+    # + a working class on the whole header BEFORE the call, then force
+    # GTK to paint the new state via a MainContext iteration pump so the
+    # user sees the change even though the call is blocking.
+
+    _WORKING_SPINNER = "󰦖"  # nf-md-spin; paired with the working label.
+
+    def _set_working(self, label: str = "WORKING") -> None:
+        """Flash the header yellow with a spinner + `label`. Paints
+        synchronously so callers can invoke this immediately before a
+        blocking RPC and the user sees the state change."""
+        if not hasattr(self, "_header"):
+            return
+        self._header.add_css_class("working")
+        self._provider_label.set_label(f"{self._WORKING_SPINNER} {label}")
+        self._provider_label.add_css_class("working")
+        # Pump one round of the GTK main loop so the new state paints
+        # before the blocking call starts.
+        ctx = GLib.MainContext.default()
+        for _ in range(8):
+            if not ctx.pending():
+                break
+            ctx.iteration(False)
+
+    def _clear_working(self) -> None:
+        """Revert the working indicator to the normal provider pill."""
+        if not hasattr(self, "_header"):
+            return
+        self._header.remove_css_class("working")
+        self._provider_label.remove_css_class("working")
+        self._provider_label.set_label(self._header_title())
 
     def _assistant_title(self) -> str:
         if self._model:
@@ -3273,11 +3310,14 @@ class PilotWindow(LayerOverlayWindow):
             ("new-session", "new session", "start a fresh ACP session", "new"),
         ]
         current = getattr(self._adapter, "session_id", None)
+        self._set_working("LISTING SESSIONS")
         try:
             sessions = self._adapter.list_sessions()
         except Exception as e:
             log.warning("list_sessions raised: %s", e)
             sessions = []
+        finally:
+            self._clear_working()
         for s in sessions:
             sid = s.get("session_id", "") or ""
             if not sid:
@@ -3332,10 +3372,13 @@ class PilotWindow(LayerOverlayWindow):
 
     def _collect_model_entries(self) -> list[tuple[str, str, str, str]]:
         models = []
+        self._set_working("LOADING MODELS")
         try:
             models = self._adapter.available_models
         except Exception as e:
             log.warning("available_models raised: %s", e)
+        finally:
+            self._clear_working()
         if not models:
             return [("empty", "no models", "agent did not expose a model list", "")]
         current = getattr(self._adapter, "current_model_id", None)
@@ -3360,11 +3403,14 @@ class PilotWindow(LayerOverlayWindow):
             self._compose.focus()
             return
         ok = False
+        self._set_working(f"SWITCHING → {model_id}")
         try:
             ok = self._adapter.set_model(model_id)
         except Exception as e:
             log.error("set_model raised: %s", e)
             self.show_error(f"Model switch failed: {e}")
+        finally:
+            self._clear_working()
         if ok:
             log.info("switched model to %s", model_id)
             self._refresh_session_label()
@@ -3382,11 +3428,14 @@ class PilotWindow(LayerOverlayWindow):
         if not session_id:
             return
         log.info("_restore_session: switching to id=%s", session_id)
+        self._set_working(f"LOADING {session_id[:8]}")
         try:
             self._adapter.select_session(session_id)
         except Exception as e:
             log.warning("adapter select_session raised: %s", e)
+            self._clear_working()
             return
+        self._clear_working()
 
         # Same housekeeping as `start_fresh_session` — the old
         # transcript, queue, and pending UI state belonged to the

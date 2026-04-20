@@ -1325,16 +1325,22 @@ class AcpAdapter:
         t = threading.Thread(target=driver, name="acp-prompt-driver", daemon=True)
         t.start()
 
+        sentinel_error: Optional[BaseException] = None
         while True:
             item = event_queue.get()
             if isinstance(item, _Sentinel):
-                if item.error is not None:
-                    log.warning("ACP prompt errored: %s", item.error)
+                sentinel_error = item.error
                 break
             yield item
 
         t.join(timeout=1)
-        err = error_holder.get("error")
+        # `prompt()` catches its own ACP errors and parks them on the
+        # sentinel so the generator drains cleanly; `error_holder`
+        # only picks up exceptions that escaped `prompt()` entirely
+        # (bootstrap failures, thread-level asserts). Either way, re-
+        # raise so the caller's try/except fires and the toast shows.
+        err = sentinel_error or error_holder.get("error")
         if err is not None and not isinstance(err, asyncio.CancelledError):
+            log.warning("ACP prompt errored: %s", err)
             raise err
 
