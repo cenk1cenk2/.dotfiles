@@ -45,6 +45,7 @@ from lib import (
     OutputAdapterClipboard,
     PermissionState,
     PlanChunk,
+    SessionInfoChunk,
     PromptAttachment,
     ThinkingChunk,
     ToolCall,
@@ -1211,6 +1212,20 @@ class TurnCard:
         if self._tool_bubbles_container is not None:
             self._tool_bubbles_container.add_css_class("frozen")
 
+    def collapse_reasoning_sections(self) -> None:
+        """Fold the thinking + plan expanders closed when the turn
+        finalises — the user wants to see the ANSWER by default, not
+        the reasoning scaffolding. Idempotent: collapsing an already-
+        collapsed expander is a no-op. Users can re-open either via
+        Ctrl+T / Ctrl+O or by clicking the expander header."""
+        if self._thinking_expander is not None and not self._thinking_collapsed:
+            self._thinking_expander.set_expanded(False)
+            self._thinking_expander.set_label(self.THINKING_LABEL_DONE)
+            self._thinking_collapsed = True
+        if self._plan_expander is not None:
+            self._plan_expander.set_expanded(False)
+            self._plan_expander.set_label(self.PLAN_LABEL_DONE)
+
 _PERMISSION_MD = MarkdownMarkup()
 
 class PermissionRow(Gtk.ListBoxRow):
@@ -1472,6 +1487,16 @@ class PilotWindow(LayerOverlayWindow):
     ASSISTANT_TITLE_WITH_MODEL_FMT = "AI Overlord - {provider} ({model})"
     HEADER_FMT = "Pilot - {provider}"
     HEADER_WITH_MODEL_FMT = "Pilot - {provider} ({model})"
+    # Agents push a `session_info_update` with a session title once
+    # they've summarised the first turn. Suffix it on the header when
+    # present so the pill reads, e.g., `Pilot - Claude (sonnet) [Fix
+    # recorder spam]`. Bracketed so the scan order stays
+    # provider → model → session.
+    HEADER_WITH_SESSION_FMT = "{base} [{title}]"
+    # Keep session titles bounded in the header so a chatty summary
+    # (opencode emits the full first turn sometimes) doesn't blow
+    # out the sidebar width.
+    HEADER_SESSION_TITLE_MAX = 48
 
     def __init__(
         self,
@@ -1547,6 +1572,11 @@ class PilotWindow(LayerOverlayWindow):
         self._skills_dir: Optional[str] = skills_dir
         self._mcp_server_names: list[str] = list(mcp_server_names or [])
         self._session_suffix: str = session_suffix or ""
+        # Agent-supplied session title (from ACP `session_info_update`
+        # notifications). Populated by `_apply_session_info` and
+        # appended to the header format string so users see the
+        # real conversation summary alongside the provider/model.
+        self._session_title: str = ""
         # Palette widget is built on demand (first Ctrl+Space) and then
         # cached — we reset state (search box, active set) on every
         # open so stale selections don't leak across sessions.
@@ -1954,8 +1984,23 @@ class PilotWindow(LayerOverlayWindow):
         else:
             base = self.HEADER_FMT.format(provider=self._provider_name)
         if self._session_suffix:
-            return f"[{self._session_suffix}] {base}"
+            base = f"[{self._session_suffix}] {base}"
+        if self._session_title:
+            title = self._session_title
+            if len(title) > self.HEADER_SESSION_TITLE_MAX:
+                title = title[: self.HEADER_SESSION_TITLE_MAX - 1] + "…"
+            base = self.HEADER_WITH_SESSION_FMT.format(base=base, title=title)
         return base
+
+    def _apply_session_info(self, title: str) -> bool:
+        """Main-thread sink for `SessionInfoChunk` events. Stashes
+        the agent-supplied title and repaints the header pill in
+        place. Tolerates empty-string clears (ACP spec lets agents
+        wipe the title by sending `null`)."""
+        self._session_title = (title or "").strip()
+        if hasattr(self, "_provider_label"):
+            self._provider_label.set_label(self._header_title())
+        return False
 
     def _pretty_cwd(self) -> str:
         """Return a compact cwd label. Collapses `$HOME` to `~`, and
@@ -2088,6 +2133,9 @@ class PilotWindow(LayerOverlayWindow):
                 if isinstance(chunk, PlanChunk):
                     GLib.idle_add(self._apply_plan, chunk.items)
                     continue
+                if isinstance(chunk, SessionInfoChunk):
+                    GLib.idle_add(self._apply_session_info, chunk.title)
+                    continue
                 if first_text_chunk:
                     GLib.idle_add(self._mark_stream_started)
                     first_text_chunk = False
@@ -2117,6 +2165,16 @@ class PilotWindow(LayerOverlayWindow):
                 )
             except Exception as e:
                 log.warning("freeze_tool_bubbles raised: %s", e)
+            # Fold the thinking + plan expanders so the reply sits
+            # above cleanly-collapsed scaffolding. `append()` already
+            # auto-collapses thinking mid-stream, but plan snapshots
+            # can finalise in-progress and mid-turn thinking bursts
+            # can re-open the expander — `collapse_reasoning_sections`
+            # normalises both at turn-end regardless of interim state.
+            try:
+                self._active_assistant.collapse_reasoning_sections()
+            except Exception as e:
+                log.warning("collapse_reasoning_sections raised: %s", e)
         self._streaming = False
         self._stream_started = False
         self._turn_cancelled = False

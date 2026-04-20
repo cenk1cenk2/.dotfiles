@@ -59,6 +59,7 @@ from acp.schema import (
     Implementation,
     McpServerStdio,
     PermissionOption,
+    SessionInfoUpdate,
     SseMcpServer,
     TextContentBlock,
     ToolCallProgress,
@@ -135,6 +136,21 @@ class PlanItem:
     content: str
     status: str  # "pending" | "in_progress" | "completed"
     priority: str  # "low" | "medium" | "high"
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """Snapshot of a `session_info_update` notification from the
+    agent. ACP agents push these whenever they rename the session
+    (e.g. opencode derives a title from the first turn's gist) so
+    clients can surface the new label without having to poll.
+
+    Both fields are optional — the spec allows `title: null` /
+    `updated_at: null` as an explicit clear. Consumers should treat
+    empty-string the same as None."""
+
+    title: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -361,6 +377,22 @@ class AcpClient(Client):
                 if items:
                     log.info("acp update: plan entries=%d", len(items))
                     self._put(("plan", items))
+            elif isinstance(update, SessionInfoUpdate):
+                # Agents push this whenever they rename the session —
+                # opencode auto-summarises the first turn, claude-agent-acp
+                # relays its summary. Forward the snapshot up to the
+                # window so the header pill can repaint with the new
+                # label without polling.
+                info = SessionInfo(
+                    title=(update.title or "").strip(),
+                    updated_at=(update.updated_at or "").strip(),
+                )
+                log.info(
+                    "acp update: session_info title=%r updated_at=%r",
+                    info.title,
+                    info.updated_at,
+                )
+                self._put(("session_info", info))
             elif isinstance(update, UserMessageChunk):
                 return
             else:

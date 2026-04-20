@@ -32,10 +32,10 @@ mode $mode_recording {
         # `ask` pilot overlay — default provider, speech-piped new
         # session (or live-forward into an existing one). Session
         # suffix `ask` keeps its socket / app-id isolated from `plan`.
-        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py --session ask toggle --input stdin', mode "default"
+        bindsym a exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py --session ask toggle --cwd ~/notes --input stdin', mode "default"
 
         # Hide/show the already-running `ask` pilot.
-        bindsym Shift+a exec $pilot --session ask toggle, mode "default"
+        bindsym Shift+a exec $pilot --session ask toggle --cwd ~/notes, mode "default"
 
         # `plan` pilot overlay — opencode+glm-5.1:cloud, cwd=~/notes.
         bindsym p exec zsh -c '$HOME/.config/wayland/scripts/speech.py toggle --output stdout | $HOME/.config/wayland/scripts/pilot.py --session plan toggle --converse-provider opencode --converse-model glm-5.1:cloud --cwd ~/notes --input stdin', mode "default"

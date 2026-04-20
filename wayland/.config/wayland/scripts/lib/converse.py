@@ -74,7 +74,20 @@ class PlanChunk:
 
     items: list
 
-TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk]
+@dataclass
+class SessionInfoChunk:
+    """Session metadata pushed by the agent via
+    `session/update` → `session_info_update`.
+
+    Agents send this whenever they rename the session (first-turn
+    summary, manual rename, agent mode switch). Consumers treat
+    empty-string `title` the same as "no title set yet" — the spec
+    allows `title: null` as an explicit clear."""
+
+    title: str
+    updated_at: str = ""
+
+TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk, SessionInfoChunk]
 
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
@@ -164,6 +177,14 @@ class _AcpConverseAdapter(AcpAdapter):
             )
         if kind == "plan":
             return PlanChunk(items=list(payload))
+        if kind == "session_info":
+            # `payload` is an `AcpAdapter.SessionInfo` snapshot
+            # (title + updated_at). Normalise blank fields so
+            # consumers can `if chunk.title:` without worrying
+            # about None vs "".
+            title = getattr(payload, "title", "") or ""
+            updated_at = getattr(payload, "updated_at", "") or ""
+            return SessionInfoChunk(title=title, updated_at=updated_at)
         return None
 
     def turn(
@@ -193,28 +214,92 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
     # on, so there's nothing to override. The inherited
     # `_AcpConverseAdapter.tool_formatters` is fine as-is.
 
-    @staticmethod
-    def _tool_name_from_meta(update: Any) -> Optional[str]:
-        """Pull `_meta.claudeCode.toolName` off an ACP update when
-        Claude's `claude-agent-acp` ships it. That's the ONLY channel
-        carrying the original Anthropic tool name (`Bash` / `Read` /
-        `mcp__server__tool`) through the protocol — `title` has been
-        mutated into human prose and `kind` is coerced to the
-        `ToolKind` enum. Returns None when the field is absent so the
-        shared transport layer falls back to title / kind.
+    @classmethod
+    def _tool_name_from_meta(cls, update: Any) -> Optional[str]:
+        """Return the SDK tool name for a Claude ACP update.
 
-        Lives on this class (not `AcpSession` / `acp_adapter`) because
-        it's branded Claude knowledge — opencode and any future ACP
-        agent don't emit this `_meta.claudeCode` envelope."""
+        Two sources, tried in order:
+
+        1. `_meta.claudeCode.toolName` — populated on
+           `session/update` notifications (tool_call, tool_call_update).
+           That's the authoritative channel: if claude-agent-acp
+           tucked the Anthropic SDK name in there, use it verbatim.
+        2. Heuristics on `title` + `kind` — populated when
+           `_meta.claudeCode` is missing, which is how the
+           `session/request_permission` path ships today
+           (claude-agent-acp calls `toolInfoFromToolUse` for the
+           header but does NOT attach `_meta` to the permission
+           envelope — see `@zed-industries/claude-agent-acp/dist/
+           acp-agent.js:714-730`). In that case we reverse-engineer
+           the SDK name from the shape `toolInfoFromToolUse` emits
+           (title prefix, ACP `kind` enum).
+
+        Returns None only when neither source yields anything — the
+        shared transport then falls back to raw `title` / `kind`."""
         meta = getattr(update, "field_meta", None)
-        if not isinstance(meta, dict):
-            return None
-        cc = meta.get("claudeCode")
-        if not isinstance(cc, dict):
-            return None
-        name = cc.get("toolName")
-        if isinstance(name, str) and name.strip():
-            return name.strip()
+        if isinstance(meta, dict):
+            cc = meta.get("claudeCode")
+            if isinstance(cc, dict):
+                name = cc.get("toolName")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+
+        title = (getattr(update, "title", "") or "").strip()
+        kind = (getattr(update, "kind", "") or "").strip().lower()
+        return cls._tool_name_from_title_kind(title, kind)
+
+    @staticmethod
+    def _tool_name_from_title_kind(title: str, kind: str) -> Optional[str]:
+        """Reverse `@zed-industries/claude-agent-acp`'s
+        `toolInfoFromToolUse` mapping. Its shape per SDK tool
+        (from `dist/tools.js`):
+
+            Bash        → title = input.command | "Terminal",  kind="execute"
+            Read        → title = "Read <path>",                kind="read"
+            Write       → title = "Write <path>" | "Write",     kind="edit"
+            Edit        → title = "Edit <path>" | "Edit",       kind="edit"
+            Glob        → title = "Find …",                     kind="search"
+            Grep        → title = "grep …",                     kind="search"
+            WebFetch    → title = "Fetch <url>" | "Fetch",      kind="fetch"
+            WebSearch   → title = "<query>" (free-form),        kind="fetch"
+            Task/Agent  → title = input.description | "Task",   kind="think"
+            TodoWrite   → title = "Update TODOs: …",            kind="think"
+            ExitPlanMode→ title = "Ready to code?",             kind="switch_mode"
+            (MCP etc.)  → title = name | "Unknown Tool",        kind="other"
+
+        So we match on `kind` + title-prefix, with sensible fallbacks
+        for ambiguous kinds (`edit` → Edit, `fetch` → WebSearch,
+        `think` → Task). For `kind="other"` the title IS the SDK
+        name (MCP tools pass through as `mcp__server__tool`)."""
+        if kind == "execute":
+            return "Bash"
+        if kind == "read":
+            return "Read"
+        if kind == "edit":
+            if title.startswith("Write"):
+                return "Write"
+            if title.startswith("NotebookEdit"):
+                return "NotebookEdit"
+            return "Edit"
+        if kind == "search":
+            if title.startswith("Find"):
+                return "Glob"
+            return "Grep"
+        if kind == "fetch":
+            if title.startswith("Fetch"):
+                return "WebFetch"
+            return "WebSearch"
+        if kind == "think":
+            if title.startswith("Update TODOs"):
+                return "TodoWrite"
+            return "Task"
+        if kind == "switch_mode":
+            return "ExitPlanMode"
+        if kind == "other" and title:
+            # MCP tools land here — their title is the raw SDK name
+            # (`mcp__server__tool`). Non-MCP "other" tools are rare
+            # enough that title-as-name is a defensible guess.
+            return title
         return None
 
     def __init__(self, system_prompt: str, **kwargs: Any):
