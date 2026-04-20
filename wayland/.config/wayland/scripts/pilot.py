@@ -250,7 +250,7 @@ class ComposeView:
         self._hint_label = hint
         bar.append(hint)
 
-        self._send_btn = Gtk.Button(label="⏎ send")
+        self._send_btn = Gtk.Button(label="󰌑 send")
         self._send_btn.add_css_class("pilot-compose-send")
         self._send_btn.set_tooltip_text("Send the current message (Enter)")
         self._send_btn.connect("clicked", lambda _b: self._submit())
@@ -322,7 +322,7 @@ class ComposeView:
     ) -> None:
         """Re-render the resource-pill strip above the compose bar.
         Each entry is `(kind, name, description)`; `on_remove(kind,
-        name)` fires when the pill's ✕ is clicked. Empty list hides
+        name)` fires when the pill's 󰅖 is clicked. Empty list hides
         the strip. CodeCompanion-style: picked skills live as chips
         instead of polluting the compose text with `#{}` tokens, and
         `PilotWindow.dispatch_turn` prepends their bodies at submit."""
@@ -336,7 +336,7 @@ class ComposeView:
             self._resource_flow.set_visible(False)
             return
         for kind, name, desc in entries:
-            btn = Gtk.Button(label=f"{kind}/{name} ✕")
+            btn = Gtk.Button(label=f"{kind}/{name} 󰅖")
             btn.add_css_class("pilot-compose-resource")
             btn.add_css_class(f"resource-kind-{kind}")
             if desc:
@@ -358,7 +358,7 @@ class ComposeView:
         on_remove: Optional[Callable[[object], None]],
     ) -> None:
         """Render the attachment-pill strip. Each entry is
-        `(label, mime, key)` — the pill shows `label` and, on ✕,
+        `(label, mime, key)` — the pill shows `label` and, on 󰅖,
         fires `on_remove(key)` so the caller can resolve the
         original `PromptAttachment` without us leaking its type
         here. Empty list hides the strip."""
@@ -372,7 +372,7 @@ class ComposeView:
             self._attachment_flow.set_visible(False)
             return
         for label, mime, key in entries:
-            btn = Gtk.Button(label=f"{label} ✕")
+            btn = Gtk.Button(label=f"{label} 󰅖")
             btn.add_css_class("pilot-compose-attachment")
             mime_kind = (mime or "").split("/", 1)[0] or "blob"
             btn.add_css_class(f"attachment-kind-{mime_kind}")
@@ -410,10 +410,10 @@ class ComposeView:
 class QueueRow(Gtk.ListBoxRow):
     """A queued turn rendered as a full-width card. The message wraps
     freely (no truncation preview) and three labelled buttons live in
-    an action strip at the bottom: `✎ edit` toggles an inline multi-line
-    editor, `⏎ send` promotes the message to the next slot, `✕ drop`
+    an action strip at the bottom: `󰏫 edit` toggles an inline multi-line
+    editor, `󰌑 send` promotes the message to the next slot, `󰅖 drop`
     removes it. In edit mode, Ctrl+Enter commits; the edit button
-    relabels to `✓ save` while editing."""
+    relabels to `󰄬 save` while editing."""
 
     def __init__(
         self,
@@ -458,19 +458,19 @@ class QueueRow(Gtk.ListBoxRow):
         )
         actions.add_css_class("pilot-queue-actions")
 
-        self._edit_btn = Gtk.Button(label="✎ edit")
+        self._edit_btn = Gtk.Button(label="󰏫 edit")
         self._edit_btn.add_css_class("pilot-queue-edit")
         self._edit_btn.set_tooltip_text("Edit this message")
         self._edit_btn.connect("clicked", lambda _b: self._toggle_edit())
         actions.append(self._edit_btn)
 
-        send_btn = Gtk.Button(label="⏎ send")
+        send_btn = Gtk.Button(label="󰌑 send")
         send_btn.add_css_class("pilot-queue-send")
         send_btn.set_tooltip_text("Promote and dispatch this message now")
         send_btn.connect("clicked", lambda _b: self._on_send(self))
         actions.append(send_btn)
 
-        remove_btn = Gtk.Button(label="✕ drop")
+        remove_btn = Gtk.Button(label="󰅖 drop")
         remove_btn.add_css_class("pilot-queue-remove")
         remove_btn.set_tooltip_text("Remove this message from the queue")
         remove_btn.connect("clicked", lambda _b: self._on_remove(self))
@@ -536,7 +536,7 @@ class QueueRow(Gtk.ListBoxRow):
         textview.grab_focus()
         self._edit_scroller = scroller
         self._edit_textview = textview
-        self._edit_btn.set_label("✓ save")
+        self._edit_btn.set_label("󰄬 save")
 
     def _on_edit_key(self, _controller, keyval, _keycode, state) -> bool:
         if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and (
@@ -562,7 +562,7 @@ class QueueRow(Gtk.ListBoxRow):
             self._display = new_text
         self._label.set_label(self._display)
         self._card.prepend(self._label)
-        self._edit_btn.set_label("✎ edit")
+        self._edit_btn.set_label("󰏫 edit")
         self._on_edit_commit(self, self._text)
 
 def _make_markdown_label(
@@ -684,10 +684,10 @@ class TurnCard:
     layout pass (TextView doesn't, which used to leave user cards
     collapsed until the assistant reply forced a re-layout)."""
 
-    THINKING_LABEL_STREAMING = "🧠 thinking…"
-    THINKING_LABEL_DONE = "🧠 thinking"
-    PLAN_LABEL_STREAMING = "📋 plan"
-    PLAN_LABEL_DONE = "📋 plan · done"
+    THINKING_LABEL_STREAMING = "󰧮 thinking…"
+    THINKING_LABEL_DONE = "󰧮 thinking"
+    PLAN_LABEL_STREAMING = "󰃃 plan"
+    PLAN_LABEL_DONE = "󰃃 plan · done"
 
     # Per-status glyph on each tool bubble. Intentionally text-only so
     # these render at the card font size without Pango fighting an
@@ -695,9 +695,9 @@ class TurnCard:
     _TOOL_STATUS_GLYPHS = {
         "pending": "⋯",
         "running": "⋯",
-        "completed": "✓",
-        "failed": "⚠",
-        "cancelled": "✕",
+        "completed": "󰄬",
+        "failed": "󰀦",
+        "cancelled": "󰅖",
     }
 
     def __init__(
@@ -919,7 +919,7 @@ class TurnCard:
         tint. Feeds straight into Pango markup — we don't need the
         full markdown pipeline for this."""
         glyph_for_status = {
-            "completed": "✓",
+            "completed": "󰄬",
             "in_progress": "◐",
             "pending": "○",
         }
@@ -1232,11 +1232,11 @@ class PermissionRow(Gtk.ListBoxRow):
     queue. Mirrors `QueueRow`'s structure: a wrapping body + an action
     strip with three buttons. Buttons are:
 
-    * `✓ allow`  — dismiss the row; the call already happened server-
+    * `󰄬 allow`  — dismiss the row; the call already happened server-
                    side / in-CLI, this just acknowledges it.
     * ` trust`  — add this tool name to the session allowlist so
                    future invocations skip the row entirely.
-    * `✕ deny`   — cancel the in-flight turn (same path as Ctrl+D) and
+    * `󰅖 deny`   — cancel the in-flight turn (same path as Ctrl+D) and
                    stamp the assistant card with a cancelled marker.
 
     The UI is visibility-only: we don't have a protocol for gating the
@@ -1332,7 +1332,7 @@ class PermissionRow(Gtk.ListBoxRow):
         )
         actions.add_css_class("pilot-permission-actions")
 
-        self._allow_btn = Gtk.Button(label="✓ allow")
+        self._allow_btn = Gtk.Button(label="󰄬 allow")
         self._allow_btn.add_css_class("pilot-permission-allow")
         self._allow_btn.set_tooltip_text("Dismiss this tool-use notification")
         self._allow_btn.connect("clicked", lambda _b: self._on_allow(self))
@@ -1347,20 +1347,20 @@ class PermissionRow(Gtk.ListBoxRow):
         trust_btn.connect("clicked", lambda _b: self._on_trust(self))
         actions.append(trust_btn)
 
-        self._deny_btn = Gtk.Button(label="✕ deny")
+        self._deny_btn = Gtk.Button(label="󰅖 deny")
         self._deny_btn.add_css_class("pilot-permission-deny")
         self._deny_btn.set_tooltip_text("Cancel the current turn")
         self._deny_btn.connect("clicked", lambda _b: self._on_deny(self))
         actions.append(self._deny_btn)
 
-        # ⛔ auto-reject — symmetric to trust but for the auto-reject
+        # 󰂭 auto-reject — symmetric to trust but for the auto-reject
         # list: future calls for this tool short-circuit to `deny`
         # without surfacing a row, AND the current turn is cancelled
         # so the model stops mid-sentence. Red-tinted like deny to
         # signal "this is destructive in both directions".
         self._auto_reject_btn: Optional[Gtk.Button] = None
         if on_auto_reject is not None:
-            self._auto_reject_btn = Gtk.Button(label="⛔ auto-reject")
+            self._auto_reject_btn = Gtk.Button(label="󰂭 auto-reject")
             self._auto_reject_btn.add_css_class("pilot-permission-autoreject")
             self._auto_reject_btn.set_tooltip_text(
                 "Cancel this turn AND auto-reject every future call to "
@@ -1375,7 +1375,7 @@ class PermissionRow(Gtk.ListBoxRow):
         self.set_child(card)
 
     def focus_allow(self) -> None:
-        """Grab focus on the `✓ allow` button so keyboard users can
+        """Grab focus on the `󰄬 allow` button so keyboard users can
         accept without mousing. Tab cycles to trust / deny peers via
         GTK's default focus chain (all three buttons are focusable)."""
         self._allow_btn.grab_focus()
@@ -1385,7 +1385,7 @@ class PermissionRow(Gtk.ListBoxRow):
         """Canonical tool identifier used for trust / auto-reject set
         membership. Prefers `call.name` when it looks programmatic (a
         single token, or the `mcp__server__tool` wire shape), otherwise
-        falls back to the ACP `kind` so clicking ✓ trust on Claude's
+        falls back to the ACP `kind` so clicking 󰄬 trust on Claude's
         `"Read README.md"` row trusts ALL future Read calls via the
         `read` kind — not just the specific README invocation."""
         name = (self._call.name or "").strip()
@@ -1637,7 +1637,7 @@ class PilotWindow(LayerOverlayWindow):
         self._session_label.set_tooltip_text(self._session_subtitle(verbose=True))
         header.append(self._session_label)
 
-        close_btn = Gtk.Button(label="✕")
+        close_btn = Gtk.Button(label="󰅖")
         close_btn.add_css_class("pilot-close")
         close_btn.connect("clicked", lambda _b: self.close())
         header.append(close_btn)
@@ -2029,11 +2029,11 @@ class PilotWindow(LayerOverlayWindow):
 
     def _session_subtitle(self, *, verbose: bool = False) -> str:
         """Single-line breadcrumb next to the provider pill:
-        `@ ~/notes  +3 mcps  +skills  ↻ restored`. `verbose` swaps the
+        `@ ~/notes  +3 mcps  +skills  󰑐 restored`. `verbose` swaps the
         truncated cwd for the full untruncated path so the tooltip can
         show the absolute path on hover.
 
-        The `↻ restored` tag only appears once the adapter has
+        The `󰑐 restored` tag only appears once the adapter has
         bootstrapped a session AND `load_session` succeeded; a fresh
         `new_session` leaves it off. That way the user can tell at a
         glance whether the current conversation is resuming a prior
@@ -2048,7 +2048,7 @@ class PilotWindow(LayerOverlayWindow):
         if self._skills_dir:
             parts.append("+skills")
         if getattr(self._adapter, "session_resumed", False):
-            parts.append("↻ restored")
+            parts.append("󰑐 restored")
         return "  ".join(parts)
 
     def _refresh_session_label(self) -> None:
@@ -2202,7 +2202,7 @@ class PilotWindow(LayerOverlayWindow):
             self._compose.focus()
             self._update_phase()
             # Session-resume flag is finalised by the time the first
-            # turn wraps; refresh the breadcrumb so `↻ restored` shows
+            # turn wraps; refresh the breadcrumb so `󰑐 restored` shows
             # up (or stays hidden for a fresh new_session). Model
             # reconciliation in `_AcpConverseAdapter.turn` may have
             # expanded `opus` → `opus[1m]` — this picks that up too.
@@ -2218,7 +2218,7 @@ class PilotWindow(LayerOverlayWindow):
         in which case `_update_phase` keeps the blue awaiting pill).
         Also refreshes the session breadcrumb — by now
         `_ensure_started` has run, so `session_resumed` is authoritative
-        and the `↻ restored` tag can surface."""
+        and the `󰑐 restored` tag can surface."""
         self._stream_started = True
         self._update_phase()
         self._refresh_session_label()
@@ -2350,9 +2350,9 @@ class PilotWindow(LayerOverlayWindow):
         return row.text()
 
     def _on_queue_send(self, row: QueueRow) -> None:
-        # Manual-drain policy: ⏎ dispatches this specific card only if
+        # Manual-drain policy: 󰌑 dispatches this specific card only if
         # nothing is currently streaming. While streaming, the button is
-        # a soft no-op — the user can wait or use the ⏎ on another
+        # a soft no-op — the user can wait or use the 󰌑 on another
         # card later. Keeps the conversation's pacing in their hands.
         if self._streaming:
             log.info("ignoring queue-send while streaming")
@@ -2366,10 +2366,10 @@ class PilotWindow(LayerOverlayWindow):
         self._start_turn(wire, display=display, attachments=attachments)
 
     def _send_next_queued(self) -> bool:
-        """Dispatch the oldest pending queue row — the Ctrl+⏎ keybind's
+        """Dispatch the oldest pending queue row — the Ctrl+󰌑 keybind's
         target. No-op when the queue is empty; reuses the per-row send
         path so the streaming guard behaves identically to clicking the
-        row's own ⏎ button. Returns True when a row was dispatched so
+        row's own 󰌑 button. Returns True when a row was dispatched so
         callers can propagate that as the keyboard-event handled flag."""
         if not self._queue:
             return False
@@ -2808,15 +2808,15 @@ class PilotWindow(LayerOverlayWindow):
         if ctrl and keyval == Gdk.KEY_o:
             self._open_last_plan()
             return True
-        # Ctrl+⏎ dispatches the next queued turn. Declared AFTER the
+        # Ctrl+󰌑 dispatches the next queued turn. Declared AFTER the
         # other ctrl-combos so a focused compose TextView (which
-        # treats plain ⏎ as "submit") still gets first crack at the
+        # treats plain 󰌑 as "submit") still gets first crack at the
         # naked Return key; only the ctrl-modified form comes here.
         if ctrl and keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             if self._send_next_queued():
                 return True
         # Ctrl+Backspace discards the head of the queue — pairs with
-        # Ctrl+⏎ (send next) so both keyboard-only queue actions live
+        # Ctrl+󰌑 (send next) so both keyboard-only queue actions live
         # on the same modifier set.
         if ctrl and keyval == Gdk.KEY_BackSpace:
             if self._discard_next_queued():
@@ -2931,7 +2931,7 @@ class PilotWindow(LayerOverlayWindow):
 
     @staticmethod
     def _attachment_label(att: PromptAttachment) -> str:
-        """Short human label for the pill. Images say `📎 image/png` with
+        """Short human label for the pill. Images say `󰁨 image/png` with
         the byte size so the user knows what they're about to send."""
         mime = att.mime_type or "blob"
         if att.data is not None:
@@ -2942,10 +2942,10 @@ class PilotWindow(LayerOverlayWindow):
                 size_str = f"{size / 1024:.1f}KB"
             else:
                 size_str = f"{size}B"
-            return f"📎 {mime} · {size_str}"
+            return f"󰁨 {mime} · {size_str}"
         if att.uri:
-            return f"📎 {mime} · {att.uri}"
-        return f"📎 {mime}"
+            return f"󰁨 {mime} · {att.uri}"
+        return f"󰁨 {mime}"
 
     def _on_pending_attachment_remove(self, key: object) -> None:
         self._pending_attachments = [
@@ -3448,7 +3448,7 @@ class PilotWindow(LayerOverlayWindow):
 
         self._update_phase()
         # `_adapter.reset()` zeroed `session_resumed`; refresh the
-        # breadcrumb so the `↻ restored` tag drops in the same frame
+        # breadcrumb so the `󰑐 restored` tag drops in the same frame
         # as the transcript wipe.
         self._refresh_session_label()
         _signal_waybar_safe()
@@ -3481,7 +3481,7 @@ class PilotWindow(LayerOverlayWindow):
         return out
 
     def _accept_first_permission(self) -> None:
-        """Ctrl+G: click the `✓ allow` button on the oldest pending
+        """Ctrl+G: click the `󰄬 allow` button on the oldest pending
         permission row. Keyboard-only accept for the row that grabbed
         focus when it appeared — saves the user a Tab-to-allow + Enter
         dance when they just want to approve and move on. Silent no-op
@@ -3491,7 +3491,7 @@ class PilotWindow(LayerOverlayWindow):
         self._permissions[0]._allow_btn.emit("clicked")
 
     def _reject_first_permission(self) -> None:
-        """Ctrl+R: click the `✕ deny` button on the oldest pending
+        """Ctrl+R: click the `󰅖 deny` button on the oldest pending
         permission row — symmetric to Ctrl+G. Cancels the current
         turn and drops the tool from trust if it was there. Silent
         no-op when the panel is empty."""

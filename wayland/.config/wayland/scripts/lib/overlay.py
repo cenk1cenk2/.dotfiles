@@ -369,7 +369,7 @@ class Header(Gtk.Box):
         self._label.add_css_class("overlay-provider")
         self._label.add_css_class("idle")
 
-        close_btn = Gtk.Button(label="✕")
+        close_btn = Gtk.Button(label="󰅖")
         close_btn.add_css_class("overlay-close")
         close_btn.connect("clicked", lambda _b: on_close())
 
@@ -745,7 +745,7 @@ class CommandPalette(Gtk.Box):
         if self._select_mode:
             row._palette_mark = None  # type: ignore[attr-defined]
         else:
-            mark = Gtk.Label(label="☑" if (kind, name) in self._active else "☐")
+            mark = Gtk.Label(label="󰄵" if (kind, name) in self._active else "󰄮")
             mark.add_css_class("overlay-palette-mark")
             mark.add_css_class("pilot-palette-mark")
             box.append(mark)
@@ -868,12 +868,12 @@ class CommandPalette(Gtk.Box):
             self._active.discard(key)
             row.remove_css_class("active")
             if mark is not None:
-                mark.set_label("☐")
+                mark.set_label("󰄮")
         else:
             self._active.add(key)
             row.add_css_class("active")
             if mark is not None:
-                mark.set_label("☑")
+                mark.set_label("󰄵")
 
     def _delete_current(self) -> None:
         """Ctrl+D — hand the highlighted entry to `on_delete` and
