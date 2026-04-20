@@ -2073,12 +2073,23 @@ class PilotWindow(LayerOverlayWindow):
             self._provider_label.set_label(self._header_title())
         return False
 
+    def _effective_cwd(self) -> str:
+        """Adapter cwd wins when set (it's the authoritative source
+        after a palette-driven switch / session restore). Fall back
+        to `self._cwd` (seeded from --cwd at spawn) and finally
+        `os.getcwd()` so the breadcrumb never renders empty."""
+        return (
+            getattr(self._adapter, "cwd", None)
+            or self._cwd
+            or os.getcwd()
+        )
+
     def _pretty_cwd(self) -> str:
         """Return a compact cwd label. Collapses `$HOME` to `~`, and
         when the full path is longer than 48 chars keeps only the last
         three segments (with a leading `…/`) so the breadcrumb stays
         one line on a ~400px-wide sidebar."""
-        raw = self._cwd or os.getcwd()
+        raw = self._effective_cwd()
         home = os.path.expanduser("~")
         if raw.startswith(home):
             raw = "~" + raw[len(home) :]
@@ -2094,8 +2105,11 @@ class PilotWindow(LayerOverlayWindow):
         """Single-line textual breadcrumb — used as the pill-row
         tooltip so hover shows the full path + segments at once.
         `verbose` swaps the truncated cwd for the untruncated one."""
-        cwd = self._cwd or os.getcwd() if verbose else self._pretty_cwd()
+        cwd = self._effective_cwd() if verbose else self._pretty_cwd()
         parts = [f"@ {cwd}"]
+        mode = (getattr(self._adapter, "current_mode_id", None) or "").strip()
+        if mode:
+            parts.append(f"mode {mode}")
         if self._mcp_server_names:
             parts.append(f"+{len(self._mcp_server_names)} mcps")
         if self._skills_dir:
@@ -2148,6 +2162,13 @@ class PilotWindow(LayerOverlayWindow):
         segments: list[tuple[str, str]] = [
             (f"@ {self._pretty_cwd()}", PillVariant.MUTED)
         ]
+        mode = (getattr(self._adapter, "current_mode_id", None) or "").strip()
+        if mode:
+            # Mode drifts silently on some agents (claude flips out of
+            # plan-mode on plan accept, opencode relabels on agent
+            # switch) — surfacing it here means the post-turn reconcile
+            # pulls the new label into the header without a restart.
+            segments.append((f"󰢻 {mode}", PillVariant.MUTED))
         if self._mcp_server_names:
             segments.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
         if self._skills_dir:
@@ -2297,6 +2318,13 @@ class PilotWindow(LayerOverlayWindow):
             log.info("run_turn: end streamed=%s", self._stream_started)
             if self._alive:
                 GLib.idle_add(self._mark_idle)
+                # Adapter's `reconcile()` just ran (inside `.turn()`)
+                # and may have pulled a drifted model / mode into its
+                # state. Repaint the header on the main thread so mode
+                # / model / cwd pills reflect the post-turn truth —
+                # without this, an agent-side `current_mode_update`
+                # lives in `_mode_state` but never reaches the pill.
+                GLib.idle_add(self._refresh_session_label)
                 self._verify_session_info()
 
     def _verify_session_info(self) -> None:
@@ -3765,7 +3793,11 @@ class PilotWindow(LayerOverlayWindow):
         `cwd`, drop the current ACP session, and let `start_fresh_session`
         wipe the transcript + re-arm the AGENTS.md prefix. The pilot
         window + Unix socket stay alive — the keybinding stays
-        wired to the same pilot instance."""
+        wired to the same pilot instance.
+
+        `self._cwd` tracks the same value so the breadcrumb pill +
+        tooltip read off one source; `_refresh_session_label` inside
+        `start_fresh_session` then paints the new path immediately."""
         if not new_cwd:
             return
         try:
@@ -3774,6 +3806,7 @@ class PilotWindow(LayerOverlayWindow):
             resolved = new_cwd
         log.info("cwd: switching adapter cwd to %s", resolved)
         self._adapter.cwd = resolved
+        self._cwd = resolved
         self.start_fresh_session()
 
     def _restore_session(self, session_id: str) -> None:

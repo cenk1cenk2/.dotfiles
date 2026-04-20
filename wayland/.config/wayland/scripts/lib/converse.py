@@ -224,7 +224,16 @@ class _AcpConverseAdapter(AcpAdapter):
         self.reconcile()
 
     def reconcile(self) -> None:
-        """Pull the agent's effective status into self."""
+        """Pull the agent's effective status into self.
+
+        Runs at turn end. Today it logs any drift between what we
+        asked for (`self.model`) and what the agent actually used
+        (`current_model_id`) so a model rejected at bootstrap
+        surfaces in the header on the very next paint. Mode drift
+        is captured by `session_update`'s `CurrentModeUpdate` branch
+        already (agent pushes it proactively); logging it here lets
+        `-v` correlate it to the turn boundary. The post-turn UI
+        repaint in `PilotWindow._run_turn` picks up both."""
         model = self.current_model_id
         if model and model != self.model:
             log.info(
@@ -233,6 +242,9 @@ class _AcpConverseAdapter(AcpAdapter):
                 model,
             )
             self.model = model
+        mode = self.current_mode_id
+        if mode:
+            log.debug("reconciling mode: current=%s", mode)
 
     def replay_chunks(self) -> Iterator[TurnChunk]:
         """Yield TurnChunks captured during `session/load`.

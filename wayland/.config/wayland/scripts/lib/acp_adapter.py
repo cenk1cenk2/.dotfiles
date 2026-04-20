@@ -49,6 +49,7 @@ from acp.schema import (
     AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
+    CurrentModeUpdate,
     AuthCapabilities,
     ClientCapabilities,
     DeniedOutcome,
@@ -433,9 +434,26 @@ class AcpClient(Client):
                 if text:
                     log.debug("acp update: user_message chunk len=%d", len(text))
                     self._put(("user_message", text))
+            elif isinstance(update, CurrentModeUpdate):
+                # Agent-driven mode switch (e.g. claude-agent-acp flips
+                # out of plan-mode when the plan is approved). Mutate
+                # `_mode_state` in place so `current_mode_id` reflects
+                # reality next time anything reads it; the post-turn
+                # reconcile pass repaints the header pill.
+                new_mode = (getattr(update, "current_mode_id", "") or "").strip()
+                if new_mode:
+                    existing = self._mode_state
+                    if existing is None:
+                        self._mode_state = SessionModeState(current_mode_id=new_mode)
+                    elif existing.current_mode_id != new_mode:
+                        self._mode_state = SessionModeState(
+                            current_mode_id=new_mode,
+                            available_modes=existing.available_modes,
+                        )
+                    log.info("acp update: current_mode -> %s", new_mode)
             else:
                 log.debug("acp update: dropped kind=%s", type(update).__name__)
-            # Usage / mode updates intentionally dropped.
+            # Usage updates intentionally dropped.
         except Exception as e:  # pragma: no cover — defensive
             log.warning("session_update dispatch failed: %s", e)
 
