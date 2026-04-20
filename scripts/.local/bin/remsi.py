@@ -630,7 +630,7 @@ class Encoder:
             streams = json.loads(result.stdout).get("streams", [])
             if streams:
                 return streams[0]
-        except json.JSONDecodeError, IndexError:
+        except (json.JSONDecodeError, IndexError):
             log.debug("ffprobe parse failed: %s", result.stderr.strip())
         return {}
 
@@ -639,7 +639,7 @@ class Encoder:
         try:
             num, den = (r_frame_rate or "").split("/")
             return round(int(num) / int(den), 3)
-        except ValueError, ZeroDivisionError, AttributeError:
+        except (ValueError, ZeroDivisionError, AttributeError):
             return None
 
     @classmethod
@@ -667,7 +667,7 @@ class Encoder:
         def _int(v: Any) -> Optional[int]:
             try:
                 return int(v) if v else None
-            except ValueError, TypeError:
+            except (ValueError, TypeError):
                 return None
 
         try:
@@ -1306,6 +1306,17 @@ class SmartCutEncoder(Encoder):
         "hevc": ("libx265", "hevc_mp4toannexb"),
     }
 
+    # Source codec family → {gpu backend: hardware encoder}. Seam re-
+    # encodes use these when `--gpu` is set and the source family has a
+    # matching accelerator. AV1 source stays software (libx264 fallback);
+    # stream-copied middles don't care about the encoder anyway, so mixing
+    # a GPU-encoded seam with a stream-copied h264 middle works because
+    # MPEG-TS carries parameter sets in-band.
+    _GPU_SEAM_ENCODERS: ClassVar[dict[str, dict[str, str]]] = {
+        "h264": {"nvidia": "h264_nvenc", "amd": "h264_amf", "vaapi": "h264_vaapi"},
+        "hevc": {"nvidia": "hevc_nvenc", "amd": "hevc_amf", "vaapi": "hevc_vaapi"},
+    }
+
     # Minimum duration of the stream-copied middle. Below this the
     # seam-reencode + TS mux overhead exceeds any savings, so we
     # re-encode the segment whole.
@@ -1372,19 +1383,76 @@ class SmartCutEncoder(Encoder):
         except (json.JSONDecodeError, IndexError):
             return {}
 
-    def _reencode_video_args(self, params: dict[str, Any]) -> list[str]:
-        """ffmpeg args that re-encode a seam piece to match the
-        source's visual parameters. Closed-GOP + CRF 16 so every
-        output frame is an IDR (no dangling refs into copied
-        middles) and the seam is visually lossless."""
-        codec_name = (params.get("codec_name") or "").lower()
-        encoder, _ = self._TS_MATRIX.get(codec_name, ("libx264", ""))
+    def _pick_seam_encoder(self, codec_name: str) -> str:
+        """Return the ffmpeg encoder name for a seam re-encode.
 
-        args: list[str] = ["-c:v", encoder]
+        When `--gpu` selects a backend and the source codec family has
+        a matching hardware encoder, use that; otherwise fall through
+        to the software row of `_TS_MATRIX`."""
+        if self.gpu and codec_name in self._GPU_SEAM_ENCODERS:
+            hw = self._GPU_SEAM_ENCODERS[codec_name].get(self.gpu)
+            if hw:
+                return hw
+        sw, _ = self._TS_MATRIX.get(codec_name, ("libx264", ""))
+        return sw
+
+    @staticmethod
+    def _encoder_quality_args(encoder: str) -> list[str]:
+        """CRF-16-equivalent visually-lossless quality knobs for
+        whichever seam encoder got picked. Each family names its
+        constant-quality mode differently."""
+        if encoder in ("libx264", "libx265"):
+            return ["-crf", "16"]
+        if encoder.endswith("_nvenc"):
+            return ["-rc", "constqp", "-qp", "16"]
+        if encoder.endswith("_vaapi"):
+            return ["-qp", "16"]
+        if encoder.endswith("_amf"):
+            return ["-rc", "cqp", "-qp_i", "16", "-qp_p", "16"]
+        return ["-crf", "16"]
+
+    @staticmethod
+    def _encoder_closed_gop_args(encoder: str) -> list[str]:
+        """Flags that force every output frame to be an IDR.
+
+        Seam pieces butt directly against stream-copied middles; any
+        B/P reference leaking outside a piece's boundary would break
+        decoding. Each encoder family spells closed-GOP differently —
+        NVENC needs `-no-scenecut 1 -forced-idr 1` (its `-g 1` alone
+        still lets scenecut inject open GOPs); AMF wants
+        `-header_insertion_mode idr`; VAAPI respects `-g 1` directly."""
+        base = ["-g", "1", "-bf", "0"]
+        if encoder in ("libx264", "libx265"):
+            return [*base, "-keyint_min", "1", "-sc_threshold", "0"]
+        if encoder.endswith("_nvenc"):
+            return [*base, "-no-scenecut", "1", "-forced-idr", "1"]
+        if encoder.endswith("_amf"):
+            return [*base, "-header_insertion_mode", "idr"]
+        return base
+
+    def _reencode_video_args(
+        self, params: dict[str, Any]
+    ) -> tuple[list[str], list[str]]:
+        """Return `(pre_input_args, post_input_args)`.
+
+        `pre_input_args` go before the seam piece's `-i` (VAAPI needs
+        `-vaapi_device` at the global scope); `post_input_args` are
+        the codec + colour + GOP + quality flags attached after the
+        input. Matches source visual parameters so every seam is
+        visually lossless against the stream-copied middles it
+        bookends."""
+        codec_name = (params.get("codec_name") or "").lower()
+        encoder = self._pick_seam_encoder(codec_name)
+
+        pre: list[str] = []
+        if encoder.endswith("_vaapi"):
+            pre = ["-vaapi_device", "/dev/dri/renderD128"]
+
+        post: list[str] = ["-c:v", encoder]
 
         pix_fmt = params.get("pix_fmt")
         if pix_fmt:
-            args.extend(["-pix_fmt", pix_fmt])
+            post.extend(["-pix_fmt", pix_fmt])
 
         for src, flag in (
             ("color_space", "-colorspace"),
@@ -1393,22 +1461,14 @@ class SmartCutEncoder(Encoder):
         ):
             v = params.get(src)
             if v and v != "unknown":
-                args.extend([flag, v])
+                post.extend([flag, v])
         cr = params.get("color_range")
         if cr and cr != "unknown":
-            args.extend(["-color_range", {"tv": "mpeg", "pc": "jpeg"}.get(cr, cr)])
+            post.extend(["-color_range", {"tv": "mpeg", "pc": "jpeg"}.get(cr, cr)])
 
-        # Every re-encoded frame is an IDR. Seam pieces butt directly
-        # against stream-copied middles; any B/P reference pointing
-        # outside this piece's boundary would break decoding.
-        args.extend([
-            "-g", "1",
-            "-keyint_min", "1",
-            "-bf", "0",
-            "-sc_threshold", "0",
-        ])
-        args.extend(["-crf", "16"])
-        return args
+        post.extend(self._encoder_closed_gop_args(encoder))
+        post.extend(self._encoder_quality_args(encoder))
+        return pre, post
 
     def _segment_plan(
         self, seg: Segment, keyframes: list[float]
@@ -1448,7 +1508,8 @@ class SmartCutEncoder(Encoder):
         start: float,
         end: float,
         action: str,
-        reencode_args: list[str],
+        reencode_pre: list[str],
+        reencode_post: list[str],
         annexb_bsf: str,
     ) -> subprocess.CompletedProcess:
         """Render one sandwich piece directly to an MPEG-TS fragment.
@@ -1460,9 +1521,12 @@ class SmartCutEncoder(Encoder):
           * "reencode" — accurate-seek, re-encode with closed GOP,
                          muxed as MPEG-TS.
 
-        Audio is dropped from every piece; we render it separately
-        in one filter_complex pass so fades land on frame-accurate
-        bounds regardless of the video stitch geometry."""
+        `reencode_pre` lands before `-i` (VAAPI device init);
+        `reencode_post` lands after `-i` (codec + colour + GOP +
+        quality). Audio is dropped from every piece; we render it
+        separately in one filter_complex pass so fades land on
+        frame-accurate bounds regardless of the video stitch
+        geometry."""
         base = [
             "ffmpeg",
             "-hide_banner",
@@ -1487,10 +1551,11 @@ class SmartCutEncoder(Encoder):
         else:
             cmd = [
                 *base,
+                *reencode_pre,
                 "-ss", str(start),
                 "-i", str(input_file),
                 "-t", str(end - start),
-                *reencode_args,
+                *reencode_post,
                 "-an",
                 "-f", "mpegts",
                 "-y", str(output_path),
@@ -1544,7 +1609,14 @@ class SmartCutEncoder(Encoder):
                 "(frame-accurate, just not faster than `fancy`)",
                 codec_name or "?",
             )
-        reencode_args = self._reencode_video_args(video_params)
+        reencode_pre, reencode_post = self._reencode_video_args(video_params)
+        seam_encoder = self._pick_seam_encoder(codec_name)
+        log.info(
+            "smart-cut seam encoder: %s (gpu=%s source=%s)",
+            seam_encoder,
+            self.gpu or "off",
+            codec_name or "?",
+        )
 
         # When we don't have a TS-capable codec match, force every
         # segment to a single re-encode piece — no stream-copy
@@ -1584,7 +1656,14 @@ class SmartCutEncoder(Encoder):
             for i, (s, e, a) in enumerate(pieces):
                 part_path = tmpdir / f"part{i:04d}.ts"
                 result = self._render_piece_ts(
-                    input_file, part_path, s, e, a, reencode_args, annexb_bsf,
+                    input_file,
+                    part_path,
+                    s,
+                    e,
+                    a,
+                    reencode_pre,
+                    reencode_post,
+                    annexb_bsf,
                 )
                 if result.returncode != 0:
                     return result
