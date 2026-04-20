@@ -2083,7 +2083,7 @@ class PilotWindow(LayerOverlayWindow):
 
         Also pulls the adapter's current model onto `self._model` and
         repaints the header pill (`Pilot - <provider> (<model>)`) so
-        `_reconcile_model` after a turn, `set_model` from the Models
+        `reconcile_model` after a turn, `set_model` from the Models
         palette, and session restores all land on the window title
         without a full respawn."""
         effective = (
@@ -2096,9 +2096,8 @@ class PilotWindow(LayerOverlayWindow):
         # showing the `WORKING` spinner, so a model switch fired from
         # the palette doesn't blow away the working-state label in
         # the same tick. `_clear_working` restores the title itself.
-        if (
-            hasattr(self, "_provider_label")
-            and not self._provider_label.has_css_class("working")
+        if hasattr(self, "_provider_label") and not self._provider_label.has_css_class(
+            "working"
         ):
             self._provider_label.set_label(self._header_title())
 
@@ -2111,7 +2110,9 @@ class PilotWindow(LayerOverlayWindow):
             self._session_pills.remove(child)
             child = nxt
 
-        segments: list[tuple[str, str]] = [(f"@ {self._pretty_cwd()}", PillVariant.MUTED)]
+        segments: list[tuple[str, str]] = [
+            (f"@ {self._pretty_cwd()}", PillVariant.MUTED)
+        ]
         if self._mcp_server_names:
             segments.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
         if self._skills_dir:
@@ -3091,11 +3092,26 @@ class PilotWindow(LayerOverlayWindow):
         self._root_palette.preseed_active(set())
         self._root_palette.open(
             [
-                ("skills", "Skills", "attach skills as resources on the next turn", "skills"),
+                (
+                    "skills",
+                    "Skills",
+                    "attach skills as resources on the next turn",
+                    "skills",
+                ),
                 ("mcps", "MCPs", "toggle MCP servers for this session", "mcps"),
                 ("models", "Models", "switch the agent's active model", "models"),
-                ("permissions", "Permissions", "review / revoke trusted tools", "permissions"),
-                ("sessions", "Sessions", "restore a previous session or start fresh", "sessions"),
+                (
+                    "permissions",
+                    "Permissions",
+                    "review / revoke trusted tools",
+                    "permissions",
+                ),
+                (
+                    "sessions",
+                    "Sessions",
+                    "restore a previous session or start fresh",
+                    "sessions",
+                ),
             ]
         )
 
@@ -3203,7 +3219,11 @@ class PilotWindow(LayerOverlayWindow):
     # `action-id` maps onto `_KEYBINDING_ACTIONS` below for dispatch.
 
     _KEYBINDINGS: tuple[tuple[str, str, str], ...] = (
-        ("Ctrl+Space", "open the command palette (skills · mcps · models · permissions · sessions)", "root_palette"),
+        (
+            "Ctrl+Space",
+            "open the command palette (skills · mcps · models · permissions · sessions)",
+            "root_palette",
+        ),
         ("Ctrl+K", "show this keybindings list", "keybindings"),
         ("Ctrl+E", "dismiss the error toast", "dismiss_error"),
         ("Ctrl+F", "focus the compose box", "focus_compose"),
@@ -3788,7 +3808,7 @@ class Session:
         try:
             probe.connect(_PATHS.socket_path)
             return True
-        except (ConnectionRefusedError, FileNotFoundError):
+        except ConnectionRefusedError, FileNotFoundError:
             return False
         except OSError as e:
             log.warning("socket probe failed: %s", e)
@@ -3807,7 +3827,7 @@ class Session:
         sock.settimeout(2)
         try:
             sock.connect(_PATHS.socket_path)
-        except (FileNotFoundError, ConnectionRefusedError):
+        except FileNotFoundError, ConnectionRefusedError:
             try:
                 os.unlink(_PATHS.socket_path)
             except FileNotFoundError:
@@ -3898,7 +3918,7 @@ class Session:
             response = self._dispatch(raw)
             try:
                 conn.sendall(json.dumps(response).encode())
-            except (BrokenPipeError, ConnectionResetError):  # noqa
+            except BrokenPipeError, ConnectionResetError:  # noqa
                 # Client went away before reading our reply. Common and
                 # expected: forwarders that fire-and-forget, kill
                 # commands that tear everything down before the response
