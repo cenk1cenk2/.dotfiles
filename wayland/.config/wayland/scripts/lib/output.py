@@ -1,57 +1,61 @@
 """Output sinks that write final transcription text for the user."""
 
+import logging
 import subprocess
 import sys
-from typing import Protocol
 from enum import StrEnum
+from typing import Protocol
+
+log = logging.getLogger(__name__)
+
 
 class OutputMode(StrEnum):
     CLIPBOARD = "clipboard"
     TYPE = "type"
     STDOUT = "stdout"
 
-class OutputAdapter(Protocol):
-    """Sink that writes final text somewhere visible to the user."""
 
+class OutputAdapter(Protocol):
     mode: OutputMode
 
     def write(self, text: str) -> None:
         """Emit the text. Blocking; raises on failure."""
         ...
 
-class OutputAdapterClipboard:
-    """Copies text to the Wayland clipboard via `wl-copy`."""
 
+class OutputAdapterClipboard:
     mode = OutputMode.CLIPBOARD
 
     def write(self, text: str) -> None:
-        subprocess.run(["wl-copy"], input=text, text=True, check=False)
-
-class OutputAdapterType:
-    """Types text into the focused window via `ydotool`."""
-
-    mode = OutputMode.TYPE
-
-    def write(self, text: str) -> None:
+        cmd = ["wl-copy"]
+        log.debug("spawn: %s (%d chars)", " ".join(cmd), len(text))
         subprocess.run(
-            [
-                "ydotool",
-                "type",
-                "--key-delay",
-                "10",
-                "--key-hold",
-                "10",
-                "--file",
-                "-",
-            ],
+            cmd,
             input=text,
             text=True,
             check=False,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
         )
 
-class OutputAdapterStdout:
-    """Writes text to stdout."""
 
+class OutputAdapterType:
+    mode = OutputMode.TYPE
+
+    def write(self, text: str) -> None:
+        cmd = ["ydotool", "type", "--key-delay", "10", "--key-hold", "10", "--file", "-"]
+        log.debug("spawn: %s (%d chars)", " ".join(cmd), len(text))
+        subprocess.run(
+            cmd,
+            input=text,
+            text=True,
+            check=False,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+
+class OutputAdapterStdout:
     mode = OutputMode.STDOUT
 
     def write(self, text: str) -> None:

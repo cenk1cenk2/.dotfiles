@@ -45,46 +45,25 @@ from gi.repository import (  # noqa: E402
 # ── Monitor helpers ─────────────────────────────────────────────
 
 def focused_monitor_name() -> Optional[str]:
-    """Ask the compositor for the connector name of the focused output
-    (e.g., 'DP-1', 'HDMI-A-1'). Returns None if neither Hyprland nor
-    sway is available or neither answers cleanly."""
-    try:
-        out = subprocess.run(
-            ["hyprctl", "monitors", "-j"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for m in json.loads(out):
-            if m.get("focused"):
-                return m.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-    try:
-        out = subprocess.run(
-            ["swaymsg", "-t", "get_outputs"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=1,
-        ).stdout
-        for o in json.loads(out):
-            if o.get("focused"):
-                return o.get("name")
-    except (
-        FileNotFoundError,
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        json.JSONDecodeError,
-    ):
-        pass
-
+    """Connector name of the focused output ('DP-1', etc.), or None."""
+    for probe in (["hyprctl", "monitors", "-j"], ["swaymsg", "-t", "get_outputs"]):
+        log.debug("spawn: %s", " ".join(probe))
+        try:
+            out = subprocess.run(
+                probe, capture_output=True, text=True, check=True, timeout=1
+            ).stdout
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
+            continue
+        try:
+            for m in json.loads(out):
+                if m.get("focused"):
+                    return m.get("name")
+        except json.JSONDecodeError:
+            continue
     return None
 
 def focused_gdk_monitor():

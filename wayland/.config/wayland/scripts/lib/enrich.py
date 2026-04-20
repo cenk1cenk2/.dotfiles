@@ -9,8 +9,8 @@ import os
 import subprocess
 import urllib.error
 import urllib.request
-from typing import Any, Optional, Protocol
 from enum import StrEnum
+from typing import Any, Optional, Protocol
 
 class EnrichProvider(StrEnum):
     HTTP = "http"
@@ -138,11 +138,16 @@ class EnrichAdapterClaude:
             self.user_prompt_template.format(text=text),
         ]
         log.info("claude enrichment: model=%s mode=%s", self.model, self.mode or "default")
+        log.debug("spawn: %s", " ".join(cmd))
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        log.debug("claude stderr: %s", proc.stderr.strip())
         if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("claude enrichment failed (exit=%d) stderr=%s", proc.returncode, proc.stderr.strip())
+            log.error(
+                "claude enrichment failed (exit=%d) stderr=%s",
+                proc.returncode,
+                proc.stderr.strip(),
+            )
             return None
-        log.debug("claude stdout=%d chars stderr=%d chars", len(proc.stdout), len(proc.stderr))
         return proc.stdout.strip()
 
 class EnrichAdapterOpenCode:
@@ -191,7 +196,9 @@ class EnrichAdapterOpenCode:
             env["OPENCODE_CONFIG"] = self.config_path
 
         log.info("opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default")
+        log.debug("spawn: %s", " ".join(argv))
         proc = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
+        log.debug("opencode stderr: %s", proc.stderr.strip())
         if proc.returncode != 0 or not proc.stdout.strip():
             log.error(
                 "opencode enrichment failed (exit=%d) stderr=%s",
@@ -199,5 +206,4 @@ class EnrichAdapterOpenCode:
                 proc.stderr.strip(),
             )
             return None
-        log.debug("opencode stdout=%d chars stderr=%d chars", len(proc.stdout), len(proc.stderr))
         return proc.stdout.strip()

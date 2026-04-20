@@ -97,7 +97,6 @@ through an out-of-band channel (Claude ships it in
 backend-specific logic (like the Claude hook) lives in the adapter
 that owns it, not in the transport core."""
 
-
 @dataclass(frozen=True)
 class PromptAttachment:
     """A non-text payload to prepend to a prompt. Used today for
@@ -111,21 +110,11 @@ class PromptAttachment:
     uri: Optional[str] = None
 
     @classmethod
-    def image(
-        cls, data: bytes, mime_type: str = "image/png"
-    ) -> PromptAttachment:
+    def image(cls, data: bytes, mime_type: str = "image/png") -> PromptAttachment:
         """Shorthand for an inline-bytes image attachment. Lives on
         the dataclass so tests + callers can build one without
         fishing through the module for a free-standing helper."""
         return cls(mime_type=mime_type, data=data)
-
-
-def image_attachment(data: bytes, mime_type: str = "image/png") -> PromptAttachment:
-    """Back-compat free function — forwards to
-    `PromptAttachment.image`. Kept so existing
-    `from lib import image_attachment` imports don't break."""
-    return PromptAttachment.image(data, mime_type)
-
 
 @dataclass(frozen=True)
 class PlanItem:
@@ -136,7 +125,6 @@ class PlanItem:
     content: str
     status: str  # "pending" | "in_progress" | "completed"
     priority: str  # "low" | "medium" | "high"
-
 
 @dataclass(frozen=True)
 class SessionInfo:
@@ -152,7 +140,6 @@ class SessionInfo:
     title: str = ""
     updated_at: str = ""
 
-
 @dataclass(frozen=True)
 class SessionModelState:
     """Effective model state for a session.
@@ -165,7 +152,6 @@ class SessionModelState:
 
     current_model_id: str = ""
     available_model_ids: tuple[str, ...] = ()
-
 
 @dataclass(frozen=True)
 class ToolCallSummary:
@@ -243,7 +229,6 @@ class ToolCallSummary:
             arguments=args,
             status=cls._STATUS_MAP.get(update.status or "", "pending"),
         )
-
 
 PermissionHandler = Callable[[ToolCallSummary, list[PermissionOption]], Optional[str]]
 """Invoked from the ACP worker thread when the agent asks for
@@ -497,10 +482,14 @@ class AcpClient(Client):
             raise acp.RequestError.internal_error({"message": str(e)})
         return None
 
-class AcpSession:
-    """Owns the asyncio loop, the spawned agent subprocess, and the ACP
-    session. Reused across every turn on an adapter so the agent sees
-    one continuous conversation rather than per-turn cold starts.
+class AcpAdapter:
+    """ACP client: owns the asyncio loop, the spawned agent subprocess,
+    and the session. Reused across every turn so the agent sees one
+    continuous conversation rather than per-turn cold starts.
+
+    Subclasses (see `lib.converse`) set `provider` to a
+    `ConversationProvider` member + override `_extra_env` to layer in
+    backend-specific env munging.
 
     Config via `**kwargs`:
       - `command`: executable to spawn (required)
@@ -513,6 +502,8 @@ class AcpSession:
         are handed to the agent at `new_session` so claude-agent-acp /
         opencode-acp can spin them up on the agent side.
     """
+
+    provider: Any  # Subclasses set to a ConversationProvider member.
 
     # Raises asyncio's default 64KB line-buffer ceiling. ACP agents
     # emit newline-delimited JSON-RPC frames that routinely cross the
@@ -577,9 +568,7 @@ class AcpSession:
         else:
             prefix = f"response id={msg_id}"
             body = (
-                message.get("result")
-                if "result" in message
-                else message.get("error")
+                message.get("result") if "result" in message else message.get("error")
             )
         try:
             dumped = json.dumps(body, ensure_ascii=False, default=str)
@@ -587,8 +576,7 @@ class AcpSession:
             dumped = repr(body)
         if len(dumped) > cls.WIRE_LOG_LIMIT:
             dumped = (
-                dumped[: cls.WIRE_LOG_LIMIT]
-                + f"…(+{len(dumped) - cls.WIRE_LOG_LIMIT})"
+                dumped[: cls.WIRE_LOG_LIMIT] + f"…(+{len(dumped) - cls.WIRE_LOG_LIMIT})"
             )
         return f"{prefix}  {dumped}"
 
@@ -637,7 +625,7 @@ class AcpSession:
     def __init__(self, **kwargs: Any):
         self.command: str = kwargs.get("command") or ""
         if not self.command:
-            raise ValueError("AcpSession requires `command`")
+            raise ValueError("AcpAdapter requires `command`")
         self.args: list[str] = list(kwargs.get("args") or ())
         self.cwd: Optional[str] = kwargs.get("cwd")
         self.env: Optional[dict[str, str]] = kwargs.get("env")
@@ -803,7 +791,9 @@ class AcpSession:
             getattr(m, "model_id", "") or ""
             for m in (getattr(models, "available_models", None) or [])
         )
-        return SessionModelState(current_model_id=current, available_model_ids=available)
+        return SessionModelState(
+            current_model_id=current, available_model_ids=available
+        )
 
     @property
     def current_model_id(self) -> Optional[str]:
@@ -864,9 +854,7 @@ class AcpSession:
             # permission-flow asymmetries between backends.
             if process.stderr is not None:
                 asyncio.create_task(
-                    self._drain_stderr(
-                        process.stderr, os.path.basename(self.command)
-                    )
+                    self._drain_stderr(process.stderr, os.path.basename(self.command))
                 )
             caps = ClientCapabilities(
                 fs=FileSystemCapabilities(read_text_file=True, write_text_file=True),
@@ -909,7 +897,9 @@ class AcpSession:
                     # dedicated queue; we hand the drained events back
                     # via `consume_replay()` for callers that want to
                     # repaint the chat history.
-                    replay_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
+                    replay_queue: queue.Queue[tuple[str, Any] | _Sentinel] = (
+                        queue.Queue()
+                    )
                     prior_queue = self._current_queue
                     self._current_queue = replay_queue
                     try:
@@ -1303,32 +1293,32 @@ class AcpSession:
             self._resumed_from_store = False
         return True
 
-class AcpAdapter:
-    """Base class for any `lib.converse` adapter that speaks ACP.
+    # ── public event stream / introspection ──────────────────────
 
-    Subclasses set `provider` + a default `command` / `args` and can
-    layer in backend-specific env munging. All kwargs flow through to
-    `AcpSession` using the `kwargs.get("x") or DEFAULT` idiom that
-    keeps argparse flags (None when unset) collapsing to defaults."""
+    @property
+    def mcp_server_names(self) -> list[str]:
+        """Names of every MCP server handed to the agent at new_session."""
+        return [s.name for s in self.mcp_servers if s.name]
 
-    provider: Any  # Subclasses set to a `ConversationProvider` member.
+    @property
+    def session_id(self) -> Optional[str]:
+        """Current ACP `session_id`, or None before the first turn."""
+        return self._session_id
 
-    def __init__(self, **kwargs: Any):
-        self._session = AcpSession(**kwargs)
+    @property
+    def session_resumed(self) -> bool:
+        """True when the active session_id came from the on-disk store."""
+        return self._resumed_from_store
 
     @staticmethod
     def select_option_id(
         options: list[PermissionOption], want_kind: str
     ) -> Optional[str]:
-        """Pick the option_id matching `want_kind` (or its fallback
-        chain). Returns None when nothing sensible is on offer so
-        callers can decide whether to send `cancelled` or fall back
-        to whatever the agent declared first.
+        """Pick the option_id matching `want_kind` or its fallback
+        chain. Returns None when nothing sensible is on offer.
 
-        Logs at WARN when the fallback chain exhausts and we have to
-        pick the first option blindly — that's the signal that
-        `_KIND_FALLBACK` is missing a translation for the agent
-        version we're talking to."""
+        Warns when the fallback chain exhausts — that's a sign
+        `_KIND_FALLBACK` needs a translation for a new agent version."""
         if not options:
             return None
         by_kind: dict[str, str] = {}
@@ -1348,99 +1338,21 @@ class AcpAdapter:
         )
         return chosen
 
-    def set_permission_handler(self, handler: Optional[PermissionHandler]) -> None:
-        self._session.set_permission_handler(handler)
-
-    @property
-    def current_model_id(self) -> Optional[str]:
-        return self._session.current_model_id
-
-    def consume_replay(self) -> list[tuple[str, Any]]:
-        return self._session.consume_replay()
-
-    def set_tool_name_extractor(self, extractor: Optional[ToolNameExtractor]) -> None:
-        """Forward to the underlying session. Subclasses call this from
-        their constructor (or late from higher-level wiring) when their
-        backend carries the canonical tool name in an extension field —
-        e.g. `ConversationAdapterClaude` pulls it from
-        `_meta.claudeCode.toolName`."""
-        self._session.set_tool_name_extractor(extractor)
-
-    def reset(self) -> None:
-        """Drop the current ACP session + restart fresh on the next
-        turn. Keeps the adapter instance + its config alive; just
-        forgets the session_id (on disk + in memory) and tears the
-        subprocess down. See `AcpSession.reset` for the full teardown
-        sequence."""
-        self._session.reset()
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        """Ask the agent for every resumable session. See
-        `AcpSession.list_sessions` — returns a list of plain dicts
-        so the UI doesn't need to import the ACP schema."""
-        return self._session.list_sessions()
-
-    def select_session(self, session_id: str) -> None:
-        """Swap the active session to `session_id`; next turn will
-        load it via `load_session` instead of bootstrapping new.
-        See `AcpSession.select_session`."""
-        self._session.select_session(session_id)
-
-    def forget_session(self, session_id: str) -> bool:
-        """Clear pilot's pointer file if it currently resolves to
-        `session_id`. Returns True when the pointer was actually
-        unlinked. See `AcpSession.forget_session`."""
-        return self._session.forget_session(session_id)
-
-    @property
-    def mcp_server_names(self) -> list[str]:
-        """Names of every MCP server the session handed to the agent at
-        `new_session`. Exposed here so callers don't need to reach into
-        `adapter._session.mcp_servers` to build palette listings."""
-        return [s.name for s in self._session.mcp_servers if s.name]
-
-    @property
-    def session_id(self) -> Optional[str]:
-        """Current ACP `session_id`, or None before the first turn /
-        after `close()`. Surfaced for the `status` socket so the
-        waybar module can tell which conversation is live."""
-        return self._session._session_id
-
-    @property
-    def session_resumed(self) -> bool:
-        """True when the active session_id came from the on-disk store
-        (`load_session` succeeded), False when we just minted it via
-        `new_session`."""
-        return self._session._resumed_from_store
-
-    @property
-    def session_store_path(self) -> Optional[str]:
-        """Filesystem path the session_id is persisted to, or None
-        when persistence is disabled."""
-        return self._session.session_store_path
-
     def iter_events(
         self,
         user_message: str,
         *,
         attachments: Optional[list[PromptAttachment]] = None,
     ) -> Iterator[tuple[str, Any]]:
-        """Yields `(kind, payload)` tuples where `kind` is one of
-        `"text" | "thinking" | "tool" | "plan"`. `attachments` is
-        optional — pasted images or other binary blobs flow through
-        as ACP content blocks prefixed to the text prose.
-
-        Named `iter_events` (not `turn`) so `_AcpConverseAdapter.turn`
-        can define its own return type (`Iterator[TurnChunk]`) without
-        the override triggering a Liskov-violation on the raw-tuple
-        yield type here — this method is the low-level event stream
-        the converse layer wraps, not a user-facing API."""
+        """Drive a turn on a background thread; yield `(kind, payload)`
+        where kind is one of text / thinking / tool / plan / session_info.
+        `_AcpConverseAdapter.turn` wraps this with a typed chunk shape."""
         event_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
         error_holder: dict[str, BaseException] = {}
 
         def driver() -> None:
             try:
-                self._session.prompt(user_message, event_queue, attachments=attachments)
+                self.prompt(user_message, event_queue, attachments=attachments)
             except BaseException as e:  # pragma: no cover
                 error_holder["error"] = e
 
@@ -1460,14 +1372,3 @@ class AcpAdapter:
         if err is not None and not isinstance(err, asyncio.CancelledError):
             raise err
 
-    def cancel(self) -> None:
-        self._session.cancel()
-
-    def close(self) -> None:
-        self._session.close()
-
-
-# Module-level alias so existing `from lib.acp_adapter import
-# select_option_id` imports in pilot.py don't need to change. The
-# canonical home is `AcpAdapter.select_option_id`.
-select_option_id = AcpAdapter.select_option_id

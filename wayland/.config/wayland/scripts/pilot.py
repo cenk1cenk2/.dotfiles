@@ -8,6 +8,7 @@ Unix-socket session lets subsequent invocations forward follow-up turns
 into the live window instead of opening a new one."""
 
 from __future__ import annotations
+from lib.acp_adapter import AcpAdapter
 
 import errno
 import json
@@ -1299,7 +1300,9 @@ class PermissionRow(Gtk.ListBoxRow):
         # is bounded only by the sidebar width (no line cap). When
         # `tool_formatters` wasn't handed in (auditor paths not tied
         # to a specific adapter), fall back to the baseline.
-        formatters = tool_formatters if tool_formatters is not None else ToolFormatters()
+        formatters = (
+            tool_formatters if tool_formatters is not None else ToolFormatters()
+        )
         md_body = formatters.format(call.name or "", call.arguments or "")
         args_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, hexpand=True, spacing=0
@@ -2475,16 +2478,15 @@ class PilotWindow(LayerOverlayWindow):
         Belt-and-suspenders short-circuits: if the tool name is already
         in an auto list, we answer without surfacing a row so the UI
         stays consistent with the pill state."""
-        from lib.acp_adapter import select_option_id  # lazy import
 
         auto_kind = self._permission.decide(call.name or "", call.kind or "")
         if auto_kind is not None:
-            resolve(select_option_id(options, auto_kind))
+            resolve(AcpAdapter.select_option_id(options, auto_kind))
             return False
 
         def on_allow(r: PermissionRow) -> None:
             self._remove_permission_row(r)
-            resolve(select_option_id(options, "allow_once"))
+            resolve(AcpAdapter.select_option_id(options, "allow_once"))
 
         def on_trust(r: PermissionRow) -> None:
             tool_name = r.tool_name
@@ -2494,11 +2496,11 @@ class PilotWindow(LayerOverlayWindow):
             for existing in list(self._permissions):
                 if existing.tool_name == tool_name:
                     self._remove_permission_row(existing)
-            resolve(select_option_id(options, "allow_always"))
+            resolve(AcpAdapter.select_option_id(options, "allow_always"))
 
         def on_deny(r: PermissionRow) -> None:
             self._remove_permission_row(r)
-            resolve(select_option_id(options, "reject_once"))
+            resolve(AcpAdapter.select_option_id(options, "reject_once"))
 
         def on_auto_reject(r: PermissionRow) -> None:
             tool_name = r.tool_name or "tool"
@@ -2517,7 +2519,7 @@ class PilotWindow(LayerOverlayWindow):
             for existing in list(self._permissions):
                 if existing.tool_name == r.tool_name:
                     self._remove_permission_row(existing)
-            resolve(select_option_id(options, "reject_always"))
+            resolve(AcpAdapter.select_option_id(options, "reject_always"))
 
         row = PermissionRow(
             call,
@@ -2735,9 +2737,7 @@ class PilotWindow(LayerOverlayWindow):
         sessions_open = (
             self._sessions_palette is not None and self._sessions_palette.is_open()
         )
-        root_open = (
-            self._root_palette is not None and self._root_palette.is_open()
-        )
+        root_open = self._root_palette is not None and self._root_palette.is_open()
         if ctrl and keyval == Gdk.KEY_space:
             # Single entry point — opens the root dispatcher palette
             # from which the user picks Skills / MCPs / Sessions.
@@ -2764,11 +2764,7 @@ class PilotWindow(LayerOverlayWindow):
             return True
         # Esc when any palette is open should dismiss only the palette.
         any_palette_open = (
-            resource_open
-            or permissions_open
-            or mcp_open
-            or sessions_open
-            or root_open
+            resource_open or permissions_open or mcp_open or sessions_open or root_open
         )
         if any_palette_open and keyval == Gdk.KEY_Escape:
             return False
@@ -4204,14 +4200,20 @@ class Pilot:
 
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-    @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Session suffix.")
+    @click.option(
+        "--session",
+        "session_suffix",
+        default="",
+        metavar="SUFFIX",
+        help="Session suffix.",
+    )
     def cli(verbose: bool, session_suffix: str):
         """Conversational AI sidebar overlay."""
         create_logger(verbose)
         global _PATHS
         _PATHS = PilotPaths.from_suffix(session_suffix or "")
 
-    @cli.command()
+    @cli.command("toggle")
     @click.option(
         "--input",
         "input_",
@@ -4225,9 +4227,26 @@ class Pilot:
         default=DEFAULT_CONVERSE_ADAPTER.value,
     )
     @click.option("--converse-model", default=None, help="Per-adapter model override.")
-    @click.option("--cwd", default=None, metavar="PATH", help="Agent working dir; defaults to a fresh tempdir.")
-    @click.option("--auto-approve", "auto_approve", multiple=True, metavar="TOOL", help="Auto-approve a tool; repeatable.")
-    @click.option("--auto-reject", "auto_reject", multiple=True, metavar="TOOL", help="Auto-reject a tool; repeatable.")
+    @click.option(
+        "--cwd",
+        default=None,
+        metavar="PATH",
+        help="Agent working dir; defaults to a fresh tempdir.",
+    )
+    @click.option(
+        "--auto-approve",
+        "auto_approve",
+        multiple=True,
+        metavar="TOOL",
+        help="Auto-approve a tool; repeatable.",
+    )
+    @click.option(
+        "--auto-reject",
+        "auto_reject",
+        multiple=True,
+        metavar="TOOL",
+        help="Auto-reject a tool; repeatable.",
+    )
     @click.option(
         "--agents-md",
         default="~/.config/nvim/utils/agents/AGENTS.md",
@@ -4246,7 +4265,17 @@ class Pilot:
         metavar="NAME",
         help="MCP server; repeatable, accepts comma/space lists.",
     )
-    def cmd_toggle(input_, converse_provider, converse_model, cwd, auto_approve, auto_reject, agents_md, skills_dir, mcp):
+    def cmd_toggle(
+        input_,
+        converse_provider,
+        converse_model,
+        cwd,
+        auto_approve,
+        auto_reject,
+        agents_md,
+        skills_dir,
+        mcp,
+    ):
         """Open the overlay, or forward a turn to the live session."""
         _cmd_toggle(
             Pilot.ToggleArgs(
@@ -4276,7 +4305,6 @@ class Pilot:
     def cmd_kill():
         """Terminate the running session."""
         _cmd_kill()
-
 
 # Early shebang scan expects the literal "toggle" token somewhere in argv
 # — we only LD_PRELOAD gtk4-layer-shell when the window will actually

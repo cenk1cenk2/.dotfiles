@@ -18,7 +18,6 @@ from .acp_adapter import (  # noqa: F401
     AcpAdapter,
     PromptAttachment,
     build_mcp_servers,
-    image_attachment,
 )
 from .tools import ToolFormatters
 

@@ -33,7 +33,7 @@ from markdown_it import MarkdownIt
 from pygments import highlight  # type: ignore[import-not-found]
 from pygments.formatter import Formatter
 from pygments.lexers import (  # type: ignore[import-not-found]
-    TextLexer,
+    TextLexer,  # ty:ignore[unresolved-import]
     get_lexer_by_name,
     guess_lexer,
 )
@@ -91,7 +91,6 @@ _COLORS = {
 }
 
 _DEFAULT_FG = "#abb2bf"
-
 
 class PangoFormatter(Formatter):
     """Pygments Formatter that builds a single flat string of `<span
