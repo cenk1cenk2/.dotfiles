@@ -134,9 +134,10 @@ class PilotPaths:
             socket_path=os.path.join(runtime, "wayland-pilot.sock"),
         )
 
-# Populated in main() once `--session` has been parsed. Module-level
-# holder so the waybar-poll helpers (_send, _is_live, _cmd_status) can
-# share it without every caller threading a paths argument through.
+# Populated by the click group callback once `--session` has been
+# parsed. Module-level so `Session.send` / `Session.is_live` / click
+# commands on `Pilot` all read the same paths without threading a
+# PilotPaths arg through every caller.
 _PATHS: PilotPaths = PilotPaths.from_suffix("")
 
 AI_SYSTEM_PROMPT = load_prompt("pilot.md", relative_to=__file__)
@@ -3580,68 +3581,68 @@ class PilotWindow(LayerOverlayWindow):
         pilot_css_path = os.path.join(os.path.dirname(__file__), "pilot.css")
         load_css_from_path(pilot_css_path, tag="pilot.css")
 
-def _is_live() -> bool:
-    """Probe the session socket without sending a command. Returns True if
-    a server accepted our connect, False if the file is stale / absent."""
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(1)
-    try:
-        probe.connect(_PATHS.socket_path)
-
-        return True
-    except ConnectionRefusedError, FileNotFoundError:
-        return False
-    except OSError as e:
-        log.warning("socket probe failed: %s", e)
-
-        return False
-    finally:
-        probe.close()
-
-def _send(cmd: str, **kwargs) -> Optional[dict]:
-    """Send a one-shot JSON command to the running session.
-
-    Returns the parsed response dict, or None when no session answers.
-    Stale socket files from a crashed session are unlinked so the next
-    invocation can bind fresh."""
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(2)
-    try:
-        sock.connect(_PATHS.socket_path)
-    except FileNotFoundError, ConnectionRefusedError:
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        return None
-    except OSError as e:
-        log.warning("socket connect failed: %s", e)
-        return None
-
-    try:
-        payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
-        sock.sendall(payload.encode())
-        chunks = []
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                break
-            chunks.append(data)
-        raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            log.warning("bad response from session: %s (raw=%r)", e, raw)
-            return None
-    finally:
-        sock.close()
-
 class Session:
     """Owns the Unix socket for a live pilot window. A background thread
     accepts connections from forwarder invocations and dispatches their
     `turn` / `status` commands back onto the GTK main thread."""
+
+    @staticmethod
+    def is_live() -> bool:
+        """Probe the session socket. True if a server accepted our
+        connect, False when the file is stale / absent."""
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(1)
+        try:
+            probe.connect(_PATHS.socket_path)
+            return True
+        except (ConnectionRefusedError, FileNotFoundError):
+            return False
+        except OSError as e:
+            log.warning("socket probe failed: %s", e)
+            return False
+        finally:
+            probe.close()
+
+    @staticmethod
+    def send(cmd: str, **kwargs) -> Optional[dict]:
+        """Send a one-shot JSON command to the running session.
+
+        Returns the parsed response dict, or None when no session
+        answers. Stale socket files from a crashed session get
+        unlinked so the next invocation can bind fresh."""
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect(_PATHS.socket_path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            try:
+                os.unlink(_PATHS.socket_path)
+            except FileNotFoundError:
+                pass
+            return None
+        except OSError as e:
+            log.warning("socket connect failed: %s", e)
+            return None
+
+        try:
+            payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
+            sock.sendall(payload.encode())
+            chunks = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+            raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                log.warning("bad response from session: %s (raw=%r)", e, raw)
+                return None
+        finally:
+            sock.close()
 
     def __init__(self, window: PilotWindow, provider: ConversationProvider):
         self._window = window
@@ -3657,7 +3658,7 @@ class Session:
             if e.errno != errno.EADDRINUSE:
                 sock.close()
                 raise
-            if _is_live():
+            if Session.is_live():
                 sock.close()
                 raise RuntimeError(
                     f"another pilot session is already running at {path}"
@@ -3915,22 +3916,13 @@ def _build_permission_handler(window):
 
 _MCP_SPLIT_RE = re.compile(r"[\s,]+")
 
-def _default_mcp_names() -> list[str]:
-    """Full MCP catalog used when `--mcp` is omitted. `system` first
-    (pilot's own server, always ships), then every external entry the
-    mcphub JSON produced."""
-    return [_PILOT_MCP_SERVER_NAME, *DEFAULT_SERVER_NAMES]
-
 def _resolve_mcp(args) -> list[str]:
     """De-dupe `--mcp NAME` flags into an ordered list. Each flag
-    value may itself be a comma- or whitespace-separated list —
-    `--mcp git,memory` and `--mcp git --mcp memory` produce identical
-    output. Omitting the flag falls through to the full catalog;
-    `--mcp ""` disables everything. Unknown names survive to
-    `_acp_mcp_servers` which logs and skips."""
+    value may itself be comma- or whitespace-separated. Omitting the
+    flag picks the full catalog; `--mcp ""` disables everything."""
     raw_values = getattr(args, "mcp", None)
     if raw_values is None:
-        return _default_mcp_names()
+        return [_PILOT_MCP_SERVER_NAME, *DEFAULT_SERVER_NAMES]
     out: list[str] = []
     seen: set[str] = set()
     for raw in raw_values:
@@ -3942,9 +3934,7 @@ def _resolve_mcp(args) -> list[str]:
     return out
 
 def _read_agents_md(path: Optional[str]) -> str:
-    """Return the AGENTS.md contents (or empty string if missing / not
-    configured). Any read error degrades to "" + a warning — we never
-    block `toggle` on a missing bootstrap file."""
+    """AGENTS.md contents (or empty string on missing / unreadable)."""
     if not path:
         log.info("agents-md: no path configured; injection disabled")
         return ""
@@ -3961,28 +3951,16 @@ def _read_agents_md(path: Optional[str]) -> str:
     log.info("agents-md %s: loaded %d chars", expanded, len(contents))
     return contents
 
-def _compose_system_prompt(base: str, agents_md: str) -> str:
-    """Prepend `agents_md` to `base`, separated by a blank line, iff
-    `agents_md` has content. Otherwise return `base` unchanged so we
-    don't introduce a leading newline into the default prompt."""
-    if not agents_md:
-        return base
-
-    return f"{agents_md}\n\n{base}"
-
 def _build_adapter(args) -> ConversationAdapter:
     provider = ConversationProvider(args.converse_provider)
     cwd = getattr(args, "cwd", None)
-    agents_md_path = getattr(args, "agents_md", None)
     skills_dir = os.path.expanduser(getattr(args, "skills_dir", "") or "") or None
     mcp_servers = _acp_mcp_servers(
         mcp=_resolve_mcp(args),
         skills_dir=skills_dir,
     )
-    system_prompt = _compose_system_prompt(
-        AI_SYSTEM_PROMPT,
-        _read_agents_md(agents_md_path),
-    )
+    agents_md = _read_agents_md(getattr(args, "agents_md", None))
+    system_prompt = f"{agents_md}\n\n{AI_SYSTEM_PROMPT}" if agents_md else AI_SYSTEM_PROMPT
     session_store_path = _session_store_path(
         suffix=_PATHS.suffix,
         provider=provider,
@@ -4018,57 +3996,33 @@ def _build_adapter(args) -> ConversationAdapter:
 
 _MODEL_TAG_RE = re.compile(r"[^a-z0-9]+")
 
-def _model_tag(model: Optional[str]) -> str:
-    """Slugify `--converse-model` into a filesystem-safe token so it can
-    ride in the session-store filename. `glm-5.1:cloud` → `glm-5-1-cloud`,
-    None / empty → `default`. Keeps store paths predictable for the
-    sessions palette's Ctrl+D / restore flow."""
-    if not model:
-        return "default"
-    slug = _MODEL_TAG_RE.sub("-", model.lower()).strip("-")
-    return slug or "default"
 
 def _session_store_path(
     *,
     suffix: str,
-    provider: "ConversationProvider",
+    provider: ConversationProvider,
     model: Optional[str],
     cwd: Optional[str],
 ) -> str:
-    """Derive the on-disk path where the ACP `session_id` for this
-    (suffix, provider, model, cwd) quadruple is persisted. Kept under
-    `$XDG_STATE_HOME/pilot/sessions/` so uninstalling pilot cleans up
-    with the rest of user state.
+    """Filesystem path where the ACP `session_id` for this
+    (suffix, provider, model, cwd) quadruple is persisted.
 
-    The key encodes:
-      - `suffix` — `--session` flag (e.g. "plan"); scopes sessions per
-        overlay so "plan" and "ask" don't collide.
-      - `provider` — Claude and OpenCode sessions aren't
-        interchangeable; different agents store different ids.
-      - `model` — resumed sessions keep whichever model they were
-        created with (opencode / claude-agent-acp don't reapply
-        `--model` to `load_session`). Including the model in the key
-        makes `--converse-model glm-5.1:cloud` vs `sonnet` spawn
-        *distinct* stored sessions so changing the flag actually
-        changes the model.
-      - `cwd` — the same `--session plan` launched against `~/notes`
-        vs `~/work` should resume INTO the corresponding project;
-        hashing cwd into the key splits them cleanly.
-
-    The cwd is hashed rather than path-embedded so filesystem-unsafe
-    characters in long paths (colons, slashes) don't leak into the
-    filename."""
+    Encoding each dimension into the key means: `--session plan`
+    against `~/notes` vs `~/work` splits stores; switching providers
+    or models spawns a fresh session instead of clobbering the last.
+    The cwd is sha1-hashed rather than path-embedded so colons /
+    slashes in long paths don't leak into the filename."""
     import hashlib
 
     state_home = os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
         "~/.local/state"
     )
-    root = os.path.join(state_home, "pilot", "sessions")
-    suffix_tag = suffix or "default"
-    cwd_key = cwd or os.getcwd()
-    cwd_hash = hashlib.sha1(cwd_key.encode("utf-8")).hexdigest()[:10]
-    filename = f"{suffix_tag}-{provider.value}-{_model_tag(model)}-{cwd_hash}.session"
-    return os.path.join(root, filename)
+    model_slug = (
+        _MODEL_TAG_RE.sub("-", (model or "").lower()).strip("-") or "default"
+    )
+    cwd_hash = hashlib.sha1((cwd or os.getcwd()).encode("utf-8")).hexdigest()[:10]
+    filename = f"{suffix or 'default'}-{provider.value}-{model_slug}-{cwd_hash}.session"
+    return os.path.join(state_home, "pilot", "sessions", filename)
 
 def _read_input(mode: InputMode) -> str:
     match mode:
@@ -4106,17 +4060,17 @@ def _toggle(args) -> None:
     # press-2 of `speech.py toggle --output stdout | pilot.py toggle`).
     piped_empty = args.input == InputMode.STDIN and not sys.stdin.isatty()
 
-    status = _send("status")
+    status = Session.send("status")
     if status and status.get("ok"):
         if initial:
-            _send("turn", text=initial)
+            Session.send("turn", text=initial)
             return
         if piped_empty:
             # Fire-and-forget callers (speech press-2) — don't touch
             # the visibility; the payload-bearing sibling pipe will
             # reach the session on its own.
             return
-        _send("toggle-window")
+        Session.send("toggle-window")
 
         return
 
@@ -4304,7 +4258,7 @@ class Pilot:
     @cli.command("status")
     def cmd_status():
         """Print waybar-shaped status JSON."""
-        resp = _send("status")
+        resp = Session.send("status")
         if not resp or not resp.get("ok"):
             print(json.dumps({"class": "idle", "text": "", "tooltip": "Pilot idle"}))
             return
@@ -4329,12 +4283,12 @@ class Pilot:
     @cli.command("is-running")
     def cmd_is_running():
         """Exit 0 if a session is live."""
-        sys.exit(0 if _is_live() else 1)
+        sys.exit(0 if Session.is_live() else 1)
 
     @cli.command("kill")
     def cmd_kill():
         """Terminate the running session."""
-        if not _send("kill"):
+        if not Session.send("kill"):
             try:
                 os.unlink(_PATHS.socket_path)
             except FileNotFoundError:

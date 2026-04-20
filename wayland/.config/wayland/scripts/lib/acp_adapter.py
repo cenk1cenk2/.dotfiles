@@ -827,8 +827,16 @@ class AcpAdapter:
     def available_models(self) -> list[ModelChoice]:
         """Models the agent exposes for this session.
 
-        Empty when the agent doesn't ship a `SessionModelState` (spec
-        marks it UNSTABLE) or before `_ensure_started` has run."""
+        Bootstraps the session on first access so the models palette
+        has content before any turn has fired. Empty when the agent
+        doesn't ship a `SessionModelState` (the block is UNSTABLE in
+        the ACP spec) or when bootstrap fails."""
+        if self._model_state is None:
+            try:
+                self._ensure_started()
+            except Exception as e:
+                log.warning("available_models: ensure_started failed: %s", e)
+                return []
         if self._model_state is None:
             return []
         return list(self._model_state.available_models)
@@ -836,15 +844,20 @@ class AcpAdapter:
     def set_model(self, model_id: str) -> bool:
         """Ask the agent to switch the active model for this session.
 
-        Returns True when the RPC landed cleanly; False when there's
-        no session yet, no conn, or the agent rejected / errored.
-        Updates `self._model_state` optimistically so callers reading
-        `current_model_id` see the new value immediately."""
+        Bootstraps the ACP subprocess + session on first call (same
+        path `list_sessions` walks) so the user doesn't need a turn
+        in flight before picking a model. Returns True when the RPC
+        landed; False when bootstrap or the agent rejected."""
+        try:
+            self._ensure_started()
+        except Exception as e:
+            log.warning("set_model: ensure_started failed: %s", e)
+            return False
         conn = self._conn
         loop = self._loop
         sid = self._session_id
         if conn is None or loop is None or sid is None:
-            log.warning("set_model: no live session")
+            log.warning("set_model: no live session after bootstrap")
             return False
 
         async def _call() -> None:
