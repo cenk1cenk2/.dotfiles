@@ -50,6 +50,13 @@ dependencies = [
   "psutil>=7.0",
   # obs-websocket bindings for recorder.py.
   "obsws-python>=1.8",
+  # Fuzzy scoring for the command-palette filter (lib/overlay.py).
+  # C++-backed, handles typos, partial matches, and multi-word haystacks
+  # out of the box via `fuzz.WRatio` — the previous pure-Python
+  # subsequence scorer ranked e.g. "gst" higher against a late match
+  # like "…most" than against "git status", which made the palette feel
+  # sluggish and wrong.
+  "rapidfuzz>=3.6",
 ]
 
 # PyGObject (import name: `gi`) is NOT listed under `dependencies`

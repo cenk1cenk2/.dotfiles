@@ -542,7 +542,7 @@ class ConversationAdapterOpenCode(_AcpConverseAdapter):
         # `OPENCODE_SYSTEM_PROMPT` env var isn't honoured by opencode,
         # so we deliver `system_prompt` as a first-turn prefix instead.
         self.system_prompt = system_prompt
-        self.model: str = kwargs.get("model") or "kilic/glm-5.1:cloud"
+        self.model: str = kwargs.get("model") or "kilic/minimax-m2.7:cloud"
         self.mode = kwargs.get("mode")
         self.config_path = kwargs.get("config_path") or os.path.expanduser(
             "~/.config/nvim/utils/agents/opencode/kilic.json"

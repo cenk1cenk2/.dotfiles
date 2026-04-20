@@ -843,6 +843,10 @@ class TurnCard:
                 expanded=True,
             )
             self._thinking_expander.add_css_class("pilot-thinking-expander")
+            self._thinking_expander.add_css_class("expanded")  # starts open
+            self._thinking_expander.connect(
+                "notify::expanded", self._on_expander_toggle
+            )
             self._thinking_expander.set_child(self._thinking_label)
             # Slot the expander between the role label and the reply
             # label so the visual order is: role → thinking → reply.
@@ -892,6 +896,10 @@ class TurnCard:
                 expanded=True,
             )
             self._plan_expander.add_css_class("pilot-plan-expander")
+            self._plan_expander.add_css_class("expanded")  # starts open
+            self._plan_expander.connect(
+                "notify::expanded", self._on_expander_toggle
+            )
             self._plan_expander.set_child(self._plan_label)
             # Plan slots in between the thinking expander (if any) and
             # the reply label. Insert after whichever of role/thinking
@@ -963,6 +971,18 @@ class TurnCard:
         self._thinking_expander.set_expanded(not self._thinking_expander.get_expanded())
 
         return True
+
+    @staticmethod
+    def _on_expander_toggle(expander: "Gtk.Expander", _pspec) -> None:
+        """Mirror an expander's `expanded` state onto an `.expanded`
+        CSS class so theming can accent-highlight the pill/header
+        while its body is revealed. Same hook used for the thinking
+        and plan expanders — CSS specifies the tint per
+        `.pilot-thinking-expander.expanded` / `.pilot-plan-expander.expanded`."""
+        if expander.get_expanded():
+            expander.add_css_class("expanded")
+        else:
+            expander.remove_css_class("expanded")
 
     # -- Tool bubbles --------------------------------------------------
 
@@ -1091,6 +1111,16 @@ class TurnCard:
         # args/result instead of whatever was written at first toggle.
         self._render_bubble_details(slot)
         revealer.set_reveal_child(expanded)
+        # Accent-highlight the pill itself while its detail panel is
+        # open. Same pattern as a focused / pressed control: the pill
+        # reads as "this is the one you're looking at". CSS
+        # `.pilot-tool-bubble.expanded` handles the tint (inherits
+        # the status-based fg colour, swaps the bg to accent).
+        button: Gtk.Button = slot["button"]
+        if expanded:
+            button.add_css_class("expanded")
+        else:
+            button.remove_css_class("expanded")
 
     def append_tool_bubble(self, call: ToolCall) -> None:
         """Add a bubble for a freshly-seen ToolCall, or merge a
@@ -1335,9 +1365,7 @@ class PermissionRow(Gtk.ListBoxRow):
             text_css_classes=("pilot-permission-args-text",),
         )
         self._args_scroller = Gtk.ScrolledWindow(hexpand=True)
-        self._args_scroller.set_policy(
-            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
-        )
+        self._args_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self._args_scroller.add_css_class("pilot-permission-args-scroller")
         self._args_scroller.set_child(args_box)
         # Until the host calls `apply_height_fraction` with the
@@ -1523,16 +1551,6 @@ class PilotWindow(LayerOverlayWindow):
     ASSISTANT_TITLE_WITH_MODEL_FMT = "AI Overlord - {provider} ({model})"
     HEADER_FMT = "Pilot - {provider}"
     HEADER_WITH_MODEL_FMT = "Pilot - {provider} ({model})"
-    # Agents push a `session_info_update` with a session title once
-    # they've summarised the first turn. Suffix it on the header when
-    # present so the pill reads, e.g., `Pilot - Claude (sonnet) [Fix
-    # recorder spam]`. Bracketed so the scan order stays
-    # provider → model → session.
-    HEADER_WITH_SESSION_FMT = "{base} [{title}]"
-    # Keep session titles bounded in the header so a chatty summary
-    # (opencode emits the full first turn sometimes) doesn't blow
-    # out the sidebar width.
-    HEADER_SESSION_TITLE_MAX = 48
 
     def __init__(
         self,
@@ -1653,22 +1671,97 @@ class PilotWindow(LayerOverlayWindow):
         root.add_css_class("pilot-root")
 
         # Header --------------------------------------------------------
-        # Single-line layout: provider/phase pill, dim cwd + mcp count
-        # breadcrumb, close button. Fits on one row on a 400px-wide
-        # sidebar; cwd uses middle-ellipsis so the most informative
-        # part (project name at the tail) stays visible when the full
-        # path overflows.
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        # Two-row layout: provider/phase pill + close on the top row,
+        # breadcrumb pills (cwd / mode / mcps / skills / restored) on
+        # the bottom row. Separating the breadcrumb from the top row
+        # gives the cwd pill the full header width to work with —
+        # previously the cwd, mcps count, and restored tag competed
+        # with the provider pill + close button for horizontal space
+        # on the 400-ish-px sidebar and got clipped silently. The cwd
+        # pill hexpands + middle-ellipsizes so it shrinks first when
+        # the bottom row still overflows under aggressive width caps.
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header.add_css_class("pilot-header")
         self._header = header
-        self._provider_label = Gtk.Label(label=self._header_title(), xalign=0.0)
+
+        # hexpand=True on top_row is LOAD-BEARING for the title-pill
+        # truncation: without it, the Box sizes to the sum of its
+        # children's natural widths and can push beyond the layer-shell
+        # window bounds (then Pango has no bounded allocation to
+        # ellipsize against, so the pill grows with the title text).
+        # With hexpand=True the Box inherits the window's width and
+        # the title pill's hexpand can actually flex within that.
+        top_row = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=8,
+            hexpand=True,
+        )
+        top_row.add_css_class("pilot-header-top")
+        # Provider pill stays at its natural width — "[suffix] Pilot -
+        # provider (model)" is a known, bounded label so it doesn't
+        # need to flex. The session-title label next to it is the flex
+        # element that absorbs the remaining width.
+        self._provider_label = Gtk.Label(
+            label=self._header_title(),
+            xalign=0.0,
+        )
         self._provider_label.add_css_class("pilot-provider")
         self._provider_label.add_css_class("idle")
-        header.append(self._provider_label)
+        top_row.append(self._provider_label)
 
-        # Breadcrumb — one row of pills (cwd / mcps / skills /
+        # Agent-supplied session title (from ACP `session_info_update`)
+        # lives as its own pill on the top row. Always visible +
+        # hexpand=True so the pill reserves the flex space between
+        # the provider pill and the close button regardless of
+        # whether the title is set — keeps the close button pinned
+        # to the trailing edge even on session start / after
+        # `start_fresh_session` before a title lands. The inner
+        # label middle-ellipsizes at the tail when the title would
+        # push the close button off-screen.
+        # Plain Gtk.Label (NOT a pill button) so we fully own its
+        # sizing. Wrapping in Gtk.Button caused the button to replay
+        # its own natural-width calculation based on the auto-created
+        # child label's text — which meant every `set_label()` call
+        # in `_refresh_session_title_label` reset the max_width_chars
+        # we'd carefully configured at init, letting the natural
+        # request balloon with the title and pushing past the
+        # layer-shell width bound. The label looks pill-shaped via
+        # CSS (`.pilot-session-title` + `.empty`) — same visual
+        # result without the Button container stealing control of
+        # the size request.
+        self._session_title_pill = Gtk.Label(
+            label="",
+            xalign=0.0,
+            hexpand=True,
+            halign=Gtk.Align.FILL,
+        )
+        self._session_title_pill.add_css_class("pilot-session-title")
+        self._session_title_pill.add_css_class("empty")
+        self._session_title_pill.set_ellipsize(Pango.EllipsizeMode.END)
+        # GTK4 label sizing with ellipsize:
+        #   - `width_chars`     → minimum allocation in chars
+        #   - `max_width_chars` → NATURAL allocation in chars
+        # Pin natural to 1 char so the label's contribution to the
+        # top_row's natural width stays tiny — the row doesn't
+        # balloon with the title length. `hexpand=True` + `halign=FILL`
+        # let the label grow to whatever allocation is left after
+        # provider + close pills, and Pango END-ellipsizes the tail
+        # when even that allocation can't fit the full title.
+        self._session_title_pill.set_width_chars(0)
+        self._session_title_pill.set_max_width_chars(1)
+        self._session_title_pill.set_size_request(1, -1)
+        top_row.append(self._session_title_pill)
+
+        close_btn = Gtk.Button(label="󰅖")
+        close_btn.add_css_class("pilot-close")
+        close_btn.connect("clicked", lambda _b: self.close())
+        top_row.append(close_btn)
+        header.append(top_row)
+
+        # Breadcrumb — one row of pills (cwd / mode / mcps / skills /
         # restored). Kept as Gtk.Box not Label so each segment can get
         # its own CSS tint (`restored` glows yellow so it stands out).
+        # Sits under the provider pill as the second header row.
         self._session_pills = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=4,
@@ -1678,10 +1771,6 @@ class PilotWindow(LayerOverlayWindow):
         self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
         header.append(self._session_pills)
 
-        close_btn = Gtk.Button(label="󰅖")
-        close_btn.add_css_class("pilot-close")
-        close_btn.connect("clicked", lambda _b: self.close())
-        header.append(close_btn)
         root.append(header)
 
         # Dismissable error toast — hidden until an ACP-side failure
@@ -2048,6 +2137,13 @@ class PilotWindow(LayerOverlayWindow):
         return getattr(adapter, "tool_formatters", None)
 
     def _header_title(self) -> str:
+        """Provider pill label — `[suffix] Pilot - provider (model)`.
+        Kept short and predictable so it fits at natural width in the
+        top row. The agent-supplied session title (populated by
+        `_apply_session_info` from ACP `session_info_update`) rides on
+        its own `_session_title_label` next to this pill, NOT inline,
+        so it can flex to fill the remaining header width and only
+        ellipsize when it genuinely overflows the window."""
         if self._model:
             base = self.HEADER_WITH_MODEL_FMT.format(
                 provider=self._provider_name, model=self._model
@@ -2056,33 +2152,47 @@ class PilotWindow(LayerOverlayWindow):
             base = self.HEADER_FMT.format(provider=self._provider_name)
         if self._session_suffix:
             base = f"[{self._session_suffix}] {base}"
-        if self._session_title:
-            title = self._session_title
-            if len(title) > self.HEADER_SESSION_TITLE_MAX:
-                title = title[: self.HEADER_SESSION_TITLE_MAX - 1] + "…"
-            base = self.HEADER_WITH_SESSION_FMT.format(base=base, title=title)
         return base
 
     def _apply_session_info(self, title: str) -> bool:
         """Main-thread sink for `SessionInfoChunk` events. Stashes
-        the agent-supplied title and repaints the header pill in
-        place. Tolerates empty-string clears (ACP spec lets agents
-        wipe the title by sending `null`)."""
+        the agent-supplied title and repaints the dedicated title
+        label next to the provider pill. Tolerates empty-string
+        clears (ACP spec lets agents wipe the title by sending
+        `null`) — the label hides itself when the title goes empty."""
         self._session_title = (title or "").strip()
-        if hasattr(self, "_provider_label"):
-            self._provider_label.set_label(self._header_title())
+        self._refresh_session_title_label()
         return False
+
+    def _refresh_session_title_label(self) -> None:
+        """Sync `self._session_title_pill` (a plain Gtk.Label styled
+        like a pill via CSS) with `self._session_title`.
+
+        The label stays visible + hexpanded at all times (including
+        when no title is set) so the close button sits at the
+        trailing edge regardless of whether an agent has pushed a
+        session title yet. The `.empty` CSS class strips background +
+        padding when the title is blank so it reads as a transparent
+        spacer instead of a weird empty rounded rectangle.
+
+        Tooltip carries the full string in case `ellipsize=END` is
+        clipping the tail on a narrow sidebar."""
+        if not hasattr(self, "_session_title_pill"):
+            return
+        label = self._session_title
+        self._session_title_pill.set_text(label or "")
+        self._session_title_pill.set_tooltip_text(label or "")
+        if label:
+            self._session_title_pill.remove_css_class("empty")
+        else:
+            self._session_title_pill.add_css_class("empty")
 
     def _effective_cwd(self) -> str:
         """Adapter cwd wins when set (it's the authoritative source
         after a palette-driven switch / session restore). Fall back
         to `self._cwd` (seeded from --cwd at spawn) and finally
         `os.getcwd()` so the breadcrumb never renders empty."""
-        return (
-            getattr(self._adapter, "cwd", None)
-            or self._cwd
-            or os.getcwd()
-        )
+        return getattr(self._adapter, "cwd", None) or self._cwd or os.getcwd()
 
     def _pretty_cwd(self) -> str:
         """Return a compact cwd label. Collapses `$HOME` to `~`, and
@@ -2159,28 +2269,61 @@ class PilotWindow(LayerOverlayWindow):
             self._session_pills.remove(child)
             child = nxt
 
-        segments: list[tuple[str, str]] = [
-            (f"@ {self._pretty_cwd()}", PillVariant.MUTED)
-        ]
+        # cwd is the ONE pill whose label is user-sized — a long path
+        # can easily exceed the sidebar width on its own even after
+        # `_pretty_cwd`'s 48-char cap. Build it with ellipsize so the
+        # Pango label shrinks from the middle when the total row
+        # overflows; the other pills stay at natural width.
+        cwd_pill = self._make_ellipsizing_cwd_pill(f"@ {self._pretty_cwd()}")
+        self._session_pills.append(cwd_pill)
+
+        tail: list[tuple[str, str]] = []
         mode = (getattr(self._adapter, "current_mode_id", None) or "").strip()
         if mode:
             # Mode drifts silently on some agents (claude flips out of
             # plan-mode on plan accept, opencode relabels on agent
             # switch) — surfacing it here means the post-turn reconcile
             # pulls the new label into the header without a restart.
-            segments.append((f"󰢻 {mode}", PillVariant.MUTED))
+            tail.append((f"󰢻 {mode}", PillVariant.MUTED))
         if self._mcp_server_names:
-            segments.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
+            tail.append((f"+{len(self._mcp_server_names)} mcps", PillVariant.MUTED))
         if self._skills_dir:
-            segments.append(("+skills", PillVariant.MUTED))
+            tail.append(("+skills", PillVariant.MUTED))
         if getattr(self._adapter, "session_resumed", False):
-            segments.append(("󰑐 restored", PillVariant.WARN))
+            tail.append(("󰑐 restored", PillVariant.WARN))
 
-        for label, variant in segments:
+        for label, variant in tail:
             pill = make_pill(label, variant)
             pill.set_sensitive(False)  # Breadcrumb is informational, not actionable.
             self._session_pills.append(pill)
         self._session_pills.set_tooltip_text(self._session_subtitle(verbose=True))
+
+    def _make_ellipsizing_cwd_pill(self, label: str) -> Gtk.Button:
+        """Build the cwd breadcrumb pill as the row's flex element:
+        hexpands to grab all remaining width, middle-ellipsizes its
+        inner Label so the most meaningful tail (project / file name)
+        stays visible when the header row can't fit everything. Other
+        breadcrumb pills (mcps / skills / restored) stay at natural
+        width, so this is the one that absorbs the squeeze.
+
+        `make_pill` returns a `Gtk.Button` whose first child is the
+        caption `Gtk.Label`; we reach in directly because the factory
+        doesn't expose ellipsize configuration — adding a kwarg there
+        would affect every other pill call site in the overlay."""
+        pill = make_pill(label, PillVariant.MUTED)
+        pill.set_hexpand(True)
+        pill.set_halign(Gtk.Align.FILL)
+        pill.set_sensitive(False)  # Informational only.
+        inner = pill.get_first_child()
+        if isinstance(inner, Gtk.Label):
+            inner.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            # max_width_chars=0 lets the label request as much width
+            # as it naturally wants; ellipsize kicks in only when the
+            # allocated width falls short of that request.
+            inner.set_max_width_chars(0)
+            inner.set_xalign(0.0)
+            inner.set_hexpand(True)
+        return pill
 
     # -- Working indicator -------------------------------------------------
     #
@@ -2347,9 +2490,7 @@ class PilotWindow(LayerOverlayWindow):
             except Exception as e:
                 log.debug("verify_session_info: list_sessions raised: %s", e)
                 return
-            match = next(
-                (s for s in sessions if s.get("session_id") == sid), None
-            )
+            match = next((s for s in sessions if s.get("session_id") == sid), None)
             if not match:
                 return
             title = (match.get("title") or "").strip()
@@ -3206,7 +3347,7 @@ class PilotWindow(LayerOverlayWindow):
                 ("modes", "Modes", "switch the agent's session mode", "modes"),
                 (
                     "cwd",
-                    " cwd",
+                    "Current Working Directory",
                     "browse + pick a new working directory",
                     "cwd",
                 ),
@@ -3874,6 +4015,7 @@ class PilotWindow(LayerOverlayWindow):
         self._session_title = ""
         self._update_phase()
         self._refresh_session_label()
+        self._refresh_session_title_label()
         if hasattr(self, "_provider_label"):
             self._provider_label.set_label(self._header_title())
         _signal_waybar_safe()

@@ -23,6 +23,8 @@ import subprocess
 from enum import Enum
 from typing import Any, Callable, Iterable, Optional, Sequence
 
+from rapidfuzz import fuzz
+
 log = logging.getLogger("lib.overlay")
 
 # ── GTK imports ─────────────────────────────────────────────────
@@ -623,37 +625,59 @@ class CommandPalette(Gtk.Box):
         return None
 
     # ── rendering ──
+
+    # Anything scoring below this gets dropped from non-pinned results.
+    # `fuzz.WRatio` is on a 0..100 scale; ~40 keeps "gst" → "git status"
+    # (≈60-80) in while dropping "gst" → "skills-some-name" (≈15). Raise
+    # if the palette feels too permissive, lower if relevant entries are
+    # getting filtered out.
+    _SCORE_CUTOFF: float = 40.0
+
     @staticmethod
-    def _fuzzy_score(query: str, haystack: str) -> Optional[int]:
-        """Subsequence-match `query` against `haystack` (both
-        lowercased). Returns a non-negative score where LOWER is
-        better (earlier + more contiguous matches score higher); None
-        if `query` isn't a subsequence of `haystack`.
+    def _fuzzy_score(query: str, haystack: str) -> Optional[float]:
+        """Score `query` against `haystack` with a two-stage matcher
+        that mirrors how fzf / `Ctrl+T` palettes feel in practice:
 
-        Scoring:
-          - Start position of the first matched char (earlier = lower).
-          - Plus the sum of gaps between consecutive matched chars.
-          - Empty query scores 0.
+        1. **Subsequence gate** — every character of `query` must
+           appear in `haystack` in order (case-insensitive). Pure
+           `rapidfuzz.WRatio` on its own happily returns 60+ for
+           totally unrelated haystacks that happen to share a
+           partial substring ("gst" scored the same against
+           "git status" as against "skills scm-gitlab docs"); the
+           gate cuts those false positives out entirely. Typos are
+           lost as a side-effect (fzf does the same) — users who
+           want typo tolerance type a shorter prefix instead.
+        2. **Rapidfuzz WRatio** — for entries that pass the gate,
+           score with `fuzz.WRatio` which weights ratio +
+           partial_ratio + token_sort_ratio so multi-word haystacks
+           rank sensibly (e.g. "git status" beats
+           "regit-post-hook" for query "git"). Returns on a 0..100
+           scale where **higher is better**.
 
-        Cheap and good enough for N<1000 palette entries; matches the
-        fzf behaviour users expect without pulling in a native lib."""
+        Empty query short-circuits to max score so the palette opens
+        showing everything in insertion order. Returns None when the
+        subsequence gate rejects OR the rapidfuzz score falls below
+        `_SCORE_CUTOFF`."""
         if not query:
-            return 0
-        hi = 0
-        score = 0
-        first = -1
-        last = -1
-        for ch in query:
-            hi = haystack.find(ch, hi)
-            if hi < 0:
+            return 100.0
+        q = query.lower()
+        h = haystack.lower()
+        # Subsequence gate — cheap, prunes the obvious non-matches
+        # before we pay for WRatio.
+        pos = 0
+        for ch in q:
+            pos = h.find(ch, pos)
+            if pos < 0:
                 return None
-            if first < 0:
-                first = hi
-            if last >= 0:
-                score += hi - last - 1
-            last = hi
-            hi += 1
-        return first + score
+            pos += 1
+        score = fuzz.WRatio(
+            q,
+            h,
+            score_cutoff=CommandPalette._SCORE_CUTOFF,
+        )
+        # rapidfuzz returns 0 when the score is below `score_cutoff`
+        # (cheaper early-exit than computing + returning a low number).
+        return score if score > 0 else None
 
     def _rebuild_list(self) -> None:
         """Wipe and rebuild the ListBox from `_entries`, fuzzy-matched
@@ -681,16 +705,24 @@ class CommandPalette(Gtk.Box):
             child = nxt
 
         query = (self._search.get_text() or "").strip().lower()
-        # Sentinel score for pinned-but-unmatched rows: large enough
-        # to sort below every real match within the active section,
-        # but tied to `idx` so the relative order between pinned
-        # unmatched rows matches their original insertion order.
-        _PINNED_UNMATCHED_SCORE = 10**9
-        scored: list[tuple[int, int, int, CommandPaletteEntry]] = []
+        # Sentinel score for pinned-but-unmatched rows: lowest possible
+        # so they sort UNDER every real match within the active
+        # section while still staying visible. `_fuzzy_score` returns
+        # HIGHER-is-better, so this is a very small negative.
+        _PINNED_UNMATCHED_SCORE = -1.0
+        scored: list[tuple[int, float, int, CommandPaletteEntry]] = []
         for idx, entry in enumerate(self._entries):
-            kind, name, desc, _preview = entry
+            kind, name, _desc, _preview = entry
             is_active = (kind, name) in self._active
-            haystack = f"{name} {kind} {desc}".lower()
+            # Match on the entry **name only**. Including `kind` +
+            # `desc` used to make the haystack noisy enough that short
+            # queries fuzz-matched unrelated rows via their
+            # descriptions (e.g. typing "git" pulled in any skill whose
+            # description happened to mention git, even when no git-
+            # related SKILL.md existed). Names are the canonical
+            # identifier users actually type, so they're the only
+            # column we score against.
+            haystack = name
             score = self._fuzzy_score(query, haystack)
             if score is None:
                 # Non-matching rows: drop unless pinned (i.e. active
@@ -703,7 +735,10 @@ class CommandPalette(Gtk.Box):
             # priority 0 = active (bubble to top); 1 = inactive.
             priority = 0 if is_active else 1
             scored.append((priority, score, idx, entry))
-        scored.sort(key=lambda t: (t[0], t[1], t[2]))
+        # Sort: priority asc (active first), score DESC (higher
+        # rapidfuzz score = better match), idx asc (stable within
+        # ties for the original insertion order).
+        scored.sort(key=lambda t: (t[0], -t[1], t[2]))
         self._filtered = [e for _p, _s, _i, e in scored]
         for entry in self._filtered:
             kind, name, desc, _preview = entry

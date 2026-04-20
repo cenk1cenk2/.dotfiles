@@ -26,10 +26,52 @@
   background-image: none;
 }
 
-.overlay label.pilot-session {
+/* Top row: provider / phase pill on the left, session-title label
+ * (flex-fills remaining width), close button on the right. Spacing
+ * between the three widgets is set on the Box via GTK, not CSS. */
+.overlay box.pilot-header-top {
+  /* No own styling today — class exists as a hook for future
+   * alignment / baseline tweaks. */
+}
+
+/* Agent-supplied session title, rendered as a pill next to the
+ * provider pill. Stylistically subordinate to the provider pill —
+ * thinner, dim, italic — so the eye still reads the provider first.
+ * The pill flex-fills remaining width (see `_session_title_pill`
+ * in pilot.py) and Pango-ellipsizes its inner label's tail ONLY
+ * when the allocation falls short of the natural width.
+ *
+ * The pill is ALWAYS present in the top row (even before an agent
+ * pushes a title) so the close button stays pinned to the trailing
+ * edge through every state change. When the title is empty the
+ * `.empty` class strips the pill's visual chrome so it reads as a
+ * transparent spacer instead of an empty rounded rectangle. */
+.overlay label.pilot-session-title {
+  font-weight: bold;
+  color: @pilot_accent;
+  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  /* min-width:0 lets the label shrink below its natural width when
+   * the row is tight; without it GTK would keep the whole label at
+   * natural width and push the close button off-screen. */
+  min-width: 0;
+}
+
+.overlay label.pilot-session-title.empty {
+  background-color: transparent;
+  padding: 0;
+}
+
+/* Second header row: the breadcrumb pill strip (cwd / mode / mcps /
+ * skills / restored). Selector is `box` not `label` — the class has
+ * always lived on a `Gtk.Box`, the old `label.pilot-session` rule
+ * matched nothing and was a latent no-op. Sit flush under the
+ * provider pill with a small top gap so the rows read as distinct. */
+.overlay box.pilot-session {
   font-size: 0.78em;
-  color: @pilot_fg_dim;
-  margin-left: 10px;
+  color: @pilot_accent;
+  margin-top: 6px;
+  margin-left: 0;
   letter-spacing: 0.02em;
 }
 
@@ -263,6 +305,14 @@
   padding: 2px 4px;
 }
 
+/* Expanded — the body's revealed. Accent the title so the user can
+ * see at a glance which fold they're currently reading. Class is
+ * mirrored from `expander.get_expanded()` via `_on_expander_toggle`. */
+.overlay expander.pilot-thinking-expander.expanded > title {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.12);
+}
+
 .overlay label.pilot-thinking-text {
   background-color: @pilot_text_surface;
   background-image: none;
@@ -288,6 +338,14 @@
   font-size: 0.85em;
   letter-spacing: 0.04em;
   padding: 2px 4px;
+}
+
+/* Expanded — accent the title so it matches the thinking-expander
+ * treatment. Same rationale: highlight the fold the user's actively
+ * reading so switching between thinking / plan / reply is legible. */
+.overlay expander.pilot-plan-expander.expanded > title {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.12);
 }
 
 .overlay label.pilot-plan-text {
@@ -458,6 +516,23 @@
   color: @pilot_pending;
   background-color: alpha(@pilot_pending, 0.14);
   border-color: alpha(@pilot_pending, 0.4);
+}
+
+/* Expanded pill — the details revealer is currently open. Tint
+ * with the accent colour so the user can see at a glance which
+ * bubble's expanded panel they're reading, especially when several
+ * bubbles stack in the same turn's strip. Uses `!important`-free
+ * priority via stacked selector specificity so the accent wins
+ * over the status tints (pending / completed / failed / cancelled). */
+.overlay button.pilot-tool-bubble.expanded,
+.overlay button.pilot-tool-bubble.pending.expanded,
+.overlay button.pilot-tool-bubble.running.expanded,
+.overlay button.pilot-tool-bubble.completed.expanded,
+.overlay button.pilot-tool-bubble.failed.expanded,
+.overlay button.pilot-tool-bubble.cancelled.expanded {
+  color: @pilot_accent;
+  background-color: alpha(@pilot_accent, 0.22);
+  border-color: alpha(@pilot_accent, 0.6);
 }
 
 /* Frozen: once the turn finalised the strip is a historical audit
