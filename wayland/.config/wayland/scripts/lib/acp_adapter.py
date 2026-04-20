@@ -154,6 +154,20 @@ class SessionInfo:
 
 
 @dataclass(frozen=True)
+class SessionModelState:
+    """Effective model state for a session.
+
+    Populated from the agent's `NewSessionResponse.models` /
+    `LoadSessionResponse.models` block (ACP `SessionModelState`) so the
+    adapter tracks what the agent actually selected, not what the client
+    asked for. Claude's ACP bridge is the classic case: you ask for
+    `opus`, the agent returns `opus[1m]` in `currentModelId`."""
+
+    current_model_id: str = ""
+    available_model_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ToolCallSummary:
     """Lightweight snapshot of an ACP ToolCallUpdate shaped for the
     permission-handler callback.
@@ -673,6 +687,15 @@ class AcpSession:
         # session-info` / the status socket can tell the user which
         # path fired without having to parse logs.
         self._resumed_from_store: bool = False
+        # Agent-reported model selection snapshot (ACP `SessionModelState`).
+        # None until `_ensure_started` reads it off new_session /
+        # load_session. Consumers read via `current_model_id`.
+        self._model_state: Optional[SessionModelState] = None
+        # Events that streamed in during `load_session` — agents may
+        # replay prior turns as `session/update` notifications before
+        # the load response comes back. `consume_replay()` drains this
+        # so callers can repaint the chat history.
+        self._replay_queue: Optional[queue.Queue[tuple[str, Any] | _Sentinel]] = None
         self._permission_handler: Optional[PermissionHandler] = None
         # Per-session hook for canonical tool-name extraction.
         # Subclasses (e.g. `ConversationAdapterClaude`) register a
@@ -766,6 +789,31 @@ class AcpSession:
         self._thread.start()
         ready.wait()
 
+    @staticmethod
+    def _extract_model_state(response: Any) -> Optional[SessionModelState]:
+        """Pull the `SessionModelState` off a new/load response, if any.
+
+        Agents are free to omit this block; the ACP schema marks it
+        UNSTABLE. Returns None when the agent didn't ship one."""
+        models = getattr(response, "models", None)
+        if models is None:
+            return None
+        current = getattr(models, "current_model_id", "") or ""
+        available = tuple(
+            getattr(m, "model_id", "") or ""
+            for m in (getattr(models, "available_models", None) or [])
+        )
+        return SessionModelState(current_model_id=current, available_model_ids=available)
+
+    @property
+    def current_model_id(self) -> Optional[str]:
+        """Model the agent is actually using for this session.
+
+        Falls back to None when the agent doesn't ship a
+        `SessionModelState` — callers should keep whatever they
+        bootstrapped with."""
+        return self._model_state.current_model_id if self._model_state else None
+
     def _ensure_started(self) -> str:
         if self._session_id is not None:
             return self._session_id
@@ -847,6 +895,7 @@ class AcpSession:
             stored_id = self._read_stored_session_id()
             session_id: Optional[str] = None
             resumed = False
+            model_state: Optional[SessionModelState] = None
             if stored_id:
                 try:
                     log.info(
@@ -854,12 +903,31 @@ class AcpSession:
                         stored_id,
                         self.session_store_path,
                     )
-                    await conn.load_session(
-                        cwd=cwd, session_id=stored_id, mcp_servers=mcp
-                    )
+                    # ACP agents may push `session/update` notifications
+                    # DURING load_session to replay prior turns so a
+                    # client can repopulate its UI. Capture those into a
+                    # dedicated queue; we hand the drained events back
+                    # via `consume_replay()` for callers that want to
+                    # repaint the chat history.
+                    replay_queue: queue.Queue[tuple[str, Any] | _Sentinel] = queue.Queue()
+                    prior_queue = self._current_queue
+                    self._current_queue = replay_queue
+                    try:
+                        load_resp = await conn.load_session(
+                            cwd=cwd, session_id=stored_id, mcp_servers=mcp
+                        )
+                    finally:
+                        self._current_queue = prior_queue
+                    self._replay_queue = replay_queue
                     session_id = stored_id
                     resumed = True
-                    log.info("acp session resumed: id=%s", session_id)
+                    model_state = self._extract_model_state(load_resp)
+                    log.info(
+                        "acp session resumed: id=%s current_model=%s replay_events=%d",
+                        session_id,
+                        model_state.current_model_id if model_state else "?",
+                        replay_queue.qsize(),
+                    )
                 except Exception as e:
                     log.info(
                         "acp load_session failed (%s); creating a fresh session",
@@ -873,13 +941,16 @@ class AcpSession:
                 )
                 session = await conn.new_session(cwd=cwd, mcp_servers=mcp)
                 session_id = session.session_id
+                model_state = self._extract_model_state(session)
                 log.info(
-                    "acp session established (fresh): id=%s store=%s",
+                    "acp session established (fresh): id=%s store=%s current_model=%s",
                     session_id,
                     self.session_store_path,
+                    model_state.current_model_id if model_state else "?",
                 )
             self._write_stored_session_id(session_id)
             self._resumed_from_store = resumed
+            self._model_state = model_state
             return session_id
 
         fut = asyncio.run_coroutine_threadsafe(_bootstrap(), loop)
@@ -996,6 +1067,29 @@ class AcpSession:
                 except Exception:
                     pass
                 return
+
+    def consume_replay(self) -> list[tuple[str, Any]]:
+        """Drain events captured during `load_session`.
+
+        ACP agents may push `session/update` notifications while
+        replaying prior turns as part of the load handshake. We buffer
+        those so the UI can repaint the chat history on resume. Each
+        element is the same `(kind, payload)` tuple shape `iter_events`
+        yields. Empty list when the session was fresh or the agent
+        didn't replay."""
+        if self._replay_queue is None:
+            return []
+        events: list[tuple[str, Any]] = []
+        while True:
+            try:
+                item = self._replay_queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, _Sentinel):
+                continue
+            events.append(item)
+        self._replay_queue = None
+        return events
 
     def cancel(self) -> None:
         """Cancel the in-flight prompt. Sends `session/cancel` for

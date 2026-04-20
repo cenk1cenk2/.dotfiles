@@ -5,6 +5,7 @@ heavy and unwanted in headless callers. We expose its symbols via a
 lazy `__getattr__` so `from lib import LayerOverlayWindow` works for
 GUI callers without making `from lib import …` drag gi in generally."""
 
+from .cli import configure_logging, stream_subprocess_output
 from .converse import (
     DEFAULT_CONVERSE_ADAPTER,
     ConversationAdapter,
@@ -87,6 +88,8 @@ __all__ = [
     "ConversationAdapterClaude",
     "ConversationAdapterOpenCode",
     "ConversationProvider",
+    "configure_logging",
+    "stream_subprocess_output",
     "DEFAULT_CONVERSE_ADAPTER",
     "DEFAULT_ENRICH_ADAPTER",
     "DEFAULT_SERVER_NAMES",

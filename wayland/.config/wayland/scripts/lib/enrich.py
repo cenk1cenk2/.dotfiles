@@ -127,27 +127,22 @@ class EnrichAdapterClaude:
         self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
-        proc = subprocess.run(
-            [
-                "claude",
-                "-p",
-                "--model",
-                self.model,
-                # `--permission-mode` is optional; skip the pair when
-                # unset so claude uses its user-level default.
-                *(["--permission-mode", self.mode] if self.mode else []),
-                "--system-prompt",
-                self.system_prompt,
-                self.user_prompt_template.format(text=text),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        cmd = [
+            "claude",
+            "-p",
+            "--model",
+            self.model,
+            *(["--permission-mode", self.mode] if self.mode else []),
+            "--system-prompt",
+            self.system_prompt,
+            self.user_prompt_template.format(text=text),
+        ]
+        log.info("claude enrichment: model=%s mode=%s", self.model, self.mode or "default")
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("claude enrichment failed (exit=%d)", proc.returncode)
+            log.error("claude enrichment failed (exit=%d) stderr=%s", proc.returncode, proc.stderr.strip())
             return None
-
+        log.debug("claude stdout=%d chars stderr=%d chars", len(proc.stdout), len(proc.stderr))
         return proc.stdout.strip()
 
 class EnrichAdapterOpenCode:
@@ -195,15 +190,14 @@ class EnrichAdapterOpenCode:
         if self.config_path and os.path.exists(self.config_path):
             env["OPENCODE_CONFIG"] = self.config_path
 
-        proc = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        log.info("opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default")
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
         if proc.returncode != 0 or not proc.stdout.strip():
-            log.error("opencode enrichment failed (exit=%d)", proc.returncode)
+            log.error(
+                "opencode enrichment failed (exit=%d) stderr=%s",
+                proc.returncode,
+                proc.stderr.strip(),
+            )
             return None
-
+        log.debug("opencode stdout=%d chars stderr=%d chars", len(proc.stdout), len(proc.stderr))
         return proc.stdout.strip()

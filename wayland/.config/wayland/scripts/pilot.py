@@ -9,7 +9,6 @@ into the live window instead of opening a new one."""
 
 from __future__ import annotations
 
-import argparse
 import errno
 import json
 import logging
@@ -21,15 +20,13 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import Callable, Optional
 
-if TYPE_CHECKING:
-    # Only pulled in for the `_build_pilot_mcp_server` return annotation;
-    # the real import happens inside the function body so the schema
-    # module isn't forced on callers that never build an ACP server.
-    from acp.schema import McpServerStdio
+import click
+from acp.schema import McpServerStdio
 
 from lib import (
+    configure_logging,
     DEFAULT_CONVERSE_ADAPTER,
     DEFAULT_SERVER_NAMES,
     ConversationAdapter,
@@ -2186,14 +2183,13 @@ class PilotWindow(LayerOverlayWindow):
         self._turn_cancelled = False
         self._active_assistant = None
         if self._alive:
-            # Compose was never disabled; just reclaim focus so the user
-            # can continue typing without clicking. Queued items stay
-            # put — user controls when each one goes via the card's ⏎.
             self._compose.focus()
             self._update_phase()
             # Session-resume flag is finalised by the time the first
             # turn wraps; refresh the breadcrumb so `↻ restored` shows
-            # up (or stays hidden for a fresh new_session).
+            # up (or stays hidden for a fresh new_session). Model
+            # reconciliation in `_AcpConverseAdapter.turn` may have
+            # expanded `opus` → `opus[1m]` — this picks that up too.
             self._refresh_session_label()
             if streamed:
                 self._notify_finished()
@@ -3723,7 +3719,7 @@ _PILOT_MCP_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lib", "mcp_server.py"
 )
 
-def _build_pilot_mcp_server(skills_dir: Optional[str]) -> "McpServerStdio":
+def _build_pilot_mcp_server(skills_dir: Optional[str]) -> McpServerStdio:
     """Construct the `system` ACP server pilot ships itself. Kept in
     pilot.py (not `lib.mcp_servers`) so the env — currently just
     `PILOT_SKILLS_DIR` — is resolved from pilot's own argparse state
@@ -4191,197 +4187,100 @@ def _cmd_kill() -> None:
             pass
     _signal_waybar_safe()
 
-def main():
-    parser = argparse.ArgumentParser(description="Conversational AI sidebar overlay")
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help=(
-            "enable DEBUG logging — includes the raw JSON-RPC wire for "
-            "every ACP frame (both directions) plus the agent subprocess "
-            "stderr. Use when a turn misbehaves (e.g. opencode not "
-            "asking for tool permission) and you need to see whether "
-            "the method is actually firing over the protocol."
-        ),
-    )
-    # Session suffix: when set, rewrites every user-visible runtime path
-    # (main socket, MCP socket, adapter config files) plus the GTK
-    # app-id to include `-<suffix>`. Lets multiple pilot overlays coexist
-    # (e.g. the default "ask" pilot and a dedicated "plan" pilot). Empty
-    # string keeps the shipped paths byte-for-byte identical, so no-flag
-    # behaviour is unchanged.
-    parser.add_argument(
-        "--session",
-        default="",
-        metavar="SUFFIX",
-        help=(
-            "session suffix — appended to socket / config-file / app-id "
-            "names so multiple pilot overlays can coexist. Empty (default) "
-            "keeps the original paths."
-        ),
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+class Pilot:
+    """CLI dispatcher — all subcommands live here as methods."""
 
-    toggle_parser = subparsers.add_parser(
-        "toggle",
-        help="open the overlay (or forward a turn to a running session)",
-    )
-    toggle_parser.add_argument(
+    @dataclass
+    class ToggleArgs:
+        input: InputMode
+        converse_provider: str
+        converse_model: Optional[str]
+        cwd: Optional[str]
+        auto_approve: list[str]
+        auto_reject: list[str]
+        agents_md: str
+        skills_dir: str
+        mcp: Optional[list[str]]
+
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Session suffix.")
+    def cli(verbose: bool, session_suffix: str):
+        """Conversational AI sidebar overlay."""
+        configure_logging(verbose)
+        global _PATHS
+        _PATHS = PilotPaths.from_suffix(session_suffix or "")
+
+    @cli.command()
+    @click.option(
         "--input",
-        type=InputMode,
-        choices=[InputMode.STDIN, InputMode.CLIPBOARD],
-        default=InputMode.STDIN,
-        help="Source of the initial user turn",
+        "input_",
+        type=click.Choice([m.value for m in (InputMode.STDIN, InputMode.CLIPBOARD)]),
+        default=InputMode.STDIN.value,
+        help="Initial user-turn source.",
     )
-    toggle_parser.add_argument(
+    @click.option(
         "--converse-provider",
-        choices=list(ConversationProvider),
-        default=DEFAULT_CONVERSE_ADAPTER,
+        type=click.Choice([p.value for p in ConversationProvider]),
+        default=DEFAULT_CONVERSE_ADAPTER.value,
     )
-    # None → per-adapter default (`sonnet` for Claude, whatever
-    # opencode picks for OpenCode).
-    toggle_parser.add_argument("--converse-model", default=None)
-    # Working directory for the spawned ACP agent subprocess. Default
-    # = a fresh `mkdtemp` so each session runs in a clean-room sandbox.
-    toggle_parser.add_argument(
-        "--cwd",
-        default=None,
-        metavar="PATH",
-        help=(
-            "working directory for the spawned AI CLI. Defaults to a "
-            "fresh tempdir (tempfile.mkdtemp(prefix='pilot-'))."
-        ),
-    )
-    # Auto-approve: tool names whose ACP permission requests are
-    # short-circuited to `allow` without surfacing a row in the
-    # overlay. Repeatable, matches case-insensitively and treats
-    # `-` / `_` as equivalent (so `Read`, `read`, `read-file`,
-    # `read_file` all canonicalise the same). Rendered as green pills
-    # on the submit bar; click a pill to drop the tool back into the
-    # normal approval flow.
-    toggle_parser.add_argument(
-        "--auto-approve",
-        action="append",
-        dest="auto_approve",
-        default=[],
-        metavar="TOOL_NAME",
-        help=(
-            "Tool name to auto-approve without prompting the user. "
-            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
-            "corresponding green pill in the compose bar to revoke."
-        ),
-    )
-    # Auto-reject: mirror of `--auto-approve` — tool names whose
-    # permission requests short-circuit to `deny`. Repeatable, same
-    # normalisation rules. Rendered as red pills; click to drop the
-    # tool back into the normal approval flow.
-    toggle_parser.add_argument(
-        "--auto-reject",
-        action="append",
-        dest="auto_reject",
-        default=[],
-        metavar="TOOL_NAME",
-        help=(
-            "Tool name to auto-reject without prompting the user. "
-            "Repeatable; case-insensitive, `-`/`_` unified. Click the "
-            "corresponding red pill in the compose bar to revoke."
-        ),
-    )
-    # Bootstrap-rules injection. When set (and the file exists) the
-    # contents are PREPENDED to the provider's system prompt on the
-    # first turn, AND registered as `mcp__pilot__resource__agents` so
-    # the model can re-read the canonical source mid-session. Default
-    # matches the nvim config's AGENTS.md path; set to empty string to
-    # disable injection entirely.
-    toggle_parser.add_argument(
+    @click.option("--converse-model", default=None, help="Per-adapter model override.")
+    @click.option("--cwd", default=None, metavar="PATH", help="Agent working dir; defaults to a fresh tempdir.")
+    @click.option("--auto-approve", "auto_approve", multiple=True, metavar="TOOL", help="Auto-approve a tool; repeatable.")
+    @click.option("--auto-reject", "auto_reject", multiple=True, metavar="TOOL", help="Auto-reject a tool; repeatable.")
+    @click.option(
         "--agents-md",
-        dest="agents_md",
         default="~/.config/nvim/utils/agents/AGENTS.md",
         metavar="PATH",
-        help=(
-            "Path to AGENTS.md. When the file exists its contents are "
-            "prepended to the system prompt and exposed as an MCP "
-            "resource tool so the model can re-read it on demand. "
-            "Empty string disables injection. "
-            "Default: ~/.config/nvim/utils/agents/AGENTS.md"
-        ),
+        help="Path to AGENTS.md; empty disables injection.",
     )
-    # Skills directory. When set (and the dir exists) the subprocess
-    # registers `list_skills` + `load_skill` MCP tools backed by the
-    # `*/SKILL.md` layout from mcphub-nvim. Default matches the nvim
-    # config; set to "" to skip.
-    toggle_parser.add_argument(
+    @click.option(
         "--skills-dir",
-        dest="skills_dir",
         default="~/.config/nvim/utils/agents/skills",
         metavar="DIR",
-        help=(
-            "Path to the agent skills root. Each subdirectory must "
-            "contain a SKILL.md with `---`-delimited YAML frontmatter "
-            "(name + description). Empty string disables the skills "
-            "MCP capability. "
-        ),
+        help="Agent skills root; empty disables.",
     )
-    # MCP servers to register alongside pilot. Repeatable; each value
-    # may itself be comma- or whitespace-separated so shell helpers
-    # can pass bulk lists (`--mcp git,memory`). Names resolve against
-    # `lib.mcp_servers.DEFAULT_SERVERS` (nvim form like `argocd/kilic`
-    # accepted too). Omitting the flag entirely picks the full
-    # catalog; pass `--mcp ""` explicitly to opt everything out.
-    toggle_parser.add_argument(
+    @click.option(
         "--mcp",
-        action="append",
-        dest="mcp",
-        default=None,
+        multiple=True,
         metavar="NAME",
-        help=(
-            "MCP server to register. Repeatable; accepts comma / "
-            "whitespace-separated lists. Omit to enable the full "
-            "catalog; pass an empty value to disable."
-        ),
+        help="MCP server; repeatable, accepts comma/space lists.",
     )
+    def cmd_toggle(input_, converse_provider, converse_model, cwd, auto_approve, auto_reject, agents_md, skills_dir, mcp):
+        """Open the overlay, or forward a turn to the live session."""
+        _cmd_toggle(
+            Pilot.ToggleArgs(
+                input=InputMode(input_),
+                converse_provider=converse_provider,
+                converse_model=converse_model,
+                cwd=os.path.expanduser(cwd) if cwd else None,
+                auto_approve=list(auto_approve),
+                auto_reject=list(auto_reject),
+                agents_md=agents_md,
+                skills_dir=skills_dir,
+                mcp=list(mcp) if mcp else None,
+            )
+        )
 
-    subparsers.add_parser("status", help="print waybar-shaped JSON status")
-    subparsers.add_parser(
-        "is-running",
-        help="exit 0 if a session is live, non-zero otherwise",
-    )
-    subparsers.add_parser("kill", help="terminate the running session (if any)")
+    @cli.command("status")
+    def cmd_status():
+        """Print waybar-shaped status JSON."""
+        _cmd_status()
 
-    args = parser.parse_args()
+    @cli.command("is-running")
+    def cmd_is_running():
+        """Exit 0 if a session is live."""
+        _cmd_is_running()
 
-    # Always log to stderr — stdout belongs to waybar-style status
-    # subcommands (`status` emits JSON) and to any future pipe consumer.
-    # INFO default so the key event-points (spawn, session-id, prompt
-    # shape, permission round-trips, MCP server chatter) surface
-    # without needing `-v`; `-v` bumps to DEBUG which adds per-chunk
-    # and per-RPC detail.
-    logging.basicConfig(
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        stream=sys.stderr,
-    )
+    @cli.command("kill")
+    def cmd_kill():
+        """Terminate the running session."""
+        _cmd_kill()
 
-    global _PATHS
-    _PATHS = PilotPaths.from_suffix(args.session or "")
 
-    # Expand `~` in user-supplied `--cwd`. The None → mkdtemp default is
-    # deferred into `_cmd_toggle` so status / kill / forwarding turns
-    # never leak a stray tempdir.
-    if args.command == "toggle" and args.cwd:
-        args.cwd = os.path.expanduser(args.cwd)
-
-    match args.command:
-        case "toggle":
-            _cmd_toggle(args)
-        case "status":
-            _cmd_status()
-        case "is-running":
-            _cmd_is_running()
-        case "kill":
-            _cmd_kill()
+# Early shebang scan expects the literal "toggle" token somewhere in argv
+# — we only LD_PRELOAD gtk4-layer-shell when the window will actually
+# render. Click's subcommand name matches this, so nothing else to wire.
 
 if __name__ == "__main__":
-    main()
+    Pilot.cli()

@@ -197,6 +197,33 @@ class _AcpConverseAdapter(AcpAdapter):
             chunk = self._translate_acp_chunk(kind, payload)
             if chunk is not None:
                 yield chunk
+        self._reconcile_model()
+
+    def _reconcile_model(self) -> None:
+        """Pull the agent's effective model back into `self.model`.
+
+        Claude's bridge expands aliases (`opus` → `opus[1m]`); other
+        agents may switch modes mid-session. Run after every turn so
+        the header + session-store path reflect reality."""
+        effective = self.current_model_id
+        if effective and effective != self.model:
+            log.info(
+                "reconciling model: requested=%s effective=%s",
+                self.model,
+                effective,
+            )
+            self.model = effective
+
+    def replay_chunks(self) -> Iterator[TurnChunk]:
+        """Yield TurnChunks captured during `session/load`.
+
+        Callers invoke this once after `session_resumed` goes True to
+        repopulate the chat window with the agent's replayed history.
+        Idempotent: subsequent calls yield nothing."""
+        for kind, payload in self.consume_replay():
+            chunk = self._translate_acp_chunk(kind, payload)
+            if chunk is not None:
+                yield chunk
 
 
 class ConversationAdapterClaude(_AcpConverseAdapter):
