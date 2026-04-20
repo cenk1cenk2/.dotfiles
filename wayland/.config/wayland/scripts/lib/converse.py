@@ -99,7 +99,9 @@ class UserMessageChunk:
 
     text: str
 
-TurnChunk = Union[str, ToolCall, ThinkingChunk, PlanChunk, SessionInfoChunk, UserMessageChunk]
+TurnChunk = Union[
+    str, ToolCall, ThinkingChunk, PlanChunk, SessionInfoChunk, UserMessageChunk
+]
 
 class ConversationAdapter(Protocol):
     """Streaming, stateful AI backend. Each `turn()` extends the session."""
@@ -369,7 +371,7 @@ class ConversationAdapterClaude(_AcpConverseAdapter):
         # first-turn prefix is the portable path that both Claude Code
         # and OpenCode agents honour.
         self.system_prompt = system_prompt
-        self.model = kwargs.get("model") or "sonnet"
+        self.model = kwargs.get("model") or "opus"
         self.mode = kwargs.get("mode")
         env = dict(kwargs.get("env") or os.environ)
         env.setdefault("ANTHROPIC_MODEL", self.model)
