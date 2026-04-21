@@ -57,7 +57,7 @@
       "wet": 0.0,
       "attack": 5.0,
       "release": 150.0,
-      "curve-threshold": -36.0,
+      "curve-threshold": -30.0,
       "curve-zone": -6.0,
       "hysteresis": true,
       "hysteresis-threshold": -6.0,
