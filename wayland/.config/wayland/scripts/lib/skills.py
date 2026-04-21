@@ -38,10 +38,26 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Skill:
+    """Parsed skill bundle.
+
+    - `name` — programmatic slug (directory name or frontmatter
+      `name:`), used for filesystem lookups and MCP URIs.
+    - `title` — human-readable display name. Frontmatter `title:`
+      wins; falls back to the first `# H1` in the body; empty string
+      when neither is available. Consumers should treat empty as
+      "no title, use `name`".
+    - `description` — one-line summary (frontmatter `description:`
+      or a synthesised fallback).
+    - `body` — markdown body after frontmatter stripping.
+    - `path` — absolute path of the SKILL.md that produced this.
+    - `frontmatter` — raw frontmatter dict, for callers that need
+      fields outside the parsed trio."""
+
     name: str
     description: str
     body: str
     path: str
+    title: str = ""
     frontmatter: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -55,6 +71,22 @@ class Skill:
         if isinstance(raw, list):
             return [r for r in raw if isinstance(r, str)]
         return []
+
+def _extract_first_h1(body: str) -> str:
+    """Return the text of the first ATX-style `# Heading` line in
+    `body`, or empty string when none exists. Stops at the first
+    non-blank, non-heading line so we don't walk a whole document.
+    Ignores setext (`=====`) headings — SKILL.md authors in this
+    tree all use ATX."""
+    for raw in body.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("# ") and not stripped.startswith("##"):
+            return stripped[2:].strip()
+        # First real line isn't an H1 — no title in the body.
+        return ""
+    return ""
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Split `---`-delimited YAML frontmatter from body. Returns
@@ -118,7 +150,19 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 def parse_skill(path: str, *, fallback_name: Optional[str] = None) -> Optional[Skill]:
     """Read and parse `SKILL.md` at `path`. Returns None on IO errors
-    or when the body is empty (matches mcphub-nvim's pruning)."""
+    or when the body is empty (matches mcphub-nvim's pruning).
+
+    Title resolution cascade (palette / MCP put this at the top):
+      1. Frontmatter `title:` — explicit author intent.
+      2. First `# H1` in the body — every well-formed SKILL.md in
+         this tree ships one (e.g. `# Brainstorming Ideas Into
+         Designs`), so skills without an explicit `title:` still
+         get a friendly display label.
+      3. Empty string — consumers should fall back to `name`.
+
+    Authors who already wrote a nice `description:` shouldn't have
+    the description land in the palette's name slot, so we pick
+    title independently of description."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
@@ -131,11 +175,13 @@ def parse_skill(path: str, *, fallback_name: Optional[str] = None) -> Optional[S
     slug = fallback_name or os.path.basename(os.path.dirname(path))
     name = fm.get("name") or slug
     description = fm.get("description") or f"Guidance for {name}"
+    title = str(fm.get("title") or "").strip() or _extract_first_h1(body)
     return Skill(
         name=str(name),
         description=str(description),
         body=body,
         path=path,
+        title=title,
         frontmatter=fm,
     )
 
@@ -199,33 +245,48 @@ def read_reference(skills_dir: str, name: str) -> Optional[str]:
 @dataclass(frozen=True)
 class SkillListing:
     """One palette row's worth of info. Deliberately slim — the full
-    SKILL.md body is only fetched if/when the agent asks for it via an
-    MCP `resources/read`, not while the user scans names."""
+    SKILL.md body is only fetched if/when the agent asks for it via
+    an MCP `resources/read`, not while the user scans names.
+
+    `title` — human-readable display label (from MCP `title` field,
+    added in 2025-03 revision of the spec). Empty string when the
+    server didn't ship one; consumers should fall back to `name`
+    (the programmatic slug) in that case."""
 
     name: str
     description: str
     uri: str
+    title: str = ""
 
-def list_skills_via_mcp(
+@dataclass(frozen=True)
+class ReferenceListing:
+    """Palette row for a shared reference (`<skills_dir>/references/
+    <name>.md`). Mirrors `SkillListing` so the palette can render
+    either interchangeably. `title` comes from the MCP resource
+    listing; empty when the server didn't emit one."""
+
+    name: str
+    description: str
+    uri: str
+    title: str = ""
+
+def _fetch_mcp_resources(
     mcp_server_script: str,
     *,
     skills_dir: Optional[str] = None,
     timeout: float = 5.0,
-) -> list[SkillListing]:
-    """Spawn `mcp_server_script` as a subprocess, speak the MCP
-    handshake + `resources/list` over stdio, and return the `skill/*`
-    entries. Used by pilot's Ctrl+Space palette so UI listing goes
-    through the exact same server (and therefore the same parser +
-    env) the agent would hit to actually read the content.
-
-    Errors collapse to an empty list — the palette gracefully shows no
-    skills rather than crashing on a missing binary / bad env."""
+) -> list[dict]:
+    """Spawn the MCP server, run the `initialize` + `resources/list`
+    handshake over stdio, and return the raw resource dicts. Shared
+    helper so both `list_skills_via_mcp` and `list_references_via_mcp`
+    go through the same codepath (one subprocess per call is fine —
+    both lists are palette-open-time only, not hot-path)."""
     env = dict(os.environ)
     if skills_dir:
         env["PILOT_SKILLS_DIR"] = skills_dir
     # stderr flows straight through so `logging` output from the MCP
     # server surfaces in pilot's own stderr — debugging why the palette
-    # shows no skills used to mean blindly re-running the server by
+    # shows no resources used to mean blindly re-running the server by
     # hand; now it lands in the same log stream as pilot's other
     # chatter.
     try:
@@ -239,7 +300,7 @@ def list_skills_via_mcp(
             env=env,
         )
     except OSError as e:
-        log.warning("skills mcp spawn failed: %s", e)
+        log.warning("mcp spawn failed: %s", e)
         return []
     # Pin narrowed references so closures don't lose the `is not None`
     # check ty otherwise complains about on `proc.stdin` / `proc.stdout`
@@ -270,7 +331,7 @@ def list_skills_via_mcp(
         resp = recv() or {}
         resources = (resp.get("result") or {}).get("resources") or []
     except (BrokenPipeError, OSError) as e:
-        log.warning("skills mcp roundtrip failed: %s", e)
+        log.warning("mcp resources/list roundtrip failed: %s", e)
     finally:
         try:
             stdin.close()
@@ -280,19 +341,33 @@ def list_skills_via_mcp(
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
+    return resources
 
+def _strip_pilot_prefix(uri: str) -> str:
+    """Drop the `pilot://` scheme from `uri` if present. Accepts either
+    form so caches from the pre-scheme era still resolve."""
+    prefix = "pilot://"
+    return uri[len(prefix) :] if uri.startswith(prefix) else uri
+
+def list_skills_via_mcp(
+    mcp_server_script: str,
+    *,
+    skills_dir: Optional[str] = None,
+    timeout: float = 5.0,
+) -> list[SkillListing]:
+    """MCP `resources/list` → `skill/*` entries. UI listing goes
+    through the same server the agent would hit, so the palette and
+    the agent see identical data.
+
+    Errors collapse to an empty list — the palette gracefully shows
+    no skills rather than crashing on a missing binary / bad env."""
+    resources = _fetch_mcp_resources(
+        mcp_server_script, skills_dir=skills_dir, timeout=timeout
+    )
     out: list[SkillListing] = []
     for r in resources:
         uri = r.get("uri", "")
-        # Accept both `skill/<name>` (legacy) and `pilot://skill/<name>`
-        # (current) — the MCP server emits the pilot:// form now for
-        # compatibility with strict clients, but older caches may still
-        # round-trip the unscoped URIs.
-        body = uri
-        for prefix in ("pilot://", ""):
-            if prefix and body.startswith(prefix):
-                body = body[len(prefix) :]
-                break
+        body = _strip_pilot_prefix(uri)
         if not body.startswith("skill/"):
             continue
         tail = body[len("skill/") :]
@@ -303,10 +378,54 @@ def list_skills_via_mcp(
                 name=r.get("name") or tail,
                 description=r.get("description", ""),
                 uri=uri,
+                title=r.get("title", "") or "",
             )
         )
     log.info(
         "list_skills_via_mcp: %d resources total, %d matched skill/*",
+        len(resources),
+        len(out),
+    )
+    return out
+
+def list_references_via_mcp(
+    mcp_server_script: str,
+    *,
+    skills_dir: Optional[str] = None,
+    timeout: float = 5.0,
+) -> list[ReferenceListing]:
+    """MCP `resources/list` → `reference/*` entries. Sibling of
+    `list_skills_via_mcp` so pilot's root palette can show references
+    as their own pickable column — users attach a reference the same
+    way they attach a skill (Tab ticks, Enter commits to pills)."""
+    resources = _fetch_mcp_resources(
+        mcp_server_script, skills_dir=skills_dir, timeout=timeout
+    )
+    out: list[ReferenceListing] = []
+    for r in resources:
+        uri = r.get("uri", "")
+        body = _strip_pilot_prefix(uri)
+        if not body.startswith("reference/"):
+            continue
+        tail = body[len("reference/") :]
+        if "/" in tail:
+            continue
+        # MCP server emits `name="reference:<tail>"` for references so
+        # strict clients surface the transport hint; peel it off so
+        # the palette shows a clean slug like `git-commit` rather
+        # than `reference:git-commit`.
+        raw_name = r.get("name") or tail
+        slug = raw_name[len("reference:") :] if raw_name.startswith("reference:") else raw_name
+        out.append(
+            ReferenceListing(
+                name=slug,
+                description=r.get("description", ""),
+                uri=uri,
+                title=r.get("title", "") or "",
+            )
+        )
+    log.info(
+        "list_references_via_mcp: %d resources total, %d matched reference/*",
         len(resources),
         len(out),
     )

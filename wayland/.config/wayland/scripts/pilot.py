@@ -57,8 +57,10 @@ from lib import (
     signal_waybar,
 )
 from lib.skills import (
+    list_references_via_mcp,
     list_skills_via_mcp,
     load_skill_references,
+    load_skills,
     parse_skill,
     read_reference,
 )
@@ -1670,6 +1672,7 @@ class PilotWindow(LayerOverlayWindow):
         # cached — we reset state (search box, active set) on every
         # open so stale selections don't leak across sessions.
         self._palette: Optional[CommandPalette] = None
+        self._references_palette: Optional[CommandPalette] = None
         self._permissions_palette: Optional[CommandPalette] = None
         self._mcp_palette: Optional[CommandPalette] = None
         self._models_palette: Optional[CommandPalette] = None
@@ -1978,15 +1981,25 @@ class PilotWindow(LayerOverlayWindow):
     def _resolve_resource(self, kind: str, name: str) -> Optional[str]:
         """Load the body of a palette-picked resource. Returns None when
         the kind is unknown or the file is unreadable — caller drops
-        the token in that case."""
+        the token in that case.
+
+        `name` may be either the programmatic slug (legacy `#{skill/
+        <slug>}` compose tokens) or the display title (palette entries
+        built from `list_skills_via_mcp` since we started surfacing
+        `skill.title` at the top). Slug wins — cheap `os.path.isdir`
+        check — with a title fallback that scans `load_skills` so
+        rewriting the palette→pending flow to carry both isn't needed."""
         if not self._skills_dir:
             return None
         if kind == "skill":
-            skill_md = os.path.join(self._skills_dir, name, "SKILL.md")
-            skill = parse_skill(skill_md, fallback_name=name)
+            slug = self._resolve_skill_slug(name)
+            if slug is None:
+                return None
+            skill_md = os.path.join(self._skills_dir, slug, "SKILL.md")
+            skill = parse_skill(skill_md, fallback_name=slug)
             if skill is None:
                 return None
-            refs = load_skill_references(self._skills_dir, name)
+            refs = load_skill_references(self._skills_dir, slug)
             if refs and refs.startswith("No references"):
                 refs = None
             parts = [skill.body]
@@ -1995,6 +2008,22 @@ class PilotWindow(LayerOverlayWindow):
             return "\n\n".join(parts)
         if kind == "reference":
             return read_reference(self._skills_dir, name)
+        return None
+
+    def _resolve_skill_slug(self, name: str) -> Optional[str]:
+        """Map a palette entry's `name` — which may be either the
+        programmatic slug or the display title — back to the skill
+        directory slug. Preserves the legacy slug path (one `isdir`
+        call) and only walks the full skills list on title misses."""
+        skills_dir = self._skills_dir
+        if not skills_dir:
+            return None
+        direct = os.path.join(skills_dir, name, "SKILL.md")
+        if os.path.isfile(direct):
+            return name
+        for skill in load_skills(skills_dir):
+            if skill.title == name:
+                return skill.name
         return None
 
     def stage_turn(self, user_message: str) -> bool:
@@ -3394,6 +3423,12 @@ class PilotWindow(LayerOverlayWindow):
                     "attach skills as resources on the next turn",
                     "skills",
                 ),
+                (
+                    "references",
+                    "References",
+                    "attach shared references as resources on the next turn",
+                    "references",
+                ),
                 ("mcps", "MCPs", "toggle MCP servers for this session", "mcps"),
                 ("models", "Models", "switch the agent's active model", "models"),
                 ("modes", "Modes", "switch the agent's session mode", "modes"),
@@ -3435,6 +3470,7 @@ class PilotWindow(LayerOverlayWindow):
         kind = entries[0][0]
         dispatch = {
             "skills": self._open_resource_palette,
+            "references": self._open_references_palette,
             "mcps": self._open_mcp_palette,
             "models": self._open_models_palette,
             "modes": self._open_modes_palette,
@@ -3474,6 +3510,30 @@ class PilotWindow(LayerOverlayWindow):
         # palette shows which resources are currently queued.
         self._palette.preseed_active({(k, n) for (k, n, _d) in self._pending_resources})
         self._palette.open(resources)
+
+    def _open_references_palette(self) -> None:
+        """Raise the references palette over the compose area. Sibling
+        of `_open_resource_palette`, wired to `_collect_references`
+        (filters the MCP `resources/list` for `reference/*`) and
+        reusing `_commit_resources_as_pills` so picked references land
+        in the same `_pending_resources` list skills go through — the
+        pending-turn expansion path handles `kind == "reference"` via
+        `read_reference` already, no separate commit pipeline needed."""
+        if self._references_palette is None:
+            self._references_palette = CommandPalette(
+                host_overlay=self._compose_overlay,
+                on_commit=self._commit_resources_as_pills,
+                on_cancel=self._compose.focus,
+                placeholder=(
+                    "Search references — Tab ticks · Enter attaches · Esc cancels"
+                ),
+            )
+        self._size_palette(self._references_palette)
+        entries = self._collect_references()
+        self._references_palette.preseed_active(
+            {(k, n) for (k, n, _d) in self._pending_resources}
+        )
+        self._references_palette.open(entries)
 
     def _commit_resources_as_pills(
         self, active_entries: list[tuple[str, str, str, str]]
@@ -4300,16 +4360,41 @@ class PilotWindow(LayerOverlayWindow):
 
     def _collect_resources(self) -> list[tuple[str, str, str, str]]:
         """Build the `(kind, name, description, preview)` list feeding
-        the Ctrl+Space palette — skills only. Sourced via our own MCP
-        server's `resources/list` so the palette and the agent see the
-        same set."""
+        the skills palette. Sourced via our own MCP server's
+        `resources/list` so the palette and the agent see the same
+        set.
+
+        `name` slot carries `skill.title or skill.name` — the MCP
+        listing now emits the human-readable title alongside the slug
+        (spec 2025-03) and the user wants that at the top of each row.
+        `_resolve_resource` falls back to a title→slug scan so the
+        pill the user picks (which carries the title as its key)
+        still resolves to the right SKILL.md folder."""
         resources: list[tuple[str, str, str, str]] = []
         if self._skills_dir:
             for skill in list_skills_via_mcp(
                 _PILOT_MCP_SCRIPT, skills_dir=self._skills_dir
             ):
-                resources.append(("skill", skill.name, skill.description, skill.uri))
+                display = skill.title or skill.name
+                resources.append(
+                    ("skill", display, skill.description, skill.uri)
+                )
         return resources
+
+    def _collect_references(self) -> list[tuple[str, str, str, str]]:
+        """Build the palette entries for the references palette — same
+        MCP source as skills, filtered for `reference/*` URIs. Filename
+        slug is the display label (references don't ship titles)."""
+        out: list[tuple[str, str, str, str]] = []
+        if self._skills_dir:
+            for ref in list_references_via_mcp(
+                _PILOT_MCP_SCRIPT, skills_dir=self._skills_dir
+            ):
+                display = ref.title or ref.name
+                out.append(
+                    ("reference", display, ref.description, ref.uri)
+                )
+        return out
 
     def _collect_permission_entries(self) -> list[tuple[str, str, str, str]]:
         """Build palette entries for the Ctrl+K permissions view. Each

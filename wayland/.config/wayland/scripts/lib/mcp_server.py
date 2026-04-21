@@ -162,16 +162,26 @@ def _list_resources() -> list[dict]:
     out: list[dict] = []
     skills = load_skills(SKILLS_DIR)
     for skill in skills:
-        out.append(
-            {
-                "uri": _skill_uri(skill.name),
-                "name": skill.name,
-                "description": skill.description,
-                "mimeType": "text/markdown",
-            }
-        )
+        entry: dict = {
+            "uri": _skill_uri(skill.name),
+            "name": skill.name,
+            "description": skill.description,
+            "mimeType": "text/markdown",
+        }
+        # MCP spec (2025-03) adds an optional `title` field — the
+        # client is free to render it above / instead of `name` when
+        # present. We only emit it when the skill actually carries
+        # one so strict validators that reject unknown empty fields
+        # don't choke.
+        if skill.title:
+            entry["title"] = skill.title
+        out.append(entry)
     references = load_references(SKILLS_DIR)
     for name, _path in references:
+        # References don't carry a title — the filename slug is the
+        # human-readable label the user sees. If that changes later
+        # (e.g. we start extracting H1s out of the body), emit it on
+        # `title` the same way skills do.
         out.append(
             {
                 "uri": _reference_uri(name),
