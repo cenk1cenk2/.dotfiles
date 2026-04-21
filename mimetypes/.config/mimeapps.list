@@ -30,5 +30,5 @@ x-scheme-handler/https=brave-browser.desktop;
 x-scheme-handler/obsidian=obsidian.desktop;
 x-scheme-handler/slack=slack.desktop
 x-scheme-handler/terminal=kitty.desktop;
-x-scheme-handler/webcal=brave-browser.desktop;
+x-scheme-handler/webcal=brave-browser.desktop
 x-scheme-handler/yazi=yazi.desktop;
