@@ -35,20 +35,6 @@
       "vad-thres": 90.0,
       "wet": 0.0
     },
-    "speex#0": {
-      "bypass": false,
-      "enable-agc": false,
-      "enable-denoise": true,
-      "enable-dereverb": true,
-      "input-gain": 0.0,
-      "noise-suppression": -20,
-      "output-gain": 0.0,
-      "vad": {
-        "enable": true,
-        "probability-continue": 90,
-        "probability-start": 95
-      }
-    },
     "gate#0": {
       "bypass": false,
       "input-gain": 0.0,
@@ -254,7 +240,6 @@
     "plugins_order": [
       "stereo_tools#0",
       "rnnoise#0",
-      "speex#0",
       "gate#0",
       "compressor#0",
       "deesser#0",
