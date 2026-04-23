@@ -8,8 +8,7 @@ set $cursor-theme Breeze_Light
 set $term-font ConsolasLG Nerd Font 16
 set $gtk-color-scheme prefer-dark
 
-set $gui-font Segoe UI 16
-set $gui-font-big Segoe UI 24
+set $gui-font Segoe UI 12
 
 # a theme specific color map
 set $color0 #282c34
