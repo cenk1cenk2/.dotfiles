@@ -39,12 +39,13 @@ class EnrichAdapterHttp:
     None-valued caller args (e.g. argparse) collapse to the baseline."""
 
     provider = EnrichProvider.HTTP
+    DEFAULT_MODEL = "gemma4:31b-cloud"
 
     def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.base_url = kwargs.get("base_url") or "https://ai.kilic.dev/api/v1"
-        self.model = kwargs.get("model") or "gemma4:e2b"
+        self.model = kwargs.get("model") or self.DEFAULT_MODEL
         self.api_key = kwargs.get("api_key") or ""
         self.temperature = kwargs.get("temperature")
         self.top_p = kwargs.get("top_p")
@@ -138,7 +139,9 @@ class EnrichAdapterClaude:
             self.system_prompt,
             self.user_prompt_template.format(text=text),
         ]
-        log.info("claude enrichment: model=%s mode=%s", self.model, self.mode or "default")
+        log.info(
+            "claude enrichment: model=%s mode=%s", self.model, self.mode or "default"
+        )
         result = run(cmd, log=log, tag="claude")
         if result.returncode != 0 or not result.stdout.strip():
             log.error(
@@ -159,7 +162,7 @@ class EnrichAdapterOpenCode:
 
     provider = EnrichProvider.OPENCODE
 
-    DEFAULT_MODEL = "gemma4:e2b"
+    DEFAULT_MODEL = "gemma4:31b-cloud"
     DEFAULT_PROVIDER = "kilic"
     DEFAULT_CONFIG_PATH = os.path.expanduser(
         "~/.config/nvim/utils/agents/opencode/kilic.json"
@@ -194,7 +197,9 @@ class EnrichAdapterOpenCode:
         if self.config_path and os.path.exists(self.config_path):
             env["OPENCODE_CONFIG"] = self.config_path
 
-        log.info("opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default")
+        log.info(
+            "opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default"
+        )
         result = run(argv, log=log, env=env, tag="opencode")
         if result.returncode != 0 or not result.stdout.strip():
             log.error(
