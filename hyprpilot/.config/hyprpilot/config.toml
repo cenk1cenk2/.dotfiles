@@ -1,0 +1,60 @@
+[ui]
+zoom = 1.4
+
+[daemon.window]
+mode = "anchor"
+
+[daemon.window.anchor]
+edge = "right"
+margin = 0
+width = "40%"
+
+[autostart]
+# TODO: fix this later on when installed via aur
+enabled = false
+
+[logging]
+level = "info"
+
+[agent]
+default = "claude-code"
+
+[profile]
+default = "personal/claude/opus"
+
+[[profiles]]
+id = "personal/claude/opus"
+agent = "claude-code"
+model = "opus"
+mode = "plan"
+system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
+mcps = ["~/.config/nvim/utils/mcphub/servers.json"]
+skills = ["~/.config/nvim/utils/agents/skills/"]
+
+[profiles.env]
+CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_KILIC}"
+
+[[profiles]]
+id = "work/claude/opus"
+agent = "claude-code"
+model = "opus"
+mode = "plan"
+system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
+mcps = ["~/.config/nvim/utils/mcphub/servers.json"]
+skills = ["~/.config/nvim/utils/agents/skills/"]
+
+[profiles.env]
+CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_WORK}"
+
+[[profiles]]
+id = "kilic/kimi2.6"
+agent = "opencode"
+model = "kilic/kimi-2.6:cloud"
+mode = "plan"
+system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
+mcps = ["~/.config/nvim/utils/mcphub/servers.json"]
+skills = ["~/.config/nvim/utils/agents/skills/"]
+
+[profiles.env]
+OPENCODE_CONFIG = "$HOME/.config/nvim/utils/agents/opencode/kilic.json"
+AI_KILIC_DEV_API_KEY = "${AI_KILIC_DEV_API_KEY}"

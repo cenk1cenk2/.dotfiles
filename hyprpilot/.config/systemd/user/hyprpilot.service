@@ -1,0 +1,21 @@
+[Unit]
+Description=hyprpilot ACP overlay daemon (temporary)
+Documentation=https://gitlab.kilic.dev/utils/hyprpilot
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecCondition=/bin/sh -c 'command -v hyprpilot'
+ExecStart=/bin/zsh -ic '%h/.local/bin/hyprpilot daemon --hidden'
+Restart=on-failure
+RestartSec=3
+# Surface daemon stdout / stderr in `journalctl --user -u hyprpilot`.
+# The daemon also writes its own rolling file log under
+# `$XDG_STATE_HOME/hyprpilot/logs/` — both paths are useful while
+# this binary is shipped as a dropped-in /usr/local/bin/.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

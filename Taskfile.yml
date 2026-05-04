@@ -82,6 +82,7 @@ tasks:
             gitconfig
             gnupg
             hyprland
+            hyprpilot
             hyprwhspr
             input-remapper
             kanshi
