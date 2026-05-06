@@ -33,6 +33,7 @@ skills = ["~/.config/nvim/utils/agents/skills/"]
 
 [profiles.env]
 CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_KILIC}"
+MAX_THINKING_TOKENS = "10000"
 
 [[profiles]]
 id = "work/claude/opus"
