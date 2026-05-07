@@ -44,6 +44,7 @@ mcps = [
     "*-kilic",
     "*-kilic-*",
     "*-laravel",
+    "aws-docs",
   ] },
 ]
 skills = [
@@ -78,6 +79,7 @@ mcps = [
     "*-kilic",
     "*-kilic-*",
     "*-laravel",
+    "aws-docs",
   ] },
 ]
 skills = [
@@ -113,6 +115,7 @@ mcps = [
     "*-kilic",
     "*-kilic-*",
     "gitlab",
+    "playwright",
   ] },
 ]
 skills = [
