@@ -35,7 +35,10 @@ id = "personal/claude/opus"
 agent = "claude-code"
 model = "opus[1m]"
 mode = "plan"
-system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
+system_prompt = [
+  "~/.config/nvim/utils/agents/AGENTS.md",
+  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+]
 mcps = [
   { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
     "*-kilic",
@@ -49,11 +52,48 @@ skills = [
     "*-kilic-*",
     "*-laravel",
     "*-laravel-*",
+    "notion-*",
+    "spacelift-*",
   ] },
 ]
 
 [profiles.env]
 CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_KILIC}"
+
+# kilic.dev profile: keep kilic infra, drop laravel work infra.
+# `*-laravel` covers the workspace-level laravel skills + MCP servers.
+# `*-laravel-*` covers the slack-laravel-{compile,review} sub-skills.
+# cluster-kilic-workload is unaffected — no `-laravel` suffix or infix.
+[[profiles]]
+id = "kilic/kimi2.6"
+agent = "opencode"
+model = "kilic/kimi-2.6:cloud"
+mode = "plan"
+system_prompt = [
+  "~/.config/nvim/utils/agents/AGENTS.md",
+  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+]
+mcps = [
+  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+    "*-laravel",
+  ] },
+]
+skills = [
+  { dir = "~/.config/nvim/utils/agents/skills/", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+    "*-laravel",
+    "*-laravel-*",
+    "notion-*",
+    "spacelift-*",
+  ] },
+]
+
+[profiles.env]
+OPENCODE_CONFIG = "$HOME/.config/nvim/utils/agents/opencode/kilic.json"
+AI_KILIC_DEV_API_KEY = "${AI_KILIC_DEV_API_KEY}"
 
 # Work profile: keep laravel infra, drop kilic.dev infra.
 # Same `*-kilic` / `*-kilic-*` pair for both MCPs and skills now that
@@ -64,7 +104,10 @@ id = "work/claude/opus"
 agent = "claude-code"
 model = "opus[1m]"
 mode = "plan"
-system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
+system_prompt = [
+  "~/.config/nvim/utils/agents/AGENTS.md",
+  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+]
 mcps = [
   { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
     "*-kilic",
@@ -82,29 +125,3 @@ skills = [
 
 [profiles.env]
 CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_WORK}"
-
-# kilic.dev profile: keep kilic infra, drop laravel work infra.
-# `*-laravel` covers the workspace-level laravel skills + MCP servers.
-# `*-laravel-*` covers the slack-laravel-{compile,review} sub-skills.
-# cluster-kilic-workload is unaffected — no `-laravel` suffix or infix.
-[[profiles]]
-id = "kilic/kimi2.6"
-agent = "opencode"
-model = "kilic/kimi-2.6:cloud"
-mode = "plan"
-system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
-mcps = [
-  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
-    "*-laravel",
-  ] },
-]
-skills = [
-  { dir = "~/.config/nvim/utils/agents/skills/", ignore = [
-    "*-laravel",
-    "*-laravel-*",
-  ] },
-]
-
-[profiles.env]
-OPENCODE_CONFIG = "$HOME/.config/nvim/utils/agents/opencode/kilic.json"
-AI_KILIC_DEV_API_KEY = "${AI_KILIC_DEV_API_KEY}"
