@@ -35,7 +35,15 @@
       "Bash(pwd:*)",
       "Bash(type:*)"
     ],
-    "deny": [],
+    "deny": [
+      "Bash(sed -i*)",
+      "Bash(sed --in-place*)",
+      "Bash(perl -i*)",
+      "Bash(perl -pi*)",
+      "Bash(perl -p -i*)",
+      "Bash(awk -i inplace*)",
+      "Bash(gawk -i inplace*)"
+    ],
     "ask": []
   },
   "model": "opus[1m]",
