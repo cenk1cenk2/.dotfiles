@@ -23,54 +23,68 @@ default = "claude-code"
 default = "personal/claude/opus"
 
 # Personal profile: drop kilic + laravel (work) infra wholesale.
-# `*-kilic` catches argocd / grafana / slack; `*-kilic-*` catches
-# linear-kilic-dev. `*-laravel` catches grafana / linear / spacelift.
-# For skills, `*kilic*` covers `kilic-*` prefixed AND `*-kilic`
-# suffixed bundles; `*-work` + `*-work-*` cover laravel-day-job
-# skills (linear-work, notion-work, slack-work*, spacelift-work).
+# Both MCPs and skills now follow the same suffix convention:
+# `*-kilic` catches workspace-level (argocd-kilic, linear-kilic, slack-kilic,
+# linear-project-argocd-{system,workload}-kilic); `*-kilic-*` catches
+# nested bundles (argocd-kilic-loadbalancer, cluster-kilic-*).
+# `*-laravel` catches workspace-level (linear-laravel, notion-laravel,
+# slack-laravel, spacelift-laravel); `*-laravel-*` catches the slack
+# laravel sub-skills (slack-laravel-compile, slack-laravel-review).
 [[profiles]]
 id = "personal/claude/opus"
 agent = "claude-code"
-model = "opus"
+model = "opus[1m]"
 mode = "plan"
 system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
 mcps = [
-  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = ["*-kilic", "*-kilic-*", "*-laravel"] },
+  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+    "*-laravel",
+  ] },
 ]
 skills = [
-  { dir = "~/.config/nvim/utils/agents/skills/", ignore = ["*kilic*", "*-work", "*-work-*"] },
+  { dir = "~/.config/nvim/utils/agents/skills/", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+    "*-laravel",
+    "*-laravel-*",
+  ] },
 ]
 
 [profiles.env]
 CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_KILIC}"
 
 # Work profile: keep laravel infra, drop kilic.dev infra.
-# `*-kilic` + `*-kilic-*` for the MCP servers; `*kilic*` for the
-# skills (catches the `kilic-cluster-*` / `kilic-argocd-*` bundles
-# along with `*-kilic` ones). `kilic-cluster-workload` does NOT
-# leak into the work profile via the *-work-* glob — the workload
-# suffix stays anchored.
+# Same `*-kilic` / `*-kilic-*` pair for both MCPs and skills now that
+# all kilic-bound names use the suffix convention. cluster-kilic-workload
+# stays caught by `*-kilic-*` (the `-kilic-` infix), no leak.
 [[profiles]]
 id = "work/claude/opus"
 agent = "claude-code"
-model = "opus"
+model = "opus[1m]"
 mode = "plan"
 system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
 mcps = [
-  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = ["*-kilic", "*-kilic-*"] },
+  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+  ] },
 ]
 skills = [
-  { dir = "~/.config/nvim/utils/agents/skills/", ignore = ["*kilic*"] },
+  { dir = "~/.config/nvim/utils/agents/skills/", ignore = [
+    "*-kilic",
+    "*-kilic-*",
+  ] },
 ]
 
 [profiles.env]
 CLAUDE_CODE_OAUTH_TOKEN = "${NVIM_CLAUDE_ACP_WORK}"
 
 # kilic.dev profile: keep kilic infra, drop laravel work infra.
-# `*-laravel` covers all three laravel-tagged MCP servers.
-# `*-work` + `*-work-*` cover linear-work / notion-work / slack-work*
-# / spacelift-work skills WITHOUT touching `kilic-cluster-workload`
-# (no `-work` suffix, no `-work-` infix — it's `-workload`).
+# `*-laravel` covers the workspace-level laravel skills + MCP servers.
+# `*-laravel-*` covers the slack-laravel-{compile,review} sub-skills.
+# cluster-kilic-workload is unaffected — no `-laravel` suffix or infix.
 [[profiles]]
 id = "kilic/kimi2.6"
 agent = "opencode"
@@ -78,10 +92,15 @@ model = "kilic/kimi-2.6:cloud"
 mode = "plan"
 system_prompt = ["~/.config/nvim/utils/agents/AGENTS.md"]
 mcps = [
-  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = ["*-laravel"] },
+  { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
+    "*-laravel",
+  ] },
 ]
 skills = [
-  { dir = "~/.config/nvim/utils/agents/skills/", ignore = ["*-work", "*-work-*"] },
+  { dir = "~/.config/nvim/utils/agents/skills/", ignore = [
+    "*-laravel",
+    "*-laravel-*",
+  ] },
 ]
 
 [profiles.env]
