@@ -1,6 +1,7 @@
+cwd = "~/notes"
+
 [ui]
 zoom = 1.4
-cwd = "~/notes"
 
 [daemon.window]
 mode = "anchor"
