@@ -38,8 +38,8 @@ agent = "claude-code"
 model = "opus[1m]"
 mode = "plan"
 system_prompt = [
-  "~/.config/nvim/utils/agents/AGENTS.md",
-  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+  { file = "~/.config/nvim/utils/agents/AGENTS.md", inject = { on_create = true, on_update = true } },
+  { file = "~/.config/nvim/utils/agents/HYPRPILOT.md", inject = { on_create = true, on_update = true } },
 ]
 mcps = [
   { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
@@ -73,8 +73,8 @@ agent = "opencode"
 model = "kilic/kimi-2.6:cloud"
 mode = "plan"
 system_prompt = [
-  "~/.config/nvim/utils/agents/AGENTS.md",
-  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+  { file = "~/.config/nvim/utils/agents/AGENTS.md", inject = { on_create = true, on_update = true } },
+  { file = "~/.config/nvim/utils/agents/HYPRPILOT.md", inject = { on_create = true, on_update = true } },
 ]
 mcps = [
   { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
@@ -109,8 +109,8 @@ agent = "claude-code"
 model = "opus[1m]"
 mode = "plan"
 system_prompt = [
-  "~/.config/nvim/utils/agents/AGENTS.md",
-  "~/.config/nvim/utils/agents/HYPRPILOT.md",
+  { file = "~/.config/nvim/utils/agents/AGENTS.md", inject = { on_create = true, on_update = true } },
+  { file = "~/.config/nvim/utils/agents/HYPRPILOT.md", inject = { on_create = true, on_update = true } },
 ]
 mcps = [
   { file = "~/.config/nvim/utils/mcphub/servers.json", ignore = [
