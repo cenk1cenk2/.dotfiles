@@ -1,7 +1,10 @@
 cwd = "~/notes"
 
+[remote]
+enabled = true
+
 [ui]
-zoom = 1.4
+zoom = 1
 
 [daemon.window]
 mode = "anchor"
