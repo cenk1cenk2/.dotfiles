@@ -6,15 +6,24 @@
 local config_dir = ("%s/.config/hypr"):format(os.getenv("HOME"))
 
 -- Make sibling .lua files reachable via require(). The extra
--- `config.d/?.lua` entry side-steps the literal `.` in the dirname
--- (which would otherwise translate to a path separator inside a
--- module name) so we can require its files by basename.
+-- `config.d/?.lua` entry lets us require config.d files by basename
+-- (e.g. `require("90-theming")` from config.d/init.lua).
 package.path = table.concat({
   ("%s/?.lua"):format(config_dir),
   ("%s/?/init.lua"):format(config_dir),
   ("%s/config.d/?.lua"):format(config_dir),
   package.path,
 }, ";")
+
+-- Fallback searcher: try the require name verbatim (no dot-to-slash
+-- translation). Lets `require("config.d")` resolve to
+-- `config.d/init.lua` instead of looking for `config/d/init.lua`.
+table.insert(package.searchers, function(name)
+  local path = package.searchpath(name, package.path, ".", ".")
+  if path then
+    return loadfile(path)
+  end
+end)
 
 -- Environment variables
 hl.env("XDG_SESSION_TYPE", "wayland")
@@ -164,11 +173,6 @@ hl.animation({ leaf = "global", enabled = true, speed = 0.5, bezier = "default" 
 -- Disable borders and gaps when only one tiled window in workspace
 hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 
--- Source config.d/*.lua (require'd by basename via the package.path
--- extension above) and modes/ (via its init.lua re-exports).
-require("50-systemd-user")
-require("90-theming")
-require("97-layer-rules")
-require("98-window-rules")
-require("99-autostart")
+-- Source config.d/ and modes/ (each via its init.lua re-exports).
+require("config.d")
 require("modes")
