@@ -3,12 +3,16 @@
 -- Renamed from hyprland.lua so the legacy hyprland.conf keeps loading
 -- on 0.54. To activate: rename this to `hyprland.lua`.
 
-local config_dir = os.getenv("HOME") .. "/.config/hypr"
+local config_dir = ("%s/.config/hypr"):format(os.getenv("HOME"))
 
--- Make sibling .lua files reachable via require().
+-- Make sibling .lua files reachable via require(). The extra
+-- `config.d/?.lua` entry side-steps the literal `.` in the dirname
+-- (which would otherwise translate to a path separator inside a
+-- module name) so we can require its files by basename.
 package.path = table.concat({
-  config_dir .. "/?.lua",
-  config_dir .. "/?/init.lua",
+  ("%s/?.lua"):format(config_dir),
+  ("%s/?/init.lua"):format(config_dir),
+  ("%s/config.d/?.lua"):format(config_dir),
   package.path,
 }, ";")
 
@@ -48,7 +52,7 @@ hl.env("PROTON_ENABLE_HDR", "1")
 hl.env("MOZ_DBUS_REMOTE", "1")
 
 -- Add mise shims and user bin to PATH
-hl.env("PATH", os.getenv("HOME") .. "/.local/share/mise/shims:" .. os.getenv("HOME") .. "/.local/bin:" .. (os.getenv("PATH") or ""))
+hl.env("PATH", ("%s/.local/share/mise/shims:%s/.local/bin:%s"):format(os.getenv("HOME"), os.getenv("HOME"), os.getenv("PATH") or ""))
 
 -- Load shared definitions (theme first, since theme exposes colors used by 90-theming)
 local theme = require("themes.custom.definitions")
@@ -160,6 +164,11 @@ hl.animation({ leaf = "global", enabled = true, speed = 0.5, bezier = "default" 
 -- Disable borders and gaps when only one tiled window in workspace
 hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 
--- Source config.d/ (via dofile because dirname has `.`) and modes/
-dofile(config_dir .. "/config.d/init.lua")
+-- Source config.d/*.lua (require'd by basename via the package.path
+-- extension above) and modes/ (via its init.lua re-exports).
+require("50-systemd-user")
+require("90-theming")
+require("97-layer-rules")
+require("98-window-rules")
+require("99-autostart")
 require("modes")
