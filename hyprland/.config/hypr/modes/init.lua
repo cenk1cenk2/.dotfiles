@@ -1,0 +1,5 @@
+require("modes.default")
+require("modes.resize")
+require("modes.screenshot")
+require("modes.recording")
+require("modes.shutdown")
