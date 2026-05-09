@@ -12,19 +12,6 @@ package.path = table.concat({
   package.path,
 }, ";")
 
--- Glob loader: dofile every *.lua in `rel` (alphabetical order).
--- Mirrors hyprlang's `source = path/*.conf` behavior.
-local function source_dir(rel)
-  local handle = io.popen("ls -1 " .. config_dir .. "/" .. rel .. "/*.lua 2>/dev/null | sort")
-  if not handle then
-    return
-  end
-  for path in handle:lines() do
-    dofile(path)
-  end
-  handle:close()
-end
-
 -- Environment variables
 hl.env("XDG_SESSION_TYPE", "wayland")
 hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
@@ -70,11 +57,9 @@ local d = require("definitions")
 -- Source plugin definitions
 require("plugins")
 
--- Source input configurations
-source_dir("inputs")
-
--- Source output configurations
-source_dir("outputs")
+-- Source input + output configurations (via per-directory init.lua)
+require("inputs")
+require("outputs")
 
 -- Base configuration settings
 hl.config({
@@ -175,6 +160,6 @@ hl.animation({ leaf = "global", enabled = true, speed = 0.5, bezier = "default" 
 -- Disable borders and gaps when only one tiled window in workspace
 hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 
--- Source config.d/*.lua and modes/*.lua
-source_dir("config.d")
-source_dir("modes")
+-- Source config.d/ (via dofile because dirname has `.`) and modes/
+dofile(config_dir .. "/config.d/init.lua")
+require("modes")

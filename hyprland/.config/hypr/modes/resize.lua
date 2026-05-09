@@ -2,11 +2,9 @@
 
 local d = require("definitions")
 
-local resize_name = "󰕒 Resize: ↑↓←→/hjkl | +Shift larger | ESC"
+hl.bind(d.mod .. " + SHIFT + R", hl.dsp.submap("󰕒 Resize: ↑↓←→/hjkl | +Shift larger | ESC"))
 
-hl.bind(d.mod .. " + SHIFT + R", hl.dsp.submap(resize_name))
-
-hl.define_submap(resize_name, function()
+hl.define_submap("󰕒 Resize: ↑↓←→/hjkl | +Shift larger | ESC", function()
   -- Resize with arrow keys and vim keys
   hl.bind("left", hl.dsp.window.resize({ x = -24, y = 0, relative = true }), { repeating = true })
   hl.bind("down", hl.dsp.window.resize({ x = 0, y = 24, relative = true }), { repeating = true })
