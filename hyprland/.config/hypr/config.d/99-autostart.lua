@@ -1,5 +1,7 @@
 -- Autostart Applications
 
+hl.exec_cmd("systemctl --user restart waybar@hyprland.service")
+
 -- Start session target
 hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl start --user hyprland-session.service")
@@ -15,7 +17,6 @@ hl.exec_cmd("systemctl --user restart swaync.service")
 hl.exec_cmd("systemctl --user restart swayosd.service")
 hl.exec_cmd("systemctl --user restart hyprland-autoname-workspaces.service")
 hl.exec_cmd("systemctl --user restart kanshi.service")
-hl.exec_cmd("systemctl --user restart waybar@hyprland.service")
 
 -- hl.on("hyprland.start", function()
 --   hl.exec_cmd("systemctl --user start dex.service")
