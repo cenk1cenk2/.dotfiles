@@ -5,15 +5,20 @@
 
 local config_dir = ("%s/.config/hypr"):format(os.getenv("HOME"))
 
--- Make sibling .lua files reachable via require(). The extra
--- `config.d/?.lua` entry lets us require config.d files by basename
--- (e.g. `require("90-theming")` from config.d/init.lua).
-package.path = table.concat({
+-- Make every .lua file under the config dir reachable via require().
+-- Top-level + per-subdir `?.lua` entries so files can be required by
+-- basename (e.g. `require("default-keyboard")`, `require("resize")`,
+-- `require("90-theming")`). `?/init.lua` keeps directory-shaped
+-- modules working (e.g. `require("inputs")`).
+local path_entries = {
   ("%s/?.lua"):format(config_dir),
   ("%s/?/init.lua"):format(config_dir),
-  ("%s/config.d/?.lua"):format(config_dir),
-  package.path,
-}, ";")
+}
+for _, sub in ipairs({ "config.d", "inputs", "outputs", "modes", "themes/custom" }) do
+  table.insert(path_entries, ("%s/%s/?.lua"):format(config_dir, sub))
+end
+table.insert(path_entries, package.path)
+package.path = table.concat(path_entries, ";")
 
 -- Fallback searcher: try the require name verbatim (no dot-to-slash
 -- translation). Lets `require("config.d")` resolve to
