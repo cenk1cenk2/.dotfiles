@@ -134,7 +134,9 @@ hl.config({
   },
 
   dwindle = {
-    pseudotile = true,
+    -- `pseudotile` removed in 0.55 (was a no-op for several releases);
+    -- pseudo behaviour is now per-window via the `pseudo` window-rule
+    -- action or the `togglepseudo` dispatcher.
     preserve_split = true,
     force_split = 2,
     smart_split = false,
