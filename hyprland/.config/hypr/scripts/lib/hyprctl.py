@@ -20,11 +20,18 @@ class Hyprctl:
         except json.JSONDecodeError:
             return None
 
-    def dispatch(self, *args: str) -> bool:
-        return self.run("dispatch", *args).returncode == 0
+    def dispatch(self, expr: str) -> bool:
+        """Call a Lua dispatcher expression. 0.55 routes `hyprctl
+        dispatch` through `hl.dispatch(<expr>)`, so the legacy verb
+        form (`dispatch movetoworkspace 5`) no longer works — pass
+        the full expression here:
+            hypr.dispatch('hl.dsp.window.move({ workspace = "5" })')"""
+        return self.run("dispatch", expr).returncode == 0
 
-    def keyword(self, *args: str) -> bool:
-        return self.run("keyword", *args).returncode == 0
+    def eval(self, expr: str) -> bool:
+        """Run an arbitrary Lua expression (e.g. `hl.config({...})`
+        for keyword-style writes that aren't dispatcher calls)."""
+        return self.run("eval", expr).returncode == 0
 
     def monitors(self) -> list[dict[str, Any]]:
         return self.query("monitors") or []

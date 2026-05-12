@@ -95,19 +95,104 @@ end
 hl.bind(("%s + CTRL + right"):format(d.mod), hl.dsp.focus({ workspace = "m+1" }))
 hl.bind(("%s + CTRL + left"):format(d.mod), hl.dsp.focus({ workspace = "m-1" }))
 
--- New workspace (uses custom script to find empty workspace on current monitor)
-hl.bind(("%s + C"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/new-workspace.py --switch"))
-hl.bind(("%s + SHIFT + C"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/new-workspace.py --move"))
-hl.bind(("%s + CTRL + SHIFT + C"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/new-workspace.py --switch"))
-hl.bind(("%s + CTRL + SHIFT + C"):format(d.mod), hl.dsp.exec_cmd(d.menu))
+-- New workspace: lowest unused ID across the session.
+local function first_empty_workspace()
+  local used = {}
+  for _, ws in ipairs(hl.get_workspaces()) do
+    used[ws.id] = true
+  end
+  local i = 1
+  while used[i] do
+    i = i + 1
+  end
+  return i
+end
+
+hl.bind(("%s + C"):format(d.mod), function()
+  hl.dispatch(hl.dsp.focus({ workspace = first_empty_workspace() }))
+end)
+hl.bind(("%s + SHIFT + C"):format(d.mod), function()
+  hl.dispatch(hl.dsp.window.move({ workspace = first_empty_workspace() }))
+end)
+hl.bind(("%s + CTRL + SHIFT + C"):format(d.mod), function()
+  hl.dispatch(hl.dsp.focus({ workspace = first_empty_workspace() }))
+  hl.exec_cmd(d.menu)
+end)
 
 -- Scratchpad (special workspace)
 hl.bind(("%s + D"):format(d.mod), hl.dsp.workspace.toggle_special("scratch"))
-hl.bind(("%s + SHIFT + D"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/scratchpad-toggle.py"))
+hl.bind(("%s + SHIFT + D"):format(d.mod), function()
+  -- Toggle the focused window between the scratchpad and the
+  -- current workspace.
+  local active = hl.get_active_window()
+  if not active then
+    return
+  end
+  local on_scratch = active.workspace and active.workspace.name == "special:scratch"
+  if on_scratch then
+    local target = hl.get_active_workspace()
+    hl.dispatch(hl.dsp.window.move({ workspace = target and target.id or 1 }))
+  else
+    hl.dispatch(hl.dsp.window.move({ workspace = "special:scratch" }))
+  end
+end)
 
--- Workspace swapping
-hl.bind(("%s + CTRL + SHIFT + h"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/swap-workspace.py -s left"))
-hl.bind(("%s + CTRL + SHIFT + l"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/swap-workspace.py -s right"))
+-- Workspace swapping: move every window between the current
+-- workspace and the left/right neighbour on the same monitor.
+local function workspace_neighbor(direction)
+  local active_ws = hl.get_active_workspace()
+  local active_mon = hl.get_active_monitor()
+  if not active_ws or not active_mon then
+    return nil
+  end
+  local ids = {}
+  for _, ws in ipairs(hl.get_workspaces()) do
+    if ws.monitor and ws.monitor.id == active_mon.id and ws.id > 0 then
+      table.insert(ids, ws.id)
+    end
+  end
+  table.sort(ids)
+  for i, id in ipairs(ids) do
+    if id == active_ws.id then
+      if direction == "left" then
+        return ids[i - 1] or ids[#ids]
+      end
+      return ids[i + 1] or ids[1]
+    end
+  end
+  return nil
+end
+
+local function swap_workspaces(direction)
+  local current = hl.get_active_workspace()
+  if not current then
+    return
+  end
+  local target = workspace_neighbor(direction)
+  if not target or target == current.id then
+    return
+  end
+  local current_windows = hl.get_workspace_windows(current.id) or {}
+  local target_windows = hl.get_workspace_windows(target) or {}
+  for _, w in ipairs(current_windows) do
+    hl.dispatch(
+      hl.dsp.window.move({ workspace = target, window = "address:" .. w.address, follow = false })
+    )
+  end
+  for _, w in ipairs(target_windows) do
+    hl.dispatch(
+      hl.dsp.window.move({ workspace = current.id, window = "address:" .. w.address, follow = false })
+    )
+  end
+  hl.dispatch(hl.dsp.focus({ workspace = target }))
+end
+
+hl.bind(("%s + CTRL + SHIFT + h"):format(d.mod), function()
+  swap_workspaces("left")
+end)
+hl.bind(("%s + CTRL + SHIFT + l"):format(d.mod), function()
+  swap_workspaces("right")
+end)
 
 -- UI elements quick access
 hl.bind(("%s + N"):format(d.mod), hl.dsp.exec_cmd("swaync-client -t"))
@@ -126,8 +211,20 @@ hl.bind(("%s + SHIFT + F"):format(d.mod), hl.dsp.window.fullscreen({ mode = "ful
 hl.bind(("%s + W"):format(d.mod), hl.dsp.window.float({ action = "toggle" }))
 hl.bind(("%s + SHIFT + W"):format(d.mod), hl.dsp.window.pin()) -- pin = sticky in Hyprland
 
--- Focus toggle (matches Sway mod+a = focus mode_toggle)
-hl.bind(("%s + A"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/toggle-float-focus.py"))
+-- Focus toggle (matches Sway mod+a = focus mode_toggle): cycle to the
+-- next window of the opposite floating-ness.
+hl.bind(("%s + A"):format(d.mod), function()
+  local active = hl.get_active_window()
+  if not active then
+    hl.dispatch(hl.dsp.window.cycle_next())
+    return
+  end
+  if active.floating then
+    hl.dispatch(hl.dsp.window.cycle_next({ tiled = true }))
+  else
+    hl.dispatch(hl.dsp.window.cycle_next({ floating = true }))
+  end
+end)
 hl.bind(("%s + SHIFT + A"):format(d.mod), hl.dsp.group.next()) -- cycle through group windows
 
 -- Monitor profiles (using kanshi)

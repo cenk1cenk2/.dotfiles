@@ -1,0 +1,13 @@
+[selene]
+# Mason's selene binary is built without bundled lua54 — lua53 is the
+# closest available. Diffs from 5.4 (integer division `//`, bitwise
+# operators as keywords) aren't used in this config so the gap is
+# harmless.
+base = "lua53"
+name = "hyprland"
+
+[hl]
+any = true
+
+[package]
+any = true
