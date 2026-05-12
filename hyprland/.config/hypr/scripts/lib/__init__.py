@@ -7,7 +7,7 @@ Typical usage:
 
     hypr = Hyprctl()
     win = hypr.active_window()
-    hypr.dispatch("workspace", "3")
+    hypr.dispatch('hl.dsp.focus({ workspace = "3" })')
 """
 
 from .hyprctl import Hyprctl

@@ -32,8 +32,7 @@ class StealWindow:
 
         window = elsewhere[selected]
         self._hypr.dispatch(
-            "movetoworkspace",
-            f"{current_ws},address:{window['address']}",
+            f'hl.dsp.window.move({{ workspace = "{current_ws}", window = "address:{window["address"]}" }})'
         )
         print(f"Stole window: {window.get('title', 'Untitled')}")
 

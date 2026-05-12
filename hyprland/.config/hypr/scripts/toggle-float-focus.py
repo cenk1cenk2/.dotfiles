@@ -13,11 +13,11 @@ class FloatFocusToggler:
     def run(self):
         active = self._hypr.active_window()
         if not active:
-            self._hypr.dispatch("cyclenext")
+            self._hypr.dispatch("hl.dsp.window.cycle_next()")
             return
 
         target = "tiled" if active.get("floating", False) else "floating"
-        if not self._hypr.dispatch("cyclenext", target):
+        if not self._hypr.dispatch(f"hl.dsp.window.cycle_next({{ {target} = true }})"):
             print(f"Error: failed to cycle to {target} window", file=sys.stderr)
             sys.exit(1)
 

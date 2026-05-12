@@ -38,7 +38,7 @@ class TabletFollowFocus(EventHandler):
 
     def _map(self, monitor: str) -> None:
         log.debug("mapping tablet to %s", monitor)
-        self._hypr.keyword("input:tablet:output", monitor)
+        self._hypr.eval(f'hl.config({{ input = {{ tablet = {{ output = "{monitor}" }} }} }})')
 
 class HyprlandListener:
     def __init__(self, args, hypr: Hyprctl, handlers: list[EventHandler]):

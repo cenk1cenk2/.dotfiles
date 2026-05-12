@@ -74,18 +74,22 @@ class SwapWorkspace:
         target_windows = self._windows_on(target)
 
         if not current_windows and not target_windows:
-            self._hypr.dispatch("workspace", str(target))
+            self._hypr.dispatch(f'hl.dsp.focus({{ workspace = "{target}" }})')
             return
 
         # Track by address, so moving current→target first and then target→current
         # is safe — the original target windows carry their address through the
         # swap.
         for addr in current_windows:
-            self._hypr.dispatch("movetoworkspacesilent", f"{target},address:{addr}")
+            self._hypr.dispatch(
+                f'hl.dsp.window.move({{ workspace = "{target}", window = "address:{addr}", follow = false }})'
+            )
         for addr in target_windows:
-            self._hypr.dispatch("movetoworkspacesilent", f"{current},address:{addr}")
+            self._hypr.dispatch(
+                f'hl.dsp.window.move({{ workspace = "{current}", window = "address:{addr}", follow = false }})'
+            )
 
-        self._hypr.dispatch("workspace", str(target))
+        self._hypr.dispatch(f'hl.dsp.focus({{ workspace = "{target}" }})')
 
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Hyprland")

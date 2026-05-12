@@ -24,16 +24,16 @@ class ScratchpadToggler:
         if current_workspace == SCRATCHPAD:
             # Pulled up from scratchpad → send to currently focused workspace.
             target = self._hypr.focused_workspace_id() or 1
-            self._hypr.dispatch("movetoworkspace", str(target))
+            self._hypr.dispatch(f'hl.dsp.window.move({{ workspace = "{target}" }})')
             return
 
         if address in self._scratchpad_addresses():
             # Previously-scratched window that drifted away → push back.
-            self._hypr.dispatch("movetoworkspace", SCRATCHPAD)
+            self._hypr.dispatch(f'hl.dsp.window.move({{ workspace = "{SCRATCHPAD}" }})')
             return
 
         # Regular window → send to scratchpad.
-        self._hypr.dispatch("movetoworkspace", SCRATCHPAD)
+        self._hypr.dispatch(f'hl.dsp.window.move({{ workspace = "{SCRATCHPAD}" }})')
 
     def _scratchpad_addresses(self) -> set[str]:
         return {

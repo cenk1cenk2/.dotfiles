@@ -13,9 +13,9 @@ class NewWorkspace:
     def run(self):
         target = self._first_empty_workspace()
         if self.args.move:
-            self._hypr.dispatch("movetoworkspace", target)
+            self._hypr.dispatch(f'hl.dsp.window.move({{ workspace = "{target}" }})')
         if self.args.switch:
-            self._hypr.dispatch("workspace", target)
+            self._hypr.dispatch(f'hl.dsp.focus({{ workspace = "{target}" }})')
 
     def _first_empty_workspace(self) -> str:
         used = {ws["id"] for ws in self._hypr.workspaces()}
