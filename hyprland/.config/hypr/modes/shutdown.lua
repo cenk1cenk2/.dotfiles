@@ -4,6 +4,8 @@
 
 local d = require("definitions")
 
+local submap = "󰐥 Power: (l) lock | (s) suspend | (S) hibernate | (L) logout | (R) reboot | (Q) shutdown | ESC"
+
 local function exec_then_reset(cmd)
   return function()
     hl.exec_cmd(cmd)
@@ -11,7 +13,7 @@ local function exec_then_reset(cmd)
   end
 end
 
-hl.define_submap("󰐥 Power: (l) lock | (s) suspend | (S) hibernate | (L) logout | (R) reboot | (Q) shutdown | ESC", function()
+hl.define_submap(submap, function()
   -- Lock
   hl.bind("l", exec_then_reset(d.locking))
 

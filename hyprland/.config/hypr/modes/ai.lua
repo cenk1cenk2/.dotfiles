@@ -2,12 +2,9 @@
 
 local d = require("definitions")
 
-hl.bind(
-  ("%s + O"):format(d.mod),
-  hl.dsp.submap(
-    "󰧑 AI: (O/o) focused/toggle | (I/i) ask/focus | (P/p) plan/focus | (L/l) work/focus | (s/S/c/C) speech | (w/W) copy | (q) stop | ESC"
-  )
-)
+local submap = "󰧑 AI: (O/o) focused/toggle | (I/i) ask/focus | (P/p) plan/focus | (L/l) work/focus | (s/S/c/C) speech | (w/W) copy | (q) stop | ESC"
+
+hl.bind(("%s + O"):format(d.mod), hl.dsp.submap(submap))
 
 local function exec_then_reset(cmd)
   return function()
@@ -29,9 +26,7 @@ local function focus_instance(args)
   return ("hyprpilot ctl instances focus %s"):format(args)
 end
 
-hl.define_submap(
-  "󰧑 AI: (O/o) focused/toggle | (I/i) ask/focus | (P/p) plan/focus | (L/l) work/focus | (s/S/c/C) speech | (w/W) copy | (q) stop | ESC",
-  function()
+hl.define_submap(submap, function()
     -- Talk to whatever hyprpilot instance is currently focused.
     -- Omitting `--instance` makes hyprpilot fall back to the focused
     -- pointer; if none is live the daemon errors out. Use `I`/`P`/`L`

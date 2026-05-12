@@ -2,7 +2,9 @@
 
 local d = require("definitions")
 
-hl.bind(("%s + S"):format(d.mod), hl.dsp.submap("󰄀 Screenshot: (s) selection | (o) output | (w) window | +Shift edit | ESC"))
+local submap = "󰄀 Screenshot: (s) selection | (o) output | (w) window | +Shift edit | ESC"
+
+hl.bind(("%s + S"):format(d.mod), hl.dsp.submap(submap))
 
 local function shot_then_reset(cmd)
   return function()
@@ -11,7 +13,7 @@ local function shot_then_reset(cmd)
   end
 end
 
-hl.define_submap("󰄀 Screenshot: (s) selection | (o) output | (w) window | +Shift edit | ESC", function()
+hl.define_submap(submap, function()
   -- Selection screenshot
   hl.bind("s", shot_then_reset(d.screenshot.selection.clipboard))
   hl.bind("SHIFT + s", shot_then_reset(d.screenshot.selection.edit))
