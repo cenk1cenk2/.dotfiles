@@ -30,30 +30,45 @@ table.insert(package.searchers, function(name)
   end
 end)
 
--- Environment variables
-hl.env("XDG_SESSION_TYPE", "wayland")
+-- Environment variables.
+--
+-- The 3rd `true` arg propagates the var to systemd + dbus via
+-- `systemctl --user import-environment` + `dbus-update-activation-environment`
+-- so services spawned by user@.service (XDG autostart, polkit, etc.)
+-- inherit them. Use it for any var that systemd-spawned Qt/GTK/Electron
+-- apps need to see.
+--
+-- Hyprland 0.55 already auto-imports DISPLAY, WAYLAND_DISPLAY,
+-- HYPRLAND_INSTANCE_SIGNATURE, XDG_CURRENT_DESKTOP, QT_QPA_PLATFORMTHEME,
+-- PATH, XDG_DATA_DIRS in startCompositor — no `, true` needed for those.
+--
+-- Gaming, Firefox and WLR vars stay process-local: they only matter to
+-- children Hyprland spawns directly, not to systemd-managed units.
+
+hl.env("XDG_SESSION_TYPE", "wayland", true)
 hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
 
--- Libseat backend
+-- Libseat backend (Hyprland-internal, no propagation needed)
 hl.env("LIBSEAT_BACKEND", "logind")
 
--- WLR settings
+-- WLR settings (Hyprland's own XWayland process inherits this directly)
 -- hl.env("WLR_RENDERER_ALLOW_SOFTWARE", "1")
 hl.env("WLR_XWAYLAND", "/usr/local/bin/Xwayland")
 
--- Qt settings
-hl.env("QT_QPA_PLATFORM", "wayland")
+-- Qt settings — propagate so Qt apps under systemd render via Wayland
+hl.env("QT_QPA_PLATFORM", "wayland", true)
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
-hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
-hl.env("QT_QUICK_CONTROLS_STYLE", "org.hyprland.style")
+hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1", true)
+hl.env("QT_QUICK_CONTROLS_STYLE", "org.hyprland.style", true)
 
--- GTK settings
-hl.env("GTK_USE_PORTAL", "1")
-hl.env("GDK_BACKEND", "wayland")
+-- GTK / Electron — propagate so GTK/Electron apps under systemd use
+-- Wayland and the portal interfaces
+hl.env("GTK_USE_PORTAL", "1", true)
+hl.env("GDK_BACKEND", "wayland", true)
 hl.env("GDK_DEBUG", "portals")
-hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland")
+hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland", true)
 
--- Gaming optimizations
+-- Gaming optimizations (Hyprland-spawned children only)
 hl.env("PROTON_DXVK_LOWLATENCY", "1")
 hl.env("MANGOHUD", "1")
 hl.env("VKD3D_CONFIG", "dxr,dxr11")
@@ -62,7 +77,7 @@ hl.env("PROTON_ENABLE_WAYLAND", "1")
 hl.env("DXVK_HDR", "1")
 hl.env("PROTON_ENABLE_HDR", "1")
 
--- Firefox/Mozilla
+-- Firefox/Mozilla (Hyprland-spawned only)
 hl.env("MOZ_DBUS_REMOTE", "1")
 
 -- Add mise shims and user bin to PATH

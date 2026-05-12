@@ -11,10 +11,12 @@ hl.exec_cmd(("gsettings set org.gnome.desktop.interface icon-theme '%s'"):format
 hl.exec_cmd(("gsettings set org.gnome.desktop.interface cursor-theme '%s'"):format(theme.gtk.cursor_theme))
 
 -- Hyprcursor with XCursor fallback
-hl.env("HYPRCURSOR_THEME", theme.gtk.cursor_theme)
-hl.env("HYPRCURSOR_SIZE", "24")
-hl.env("XCURSOR_THEME", theme.gtk.cursor_theme)
-hl.env("XCURSOR_SIZE", "24")
+-- Cursor theme — propagate so Qt/GTK apps spawned by systemd pick
+-- up the same theme as Hyprland-spawned ones.
+hl.env("HYPRCURSOR_THEME", theme.gtk.cursor_theme, true)
+hl.env("HYPRCURSOR_SIZE", "24", true)
+hl.env("XCURSOR_THEME", theme.gtk.cursor_theme, true)
+hl.env("XCURSOR_SIZE", "24", true)
 
 hl.config({
   cursor = {
