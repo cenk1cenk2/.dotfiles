@@ -19,7 +19,9 @@ end
 -- Speech-piped prompt → hyprpilot. `--instance NAME` auto-spawns the
 -- named lane under its profile if no live instance carries that slug.
 local function speech_to_pilot(args)
-  return ([[zsh -c '~/.config/wayland/scripts/speech.py toggle --output stdout | hyprpilot ctl prompts send %s']]):format(args)
+  return ([[zsh -c '~/.config/wayland/scripts/speech.py toggle --output stdout | hyprpilot ctl prompts send %s']]):format(
+    args
+  )
 end
 
 -- Focus + present an existing hyprpilot instance — same shape every time.
