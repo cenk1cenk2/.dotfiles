@@ -8,6 +8,11 @@ After=%i-session.target
 Type=simple
 ExecCondition=/bin/sh -c 'command -v waybar'
 ExecStart=waybar -c %h/.config/waybar/%i.jsonc
+# Hold "active" until waybar publishes org.kde.StatusNotifierWatcher,
+# so units that After=waybar@%i.service (e.g. xdg-desktop-autostart.target
+# via its drop-in) actually wait for the tray to be ready instead of
+# just for the waybar process to exec.
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 50); do busctl --user --no-pager list 2>/dev/null | grep -q org.kde.StatusNotifierWatcher && break; sleep 0.1; done'
 Restart=on-failure
 RestartSec=3
 # Logging
