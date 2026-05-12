@@ -3,7 +3,6 @@ hypr-zoom
 hyprcursor
 hypridle
 hyprland
-hyprland-autoname-workspaces
 hyprland-qt-support
 hyprlock
 hyprpaper

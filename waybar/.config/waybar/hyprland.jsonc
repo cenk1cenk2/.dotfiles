@@ -193,10 +193,17 @@
   // -------------------------------------------------------------------------
 
   "hyprland/workspaces": {
-    "format": "{name}",
+    "format": "{icon}: {windows}",
+    "format-window-separator": "",
     "on-click": "activate",
     "all-outputs": false,
     "show-special": true,
+    "workspace-taskbar": {
+      "enable": true,
+      "update-active-window": true,
+      "format": "{icon}",
+      "icon-size": 18,
+    },
   },
 
   "hyprland/window": {
