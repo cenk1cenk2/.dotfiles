@@ -61,7 +61,10 @@ hl.env("PROTON_ENABLE_HDR", "1")
 hl.env("MOZ_DBUS_REMOTE", "1")
 
 -- Add mise shims and user bin to PATH
-hl.env("PATH", ("%s/.local/share/mise/shims:%s/.local/bin:%s"):format(os.getenv("HOME"), os.getenv("HOME"), os.getenv("PATH") or ""))
+hl.env(
+  "PATH",
+  ("%s/.local/share/mise/shims:%s/.local/bin:%s"):format(os.getenv("HOME"), os.getenv("HOME"), os.getenv("PATH") or "")
+)
 
 -- Load shared definitions (theme first, since theme exposes colors used by 90-theming)
 local theme = require("themes.custom.definitions")
