@@ -1,22 +1,35 @@
 -- Autostart Applications
 
-hl.exec_cmd("systemctl --user restart waybar@hyprland.service")
-
--- Start session target
 hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl start --user hyprland-session.service")
+  hl.exec_cmd("systemctl --user start waybar@hyprland.service")
+end)
+
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user start hyprland-session.service")
 end)
 
 hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
 end)
 
-hl.exec_cmd("systemctl --user restart hyprpaper.service")
-hl.exec_cmd("systemctl --user restart hypridle.service")
-hl.exec_cmd("systemctl --user restart swaync.service")
-hl.exec_cmd("systemctl --user restart swayosd.service")
-hl.exec_cmd("systemctl --user restart hyprland-autoname-workspaces.service")
-hl.exec_cmd("systemctl --user restart kanshi.service")
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart hyprpaper.service")
+end)
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart hypridle.service")
+end)
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart swaync.service")
+end)
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart swayosd.service")
+end)
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart hyprland-autoname-workspaces.service")
+end)
+hl.on("hyprland.start", function()
+  hl.exec_cmd("systemctl --user restart kanshi.service")
+end)
 
 -- hl.on("hyprland.start", function()
 --   hl.exec_cmd("systemctl --user start dex.service")
