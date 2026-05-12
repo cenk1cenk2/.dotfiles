@@ -121,6 +121,12 @@ window#waybar .modules-right {
   color: @bg_color_100;
 }
 
+#workspaces .taskbar-window.active {
+  background-color: @bg_color_alpha_400;
+  border-radius: 50%;
+  border: 1px solid @bright_text_color;
+}
+
 /* -----------------------------------------------------------------------------
  * Individual modules - default styling
  * -------------------------------------------------------------------------- */
