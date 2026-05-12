@@ -50,26 +50,24 @@ M.volume_query = {
 M.workspaces = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }
 
 -- Screenshot tools
-local grimshot = "~/.config/hypr/scripts/grimshot.sh"
-M.screenshot = {
-  grimshot = grimshot,
-  screen = {
-    clipboard = grimshot .. " --notify copy output",
-    file = grimshot .. " --notify save output",
-    edit = grimshot .. " --notify save output - | swappy -f -",
-  },
-  selection = {
-    clipboard = grimshot .. " --notify copy area",
-    file = grimshot .. " --notify save area",
-    edit = grimshot .. " --notify save area - | swappy -f -",
-  },
-  window = {
-    clipboard = grimshot .. " --notify copy active",
-    file = grimshot .. " --notify save active",
-    edit = grimshot .. " --notify save active - | swappy -f -",
-  },
-  snipping_tool = grimshot .. " --notify save area - | swappy -f -",
+M.screenshot = {}
+M.screenshot.grimshot = "~/.config/hypr/scripts/grimshot.sh"
+M.screenshot.screen = {
+  clipboard = M.screenshot.grimshot .. " --notify copy output",
+  file = M.screenshot.grimshot .. " --notify save output",
+  edit = M.screenshot.grimshot .. " --notify save output - | swappy -f -",
 }
+M.screenshot.selection = {
+  clipboard = M.screenshot.grimshot .. " --notify copy area",
+  file = M.screenshot.grimshot .. " --notify save area",
+  edit = M.screenshot.grimshot .. " --notify save area - | swappy -f -",
+}
+M.screenshot.window = {
+  clipboard = M.screenshot.grimshot .. " --notify copy active",
+  file = M.screenshot.grimshot .. " --notify save active",
+  edit = M.screenshot.grimshot .. " --notify save active - | swappy -f -",
+}
+M.screenshot.snipping_tool = M.screenshot.grimshot .. " --notify save area - | swappy -f -"
 
 -- On-screen display (monitor-aware)
 M.osd = [[swayosd-client --monitor $(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')]]
@@ -101,13 +99,5 @@ M.recorder = "~/.config/wayland/scripts/recorder.py"
 -- Speech-to-text
 M.speech = [[zsh -c '~/.config/wayland/scripts/speech.py "$@"' zsh]]
 M.copywriter = [[zsh -c '~/.config/wayland/scripts/copywriter.py "$@"' zsh]]
-
--- hyprpilot — ACP overlay (replaces the legacy pilot.py). Keeping
--- `pilot` as the public alias so existing bindings keep working;
--- the value just dispatches the new `ctl` surface.
-M.pilot = "/usr/local/bin/hyprpilot ctl"
-
--- Tablet mapping
-M.tablet_map_to_output = [[hyprctl keyword input:tablet:output "$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')"]]
 
 return M
