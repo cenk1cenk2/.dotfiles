@@ -16,6 +16,15 @@
   // -------------------------------------------------------------------------
 
   "battery": {
+    // Pin to a specific name so auto-discovery doesn't scan transient
+    // batteries like Bluetooth controllers. Waybar has a known crash
+    // (terminate with std::runtime_error from inotify_add_watch) when
+    // a hot-plugged battery sysfs entry disappears mid-session — e.g.
+    // a DualSense controller battery at
+    // /sys/class/power_supply/ps-controller-battery-XX:XX:XX:XX:XX:XX
+    // vanishing when the controller disconnects. "BAT0" doesn't exist
+    // on this desktop so the module gracefully shows nothing.
+    "bat": "BAT0",
     "interval": 30,
     "states": {
       "warning": 30,
