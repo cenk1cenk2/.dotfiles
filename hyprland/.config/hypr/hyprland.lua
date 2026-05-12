@@ -66,9 +66,10 @@ hl.env(
   ("%s/.local/share/mise/shims:%s/.local/bin:%s"):format(os.getenv("HOME"), os.getenv("HOME"), os.getenv("PATH") or "")
 )
 
--- Load shared definitions (theme first, since theme exposes colors used by 90-theming)
+-- Load shared definitions (theme first, since theme exposes colors used
+-- by 90-theming). Modes/config.d require definitions themselves; the
+-- entry doesn't reference it directly so it's not bound here.
 local theme = require("themes.custom.definitions")
-local d = require("definitions")
 
 -- Source plugin definitions
 require("plugins")
