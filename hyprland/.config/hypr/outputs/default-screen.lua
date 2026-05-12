@@ -36,11 +36,15 @@ hl.monitor({
 
 hl.config({
   render = {
-    cm_fs_passthrough = 0,
+    -- cm_fs_passthrough removed in 0.55; behavior is now automatic
+    -- via cm_auto_hdr.
     cm_auto_hdr = 2,
   },
   misc = {
     vrr = 2,
+  },
+  debug = {
+    -- moved from `misc:vfr` to `debug:vfr` in 0.55.
     vfr = true,
   },
 })

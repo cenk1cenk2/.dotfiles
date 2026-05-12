@@ -2,7 +2,9 @@
 
 local d = require("definitions")
 
-hl.bind(("%s + R"):format(d.mod), hl.dsp.submap("󰕧 Recording: (r/R) toggle/pause | (o) OBS | (z) zoom | (q) stop | ESC"))
+local submap = "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (z) zoom | (q) stop | ESC"
+
+hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
 local function exec_then_reset(cmd)
   return function()
@@ -11,7 +13,7 @@ local function exec_then_reset(cmd)
   end
 end
 
-hl.define_submap("󰕧 Recording: (r/R) toggle/pause | (o) OBS | (z) zoom | (q) stop | ESC", function()
+hl.define_submap(submap, function()
   -- Toggle recording (start/stop)
   hl.bind("r", exec_then_reset(("%s toggle"):format(d.recorder)))
 

@@ -40,7 +40,7 @@ class SwitchWindow:
             return
 
         window = windows[selected]
-        self._hypr.dispatch("focuswindow", f"address:{window['address']}")
+        self._hypr.dispatch(f'hl.dsp.focus({{ window = "address:{window["address"]}" }})')
         print(f"Switched to window: {window.get('title', 'Untitled')}")
 
     @staticmethod
