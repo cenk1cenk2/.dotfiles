@@ -2,9 +2,10 @@
 
 local theme = require("themes.custom.definitions")
 
-hl.on("hyprland.start", function()
-  hl.exec_cmd("xsettingsd")
-end)
+-- xsettingsd: hl.on("hyprland.start", ...) doesn't fire in 0.55, so
+-- start at module top. Guard with pidof so hyprctl reload doesn't
+-- spawn a duplicate.
+hl.exec_cmd("pidof xsettingsd >/dev/null || xsettingsd &")
 
 hl.exec_cmd(("gsettings set org.gnome.desktop.interface gtk-theme '%s'"):format(theme.gtk.theme))
 hl.exec_cmd(("gsettings set org.gnome.desktop.interface icon-theme '%s'"):format(theme.gtk.icon_theme))
