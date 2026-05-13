@@ -57,13 +57,8 @@ hl.env("GDK_BACKEND", "wayland", true)
 hl.env("GDK_DEBUG", "portals")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland", true)
 
--- Gaming / Proton / HDR. envd (third `true`) so vars also land in the
--- systemd user manager + dbus activation env — covers anything launched
--- as a user service, via app2unit, or via flatpak overrides later.
--- DXVK_HDR is implied by PROTON_ENABLE_HDR; VKD3D dxr/feature-level
--- knobs are no-ops on modern VKD3D-Proton + RTX.
-hl.env("ENABLE_HDR_WSI", "1", true)
-hl.env("PROTON_ENABLE_WAYLAND", "1", true)
+-- Gaming / Proton
+-- hl.env("PROTON_ENABLE_WAYLAND", "1", true)
 hl.env("PROTON_ENABLE_HDR", "1", true)
 hl.env("PROTON_DXVK_LOWLATENCY", "1", true)
 hl.env("PROTON_HIDE_NVIDIA_GPU", "0", true)
@@ -71,7 +66,6 @@ hl.env("PROTON_ENABLE_NVAPI", "1", true)
 hl.env("DXVK_ENABLE_NVAPI", "1", true)
 hl.env("PROTON_ENABLE_NGX_UPDATER", "1", true)
 hl.env("MANGOHUD", "1", true)
-hl.env("WEBKIT_DISABLE_COMPOSITING_MODE", "1", true)
 
 -- Firefox/Mozilla
 hl.env("MOZ_DBUS_REMOTE", "1", true)
@@ -175,6 +169,7 @@ hl.config({
 
   misc = {
     disable_hyprland_logo = true,
+    disable_autoreload = true,
     disable_splash_rendering = true,
     force_default_wallpaper = 0,
     mouse_move_enables_dpms = true,

@@ -85,6 +85,7 @@ tasks:
             hyprpilot
             hyprwhspr
             input-remapper
+            kanshi
             khal
             kitty
             mako
@@ -141,7 +142,6 @@ tasks:
           to: "~"
           packages: >-
             chrome
-            kanshi
           # args: --adopt
 
   deploy:macos:

@@ -251,6 +251,7 @@ M.profiles = {
   ["tv"] = {
     order = 10,
     required = { M.monitors.SONY_BRAVIA7 },
+    on_demand = true,
     monitors = {
       {
         output = M.monitors.SONY_BRAVIA7,
@@ -389,11 +390,6 @@ function M.apply(name)
         end
       end
     else
-      -- Apply unconditionally. `hl.monitor` registers the rule with
-      -- Hyprland's monitor rule manager, which iterates `m_realMonitors`
-      -- (including disabled monitors) — gating on `hl.get_monitor`
-      -- here would drop the re-enable rule for any monitor a previous
-      -- profile had disabled.
       hl.monitor(spec)
     end
   end

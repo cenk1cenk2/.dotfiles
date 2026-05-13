@@ -1,2 +1,2 @@
 require("outputs.default-screen")
-require("outputs.profiles")
+-- require("outputs.profiles")
