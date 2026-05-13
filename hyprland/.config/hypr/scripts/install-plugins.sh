@@ -3,7 +3,6 @@
 
 # List of plugins to install: "name|repo_url"
 PLUGINS=(
-  "hy3|https://github.com/outfoxxed/hy3"
 )
 
 for plugin_entry in "${PLUGINS[@]}"; do
