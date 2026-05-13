@@ -5,15 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 class Jumpy:
     AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
-    DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
-    KANSHI_CONFIG = Path.home() / ".config/kanshi/config"
-    WAYLAND_USER_SH = "/etc/udev/scripts/wayland-user.sh"
+    DISPLAY_MODULE = "outputs.profiles"
+    PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"
 
     def _notify(self, title: str, message: str, icon: str) -> None:
         subprocess.run(
@@ -57,23 +57,44 @@ class Jumpy:
         )
         sys.exit(1)
 
+    def _hyprctl_eval(self, expr: str) -> str:
+        # `-i 0` makes hyprctl walk its own instance list and pick the
+        # first running compositor. Lets non-interactive callers (SSH,
+        # systemd units, home-assistant shell_command) work without
+        # HYPRLAND_INSTANCE_SIGNATURE in the environment.
+        proc = subprocess.run(
+            ["hyprctl", "-i", "0", "eval", expr],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return proc.stdout
+
     def display_ls(self) -> None:
-        seen = set()
-        for line in self.KANSHI_CONFIG.read_text().splitlines():
-            if line.startswith("profile "):
-                name = line.split()[1]
-                if name not in seen:
-                    seen.add(name)
-                    print(name)
+        # Why we parse the Lua file instead of asking Hyprland:
+        # Hyprland 0.55 has no way to return a Lua value through
+        # `hyprctl`. `hyprctl eval EXPR` runs `guardedPCall(..., 0, 0)`
+        # (`nresults=0`) and always echoes "ok" / error-text — the
+        # return value is discarded. `print()` goes to Hyprland's log,
+        # not the request socket. There's no `hl.ipc.handler`, no
+        # `hyprctl call`, and `-j eval` is not JSON-aware.
+        # See: src/debug/HyprCtl.cpp `evalRequest`,
+        #      src/config/lua/ConfigManager.cpp `eval`.
+        # The canonical workaround is a tmp-file round-trip via
+        # $XDG_RUNTIME_DIR/hypr/$HIS/, but for a static profile dict
+        # that's just extra moving parts — the .lua file IS the source
+        # of truth. Regex over `["name"] = {` is exact and stable.
+        text = self.PROFILES_LUA.read_text()
+        for match in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text):
+            print(match.group(1))
 
     def display_reload(self) -> None:
-        subprocess.run(["kanshictl", "reload"], check=True)
+        self._hyprctl_eval(f'require("{self.DISPLAY_MODULE}").auto_apply()')
 
     def display_switch(self, profile: str) -> None:
-        subprocess.run(
-            [self.WAYLAND_USER_SH, "kanshictl", "switch", profile], check=True
+        self._hyprctl_eval(
+            f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
         )
-        self._notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
 
     def _build_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
@@ -98,10 +119,10 @@ class Jumpy:
 
         display = sub.add_parser(
             "display",
-            help="Apply / list kanshi monitor profiles.",
+            help="Apply / list Hyprland monitor profiles.",
             description=(
                 "List available profiles: jumpy display ls\n"
-                "Reload the configuration: jumpy display reload\n"
+                "Re-run auto-match: jumpy display reload\n"
                 "Apply a profile: jumpy display [profile]"
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
