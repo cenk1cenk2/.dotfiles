@@ -1,75 +1,144 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
+"""Switch audio sinks and display profiles."""
 
-case "$1" in
-"sound")
-  shift
+from __future__ import annotations
 
-  set -e
-  case "$1" in
-  "help")
-    echo "$(
-      cat <<EOF
-$0
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
 
-Set default audio using wireplumber.
-Usage: $0 sound [media.class] [alsa.card_name|media.name]
-Example: $0 sound 'Audio/Sink' 'Scarlett 8i6 USB'
+class Jumpy:
+    AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
+    DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
+    KANSHI_CONFIG = Path.home() / ".config/kanshi/config"
+    WAYLAND_USER_SH = "/etc/udev/scripts/wayland-user.sh"
 
-List available devices and their classes.
-Usage: $0 sound ls
-EOF
-    )"
-    ;;
-  "ls")
-    echo "Available sources are listed below."
+    def _notify(self, title: str, message: str, icon: str) -> None:
+        subprocess.run(
+            ["notify-send", title, message, "-i", icon],
+            check=False,
+        )
 
-    echo 'media.class,alsa.card_name,media.name'
-    echo '-------------------------------------'
+    def _pw_nodes(self) -> list[dict]:
+        proc = subprocess.run(["pw-dump"], capture_output=True, text=True, check=True)
+        return [
+            n
+            for n in json.loads(proc.stdout)
+            if n.get("type") == "PipeWire:Interface:Node"
+        ]
 
-    pw-dump | jq -r '.[] | select(.type == "PipeWire:Interface:Node") | [ .info.props["media.class"], .info.props["alsa.card_name"], .info.props["media.name"]] | @csv'
-    ;;
-  *)
-    # to inspect current
-    # pw-dump | jq --arg media_class "Audio/Sink" --arg card_name "Scarlett 8i6 USB" '.[] | select(.type == "PipeWire:Interface:Node")' | b -l json
-    wpctl set-default $(pw-dump | jq --arg media_class "$1" --arg card_name "$2" '.[] | select(.type == "PipeWire:Interface:Node" and ([.info.props["alsa.card_name"], .info.props["media.name"]] | index($card_name) > -1) and .info.props["media.class"] == $media_class) | .id')
-    notify-send "wireplumber [$1]" "$2" -i /usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg
-    ;;
-  esac
-  ;;
-"display")
-  shift
+    def sound_ls(self) -> None:
+        print("Available sources are listed below.")
+        print()
+        print("media.class,alsa.card_name,media.name")
+        print("-------------------------------------")
+        for node in self._pw_nodes():
+            props = node.get("info", {}).get("props", {})
+            row = ",".join(
+                json.dumps(props.get(k, ""))
+                for k in ("media.class", "alsa.card_name", "media.name")
+            )
+            print(row)
 
-  set -e
+    def sound_apply(self, media_class: str, card_name: str) -> None:
+        for node in self._pw_nodes():
+            props = node.get("info", {}).get("props", {})
+            if props.get("media.class") != media_class:
+                continue
+            if card_name in (props.get("alsa.card_name"), props.get("media.name")):
+                subprocess.run(["wpctl", "set-default", str(node["id"])], check=True)
+                self._notify(f"wireplumber [{media_class}]", card_name, self.AUDIO_ICON)
+                return
+        print(
+            f"jumpy sound: no node matches {media_class!r} + {card_name!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-  case "$1" in
-  "help")
-    echo "$(
-      cat <<EOF
-$0
+    def display_ls(self) -> None:
+        seen = set()
+        for line in self.KANSHI_CONFIG.read_text().splitlines():
+            if line.startswith("profile "):
+                name = line.split()[1]
+                if name not in seen:
+                    seen.add(name)
+                    print(name)
 
-List available profiles.
-Usage: $0 display ls
+    def display_reload(self) -> None:
+        subprocess.run(["kanshictl", "reload"], check=True)
 
-Reload the configuration.
-Usage: $0 display reload
+    def display_switch(self, profile: str) -> None:
+        subprocess.run(
+            [self.WAYLAND_USER_SH, "kanshictl", "switch", profile], check=True
+        )
+        self._notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
 
-Apply a profile.
-Usage: $0 display [profile]
-EOF
-    )"
-    ;;
-  "reload")
-    kanshictl reload
-    ;;
-  "ls")
-    cat "$HOME/.config/kanshi/config" | grep -E '^profile ' | awk '{print $2}' | uniq
-    ;;
-  *)
-    /etc/udev/scripts/wayland-user.sh kanshictl switch "$1" && notify-send "display" "Trigger profile $1." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
-    ;;
-  esac
-  ;;
-*)
-  echo "Usage: $0 [sound|display]"
-  ;;
-esac
+    def _build_parser(self) -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser(
+            prog="jumpy",
+            description="Switch audio sinks and display profiles.",
+        )
+        sub = parser.add_subparsers(dest="command", required=True)
+
+        sound = sub.add_parser(
+            "sound",
+            help="Set default audio device via wireplumber.",
+            description=(
+                "Set default audio using wireplumber.\n"
+                "Usage: jumpy sound [media.class] [alsa.card_name|media.name]\n"
+                "Example: jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'\n\n"
+                "List available devices and their classes:\n"
+                "Usage: jumpy sound ls"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        sound.add_argument("args", nargs="*")
+
+        display = sub.add_parser(
+            "display",
+            help="Apply / list kanshi monitor profiles.",
+            description=(
+                "List available profiles: jumpy display ls\n"
+                "Reload the configuration: jumpy display reload\n"
+                "Apply a profile: jumpy display [profile]"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        display.add_argument("args", nargs="*")
+
+        return parser
+
+    def run(self, argv: list[str] | None = None) -> None:
+        parser = self._build_parser()
+        ns = parser.parse_args(argv)
+
+        match ns.command:
+            case "sound":
+                match ns.args:
+                    case [] | ["help"]:
+                        parser.parse_args(["sound", "--help"])
+                    case ["ls"]:
+                        self.sound_ls()
+                    case [media_class, card_name]:
+                        self.sound_apply(media_class, card_name)
+                    case _:
+                        parser.parse_args(["sound", "--help"])
+                        sys.exit(2)
+            case "display":
+                match ns.args:
+                    case [] | ["help"]:
+                        parser.parse_args(["display", "--help"])
+                    case ["ls"]:
+                        self.display_ls()
+                    case ["reload"]:
+                        self.display_reload()
+                    case [profile]:
+                        self.display_switch(profile)
+                    case _:
+                        parser.parse_args(["display", "--help"])
+                        sys.exit(2)
+
+if __name__ == "__main__":
+    Jumpy().run()
