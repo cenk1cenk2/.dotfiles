@@ -12,8 +12,10 @@ from pathlib import Path
 
 class Jumpy:
     AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
-    DISPLAY_MODULE = "outputs.profiles"
-    PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"
+    DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
+    KANSHI_CONFIG = Path.home() / ".config/kanshi/config"
+    # DISPLAY_MODULE = "outputs.profiles"
+    # PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"
 
     def _notify(self, title: str, message: str, icon: str) -> None:
         subprocess.run(
@@ -57,44 +59,63 @@ class Jumpy:
         )
         sys.exit(1)
 
-    def _hyprctl_eval(self, expr: str) -> str:
-        # `-i 0` makes hyprctl walk its own instance list and pick the
-        # first running compositor. Lets non-interactive callers (SSH,
-        # systemd units, home-assistant shell_command) work without
-        # HYPRLAND_INSTANCE_SIGNATURE in the environment.
-        proc = subprocess.run(
-            ["hyprctl", "-i", "0", "eval", expr],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return proc.stdout
+    # def _hyprctl_eval(self, expr: str) -> str:
+    #     # `-i 0` makes hyprctl walk its own instance list and pick the
+    #     # first running compositor. Lets non-interactive callers (SSH,
+    #     # systemd units, home-assistant shell_command) work without
+    #     # HYPRLAND_INSTANCE_SIGNATURE in the environment.
+    #     proc = subprocess.run(
+    #         ["hyprctl", "-i", "0", "eval", expr],
+    #         capture_output=True,
+    #         text=True,
+    #         check=True,
+    #     )
+    #     return proc.stdout
+    #
+    # def display_ls(self) -> None:
+    #     # Why we parse the Lua file instead of asking Hyprland:
+    #     # Hyprland 0.55 has no way to return a Lua value through
+    #     # `hyprctl`. `hyprctl eval EXPR` runs `guardedPCall(..., 0, 0)`
+    #     # (`nresults=0`) and always echoes "ok" / error-text — the
+    #     # return value is discarded. `print()` goes to Hyprland's log,
+    #     # not the request socket. There's no `hl.ipc.handler`, no
+    #     # `hyprctl call`, and `-j eval` is not JSON-aware.
+    #     # See: src/debug/HyprCtl.cpp `evalRequest`,
+    #     #      src/config/lua/ConfigManager.cpp `eval`.
+    #     # The canonical workaround is a tmp-file round-trip via
+    #     # $XDG_RUNTIME_DIR/hypr/$HIS/, but for a static profile dict
+    #     # that's just extra moving parts — the .lua file IS the source
+    #     # of truth. Regex over `["name"] = {` is exact and stable.
+    #     text = self.PROFILES_LUA.read_text()
+    #     for match in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text):
+    #         print(match.group(1))
+    #
+    # def display_reload(self) -> None:
+    #     self._hyprctl_eval(f'require("{self.DISPLAY_MODULE}").auto_apply()')
+    #
+    # def display_switch(self, profile: str) -> None:
+    #     self._hyprctl_eval(
+    #         f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
+    #     )
 
     def display_ls(self) -> None:
-        # Why we parse the Lua file instead of asking Hyprland:
-        # Hyprland 0.55 has no way to return a Lua value through
-        # `hyprctl`. `hyprctl eval EXPR` runs `guardedPCall(..., 0, 0)`
-        # (`nresults=0`) and always echoes "ok" / error-text — the
-        # return value is discarded. `print()` goes to Hyprland's log,
-        # not the request socket. There's no `hl.ipc.handler`, no
-        # `hyprctl call`, and `-j eval` is not JSON-aware.
-        # See: src/debug/HyprCtl.cpp `evalRequest`,
-        #      src/config/lua/ConfigManager.cpp `eval`.
-        # The canonical workaround is a tmp-file round-trip via
-        # $XDG_RUNTIME_DIR/hypr/$HIS/, but for a static profile dict
-        # that's just extra moving parts — the .lua file IS the source
-        # of truth. Regex over `["name"] = {` is exact and stable.
-        text = self.PROFILES_LUA.read_text()
-        for match in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text):
-            print(match.group(1))
+        text = self.KANSHI_CONFIG.read_text()
+        seen: set[str] = set()
+        for match in re.finditer(r"^\s*profile\s+(\S+)\s*\{", text, re.M):
+            name = match.group(1)
+            if name not in seen:
+                seen.add(name)
+                print(name)
 
     def display_reload(self) -> None:
-        self._hyprctl_eval(f'require("{self.DISPLAY_MODULE}").auto_apply()')
+        subprocess.run(["kanshictl", "reload"], check=True)
 
     def display_switch(self, profile: str) -> None:
-        self._hyprctl_eval(
-            f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
+        subprocess.run(
+            ["/etc/udev/scripts/wayland-user.sh", "kanshictl", "switch", profile],
+            check=True,
         )
+        self._notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
 
     def _build_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(
