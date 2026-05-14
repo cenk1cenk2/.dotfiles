@@ -7,7 +7,7 @@ local config_dir = ("%s/.config/hypr"):format(os.getenv("HOME"))
 
 package.path = table.concat({
   ("%s/?.lua"):format(config_dir),
-  ("%s/?/init.lua"):format(config_dir),
+  ("%s/?/?.lua"):format(config_dir),
   ("%s/config.d/?.lua"):format(config_dir),
   package.path,
 }, ";")

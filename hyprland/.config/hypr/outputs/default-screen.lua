@@ -23,3 +23,37 @@ hl.config({
     vfr = true,
   },
 })
+
+local function apply_monitor_extras()
+  hl.monitor({
+    output = "desc:Sony SONY TV  *30",
+    bitdepth = 10,
+    supports_hdr = 1,
+    supports_wide_color = 1,
+    vrr = true,
+  })
+  hl.monitor({
+    output = "desc:LG Electronics 38GN950",
+    bitdepth = 10,
+    supports_hdr = 1,
+    supports_wide_color = 1,
+    vrr = true,
+  })
+  hl.monitor({
+    output = "desc:ASUSTek COMPUTER INC VG27A",
+    bitdepth = 10,
+    supports_hdr = 1,
+    supports_wide_color = 1,
+  })
+end
+
+apply_monitor_extras()
+hl.on("hyprland.start", function()
+  apply_monitor_extras()
+end)
+hl.on("monitor.added", function()
+  apply_monitor_extras()
+end)
+hl.on("monitor.removed", function()
+  apply_monitor_extras()
+end)
