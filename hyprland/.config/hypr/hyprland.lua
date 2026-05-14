@@ -58,7 +58,7 @@ hl.env("GDK_DEBUG", "portals")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland", true)
 
 -- Gaming / Proton
--- hl.env("PROTON_ENABLE_WAYLAND", "1", true)
+hl.env("PROTON_ENABLE_WAYLAND", "1", true)
 hl.env("PROTON_ENABLE_HDR", "1", true)
 hl.env("PROTON_DXVK_LOWLATENCY", "1", true)
 hl.env("PROTON_HIDE_NVIDIA_GPU", "0", true)
