@@ -4,7 +4,7 @@ remote:
   enabled: true
 
 ui:
-  zoom: 1
+  zoom: 1.2
 
 daemon:
   window:
