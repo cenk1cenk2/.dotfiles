@@ -60,6 +60,38 @@ profiles:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
+  - id: personal/claude/sonnet
+    agent: claude-code
+    model: "sonnet[1m]"
+    mode: plan
+    system_prompt:
+      - file: ~/.config/nvim/utils/agents/AGENTS.md
+        inject:
+          on_create: true
+          on_update: true
+      - file: ~/.config/nvim/utils/agents/HYPRPILOT.md
+        inject:
+          on_create: true
+          on_update: true
+    mcps:
+      - file: ~/.config/nvim/utils/mcphub/servers.json
+        ignore:
+          - "*-kilic"
+          - "*-kilic-*"
+          - "*-laravel"
+          - aws-docs
+    skills:
+      - dir: ~/.config/nvim/utils/agents/skills/
+        ignore:
+          - "*-kilic"
+          - "*-kilic-*"
+          - "*-laravel"
+          - "*-laravel-*"
+          - notion-*
+          - spacelift-*
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+
   - id: kilic/kimi2.6
     agent: opencode
     model: kilic/kimi-2.6:cloud
