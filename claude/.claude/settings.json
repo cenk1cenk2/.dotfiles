@@ -48,7 +48,6 @@
   },
   "model": "opus[1m]",
   "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "coderabbit@claude-plugins-official": true,
