@@ -64,6 +64,7 @@ patches:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
+          - terraform
 
   - $match:
       profile: "kilic/*"
@@ -84,6 +85,7 @@ patches:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
+          - terraform
 
   # work/* profiles use a different ignore set (gitlab + playwright
   # excluded; aws-docs allowed).
