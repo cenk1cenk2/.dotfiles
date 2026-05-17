@@ -1,5 +1,3 @@
-cwd: ~/notes
-
 remote:
   enabled: true
 
@@ -27,10 +25,11 @@ logging:
 # reaches. Replaces the per-field root fallback shape (system_prompt,
 # mcps, mcp.skills) the daemon shipped through 0.x.
 patches:
-  # Unscoped — every profile inherits the shared system_prompt + the
-  # default mcp + skills config. Captain-specific tuning (the
+  # Unscoped — every profile inherits the shared cwd, system_prompt
+  # and default mcp/skills config. Captain-specific tuning (the
   # personal/* vs work/* mcps split) lives in the scoped patches below.
-  - system_prompt:
+  - cwd: ~/notes
+    system_prompt:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
         inject:
           on_create: true
