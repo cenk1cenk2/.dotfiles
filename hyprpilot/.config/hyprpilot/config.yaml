@@ -43,6 +43,11 @@ patches:
       enabled: true
       autoAcceptTools: ["*"]
       autoRejectTools: []
+
+  # personal/* + kilic/* profiles share one mcps ignore list.
+  - $match:
+      profile: "personal/*"
+    mcp:
       skills:
         - dir: ~/.config/nvim/utils/agents/skills/
           ignore:
@@ -52,10 +57,6 @@ patches:
             - "*-laravel-*"
             - notion-*
             - spacelift-*
-
-  # personal/* + kilic/* profiles share one mcps ignore list.
-  - $match:
-      profile: "personal/*"
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -66,6 +67,16 @@ patches:
 
   - $match:
       profile: "kilic/*"
+    mcp:
+      skills:
+        - dir: ~/.config/nvim/utils/agents/skills/
+          ignore:
+            - "*-kilic"
+            - "*-kilic-*"
+            - "*-laravel"
+            - "*-laravel-*"
+            - notion-*
+            - spacelift-*
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -78,13 +89,6 @@ patches:
   # excluded; aws-docs allowed).
   - $match:
       profile: "work/*"
-    mcps:
-      - file: ~/.config/nvim/utils/mcphub/servers.json
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - gitlab
-          - playwright
     mcp:
       skills:
         - dir: ~/.config/nvim/utils/agents/skills/
@@ -92,6 +96,13 @@ patches:
             - "*-kilic"
             - "*-kilic-*"
             - gitlab-*
+    mcps:
+      - file: ~/.config/nvim/utils/mcphub/servers.json
+        ignore:
+          - "*-kilic"
+          - "*-kilic-*"
+          - gitlab
+          - playwright
 
 profile:
   default: personal/claude/opus
