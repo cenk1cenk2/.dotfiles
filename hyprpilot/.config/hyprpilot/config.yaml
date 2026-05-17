@@ -21,18 +21,16 @@ autostart:
 logging:
   level: info
 
-agent:
-  default: claude-code
-
-profile:
-  default: personal/claude/opus
-
-profiles:
-  - id: personal/claude/opus
-    agent: claude-code
-    model: "opus[1m]"
-    mode: plan
-    system_prompt:
+# Root-level [[patches]] — each entry is a partial ProfileConfig
+# overlay applied to whichever profile is picked at resolve time.
+# Optional `$match.profile` glob filters which profiles a patch
+# reaches. Replaces the per-field root fallback shape (system_prompt,
+# mcps, mcp.skills) the daemon shipped through 0.x.
+patches:
+  # Unscoped — every profile inherits the shared system_prompt + the
+  # default mcp + skills config. Captain-specific tuning (the
+  # personal/* vs work/* mcps split) lives in the scoped patches below.
+  - system_prompt:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
         inject:
           on_create: true
@@ -41,14 +39,10 @@ profiles:
         inject:
           on_create: true
           on_update: true
-    mcps:
-      - file: ~/.config/nvim/utils/mcphub/servers.json
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - "*-laravel"
-          - aws-docs
     mcp:
+      enabled: true
+      autoAcceptTools: ["*"]
+      autoRejectTools: []
       skills:
         - dir: ~/.config/nvim/utils/agents/skills/
           ignore:
@@ -58,22 +52,10 @@ profiles:
             - "*-laravel-*"
             - notion-*
             - spacelift-*
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
-  - id: personal/claude/sonnet
-    agent: claude-code
-    model: "sonnet[1m]"
-    mode: plan
-    system_prompt:
-      - file: ~/.config/nvim/utils/agents/AGENTS.md
-        inject:
-          on_create: true
-          on_update: true
-      - file: ~/.config/nvim/utils/agents/HYPRPILOT.md
-        inject:
-          on_create: true
-          on_update: true
+  # personal/* + kilic/* profiles share one mcps ignore list.
+  - $match:
+      profile: "personal/*"
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -81,32 +63,9 @@ profiles:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
-    mcp:
-      skills:
-        - dir: ~/.config/nvim/utils/agents/skills/
-          ignore:
-            - "*-kilic"
-            - "*-kilic-*"
-            - "*-laravel"
-            - "*-laravel-*"
-            - notion-*
-            - spacelift-*
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
-  - id: kilic/kimi2.6
-    agent: opencode
-    model: kilic/kimi-2.6:cloud
-    mode: plan
-    system_prompt:
-      - file: ~/.config/nvim/utils/agents/AGENTS.md
-        inject:
-          on_create: true
-          on_update: true
-      - file: ~/.config/nvim/utils/agents/HYPRPILOT.md
-        inject:
-          on_create: true
-          on_update: true
+  - $match:
+      profile: "kilic/*"
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -114,33 +73,11 @@ profiles:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
-    mcp:
-      skills:
-        - dir: ~/.config/nvim/utils/agents/skills/
-          ignore:
-            - "*-kilic"
-            - "*-kilic-*"
-            - "*-laravel"
-            - "*-laravel-*"
-            - notion-*
-            - spacelift-*
-    env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/kilic.json
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
-  - id: work/claude/opus
-    agent: claude-code
-    model: "opus[1m]"
-    mode: plan
-    system_prompt:
-      - file: ~/.config/nvim/utils/agents/AGENTS.md
-        inject:
-          on_create: true
-          on_update: true
-      - file: ~/.config/nvim/utils/agents/HYPRPILOT.md
-        inject:
-          on_create: true
-          on_update: true
+  # work/* profiles use a different ignore set (gitlab + playwright
+  # excluded; aws-docs allowed).
+  - $match:
+      profile: "work/*"
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -155,5 +92,39 @@ profiles:
             - "*-kilic"
             - "*-kilic-*"
             - gitlab-*
+
+agent:
+  default: claude-code
+
+profile:
+  default: personal/claude/opus
+
+profiles:
+  - id: personal/claude/opus
+    agent: claude-code
+    model: "opus[1m]"
+    mode: plan
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+
+  - id: personal/claude/sonnet
+    agent: claude-code
+    model: "sonnet[1m]"
+    mode: plan
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+
+  - id: kilic/kimi2.6
+    agent: opencode
+    model: kilic/kimi-2.6:cloud
+    mode: plan
+    env:
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/kilic.json
+      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+
+  - id: work/claude/opus
+    agent: claude-code
+    model: "opus[1m]"
+    mode: plan
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
