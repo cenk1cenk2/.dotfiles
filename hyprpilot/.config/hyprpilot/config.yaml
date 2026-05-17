@@ -93,9 +93,6 @@ patches:
             - "*-kilic-*"
             - gitlab-*
 
-agent:
-  default: claude-code
-
 profile:
   default: personal/claude/opus
 
