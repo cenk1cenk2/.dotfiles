@@ -70,12 +70,12 @@ Two buckets. Pick the one that matches how the script is actually
 used; don't assume one pattern fits all:
 
 - **Pipe-involved scripts** (waybar modules, stdin/stdout sinks,
-  anything composed via `speech.py | pilot.py`, anything whose
-  output is parsed by another tool): **stdout is for the payload
-  only**. No `print("…")` for prose. Status / progress goes
+  anything whose output is parsed by another tool, e.g.
+  `speech.py | hyprpilot ctl prompts send`): **stdout is for the
+  payload only**. No `print("…")` for prose. Status / progress goes
   through `log.*` which lands on stderr. Use explicit
   `sys.stdout.write(...)` for the pipe-intended bytes.
-  `copywriter`, `recorder`, `speech`, `pilot` all fall here.
+  `copywriter`, `recorder`, `speech` all fall here.
 
 - **Interactive scripts** (operator runs the command, reads the
   output on-screen, never pipes): **stdout is allowed for pretty
@@ -178,19 +178,3 @@ adapter; the rest of the code never knows which one.
   linters in the toolchain strip the parens to the Py2
   `except A, B:` form, which Py3 rejects as a `SyntaxError`. Keep
   an eye on this after auto-format runs.
-
-### GTK widgets (pilot-specific)
-
-- **Nerd Font** (Material Design Icons) glyphs for every in-app
-  label. No emojis — the user's GTK font stack renders Nerd Font
-  reliably; emojis depend on the desktop font fallback chain.
-
-- Pills / buttons / CSS variants live in `lib/overlay.py` and
-  `lib/overlay.css`. Adding a new tint = one entry in `PillVariant`
-  + one CSS block.
-
-- `lib/overlay.py` imports `gi` at module-top. Headless scripts
-  (waybar-status polls, MCP subprocesses) must NOT go through
-  `from lib import X` for overlay symbols — import directly from
-  `lib.overlay` so the non-GUI scripts don't pay the GTK load cost
-  on every invocation.
