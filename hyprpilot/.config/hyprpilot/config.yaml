@@ -48,15 +48,16 @@ profiles:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
-    skills:
-      - dir: ~/.config/nvim/utils/agents/skills/
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - "*-laravel"
-          - "*-laravel-*"
-          - notion-*
-          - spacelift-*
+    mcp:
+      skills:
+        - dir: ~/.config/nvim/utils/agents/skills/
+          ignore:
+            - "*-kilic"
+            - "*-kilic-*"
+            - "*-laravel"
+            - "*-laravel-*"
+            - notion-*
+            - spacelift-*
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
@@ -80,15 +81,16 @@ profiles:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
-    skills:
-      - dir: ~/.config/nvim/utils/agents/skills/
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - "*-laravel"
-          - "*-laravel-*"
-          - notion-*
-          - spacelift-*
+    mcp:
+      skills:
+        - dir: ~/.config/nvim/utils/agents/skills/
+          ignore:
+            - "*-kilic"
+            - "*-kilic-*"
+            - "*-laravel"
+            - "*-laravel-*"
+            - notion-*
+            - spacelift-*
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
@@ -112,15 +114,16 @@ profiles:
           - "*-kilic-*"
           - "*-laravel"
           - aws-docs
-    skills:
-      - dir: ~/.config/nvim/utils/agents/skills/
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - "*-laravel"
-          - "*-laravel-*"
-          - notion-*
-          - spacelift-*
+    mcp:
+      skills:
+        - dir: ~/.config/nvim/utils/agents/skills/
+          ignore:
+            - "*-kilic"
+            - "*-kilic-*"
+            - "*-laravel"
+            - "*-laravel-*"
+            - notion-*
+            - spacelift-*
     env:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/kilic.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
@@ -145,11 +148,12 @@ profiles:
           - "*-kilic-*"
           - gitlab
           - playwright
-    skills:
-      - dir: ~/.config/nvim/utils/agents/skills/
-        ignore:
-          - "*-kilic"
-          - "*-kilic-*"
-          - gitlab-*
+    mcp:
+      skills:
+        - dir: ~/.config/nvim/utils/agents/skills/
+          ignore:
+            - "*-kilic"
+            - "*-kilic-*"
+            - gitlab-*
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
