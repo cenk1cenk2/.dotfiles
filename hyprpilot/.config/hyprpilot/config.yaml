@@ -98,7 +98,7 @@ patches:
           - playwright
 
 profile:
-  default: personal/claude/sonnet
+  default: personal/claude/opus
 
 profiles:
   - id: personal/claude/opus
