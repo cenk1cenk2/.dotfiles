@@ -8,6 +8,7 @@ import logging
 import os
 import urllib.error
 import urllib.request
+import uuid
 from enum import StrEnum
 from typing import Any, Optional, Protocol
 
@@ -65,6 +66,14 @@ class EnrichAdapterHttp:
         self.mode = kwargs.get("mode")
 
     def enrich(self, text: str) -> Optional[str]:
+        # OpenWebUI ≥0.9.5 crashes (`process_chat:2013`,
+        # `metadata['chat_id'].startswith('local:')` on None) when an
+        # external client omits chat_id — the masked 400 reads
+        # `{"detail":"'NoneType' object has no attribute 'startswith'"}`.
+        # Just `chat_id` is enough; sending session_id/id/parent_id too
+        # makes the server route this as a UI background task and return
+        # `{status, task_ids, chat_id}` instead of OpenAI choices.
+        # Ref: open-webui/open-webui#24550, #24575.
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -74,8 +83,13 @@ class EnrichAdapterHttp:
                     "content": self.user_prompt_template.format(text=text),
                 },
             ],
-            "reasoning_effort": self.thinking,
+            "chat_id": f"speech-{uuid.uuid4()}",
         }
+        # OpenWebUI's reasoning router only accepts high/medium/low; sending
+        # "none" makes its task-model lookup return None and the middleware
+        # then `.startswith()`s that None.
+        if self.thinking in ("high", "medium", "low"):
+            body["reasoning_effort"] = self.thinking
         if self.temperature is not None:
             body["temperature"] = self.temperature
         if self.top_p is not None:
@@ -87,9 +101,11 @@ class EnrichAdapterHttp:
         if self.files:
             body["files"] = self.files
 
+        payload = json.dumps(body)
+        log.debug("request: %s", payload)
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
-            data=json.dumps(body).encode(),
+            data=payload.encode(),
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
@@ -100,7 +116,12 @@ class EnrichAdapterHttp:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            log.error("HTTP %d: %s", e.code, e.read().decode(errors="replace"))
+            log.error(
+                "HTTP %d (model=%s): %s",
+                e.code,
+                self.model,
+                e.read().decode(errors="replace"),
+            )
             return None
         except Exception as e:
             log.error("http completion failed: %s", e)
