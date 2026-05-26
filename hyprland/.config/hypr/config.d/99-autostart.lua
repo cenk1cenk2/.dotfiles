@@ -49,3 +49,7 @@ end)
 hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user start ydotool.service")
 end)
+
+hl.on("hyprland.shutdown", function()
+  hl.exec_cmd("systemctl --user stop hyprland-session.service")
+end)
