@@ -8,6 +8,7 @@ bluez
 bluez-obex
 bluez-utils
 brave-bin
+breeze-cursors
 brightnessctl
 clamav
 clipboard
@@ -143,7 +144,6 @@ wlogout
 wol-systemd
 wpa_supplicant
 xclip
-xcursor-breeze
 xdg-desktop-portal
 xdg-desktop-portal-termfilechooser-hunkyburrito-git
 xdg-desktop-portal-wlr
