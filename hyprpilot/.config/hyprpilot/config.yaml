@@ -123,10 +123,10 @@ profiles:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/kilic.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
-  # - id: personal/codex/gpt-5.5
-  #   agent: codex
-  #   model: gpt-5.5
-  #   mode: read-only
+  - id: personal/codex/gpt-5.5
+    agent: codex
+    model: gpt-5.5
+    mode: read-only
 
   - id: personal/opencode/codex-gpt-5.5
     agent: opencode
