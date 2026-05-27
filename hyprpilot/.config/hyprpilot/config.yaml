@@ -134,3 +134,18 @@ profiles:
     mode: plan
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
+
+  - id: work/claude/sonnet
+    agent: claude-code
+    model: "sonnet[1m]"
+    mode: plan
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
+
+  - id: work/claude/haiku
+    agent: claude-code
+    model: haiku
+    mode: plan
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
+    system_prompt: []
