@@ -98,7 +98,7 @@ patches:
           - playwright
 
 profile:
-  default: personal/claude/opus
+  default: personal/opencode/codex-gpt-5.5
 
 profiles:
   - id: personal/claude/opus
