@@ -134,6 +134,7 @@ profiles:
     mode: plan
     env:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/codex.json
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
 
   - id: personal/opencode/codex-gpt-5.3-codex-spark
     agent: opencode
@@ -141,6 +142,7 @@ profiles:
     mode: plan
     env:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/codex.json
+      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
 
   - id: work/claude/opus
     agent: claude-code
