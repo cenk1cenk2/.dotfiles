@@ -61,23 +61,6 @@ patches:
           - aws-docs
           - terraform
 
-  - $match:
-      profile: "kilic/*"
-    mcp:
-      skills:
-        - dir: ~/.config/nvim/utils/agents/skills/
-          ignore:
-            - "*-laravel"
-            - "*-laravel-*"
-            - notion-*
-            - spacelift-*
-    mcps:
-      - file: ~/.config/nvim/utils/mcphub/servers.json
-        ignore:
-          - "*-laravel"
-          - aws-docs
-          - terraform
-
   # work/* profiles use a different ignore set (gitlab + playwright
   # excluded; aws-docs allowed).
   - $match:
@@ -115,7 +98,7 @@ profiles:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
-  - id: kilic/kimi2.6
+  - id: personal/kilic/kimi2.6
     agent: opencode
     model: kilic/kimi-2.6:cloud
     mode: plan
