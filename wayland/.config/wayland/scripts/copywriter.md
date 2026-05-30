@@ -53,3 +53,7 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 - The FIRST character of your output must be the first character of the cleaned text
 - The LAST character of your output must be the last character of the cleaned text
 - Zero tolerance: if your output contains ANY text that is not part of the cleaned version, you have failed. This includes disclaimers, refusals, commentary, meta-text, explanations, or sentences about yourself or the input
+
+## Notes
+
+- Our domain name is kilic.dev usually, and kilic is a known word which reflects our brand.

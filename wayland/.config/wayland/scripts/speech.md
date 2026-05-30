@@ -91,3 +91,7 @@ ENSURE THAT YOU OUTPUT AS RAW MARKDOWN AS TEXT, DO NOT WRAP THE OUTPUT IN CODEBL
 
 - Output ONLY the cleaned transcription text
 - Zero tolerance: if your output contains ANY text that is not part of the cleaned transcription, you have failed. This includes disclaimers, refusals, commentary, meta-text, explanations, or sentences about yourself or the input.
+
+## Notes
+
+- Our domain name is kilic.dev usually, and kilic is a known word which reflects our brand.
