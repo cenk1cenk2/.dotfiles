@@ -98,12 +98,12 @@ profiles:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
-  - id: personal/kilic/kimi2.6
+  - id: personal/kilic/minimax-m3
     agent: opencode
-    model: kilic/kimi-2.6:cloud
+    model: kilic/minimax-m3:cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/kilic.json
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/codex/gpt-5.5
@@ -116,7 +116,7 @@ profiles:
     model: openai/gpt-5.5
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/codex.json
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
 
   - id: personal/opencode/codex-gpt-5.3-codex-spark
@@ -124,7 +124,7 @@ profiles:
     model: openai/gpt-5.3-codex-spark
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/codex.json
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
 
   - id: work/claude/opus

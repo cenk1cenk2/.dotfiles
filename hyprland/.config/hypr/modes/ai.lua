@@ -33,33 +33,13 @@ hl.define_submap(submap, function()
     hl.dispatch(hl.dsp.submap("reset"))
   end)
 
-  -- `ask` lane — `personal/claude/opus` profile.
-  hl.bind("SHIFT + i", function()
-    hl.exec_cmd(speech_to_pilot("--instance ask --draft --show --profile personal/claude/opus --cwd ~/notes"))
-    hl.dispatch(hl.dsp.submap("reset"))
-  end)
-  hl.bind("i", function()
-    hl.exec_cmd(focus_instance("--instance ask --show --ensure --profile personal/claude/opus --cwd ~/notes"))
-    hl.dispatch(hl.dsp.submap("reset"))
-  end)
-
   -- `plan` lane — `kilic/kimi2.6` profile (opencode + kimi-2.6:cloud).
   hl.bind("SHIFT + p", function()
-    hl.exec_cmd(speech_to_pilot("--instance plan --draft --show --profile kilic/kimi2.6 --cwd ~/notes"))
+    hl.exec_cmd(speech_to_pilot("--instance plan --draft --show --profile personal/kilic/minimax-m3 --cwd ~/notes"))
     hl.dispatch(hl.dsp.submap("reset"))
   end)
   hl.bind("p", function()
-    hl.exec_cmd(focus_instance("--instance plan --show --ensure --profile kilic/kimi2.6 --cwd ~/notes"))
-    hl.dispatch(hl.dsp.submap("reset"))
-  end)
-
-  -- `work` lane — `work/claude/opus` profile (laravel).
-  hl.bind("SHIFT + l", function()
-    hl.exec_cmd(speech_to_pilot("--instance work --draft --show --profile work/claude/opus --cwd ~/notes"))
-    hl.dispatch(hl.dsp.submap("reset"))
-  end)
-  hl.bind("l", function()
-    hl.exec_cmd(focus_instance("--instance work --show --ensure --profile work/claude/opus --cwd ~/notes"))
+    hl.exec_cmd(focus_instance("--instance plan --show --ensure --profile personal/kilic/minimax-m3 --cwd ~/notes"))
     hl.dispatch(hl.dsp.submap("reset"))
   end)
 
