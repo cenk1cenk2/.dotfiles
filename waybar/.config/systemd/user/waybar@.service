@@ -1,8 +1,9 @@
 [Unit]
 Description=Waybar - Highly customizable Wayland bar for %i
 Documentation=https://github.com/Alexays/Waybar
-PartOf=%i-session.target
-After=%i-session.target
+PartOf=graphical-session.target
+After=graphical-session.target
+Before=xdg-desktop-autostart.target
 
 [Service]
 Type=simple
@@ -14,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=%i-session.target
+WantedBy=graphical-session.target

@@ -143,6 +143,8 @@ tasks:
           # args: --adopt
       - sudo install -d -m 0755 /usr/local/share/wayland-sessions
       - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
+      - systemctl --user daemon-reload
+      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
       # TODO: remove after deploying to all instances
       - task: undeploy
         vars:
