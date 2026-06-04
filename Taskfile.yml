@@ -115,6 +115,8 @@ tasks:
             xauthority
             xdg-desktop-portal
             xdg-desktop-portal-termfilechooser
+            xsettingsd
+            uwsm
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       # - task: deploy

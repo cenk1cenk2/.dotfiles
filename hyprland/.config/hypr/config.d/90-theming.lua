@@ -2,13 +2,7 @@
 
 local theme = require("themes.custom.definitions")
 
--- Hyprcursor with XCursor fallback
--- Cursor theme — propagate so Qt/GTK apps spawned by systemd pick
--- up the same theme as Hyprland-spawned ones.
-hl.env("HYPRCURSOR_THEME", theme.gtk.cursor_theme, true)
-hl.env("HYPRCURSOR_SIZE", "24", true)
-hl.env("XCURSOR_THEME", theme.gtk.cursor_theme, true)
-hl.env("XCURSOR_SIZE", "24", true)
+-- Cursor environment is exported by UWSM before Hyprland starts.
 
 hl.config({
   cursor = {

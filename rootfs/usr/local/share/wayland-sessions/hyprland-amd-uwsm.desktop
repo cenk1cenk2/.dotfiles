@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Hyprland AMD
+Comment=Hyprland via UWSM with AMD session environment
+Exec=/usr/bin/uwsm start -e -D Hyprland:Amd -- hyprland.desktop
+TryExec=/usr/bin/uwsm
+Type=Application

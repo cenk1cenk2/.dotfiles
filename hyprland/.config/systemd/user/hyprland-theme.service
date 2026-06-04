@@ -1,8 +1,7 @@
 [Unit]
 Description=Hyprland theme and font configuration
-PartOf=hyprland-session.target
-After=hyprland-session.target
-Before=xsettingsd.service graphical-session.target xdg-desktop-autostart.target
+PartOf=graphical-session.target
+Before=graphical-session-pre.target graphical-session.target xsettingsd.service xdg-desktop-autostart.target
 
 [Service]
 Type=oneshot
@@ -22,4 +21,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=graphical-session-pre.target

@@ -1,55 +1,23 @@
 -- Autostart Applications
 
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start hyprland-session.service")
-end)
+local services = {
+  "hyprland-theme.service",
+  "xsettingsd.service",
+  "waybar@hyprland.service",
+  "hyprpolkitagent.service",
+  "hyprpaper.service",
+  "hypridle.service",
+  "swaync.service",
+  "swayosd.service",
+  "kanshi.service",
+  "clipse.service",
+  "wl-gammarelay-rs.service",
+  "playerctl-waybar.service",
+  "poweralertd.service",
+  "input-remapper-autoload.service",
+  "ydotool.service",
+}
 
 hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start waybar@hyprland.service")
-end)
-
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
-end)
-
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start hyprpaper.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start hypridle.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start swaync.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start swayosd.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start kanshi.service")
-end)
-
--- hl.on("hyprland.start", function()
---   hl.exec_cmd("systemctl --user start dex.service")
--- end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start clipse.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start wl-gammarelay-rs.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start playerctl-waybar.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start poweralertd.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start input-remapper-autoload.service")
-end)
-hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start ydotool.service")
-end)
-
-hl.on("hyprland.shutdown", function()
-  hl.exec_cmd("systemctl --user stop hyprland-session.service")
+  hl.exec_cmd("uwsm finalize; systemctl --user start --no-block " .. table.concat(services, " "))
 end)
