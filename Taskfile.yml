@@ -81,6 +81,7 @@ tasks:
             fonts
             gitconfig
             gnupg
+            gtk
             hyprland
             hyprpilot
             hyprwhspr
@@ -109,6 +110,7 @@ tasks:
             sworkstyle
             waybar
             wayland
+            wayland-theme
             wiremix
             wireplumber
             wl-gamma-relay-rs

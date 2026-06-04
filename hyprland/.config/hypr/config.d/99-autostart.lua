@@ -1,7 +1,7 @@
 -- Autostart Applications
 
 local services = {
-  "hyprland-theme.service",
+  "wayland-theme.service",
   "xsettingsd.service",
   "waybar@hyprland.service",
   "hyprpolkitagent.service",

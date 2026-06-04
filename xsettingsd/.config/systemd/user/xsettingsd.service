@@ -2,7 +2,7 @@
 Description=XSettings daemon for Wayland XWayland clients
 Documentation=man:xsettingsd(1)
 PartOf=graphical-session.target
-After=wayland-session-waitenv.service hyprland-theme.service
+After=wayland-session-waitenv.service wayland-theme.service
 Before=graphical-session.target xdg-desktop-autostart.target
 ConditionEnvironment=DISPLAY
 
