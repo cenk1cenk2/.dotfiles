@@ -1,14 +1,10 @@
-# UNUSED - This service file is not used
-# Use waybar@.service template instead with compositor-specific instances:
-#   - waybar@sway.service for Sway
-#   - waybar@hyprland.service for Hyprland
-#
-# This file is kept as an example of generic waybar service configuration
 [Unit]
 Description=Waybar - Highly customizable Wayland bar (generic/unused)
 Documentation=https://github.com/Alexays/Waybar
 PartOf=graphical-session.target
 After=graphical-session.target
+Before=xdg-desktop-autostart.target
+Requires=dbus.socket
 
 [Service]
 Type=simple
@@ -16,7 +12,6 @@ ExecCondition=/bin/sh -c 'command -v waybar'
 ExecStart=waybar
 Restart=on-failure
 RestartSec=3
-# Logging
 StandardOutput=journal
 StandardError=journal
 
