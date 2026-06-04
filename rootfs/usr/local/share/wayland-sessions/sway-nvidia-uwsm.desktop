@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Sway NVIDIA
+Comment=Sway via UWSM with NVIDIA session environment
+Exec=/usr/bin/uwsm start -e -D sway:Nvidia -- sway --unsupported-gpu
+TryExec=/usr/bin/uwsm
+Type=Application

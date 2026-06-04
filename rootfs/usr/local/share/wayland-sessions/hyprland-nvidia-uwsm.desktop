@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Hyprland NVIDIA
+Comment=Hyprland via UWSM with NVIDIA session environment
+Exec=/usr/bin/uwsm start -e -D Hyprland:Nvidia -- hyprland.desktop
+TryExec=/usr/bin/uwsm
+Type=Application

@@ -10,4 +10,6 @@ hyprpolkitagent
 hyprpwcenter
 hyprshutdown
 hyprwhspr
+libnewt
+uwsm
 xdg-desktop-portal-hyprland

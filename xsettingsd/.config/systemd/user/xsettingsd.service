@@ -1,9 +1,10 @@
 [Unit]
-Description=XSettings daemon for Hyprland XWayland clients
+Description=XSettings daemon for Wayland XWayland clients
 Documentation=man:xsettingsd(1)
-PartOf=hyprland-session.target
-After=hyprland-theme.service
+PartOf=graphical-session.target
+After=wayland-session-waitenv.service wayland-theme.service
 Before=graphical-session.target xdg-desktop-autostart.target
+ConditionEnvironment=DISPLAY
 
 [Service]
 Type=simple
@@ -15,4 +16,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=graphical-session.target

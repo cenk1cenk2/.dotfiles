@@ -10,7 +10,6 @@ ExecCondition=/bin/sh -c 'command -v waybar'
 ExecStart=waybar -c %h/.config/waybar/%i.jsonc
 Restart=on-failure
 RestartSec=3
-# Logging
 StandardOutput=journal
 StandardError=journal
 
