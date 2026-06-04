@@ -12,6 +12,7 @@ Type=simple
 # BusName=org.kde.StatusNotifierWatcher
 ExecCondition=/bin/sh -c 'command -v waybar'
 ExecStart=waybar -c %h/.config/waybar/%i.jsonc
+ExecStartPost=/usr/bin/gdbus wait --session --timeout=15 org.kde.StatusNotifierWatcher
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
