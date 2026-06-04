@@ -91,7 +91,7 @@ configuration {
 
 	/*---------- Misc setting ----------*/
 	terminal: "rofi-sensible-terminal";
-	font: "Roboto 18";
+	font: "Segoe UI 18";
 	sort: false;
 	threads: 0;
 	click-to-exit: true;
