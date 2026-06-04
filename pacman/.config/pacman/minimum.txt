@@ -21,7 +21,6 @@ cronie
 cups
 dconf-editor
 debtap
-dex
 dhcping
 dmenu
 downgrade
