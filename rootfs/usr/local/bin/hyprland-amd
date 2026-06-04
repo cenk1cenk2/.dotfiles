@@ -1,3 +1,0 @@
-#!/usr/bin/env sh
-
-exec start-hyprland 2>&1 | tee /tmp/hyprland.log

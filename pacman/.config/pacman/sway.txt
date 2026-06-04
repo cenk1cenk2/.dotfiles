@@ -8,3 +8,5 @@ swayidle
 swaylock-effects-git
 swayr
 sworkstyle
+libnewt
+uwsm

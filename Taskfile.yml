@@ -138,6 +138,8 @@ tasks:
           to: "/"
           packages: rootfs
           # args: --adopt
+      - sudo install -d -m 0755 /usr/local/share/wayland-sessions
+      - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
       # TODO: remove after deploying to all instances
       - task: undeploy
         vars:

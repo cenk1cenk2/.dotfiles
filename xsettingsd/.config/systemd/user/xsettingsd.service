@@ -1,5 +1,5 @@
 [Unit]
-Description=XSettings daemon for Hyprland XWayland clients
+Description=XSettings daemon for Wayland XWayland clients
 Documentation=man:xsettingsd(1)
 PartOf=graphical-session.target
 After=wayland-session-waitenv.service hyprland-theme.service
