@@ -100,6 +100,7 @@ tasks:
             ssh-config
             swappy
             sway
+            swayidle
             swayimg
             swaylock
             swaync
@@ -117,6 +118,7 @@ tasks:
             xdg-desktop-portal-termfilechooser
             xsettingsd
             uwsm
+            ydotool
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       # - task: deploy
