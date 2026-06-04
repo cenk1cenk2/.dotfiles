@@ -8,6 +8,8 @@ Requires=dbus.socket
 
 [Service]
 Type=simple
+# Type=dbus
+# BusName=org.kde.StatusNotifierWatcher
 ExecCondition=/bin/sh -c 'command -v waybar'
 ExecStart=waybar -c %h/.config/waybar/%i.jsonc
 Restart=on-failure
