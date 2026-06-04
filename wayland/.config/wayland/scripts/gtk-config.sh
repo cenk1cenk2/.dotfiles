@@ -46,7 +46,9 @@ _font() {
 EOF
 
   # Refresh so the alias applies without waiting for a session restart.
-  fc-cache -f >/dev/null 2>&1 || true
+  if [ "${GTK_CONFIG_SKIP_FC_CACHE:-0}" != "1" ]; then
+    fc-cache -f >/dev/null 2>&1 || true
+  fi
 }
 
 cmd="${1:?usage: gtk-config.sh <subcommand> [args]}"

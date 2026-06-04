@@ -1,0 +1,25 @@
+[Unit]
+Description=Hyprland theme and font configuration
+PartOf=hyprland-session.target
+After=hyprland-session.target
+Before=xsettingsd.service graphical-session.target xdg-desktop-autostart.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=GTK_CONFIG_SKIP_FC_CACHE=1
+ExecStart=gsettings set org.gnome.desktop.interface gtk-theme Graphite-yellow-Dark-compact
+ExecStart=gsettings set org.gnome.desktop.interface icon-theme Tela-dracula-dark
+ExecStart=gsettings set org.gnome.desktop.interface cursor-theme Breeze_Light
+ExecStart=gsettings set org.gnome.desktop.interface font-name "Segoe UI 12"
+ExecStart=gsettings set org.gnome.desktop.interface monospace-font-name "ConsolasLG Nerd Font 16"
+ExecStart=%h/.config/wayland/scripts/gtk-config.sh font monospace "ConsolasLG Nerd Font 16"
+ExecStart=%h/.config/wayland/scripts/gtk-config.sh font sans-serif "Segoe UI 12"
+ExecStart=gsettings set org.gnome.desktop.input-sources show-all-sources true
+ExecStart=gsettings set org.gnome.desktop.interface color-scheme prefer-dark
+ExecStart=gsettings set org.gnome.desktop.interface gtk-key-theme Default
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=hyprland-session.target

@@ -1,11 +1,11 @@
 -- Autostart Applications
 
 hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start waybar@hyprland.service")
+  hl.exec_cmd("systemctl --user start hyprland-session.service")
 end)
 
 hl.on("hyprland.start", function()
-  hl.exec_cmd("systemctl --user start hyprland-session.service")
+  hl.exec_cmd("systemctl --user start waybar@hyprland.service")
 end)
 
 hl.on("hyprland.start", function()
