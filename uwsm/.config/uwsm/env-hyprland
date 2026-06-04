@@ -1,0 +1,7 @@
+export XDG_CURRENT_DESKTOP=Hyprland
+export XDG_SESSION_DESKTOP=Hyprland
+
+export QT_QUICK_CONTROLS_STYLE=org.hyprland.style
+
+export HYPRCURSOR_THEME=Breeze_Light
+export HYPRCURSOR_SIZE=24

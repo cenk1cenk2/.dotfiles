@@ -81,6 +81,7 @@ tasks:
             fonts
             gitconfig
             gnupg
+            gtk
             hyprland
             hyprpilot
             hyprwhspr
@@ -100,6 +101,7 @@ tasks:
             ssh-config
             swappy
             sway
+            swayidle
             swayimg
             swaylock
             swaync
@@ -108,6 +110,7 @@ tasks:
             sworkstyle
             waybar
             wayland
+            wayland-theme
             wiremix
             wireplumber
             wl-gamma-relay-rs
@@ -115,6 +118,9 @@ tasks:
             xauthority
             xdg-desktop-portal
             xdg-desktop-portal-termfilechooser
+            xsettingsd
+            uwsm
+            ydotool
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       # - task: deploy
@@ -136,6 +142,8 @@ tasks:
           to: "/"
           packages: rootfs
           # args: --adopt
+      - sudo install -d -m 0755 /usr/local/share/wayland-sessions
+      - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
       # TODO: remove after deploying to all instances
       - task: undeploy
         vars:

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Sway AMD
+Comment=Sway via UWSM with AMD session environment
+Exec=/usr/bin/uwsm start -e -D sway:Amd -- sway
+TryExec=/usr/bin/uwsm
+Type=Application

@@ -19,62 +19,9 @@ table.insert(package.searchers, function(name)
   end
 end)
 
--- Environment variables.
---
--- The 3rd `true` arg propagates the var to systemd + dbus via
--- `systemctl --user import-environment` + `dbus-update-activation-environment`
--- so services spawned by user@.service (XDG autostart, polkit, etc.)
--- inherit them. Use it for any var that systemd-spawned Qt/GTK/Electron
--- apps need to see.
---
--- Hyprland 0.55 already auto-imports DISPLAY, WAYLAND_DISPLAY,
--- HYPRLAND_INSTANCE_SIGNATURE, XDG_CURRENT_DESKTOP, QT_QPA_PLATFORMTHEME,
--- PATH, XDG_DATA_DIRS in startCompositor — no `, true` needed for those.
---
--- Gaming, Firefox and WLR vars stay process-local: they only matter to
--- children Hyprland spawns directly, not to systemd-managed units.
-
-hl.env("XDG_SESSION_TYPE", "wayland", true)
-hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
-
--- Libseat backend (Hyprland-internal, no propagation needed)
-hl.env("LIBSEAT_BACKEND", "logind")
-
--- WLR settings (Hyprland's own XWayland process inherits this directly)
--- hl.env("WLR_RENDERER_ALLOW_SOFTWARE", "1")
-hl.env("WLR_XWAYLAND", "/usr/local/bin/Xwayland")
-
--- Qt settings — propagate so Qt apps under systemd render via Wayland
-hl.env("QT_QPA_PLATFORM", "wayland", true)
-hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
-hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1", true)
-hl.env("QT_QUICK_CONTROLS_STYLE", "org.hyprland.style", true)
-
--- GTK / Electron — propagate so GTK/Electron apps under systemd use
--- Wayland and the portal interfaces
-hl.env("GTK_USE_PORTAL", "1", true)
-hl.env("GDK_BACKEND", "wayland", true)
-hl.env("GDK_DEBUG", "portals")
-hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland", true)
-
--- Gaming / Proton
--- hl.env("PROTON_ENABLE_WAYLAND", "1", true)
-hl.env("PROTON_ENABLE_HDR", "1", true)
-hl.env("PROTON_DXVK_LOWLATENCY", "1", true)
-hl.env("PROTON_HIDE_NVIDIA_GPU", "0", true)
-hl.env("PROTON_ENABLE_NVAPI", "1", true)
-hl.env("DXVK_ENABLE_NVAPI", "1", true)
-hl.env("PROTON_ENABLE_NGX_UPDATER", "1", true)
-hl.env("MANGOHUD", "1", true)
-
--- Firefox/Mozilla
-hl.env("MOZ_DBUS_REMOTE", "1", true)
-
--- Add mise shims and user bin to PATH
-hl.env(
-  "PATH",
-  ("%s/.local/share/mise/shims:%s/.local/bin:%s"):format(os.getenv("HOME"), os.getenv("HOME"), os.getenv("PATH") or "")
-)
+-- Environment variables are prepared by UWSM for UWSM-managed sessions.
+-- Keep compositor/session/toolkit variables in ~/.config/uwsm/env* so they
+-- are available before Hyprland and graphical-session.target start.
 
 -- Load shared definitions (theme first, since theme exposes colors used
 -- by 90-theming). Modes/config.d require definitions themselves; the

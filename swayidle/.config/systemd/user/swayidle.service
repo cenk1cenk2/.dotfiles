@@ -1,8 +1,10 @@
 [Unit]
 Description=Swayidle - Idle management daemon for Wayland
 Documentation=https://github.com/swaywm/swayidle
-PartOf=sway-session.target
-After=sway-session.target
+PartOf=graphical-session.target
+After=graphical-session.target
+
+ConditionEnvironment=XDG_CURRENT_DESKTOP=sway
 
 [Service]
 Type=simple
@@ -19,4 +21,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=sway-session.target
+WantedBy=graphical-session.target
