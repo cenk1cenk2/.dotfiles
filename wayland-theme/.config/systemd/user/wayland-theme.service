@@ -16,7 +16,6 @@ ExecStart=%h/.config/wayland/scripts/gtk-config.sh font monospace "ConsolasLG Ne
 ExecStart=%h/.config/wayland/scripts/gtk-config.sh font sans-serif "Segoe UI 12"
 ExecStart=gsettings set org.gnome.desktop.input-sources show-all-sources true
 ExecStart=gsettings set org.gnome.desktop.interface color-scheme prefer-dark
-ExecStart=gsettings set org.freedesktop.appearance color-scheme prefer-dark
 ExecStart=gsettings set org.gnome.desktop.interface gtk-key-theme Default
 StandardOutput=journal
 StandardError=journal
