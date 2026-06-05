@@ -85,7 +85,7 @@
   context = 5
 
 [difftool "diffview"]
-  cmd = "CK_FLATTEN_HANDLER=gittool DIFFVIEW_GITTOOL_MODE=diff DIFFVIEW_LEFT=\"$LOCAL\" DIFFVIEW_RIGHT=\"$REMOTE\" DIFFVIEW_OUTPUT=\"$MERGED\" nvim -n /dev/null \"+lua require('ck.modules.gittool').open_from_gittool()\""
+  cmd = "CK_FLATTEN_HANDLER=gittool DIFFVIEW_GITTOOL_MODE=diff DIFFVIEW_LEFT=\"$LOCAL\" DIFFVIEW_RIGHT=\"$REMOTE\" DIFFVIEW_OUTPUT=\"$MERGED\" nvim -b -n /dev/null \"+lua require('ck.modules.gittool').open_from_gittool()\""
 
 [difftool "nvim"]
 cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
@@ -104,7 +104,7 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
   tool = diffview
 
 [mergetool "diffview"]
-  cmd = "CK_FLATTEN_HANDLER=gittool DIFFVIEW_GITTOOL_MODE=merge DIFFVIEW_MERGED=\"$MERGED\" DIFFVIEW_BASE=\"$BASE\" DIFFVIEW_LOCAL=\"$LOCAL\" DIFFVIEW_REMOTE=\"$REMOTE\" nvim -n /dev/null \"+lua require('ck.modules.gittool').open_from_gittool()\""
+  cmd = "CK_FLATTEN_HANDLER=gittool DIFFVIEW_GITTOOL_MODE=merge DIFFVIEW_MERGED=\"$MERGED\" DIFFVIEW_BASE=\"$BASE\" DIFFVIEW_LOCAL=\"$LOCAL\" DIFFVIEW_REMOTE=\"$REMOTE\" nvim -b -n /dev/null \"+lua require('ck.modules.gittool').open_from_gittool()\""
   trustExitCode = false
 
 [mergetool "nvim"]
