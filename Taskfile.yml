@@ -65,6 +65,14 @@ tasks:
     platforms:
       - linux
     cmds:
+      - task: deploy:linux:user
+      - task: deploy:linux:system
+
+  deploy:linux:user:
+    desc: Deploy to target.
+    platforms:
+      - linux
+    cmds:
       - task: deploy
         vars:
           to: "~"
@@ -135,6 +143,20 @@ tasks:
       #     # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
       #     status: test ! -d /usr/lib/nvidia
       # HACK: little trick to change the configuration for nvidia
+      # TODO: remove after deploying to all instances
+      - task: undeploy
+        vars:
+          to: "~"
+          packages: >-
+            chrome
+            dex
+          # args: --adopt
+
+  deploy:linux:system:
+    desc: Deploy to target.
+    platforms:
+      - linux
+    cmds:
       - task: deploy
         vars:
           sudo: true
@@ -145,14 +167,6 @@ tasks:
       - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
-      # TODO: remove after deploying to all instances
-      - task: undeploy
-        vars:
-          to: "~"
-          packages: >-
-            chrome
-            dex
-          # args: --adopt
 
   deploy:macos:
     desc: Deploy to target.
