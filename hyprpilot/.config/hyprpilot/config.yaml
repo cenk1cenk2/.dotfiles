@@ -70,13 +70,11 @@ patches:
         - dir: ~/.config/nvim/utils/agents/skills/
           ignore:
             - "*-kilic"
-            - "*-kilic-*"
             - gitlab-*
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
           - "*-kilic"
-          - "*-kilic-*"
           - gitlab
           - playwright
 
