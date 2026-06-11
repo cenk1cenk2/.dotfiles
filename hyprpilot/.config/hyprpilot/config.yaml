@@ -96,6 +96,14 @@ profiles:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
+  - id: personal/kilic/deepseek-v4-pro:cloud
+    agent: opencode
+    model: kilic/deepseek-v4-pro:cloud
+    mode: plan
+    env:
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
+      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+
   - id: personal/kilic/minimax-m3
     agent: opencode
     model: kilic/minimax-m3:cloud
@@ -107,6 +115,14 @@ profiles:
   - id: personal/kilic/kimi-k2.6:cloud
     agent: opencode
     model: kilic/kimi-k2.6:cloud
+    mode: plan
+    env:
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
+      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+
+  - id: personal/kilic/gemma4:31b-cloud
+    agent: opencode
+    model: kilic/gemma4:31b-cloud
     mode: plan
     env:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
