@@ -177,8 +177,8 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 [includeIf "gitdir/i:~/development/laravel/"]
   path = ~/development/laravel/.gitconfig
 
-[includeIf "gitdir/i:/mnt/laravel/"]
-  path = /mnt/laravel/.gitconfig
+[includeIf "gitdir/i:~/workspaces/"]
+  path = ~/workspaces
 
 [url "git@gitlab.kilic.dev:"]
   insteadOf = https://gitlab.kilic.dev/
