@@ -54,10 +54,12 @@
     "code-simplifier@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
+  "syntaxHighlightingDisabled": false,
   "effortLevel": "medium",
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "autoMemoryEnabled": true,
+  "theme": "custom:onedarker",
   "editorMode": "vim",
   "verbose": true
 }
