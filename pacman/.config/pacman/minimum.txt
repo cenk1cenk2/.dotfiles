@@ -92,7 +92,7 @@ qt5-styleplugins
 qt5-wayland
 rclone
 rebuild-detector
-ripdrag-git
+ripdrag
 rofi
 rsync
 seahorse
@@ -109,7 +109,6 @@ swayimg
 swaync
 swayosd
 tailscale
-themechanger-git
 tlp
 tlpui
 tmux

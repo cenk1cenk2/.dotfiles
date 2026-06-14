@@ -1,8 +1,6 @@
 gamemode
 gamescope-git
 goverlay
-input-remapper-bin
-lutris
 mangohud
 steam
 wine
