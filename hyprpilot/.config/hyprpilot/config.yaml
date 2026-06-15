@@ -87,7 +87,11 @@ patches:
 
 agents:
   - id: codex
+    provider: acp-codex
+    command: bunx
+    args: ["--bun", "-y", "@zed-industries/codex-acp@latest"]
     spawn:
+      command: codex
       args: ["--profile", "default"]
 
 profile:
