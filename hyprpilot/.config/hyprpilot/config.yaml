@@ -85,6 +85,11 @@ patches:
     env:
       "$patch": replace
 
+agents:
+  - id: codex
+    spawn:
+      args: ["--profile", "default"]
+
 profile:
   default: personal/codex/gpt-5.5
 
