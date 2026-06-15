@@ -54,8 +54,10 @@
     "code-simplifier@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
+  "viewMode": "default",
+  "spinnerTipsEnabled": false,
   "syntaxHighlightingDisabled": false,
-  "effortLevel": "medium",
+  "effortLevel": "high",
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "autoMemoryEnabled": true,
@@ -63,6 +65,5 @@
   "editorMode": "vim",
   "verbose": false,
   "showTurnDuration": true,
-  "spinnerTipsEnabled": false,
-  "viewMode": "default"
+  "preferredNotifChannel": "kitty"
 }
