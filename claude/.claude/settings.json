@@ -64,6 +64,6 @@
   "theme": "custom:onedarker",
   "editorMode": "vim",
   "verbose": false,
-  "showTurnDuration": true,
-  "preferredNotifChannel": "kitty"
+  "preferredNotifChannel": "kitty",
+  "showTurnDuration": true
 }
