@@ -81,6 +81,7 @@ tasks:
             brave
             claude
             clipse
+            codex
             dbus
             desktop
             easyeffects

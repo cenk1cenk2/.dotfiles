@@ -1,0 +1,30 @@
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+
+model_reasoning_summary = "auto"
+
+approvals_reviewer = "auto_review"
+
+personality = "pragmatic"
+
+[terminal]
+newline = "ctrl_m"
+
+[features]
+use_linux_sandbox_bwrap = true
+multi_agent = true
+apps = true
+terminal_resize_reflow = true
+memories = true
+remote_control = true
+
+[tui]
+notifications = true
+notification_method = "bel"
+notification_condition = "always"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[notice]
+hide_full_access_warning = true
