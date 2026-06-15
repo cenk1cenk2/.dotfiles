@@ -61,5 +61,8 @@
   "autoMemoryEnabled": true,
   "theme": "custom:onedarker",
   "editorMode": "vim",
-  "verbose": true
+  "verbose": false,
+  "showTurnDuration": true,
+  "spinnerTipsEnabled": false,
+  "viewMode": "default"
 }
