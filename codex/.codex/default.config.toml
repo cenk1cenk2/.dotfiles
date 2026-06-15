@@ -1,11 +1,11 @@
 model = "gpt-5.5"
 model_reasoning_effort = "high"
-
-model_reasoning_summary = "auto"
+model_reasoning_summary = "concise"
 
 approvals_reviewer = "auto_review"
 
 personality = "pragmatic"
+web_search = "cached"
 
 [terminal]
 newline = "ctrl_m"
@@ -22,6 +22,7 @@ remote_control = true
 notifications = true
 notification_method = "bel"
 notification_condition = "always"
+show_tooltips = false
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
