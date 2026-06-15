@@ -79,12 +79,11 @@ patches:
           - playwright
 
   # Direct-spawn-only override for work Claude profiles.
-  # Uncomment after running a Hyprpilot build that supports `$match.spawn`.
-  # - $match:
-  #     profile: "work/claude/*"
-  #     spawn: true
-  #   env:
-  #     "$patch": replace
+  - $match:
+      profile: "work/claude/*"
+      spawn: true
+    env:
+      "$patch": replace
 
 profile:
   default: personal/codex/gpt-5.5
