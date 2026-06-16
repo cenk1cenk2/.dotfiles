@@ -1,3 +1,5 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
 model = "gpt-5.5"
 model_reasoning_effort = "high"
 model_reasoning_summary = "concise"
@@ -6,6 +8,15 @@ approvals_reviewer = "auto_review"
 
 personality = "pragmatic"
 web_search = "cached"
+
+project_doc_fallback_filenames = ["CLAUDE.md", "GEMINI.md"]
+
+[history]
+persistence = "save-all"
+
+[memories]
+use_memories = true
+generate_memories = true
 
 [terminal]
 newline = "ctrl_m"
@@ -23,6 +34,25 @@ notifications = true
 notification_method = "bel"
 notification_condition = "always"
 show_tooltips = false
+
+status_line = [
+  "model-with-reasoning",
+  "current-dir",
+  "project-name",
+  "git-branch",
+  "pull-request-number",
+  "branch-changes",
+  "run-state",
+  "permissions",
+  "approval-mode",
+  "context-remaining",
+  "context-used",
+  "five-hour-limit",
+  "weekly-limit",
+  "context-window-size",
+  "task-progress",
+]
+status_line_use_colors = true
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
