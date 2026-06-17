@@ -120,6 +120,14 @@ profiles:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
+  - id: personal/kilic/glm-5.2:cloud
+    agent: opencode
+    model: kilic/glm-5.2:cloud
+    mode: plan
+    env:
+      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
+      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+
   - id: personal/kilic/minimax-m3
     agent: opencode
     model: kilic/minimax-m3:cloud
@@ -128,9 +136,9 @@ profiles:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
-  - id: personal/kilic/kimi-k2.6:cloud
+  - id: personal/kilic/kimi-k2.7-code:cloud
     agent: opencode
-    model: kilic/kimi-k2.6:cloud
+    model: kilic/kimi-k2.7-code:cloud
     mode: plan
     env:
       OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
