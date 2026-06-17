@@ -1,0 +1,19 @@
+[Unit]
+Description=Codex remote control daemon
+Documentation=https://developers.openai.com/codex/
+Wants=network-online.target
+PartOf=graphical-session.target
+After=network-online.target graphical-session.target
+
+[Service]
+Type=simple
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecCondition=/bin/zsh -lc 'command -v codex >/dev/null'
+ExecStart=/bin/zsh -lc 'exec codex remote-control --json'
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target
