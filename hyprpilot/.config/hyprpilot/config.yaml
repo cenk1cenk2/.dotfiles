@@ -157,21 +157,10 @@ profiles:
     model: gpt-5.5
     mode: read-only
 
-  - id: personal/opencode/codex-gpt-5.5
-    agent: opencode
-    model: openai/gpt-5.5
-    mode: plan
-    env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
-      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
-
-  - id: personal/opencode/codex-gpt-5.3-codex-spark
-    agent: opencode
-    model: openai/gpt-5.3-codex-spark
-    mode: plan
-    env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
-      CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "Codex Desktop"
+  - id: personal/codex/gpt-5.3-codex-spark
+    agent: codex
+    model: gpt-5.3-codex-spark
+    mode: read-only
 
   - id: work/claude/opus
     agent: claude-code
