@@ -42,6 +42,7 @@ status_line = [
   "approval-mode",
   "five-hour-limit",
   "weekly-limit",
+  "task-progress",
   "project-name",
   "git-branch",
   "branch-changes",
