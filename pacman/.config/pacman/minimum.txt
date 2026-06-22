@@ -11,7 +11,6 @@ brave-bin
 breeze-cursors
 brightnessctl
 clamav
-clipboard
 cliphist
 clipse
 cmake
@@ -32,7 +31,6 @@ gawk
 git
 git-lfs
 gnome-keyring
-gnu-netcat
 gnupg
 greetd
 greetd-tuigreet
@@ -55,7 +53,7 @@ kitty-shell-integration
 kitty-terminfo
 libpulse
 libva-utils
-libva-vdpau-driver
+# libva-vdpau-driver
 linux-firmware
 linux-headers
 linux-zen
@@ -80,7 +78,6 @@ pinentry
 pipewire
 pipewire-alsa
 pipewire-audio
-pipewire-jack
 pipewire-libcamera
 pipewire-pulse
 playerctl
@@ -110,7 +107,6 @@ tailscale
 tlp
 tlpui
 tmux
-ttf-ms-win11-auto
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
 ttf-roboto-mono-nerd
@@ -132,9 +128,7 @@ which
 wiremix
 wireplumber
 wl-clipboard
-wl-gammarelay-rs
 wl-mirror
-wl-screenrec
 wlogout
 wol-systemd
 wpa_supplicant

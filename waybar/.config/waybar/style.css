@@ -54,9 +54,9 @@ window#waybar {
   font-size: 14px;
 }
 
-window.eDP-1 * {
-  font-size: 12px;
-}
+/* window.eDP-1 * { */
+/*   font-size: 12px; */
+/* } */
 
 /* -----------------------------------------------------------------------------
  * Module containers
