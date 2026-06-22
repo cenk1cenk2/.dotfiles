@@ -22,6 +22,12 @@ profile portable {
     exec notify-send kanshi "Profile portable has been applied."
 }
 
+# lenovo only
+profile portable {
+    output "Samsung Display Corp. ATNA60KA04-0  0x00000032" enable mode 3200x2000@120.000Hz position 0,0 scale 1.60 transform normal adaptive_sync off
+    exec notify-send kanshi "Profile portable has been applied."
+}
+
 # gpd docked at main setup
 profile docked {
     output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@119.982Hz position 0,0 scale 1.0 transform normal adaptive_sync off
