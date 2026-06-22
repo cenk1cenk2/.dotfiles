@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Hyprland Hybrid
+Comment=Hyprland via UWSM with Intel primary and NVIDIA available
+Exec=/usr/bin/uwsm start -e -D Hyprland:Hybrid -- hyprland.desktop
+TryExec=/usr/bin/uwsm
+Type=Application

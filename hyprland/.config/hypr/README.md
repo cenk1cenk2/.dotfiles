@@ -32,56 +32,29 @@ hyprland/.config/hypr/
 
 ## Environment Variables
 
-Environment variables are configured directly in `hyprland.conf` using Hyprland's native `env` directive:
+Environment variables are prepared by UWSM before Hyprland starts. Keep compositor, toolkit, and GPU selection variables in `uwsm/.config/uwsm/env*` so they reach Hyprland and the user systemd environment.
 
-### Session and Desktop
+UWSM loads the common file plus profile files selected by the display-manager session:
 
-- `XDG_SESSION_TYPE=wayland`
-- `XDG_CURRENT_DESKTOP=Hyprland`
-- `LIBSEAT_BACKEND=logind`
-- `PATH` - Includes mise shims (`~/.local/share/mise/shims`) and user bin (`~/.local/bin`)
+- `uwsm/.config/uwsm/env` - common Wayland/toolkit/application environment.
+- `uwsm/.config/uwsm/env-hyprland` - Hyprland desktop identity and Hyprcursor environment.
+- `uwsm/.config/uwsm/env-amd` - AMD media acceleration profile.
+- `uwsm/.config/uwsm/env-nvidia` - NVIDIA-default profile.
+- `uwsm/.config/uwsm/env-hybrid` - Intel-primary/NVIDIA-available profile.
 
-### Wayland/XWayland
+Common settings include `LIBSEAT_BACKEND=logind`, `WLR_XWAYLAND=/usr/local/bin/Xwayland`, Wayland Qt/GTK variables, cursor variables, `MANGOHUD=1`, `MOZ_ENABLE_WAYLAND=1`, and `DOCKER_BUILDKIT=1`.
 
-- `WLR_RENDERER_ALLOW_SOFTWARE=1` - Allow software rendering
-- `WLR_XWAYLAND=/usr/local/bin/Xwayland` - Custom Xwayland path
+## Hardware-Specific Sessions
 
-### Qt Configuration
+Display-manager entries live in `rootfs/usr/local/share/wayland-sessions/` and select hardware profiles with UWSM's `-D` desktop list.
 
-- `QT_QPA_PLATFORM=wayland` - Use Wayland backend
-- `QT_QPA_PLATFORMTHEME=hyprqt6engine` - Use Hyprland Qt theme
-- `QT_WAYLAND_DISABLE_WINDOWDECORATION=1` - Disable Qt decorations
+- **Hyprland AMD** runs `uwsm start -e -D Hyprland:Amd -- hyprland.desktop`.
+- **Hyprland NVIDIA** runs `uwsm start -e -D Hyprland:Nvidia -- hyprland.desktop` and keeps NVIDIA as the default renderer/offload target.
+- **Hyprland Hybrid** runs `uwsm start -e -D Hyprland:Hybrid -- hyprland.desktop` and uses Intel as Hyprland's primary renderer when an Intel iGPU and NVIDIA dGPU are both present.
 
-### GTK Configuration
+`env-hybrid` detects the current `/dev/dri/card*` devices from sysfs vendor IDs at session start and exports `AQ_DRM_DEVICES` with Intel first and NVIDIA second. This avoids machine-specific udev rules while avoiding hard-coded card numbering in the shared dotfiles repo. It does not export global NVIDIA PRIME/offload variables such as `__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, or `GBM_BACKEND=nvidia-drm`.
 
-- `GTK_USE_PORTAL=1` - Use XDG portals
-- `GDK_BACKEND=wayland` - Use Wayland backend
-- `GDK_DEBUG=portals` - Enable portal debugging
-
-### Gaming Optimizations
-
-- `DXVK_ASYNC=1` - Enable async DXVK shader compilation
-- `MANGOHUD=1` - Enable MangoHUD overlay
-
-### Applications
-
-- `MOZ_ENABLE_WAYLAND=1` - Firefox Wayland support
-- `MOZ_DBUS_REMOTE=1` - Firefox D-Bus remote
-- `DOCKER_BUILDKIT=1` - Enable Docker BuildKit
-
-## Hardware-Specific Configuration
-
-Hardware-specific environment variables (GPU-related) are handled by wrapper scripts in `rootfs/usr/local/bin/`:
-
-- **hyprland-amd** - Launch Hyprland for AMD systems
-- **hyprland-nvidia** - Launch Hyprland for NVIDIA systems with additional GPU-specific variables:
-  - GBM backend settings
-  - PRIME render offload
-  - VDPAU and VAAPI driver configuration
-  - Proton/DXVK NVAPI settings
-  - VKD3D DirectX Raytracing support
-
-Use the appropriate script when launching Hyprland from your display manager or `.xinitrc`.
+Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA. Use `Hyprland Hybrid` for Intel-primary laptop sessions where Hyprland should prefer the iGPU while still seeing the NVIDIA card for outputs/fallbacks.
 
 ## Tool Choices
 

@@ -6,6 +6,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
+Environment=DRI_PRIME=0
 ExecCondition=/bin/sh -c 'command -v swaync'
 ExecStart=swaync
 Restart=on-failure
