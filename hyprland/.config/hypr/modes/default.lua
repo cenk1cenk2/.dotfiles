@@ -175,14 +175,10 @@ local function swap_workspaces(direction)
   local current_windows = hl.get_workspace_windows(current.id) or {}
   local target_windows = hl.get_workspace_windows(target) or {}
   for _, w in ipairs(current_windows) do
-    hl.dispatch(
-      hl.dsp.window.move({ workspace = target, window = "address:" .. w.address, follow = false })
-    )
+    hl.dispatch(hl.dsp.window.move({ workspace = target, window = "address:" .. w.address, follow = false }))
   end
   for _, w in ipairs(target_windows) do
-    hl.dispatch(
-      hl.dsp.window.move({ workspace = current.id, window = "address:" .. w.address, follow = false })
-    )
+    hl.dispatch(hl.dsp.window.move({ workspace = current.id, window = "address:" .. w.address, follow = false }))
   end
   hl.dispatch(hl.dsp.focus({ workspace = target }))
 end

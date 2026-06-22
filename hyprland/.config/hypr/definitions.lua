@@ -73,9 +73,17 @@ M.screenshot.snipping_tool = M.screenshot.grimshot .. " --notify save area - | s
 M.osd = [[swayosd-client --monitor $(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')]]
 
 -- Brightness control
+local hostname_file = io.open("/etc/hostname", "r")
+local hostname = hostname_file and hostname_file:read("*l") or ""
+if hostname_file then
+  hostname_file:close()
+end
+
+local brightness_device = hostname == "bat" and " --device intel_backlight" or ""
+
 M.brightness = {
-  up = M.osd .. " --brightness raise",
-  down = M.osd .. " --brightness lower",
+  up = M.osd .. brightness_device .. " --brightness raise",
+  down = M.osd .. brightness_device .. " --brightness lower",
 }
 
 -- Audio control
