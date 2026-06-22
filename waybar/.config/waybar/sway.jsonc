@@ -287,6 +287,7 @@
     "warning-threshold": 72,
     "critical-threshold": 78,
     "hwmon-path": [
+      "/sys/devices/platform/coretemp.0/hwmon/hwmon7/temp1_input",
       "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input",
       "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input",
     ],
