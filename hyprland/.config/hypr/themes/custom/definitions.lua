@@ -5,7 +5,7 @@ local M = {}
 
 M.gtk = {
   theme = "Graphite-yellow-Dark-compact",
-  icon_theme = "Tela-dracula-dark",
+  icon_theme = "Tela-yellow-dark",
   cursor_theme = "Breeze_Light",
   color_scheme = "prefer-dark",
 }
