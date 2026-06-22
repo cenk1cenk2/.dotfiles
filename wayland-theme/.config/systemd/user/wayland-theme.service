@@ -8,6 +8,7 @@ Type=oneshot
 RemainAfterExit=yes
 Environment=GTK_CONFIG_SKIP_FC_CACHE=1
 ExecStart=gsettings set org.gnome.desktop.interface gtk-theme Graphite-yellow-Dark-compact
+ExecStart=%h/.config/wayland/scripts/gtk-config.sh gtk4-theme Graphite-yellow-Dark-compact
 ExecStart=gsettings set org.gnome.desktop.interface icon-theme Tela-yellow-dark
 ExecStart=gsettings set org.gnome.desktop.interface cursor-theme Breeze_Light
 ExecStart=gsettings set org.gnome.desktop.interface font-name "Segoe UI 12"

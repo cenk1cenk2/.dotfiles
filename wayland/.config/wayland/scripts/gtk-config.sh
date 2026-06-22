@@ -13,6 +13,7 @@
 # usage:
 #   gtk-config.sh font monospace  "ConsolasLG Nerd Font 11"
 #   gtk-config.sh font sans-serif "Segoe UI 11"
+#   gtk-config.sh gtk4-theme "Graphite-yellow-Dark-compact"
 
 set -eu
 
@@ -51,11 +52,49 @@ EOF
   fi
 }
 
+_gtk4_theme() {
+  local theme="${1:?usage: gtk-config.sh gtk4-theme <theme>}"
+
+  gsettings set org.gnome.desktop.interface gtk-theme "$theme"
+
+  local theme_root
+  if [ -d "$HOME/.themes/${theme}" ]; then
+    theme_root="$HOME/.themes/${theme}"
+  elif [ -d "${XDG_DATA_HOME:-$HOME/.local/share}/themes/${theme}" ]; then
+    theme_root="${XDG_DATA_HOME:-$HOME/.local/share}/themes/${theme}"
+  else
+    theme_root="/usr/share/themes/${theme}"
+  fi
+
+  local theme_dir="${theme_root}/gtk-4.0"
+  local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/gtk-4.0"
+  mkdir -p "$config_dir"
+
+  if [ -d "$theme_dir/assets" ]; then
+    cp -rf --backup "$theme_dir/assets" "$config_dir"
+  fi
+
+  if [ -f "$theme_dir/gtk.css" ]; then
+    cp -rf --backup "$theme_dir/gtk.css" "$config_dir"
+  fi
+
+  if [ -f "$theme_dir/gtk-dark.css" ]; then
+    cp -rf --backup "$theme_dir/gtk-dark.css" "$config_dir"
+  else
+    rm -rf "$config_dir/gtk-dark.css"
+  fi
+
+  if [ -d "$theme_dir/icons" ]; then
+    cp -rf --backup "$theme_dir/icons" "$config_dir"
+  fi
+}
+
 cmd="${1:?usage: gtk-config.sh <subcommand> [args]}"
 shift
 
 case "$cmd" in
 font) _font "$@" ;;
+gtk4-theme) _gtk4_theme "$@" ;;
 *)
   echo "gtk-config.sh: unknown subcommand: $cmd" >&2
   exit 2
