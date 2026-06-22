@@ -24,7 +24,7 @@
     // /sys/class/power_supply/ps-controller-battery-XX:XX:XX:XX:XX:XX
     // vanishing when the controller disconnects. "BAT0" doesn't exist
     // on this desktop so the module gracefully shows nothing.
-    "bat": "BAT0",
+    // "bat": "BAT0",
     "interval": 30,
     "states": {
       "warning": 30,
