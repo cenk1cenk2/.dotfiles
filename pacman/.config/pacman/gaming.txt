@@ -1,5 +1,5 @@
 gamemode
-gamescope-git
+gamescope
 goverlay
 mangohud
 steam
