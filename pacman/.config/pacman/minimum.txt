@@ -1,3 +1,4 @@
+# libva-vdpau-driver
 base
 base-devel
 bind
@@ -53,7 +54,6 @@ kitty-shell-integration
 kitty-terminfo
 libpulse
 libva-utils
-# libva-vdpau-driver
 linux-firmware
 linux-headers
 linux-zen
@@ -103,6 +103,7 @@ swappy-git
 swayimg
 swaync
 swayosd
+tailscale
 tailscale
 tlp
 tlpui
