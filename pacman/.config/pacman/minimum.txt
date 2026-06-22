@@ -117,7 +117,6 @@ ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
 ttf-roboto-mono-nerd
 ufw
-unbound
 unzip
 v4l2loopback-dkms
 vdirsyncer
