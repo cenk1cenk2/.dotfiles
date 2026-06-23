@@ -9,6 +9,7 @@ Type=simple
 Environment=DRI_PRIME=0
 Environment=MANGOHUD=0
 Environment=DISABLE_MANGOHUD=1
+Environment=GSK_RENDERER=cairo
 ExecCondition=/bin/sh -c 'command -v swaync'
 ExecStart=swaync
 Restart=on-failure
