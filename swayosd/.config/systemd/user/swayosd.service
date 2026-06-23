@@ -7,6 +7,8 @@ After=graphical-session.target
 [Service]
 Type=simple
 Environment=DRI_PRIME=0
+Environment=MANGOHUD=0
+Environment=DISABLE_MANGOHUD=1
 ExecCondition=/bin/sh -c 'command -v swayosd-server'
 ExecStart=swayosd-server
 Restart=on-failure
