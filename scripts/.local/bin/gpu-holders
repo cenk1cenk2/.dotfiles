@@ -1,0 +1,348 @@
+#!/usr/bin/env -S sh -c 'exec uv run --script --project "$(dirname "$0")" "$0" "$@"'
+"""Show GPU runtime power state and device-node holders."""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
+from lib import create_logger
+
+console = Console(force_terminal=None)
+
+class SmiMode(StrEnum):
+    AUTO = "auto"
+    YES = "yes"
+    NO = "no"
+
+@dataclass
+class Card:
+    name: str
+    pci_id: str
+    vendor_id: str
+    device_id: str
+    subsystem_vendor_id: str | None
+    subsystem_device_id: str | None
+    class_id: str
+    driver: str | None
+    power_control: str | None
+    runtime_status: str | None
+    label: str | None
+    lspci: str | None
+    nodes: list[Path] = field(default_factory=list)
+
+    @property
+    def vendor(self) -> str:
+        return {
+            "0x1002": "AMD",
+            "0x10de": "NVIDIA",
+            "0x8086": "Intel",
+        }.get(self.vendor_id, self.vendor_id)
+
+    @property
+    def model(self) -> str:
+        if self.lspci:
+            parts = self.lspci.split(": ", 2)
+            if len(parts) == 3:
+                return parts[2]
+            if len(parts) == 2:
+                return parts[1]
+        if self.label:
+            return self.label
+        return self.device_id
+
+    @property
+    def short_model(self) -> str:
+        model = self.model
+        model = re.sub(r"^Intel Corporation ", "", model)
+        model = re.sub(r"^NVIDIA Corporation ", "", model)
+        model = re.sub(r"^Advanced Micro Devices, Inc\. \[AMD/ATI\] ", "", model)
+        model = re.sub(r" \(rev [^)]+\)$", "", model)
+        model = model.replace("[Intel Graphics]", "Graphics")
+        model = model.replace("[GeForce ", "GeForce ").replace("]", "")
+        model = re.sub(r"\s+", " ", model).strip()
+        return model or self.device_id
+
+    @property
+    def is_nvidia(self) -> bool:
+        return self.vendor_id == "0x10de"
+
+    @property
+    def is_active(self) -> bool:
+        return self.runtime_status == "active"
+
+@dataclass
+class ProcessInfo:
+    pid: int
+    ppid: int | None
+    stat: str
+    command: str
+    args: str
+    nodes: list[Path]
+
+class GpuHolders:
+    log = logging.getLogger("gpu-holders")
+
+    def __init__(self, *, include_smi: SmiMode):
+        self.include_smi = include_smi
+
+    @staticmethod
+    def _read(path: Path) -> str | None:
+        try:
+            return path.read_text().strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+    @staticmethod
+    def _realpath(path: Path) -> Path | None:
+        try:
+            return path.resolve(strict=True)
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+    def _run(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        self.log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.stderr:
+            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+        return proc
+
+    def _lspci(self, pci_id: str) -> str | None:
+        if not self._command_exists("lspci"):
+            return None
+        proc = self._run(["lspci", "-D", "-s", pci_id])
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip() or None
+
+    @staticmethod
+    def _command_exists(command: str) -> bool:
+        return any((Path(part) / command).exists() for part in os.environ.get("PATH", "").split(os.pathsep))
+
+    def cards(self) -> list[Card]:
+        cards: list[Card] = []
+        for card_path in sorted(Path("/sys/class/drm").glob("card*")):
+            if not re.fullmatch(r"card\d+", card_path.name):
+                continue
+            pci_path = self._realpath(card_path / "device")
+            if pci_path is None:
+                continue
+
+            nodes = [Path("/dev/dri") / card_path.name]
+            for render_path in sorted((pci_path / "drm").glob("renderD*")):
+                nodes.append(Path("/dev/dri") / render_path.name)
+
+            pci_id = pci_path.name
+            cards.append(
+                Card(
+                    name=card_path.name,
+                    pci_id=pci_id,
+                    vendor_id=self._read(pci_path / "vendor") or "unknown",
+                    device_id=self._read(pci_path / "device") or "unknown",
+                    subsystem_vendor_id=self._read(pci_path / "subsystem_vendor"),
+                    subsystem_device_id=self._read(pci_path / "subsystem_device"),
+                    class_id=self._read(pci_path / "class") or "unknown",
+                    driver=(self._realpath(pci_path / "driver") or Path("none")).name,
+                    power_control=self._read(pci_path / "power/control"),
+                    runtime_status=self._read(pci_path / "power/runtime_status"),
+                    label=self._read(pci_path / "label"),
+                    lspci=self._lspci(pci_id),
+                    nodes=nodes,
+                )
+            )
+
+        return cards
+
+    def device_nodes(self, cards: list[Card]) -> list[Path]:
+        nodes: list[Path] = []
+        for card in cards:
+            nodes.extend(card.nodes)
+
+        for pattern in ("/dev/nvidia*", "/dev/nvidia-caps/nvidia-cap*"):
+            for node in sorted(Path("/").glob(pattern.removeprefix("/"))):
+                if node.exists() and not node.is_dir():
+                    nodes.append(node)
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for node in nodes:
+            if node in seen or not node.exists() or node.is_dir():
+                continue
+            seen.add(node)
+            unique.append(node)
+
+        return unique
+
+    def holders(self, nodes: list[Path]) -> list[ProcessInfo]:
+        holder_nodes: dict[int, list[Path]] = {}
+        for node in nodes:
+            proc = self._run(["fuser", str(node)])
+            output = f"{proc.stdout}\n{proc.stderr}"
+            for raw_pid in re.findall(r"\b\d+\b", output):
+                pid = int(raw_pid)
+                holder_nodes.setdefault(pid, []).append(node)
+
+        processes: list[ProcessInfo] = []
+        for pid in sorted(holder_nodes):
+            stat_path = Path("/proc") / str(pid) / "stat"
+            cmdline_path = Path("/proc") / str(pid) / "cmdline"
+            comm_path = Path("/proc") / str(pid) / "comm"
+            try:
+                stat_fields = stat_path.read_text().split()
+                ppid = int(stat_fields[3])
+                stat = stat_fields[2]
+            except (FileNotFoundError, PermissionError, OSError, ValueError, IndexError):
+                ppid = None
+                stat = "?"
+
+            command = self._read(comm_path) or "?"
+            args = (self._read(cmdline_path) or "").replace("\x00", " ").strip()
+            processes.append(
+                ProcessInfo(
+                    pid=pid,
+                    ppid=ppid,
+                    stat=stat,
+                    command=command,
+                    args=args or command,
+                    nodes=holder_nodes[pid],
+                )
+            )
+
+        return processes
+
+    def print_cards(self, cards: list[Card]) -> None:
+        table = Table(title="DRM cards", box=None)
+        table.add_column("Card", style="bold")
+        table.add_column("Vendor")
+        table.add_column("Model")
+        table.add_column("PCI")
+        table.add_column("IDs")
+        table.add_column("Driver")
+        table.add_column("Power")
+        table.add_column("Nodes")
+
+        for card in cards:
+            power = f"{card.power_control or '?'} / {card.runtime_status or '?'}"
+            power_text = Text(power)
+            if card.runtime_status == "active":
+                power_text.stylize("red")
+            elif card.runtime_status == "suspended":
+                power_text.stylize("green")
+
+            ids = f"vendor={card.vendor_id}\ndevice={card.device_id}\nclass={card.class_id}"
+            if card.subsystem_vendor_id and card.subsystem_device_id:
+                ids += f"\nsubsystem={card.subsystem_vendor_id}:{card.subsystem_device_id}"
+
+            table.add_row(
+                card.name,
+                card.vendor,
+                card.model,
+                card.pci_id,
+                ids,
+                card.driver or "?",
+                power_text,
+                "\n".join(str(node) for node in card.nodes),
+            )
+
+        console.print(table)
+
+    def node_labels(self, cards: list[Card], nodes: list[Path]) -> dict[Path, str]:
+        labels: dict[Path, str] = {}
+        for card in cards:
+            for node in card.nodes:
+                role = "card" if node.name.startswith("card") else "render"
+                labels[node] = f"{card.name} {card.vendor} {card.short_model} {role} {node.name}"
+
+        nvidia_cards = [card for card in cards if card.is_nvidia]
+        if len(nvidia_cards) == 1:
+            card = nvidia_cards[0]
+            for node in nodes:
+                if str(node).startswith("/dev/nvidia"):
+                    labels[node] = f"{card.name} {card.vendor} {card.short_model} driver {node.name}"
+
+        return labels
+
+    def print_holders(self, processes: list[ProcessInfo], labels: dict[Path, str]) -> None:
+        table = Table(title="GPU holders", box=None)
+        table.add_column("PID", justify="right", style="bold")
+        table.add_column("PPID", justify="right")
+        table.add_column("State")
+        table.add_column("Command")
+        table.add_column("Nodes")
+        table.add_column("Args")
+
+        for process in processes:
+            table.add_row(
+                str(process.pid),
+                str(process.ppid) if process.ppid is not None else "?",
+                process.stat,
+                process.command,
+                "\n".join(labels.get(node, str(node)) for node in process.nodes),
+                process.args,
+            )
+
+        if processes:
+            console.print(table)
+        else:
+            console.print("[green]No open GPU device nodes.[/]")
+
+    def print_smi(self, cards: list[Card]) -> None:
+        if not self._command_exists("nvidia-smi"):
+            return
+        if self.include_smi == SmiMode.NO:
+            return
+        if self.include_smi == SmiMode.AUTO and not any(card.is_nvidia and card.is_active for card in cards):
+            console.print("[dim]Skipped nvidia-smi because NVIDIA is not active. Use --smi to query anyway.[/]")
+            return
+
+        console.rule("nvidia-smi")
+        gpu = self._run([
+            "nvidia-smi",
+            "--query-gpu=power.draw,memory.used,pstate",
+            "--format=csv,noheader,nounits",
+        ])
+        if gpu.stdout.strip():
+            console.print(gpu.stdout.strip())
+
+        apps = self._run([
+            "nvidia-smi",
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ])
+        if apps.stdout.strip():
+            console.print(apps.stdout.strip())
+
+    def run(self) -> None:
+        cards = self.cards()
+        if not cards:
+            console.print("[yellow]No DRM cards found.[/]")
+            return
+
+        nodes = self.device_nodes(cards)
+        processes = self.holders(nodes)
+        labels = self.node_labels(cards, nodes)
+        self.print_cards(cards)
+        self.print_holders(processes, labels)
+        self.print_smi(cards)
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("--smi", "smi", flag_value=SmiMode.YES, default=SmiMode.AUTO, help="Always query nvidia-smi.")
+@click.option("--no-smi", "smi", flag_value=SmiMode.NO, help="Never query nvidia-smi.")
+@click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+def cli(smi: SmiMode, verbose: bool) -> None:
+    create_logger(verbose, name="gpu-holders")
+    GpuHolders(include_smi=smi).run()
+
+if __name__ == "__main__":
+    cli()

@@ -38,6 +38,7 @@ M.apps = {
   calendar = M.term.float .. " ikhal",
   process_manager = M.term.float_portrait_lg .. " btop",
   sensors = M.term.float_lg .. " zsh -ic 'hwatch sensors'",
+  hwatch_sensors = M.term.float_lg .. " zsh -ic 'hwatch sensors'",
 }
 
 -- Volume query commands (return current %, no UI)
