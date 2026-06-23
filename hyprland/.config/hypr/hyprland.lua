@@ -109,11 +109,6 @@ hl.config({
     new_on_top = true,
   },
 
-  gestures = {
-    workspace_swipe_distance = 300,
-    workspace_swipe_cancel_ratio = 0.5,
-  },
-
   misc = {
     disable_hyprland_logo = true,
     disable_autoreload = true,
@@ -127,9 +122,6 @@ hl.config({
     force_zero_scaling = false,
   },
 })
-
--- 3-finger horizontal swipe to switch workspaces
-hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 
 -- Global animation
 hl.animation({ leaf = "global", enabled = true, speed = 0.5, bezier = "default" })

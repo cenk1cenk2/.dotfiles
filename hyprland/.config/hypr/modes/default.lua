@@ -234,6 +234,17 @@ hl.bind(("%s + F9"):format(d.mod), hl.dsp.exec_cmd("jumpy display tv"))
 hl.bind(("%s + F10"):format(d.mod), hl.dsp.exec_cmd("jumpy display tv-4k"))
 hl.bind(("%s + F12"):format(d.mod), hl.dsp.exec_cmd("jumpy display reload"))
 
+-- gestures
+hl.config({
+  gestures = {
+    workspace_swipe_distance = 500,
+    workspace_swipe_cancel_ratio = 0.5,
+    workspace_swipe_invert = false,
+  },
+})
+
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+
 -- GLOBAL SHORTCUTS
 -- hyprctl globalshortcuts
 
