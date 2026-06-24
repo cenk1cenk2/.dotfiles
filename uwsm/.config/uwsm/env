@@ -17,7 +17,7 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XCURSOR_THEME=Breeze_Light
 export XCURSOR_SIZE=24
 
-export PROTON_ENABLE_HDR=1
+# export PROTON_ENABLE_HDR=1
 export MANGOHUD=1
 
 export DOCKER_BUILDKIT=1

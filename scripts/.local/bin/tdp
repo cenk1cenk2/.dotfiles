@@ -382,6 +382,44 @@ class Tdp:
             table.add_row(str(pid), command, "\n".join(str(node) for node in nodes))
         self.console.print(table)
 
+    def nvidia_power_rows(self) -> list[list[str]]:
+        query = ",".join(
+            [
+                "pci.bus_id",
+                "power.draw",
+                "enforced.power.limit",
+                "power.default_limit",
+                "power.min_limit",
+                "power.max_limit",
+                "memory.used",
+                "pstate",
+            ]
+        )
+        proc = self.run(
+            [
+                "nvidia-smi",
+                f"--query-gpu={query}",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+        )
+
+        rows: list[list[str]] = []
+        for line in proc.stdout.splitlines():
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) == 8:
+                rows.append(fields)
+
+        return rows
+
+    def set_nvidia_power_limit(self, watts: float, pci_id: str | None = None) -> None:
+        gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
+        self.run(
+            ["sudo", "nvidia-smi", "-i", gpu_pci_id, "-pl", f"{watts:g}"],
+            echo_output=True,
+        )
+        self.show_nvidia(gpu_pci_id)
+
     def show_nvidia(self, pci_id: str | None = None) -> None:
         self.console.rule("[bold yellow]NVIDIA[/]")
         pci_ids = (
@@ -412,16 +450,20 @@ class Tdp:
             )
         self.console.print(table)
 
-        smi = self.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=pci.bus_id,power.draw,memory.used,pstate",
-                "--format=csv,noheader,nounits",
-            ],
-            check=False,
-        )
-        if smi.stdout.strip():
-            self.console.print(Text(smi.stdout.rstrip()))
+        power_table = Table(title="NVIDIA power limits", box=None)
+        power_table.add_column("PCI", style="bold")
+        power_table.add_column("Draw W", justify="right")
+        power_table.add_column("Current W", justify="right")
+        power_table.add_column("Default W", justify="right")
+        power_table.add_column("Min W", justify="right")
+        power_table.add_column("Max W", justify="right")
+        power_table.add_column("Memory MiB", justify="right")
+        power_table.add_column("P-State")
+        for row in self.nvidia_power_rows():
+            power_table.add_row(*row)
+
+        if power_table.row_count:
+            self.console.print(power_table)
 
         for gpu_pci_id in pci_ids:
             self.print_nvidia_holders(self.nvidia_holders(gpu_pci_id))
@@ -623,6 +665,12 @@ class Tdp:
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_status(pci_id: str | None) -> None:
         Tdp().show_nvidia(pci_id)
+
+    @cmd_nvidia.command("limit")
+    @click.argument("watts", type=float)
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_limit(watts: float, pci_id: str | None) -> None:
+        Tdp().set_nvidia_power_limit(watts, pci_id)
 
     @cmd_nvidia.command("drain", hidden=True)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
