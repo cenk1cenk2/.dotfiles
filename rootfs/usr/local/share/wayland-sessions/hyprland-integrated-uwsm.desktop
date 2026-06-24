@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Hyprland Integrated
+Comment=Hyprland via UWSM with integrated GPU only
+Exec=/usr/bin/uwsm start -e -D Hyprland:Integrated -- hyprland.desktop
+TryExec=/usr/bin/uwsm
+Type=Application

@@ -1,0 +1,28 @@
+unset GBM_BACKEND __NV_PRIME_RENDER_OFFLOAD __GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus VDPAU_DRIVER LIBVA_DRIVER_NAME NVD_BACKEND
+unset PROTON_DXVK_LOWLATENCY PROTON_HIDE_NVIDIA_GPU PROTON_ENABLE_NVAPI DXVK_ENABLE_NVAPI PROTON_ENABLE_NGX_UPDATER VKD3D_CONFIG VKD3D_FEATURE_LEVEL
+
+_hypr_card_for_vendor() {
+  for vendor in /sys/class/drm/card*/device/vendor; do
+    [ -r "$vendor" ] || continue
+    [ "$(cat "$vendor")" = "$1" ] || continue
+
+    card_dir="${vendor%/device/vendor}"
+    card="${card_dir##*/}"
+    [ -e "/dev/dri/$card" ] || continue
+
+    printf '/dev/dri/%s\n' "$card"
+    return 0
+  done
+
+  return 1
+}
+
+_hypr_intel_card="$(_hypr_card_for_vendor 0x8086 || true)"
+
+if [ -n "$_hypr_intel_card" ]; then
+  export AQ_DRM_DEVICES="$_hypr_intel_card"
+  export LIBVA_DRIVER_NAME=iHD
+fi
+
+unset _hypr_intel_card
+unset -f _hypr_card_for_vendor
