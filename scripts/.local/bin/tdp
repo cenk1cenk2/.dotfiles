@@ -170,8 +170,9 @@ class Tdp:
         if proc.stderr:
             self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
         if check and proc.returncode != 0:
+            output = "\n".join(part for part in (proc.stderr.strip(), proc.stdout.strip()) if part)
             raise click.ClickException(
-                proc.stderr.strip()
+                output
                 or f"{cmd[0]} failed with exit code {proc.returncode}."
             )
 
@@ -286,7 +287,7 @@ class Tdp:
         )
 
     def set_nvidia_drain(self, pci_id: str, enabled: bool) -> None:
-        self.run(
+        proc = self.run(
             [
                 "sudo",
                 "nvidia-smi",
@@ -295,8 +296,20 @@ class Tdp:
                 pci_id,
                 "-m",
                 "1" if enabled else "0",
-            ]
+            ],
+            check=False,
         )
+        if proc.returncode == 0:
+            return
+
+        state = self.nvidia_drain_state(pci_id)
+        if enabled and state == "draining":
+            return
+        if not enabled and state == "not draining":
+            return
+
+        output = "\n".join(part for part in (proc.stderr.strip(), proc.stdout.strip()) if part)
+        raise click.ClickException(output or f"nvidia-smi drain failed with exit code {proc.returncode}.")
 
     def nvidia_drain_state(self, pci_id: str) -> str:
         proc = self.run(["nvidia-smi", "drain", "-q", "-p", pci_id], check=False)
@@ -431,7 +444,20 @@ class Tdp:
                 "Switch to Hyprland Integrated or close the listed processes, then retry."
             )
 
-        self.run(["sudo", "nvidia-smi", "drain", "-p", gpu_pci_id, "-r"])
+        try:
+            self.run(["sudo", "nvidia-smi", "drain", "-p", gpu_pci_id, "-r"])
+        except click.ClickException as exc:
+            self.run([
+                "sudo",
+                "nvidia-smi",
+                "drain",
+                "-p",
+                gpu_pci_id,
+                "-m",
+                "0",
+            ], check=False)
+            raise click.ClickException(f"Failed to remove NVIDIA GPU: {exc}") from exc
+
         self.console.print(f"Removed NVIDIA GPU: [bold]{gpu_pci_id}[/]")
         self.show_nvidia()
 
@@ -584,12 +610,12 @@ class Tdp:
     def cmd_nvidia_status(pci_id: str | None) -> None:
         Tdp().show_nvidia(pci_id)
 
-    @cmd_nvidia.command("drain")
+    @cmd_nvidia.command("drain", hidden=True)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_drain(pci_id: str | None) -> None:
         Tdp().drain_nvidia(pci_id)
 
-    @cmd_nvidia.command("undrain")
+    @cmd_nvidia.command("undrain", hidden=True)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_undrain(pci_id: str | None) -> None:
         Tdp().undrain_nvidia(pci_id)
@@ -599,11 +625,15 @@ class Tdp:
     def cmd_nvidia_remove(pci_id: str | None) -> None:
         Tdp().remove_nvidia(pci_id)
 
-    @cmd_nvidia.command("discover")
+    @cmd_nvidia.command("recover")
+    def cmd_nvidia_recover() -> None:
+        Tdp().discover_nvidia()
+
+    @cmd_nvidia.command("discover", hidden=True)
     def cmd_nvidia_discover() -> None:
         Tdp().discover_nvidia()
 
-    @cmd_nvidia.command("rescan")
+    @cmd_nvidia.command("rescan", hidden=True)
     def cmd_nvidia_rescan() -> None:
         Tdp().discover_nvidia()
 
