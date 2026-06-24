@@ -1,5 +1,14 @@
 # vim: ft=bash
 
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+export MANGOHUD=0
+export DISABLE_MANGOHUD=1
+export DRI_PRIME=0!
+
+if [ -r /usr/share/vulkan/icd.d/intel_icd.json ]; then
+  export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/intel_icd.json
+fi
+
 _card_for_vendor() {
   for vendor in /sys/class/drm/card*/device/vendor; do
     [ -r "$vendor" ] || continue
@@ -16,13 +25,12 @@ _card_for_vendor() {
   return 1
 }
 
-_gpu_intel_card="$(_card_for_vendor 0x8086 || true)"
-_gpu_nvidia_card="$(_card_for_vendor 0x10de || true)"
+_intel_card="$(_card_for_vendor 0x8086 || true)"
 
-if [ -n "$_gpu_intel_card" ] && [ -n "$_gpu_nvidia_card" ]; then
-  export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
+if [ -n "$_intel_card" ]; then
+  export AQ_DRM_DEVICES="$_intel_card"
   export LIBVA_DRIVER_NAME=iHD
 fi
 
-unset _gpu_intel_card _gpu_nvidia_card
+unset _intel_card
 unset -f _card_for_vendor

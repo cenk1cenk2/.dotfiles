@@ -41,6 +41,7 @@ UWSM loads the common file plus profile files selected by the display-manager se
 - `uwsm/.config/uwsm/env-amd` - AMD media acceleration profile.
 - `uwsm/.config/uwsm/env-nvidia` - NVIDIA-default profile.
 - `uwsm/.config/uwsm/env-hybrid` - Intel-primary/NVIDIA-available profile.
+- `uwsm/.config/uwsm/env-integrated` - integrated-GPU-only profile.
 
 Common settings include `LIBSEAT_BACKEND=logind`, `WLR_XWAYLAND=/usr/local/bin/Xwayland`, Wayland Qt/GTK variables, cursor variables, `MANGOHUD=1`, `MOZ_ENABLE_WAYLAND=1`, and `DOCKER_BUILDKIT=1`.
 
@@ -51,10 +52,11 @@ Display-manager entries live in `rootfs/usr/local/share/wayland-sessions/` and s
 - **Hyprland AMD** runs `uwsm start -e -D Hyprland:Amd -- hyprland.desktop`.
 - **Hyprland NVIDIA** runs `uwsm start -e -D Hyprland:Nvidia -- hyprland.desktop` and keeps NVIDIA as the default renderer/offload target.
 - **Hyprland Hybrid** runs `uwsm start -e -D Hyprland:Hybrid -- hyprland.desktop` and uses Intel as Hyprland's primary renderer when an Intel iGPU and NVIDIA dGPU are both present.
+- **Hyprland Integrated** runs `uwsm start -e -D Hyprland:Integrated -- hyprland.desktop` and exposes only the integrated GPU to Hyprland.
 
 `env-hybrid` detects the current `/dev/dri/card*` devices from sysfs vendor IDs at session start and exports `AQ_DRM_DEVICES` with Intel first and NVIDIA second. This avoids machine-specific udev rules while avoiding hard-coded card numbering in the shared dotfiles repo. It does not export global NVIDIA PRIME/offload variables such as `__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, or `GBM_BACKEND=nvidia-drm`.
 
-Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA. Use `Hyprland Hybrid` for Intel-primary laptop sessions where Hyprland should prefer the iGPU while still seeing the NVIDIA card for outputs/fallbacks.
+Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA. Use `Hyprland Hybrid` for Intel-primary laptop sessions where Hyprland should prefer the iGPU while still seeing the NVIDIA card for outputs/fallbacks. Use `Hyprland Integrated` when the dGPU should stay out of the compositor entirely so NVIDIA runtime power management or `tdp nvidia remove` can suspend/remove it once no applications hold it open.
 
 ## Tool Choices
 

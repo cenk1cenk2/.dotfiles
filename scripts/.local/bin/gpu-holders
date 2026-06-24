@@ -1,4 +1,5 @@
 #!/usr/bin/env -S sh -c 'exec uv run --script --project "$(dirname "$0")" "$0" "$@"'
+# vim: ft=python
 """Show GPU runtime power state and device-node holders."""
 
 from __future__ import annotations

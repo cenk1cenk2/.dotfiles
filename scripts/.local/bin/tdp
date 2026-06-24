@@ -1,46 +1,703 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S sh -c 'exec uv run --script --project "$(dirname "$0")" "$0" "$@"'
+"""Set CPU power profiles and show current limits."""
 
-# vim: ft=bash
+from __future__ import annotations
 
-case "$1" in
-gfx)
-	sudo ryzenadj --gfx-clk $2
-	;;
-30)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=35000 --slow-limit=32000 --tctl-temp=95 --max-performance
-	;;
-28)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=30000 --slow-limit=30000 --tctl-temp=95 --max-performance
-	;;
-25)
-	sudo ryzenadj --stapm-limit=25000 --fast-limit=28000 --slow-limit=28000 --tctl-temp=90 --max-performance
-	;;
-20)
-	sudo ryzenadj --stapm-limit=20000 --fast-limit=25000 --slow-limit=22000 --tctl-temp=90 --max-performance
-	;;
-18)
-	sudo ryzenadj --stapm-limit=18000 --fast-limit=22000 --slow-limit=20000 --tctl-temp=85 --max-performance
-	;;
-15)
-	sudo ryzenadj --stapm-limit=15000 --fast-limit=18000 --slow-limit=17000 --tctl-temp=85 --max-performance
-	;;
-12)
-	sudo ryzenadj --stapm-limit=12000 --fast-limit=15000 --slow-limit=15000 --tctl-temp=85 --power-saving
-	;;
-9)
-	sudo ryzenadj --stapm-limit=9000 --fast-limit=12000 --slow-limit=12000 --tctl-temp=80 --power-saving
-	;;
-5)
-	sudo ryzenadj --stapm-limit=5000 --fast-limit=9000 --slow-limit=9000 --tctl-temp=75 --power-saving
-	;;
-show) ;;
-*)
-	echo "Power limit unknown."
-	exit 127
-	;;
+import logging
+import subprocess
+import sys
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import ClassVar
 
-esac
+import click
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
-sudo ryzenadj -i
+from lib import create_logger
 
-echo "Applied: $1"
+class CpuVendor(StrEnum):
+    INTEL = "GenuineIntel"
+    AMD = "AuthenticAMD"
+
+@dataclass
+class PowerLimit:
+    domain: str
+    domain_name: str | None
+    constraint: str
+    constraint_name: str | None
+    microwatts: int
+
+    @property
+    def watts(self) -> str:
+        return f"{self.microwatts / 1_000_000:.3g}"
+
+class Tdp:
+    @click.group(
+        context_settings={"help_option_names": ["-h", "--help"]},
+        invoke_without_command=True,
+    )
+    @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+    @click.pass_context
+    def cli(ctx: click.Context, verbose: bool) -> None:
+        create_logger(verbose, name="tdp")
+        if ctx.invoked_subcommand is None:
+            Tdp().show()
+
+    console: ClassVar[Console] = Console(force_terminal=None)
+    log = logging.getLogger("tdp")
+
+    PROFILE_PATH = Path("/sys/firmware/acpi/platform_profile")
+    PROFILE_CHOICES_PATH = Path("/sys/firmware/acpi/platform_profile_choices")
+    HOSTNAME_PATH = Path("/proc/sys/kernel/hostname")
+    CPUINFO_PATH = Path("/proc/cpuinfo")
+    PCI_DEVICES_PATH = Path("/sys/bus/pci/devices")
+    NVIDIA_VENDOR_ID = "0x10de"
+    NVIDIA_GPU_CLASSES: ClassVar[set[str]] = {"0x030000", "0x030200"}
+    AMD_PRESETS_BY_HOST: ClassVar[dict[str, dict[str, list[str]]]] = {
+        "emanet": {
+            "30": [
+                "--stapm-limit=28000",
+                "--fast-limit=35000",
+                "--slow-limit=32000",
+                "--tctl-temp=95",
+                "--max-performance",
+            ],
+            "28": [
+                "--stapm-limit=28000",
+                "--fast-limit=30000",
+                "--slow-limit=30000",
+                "--tctl-temp=95",
+                "--max-performance",
+            ],
+            "25": [
+                "--stapm-limit=25000",
+                "--fast-limit=28000",
+                "--slow-limit=28000",
+                "--tctl-temp=90",
+                "--max-performance",
+            ],
+            "20": [
+                "--stapm-limit=20000",
+                "--fast-limit=25000",
+                "--slow-limit=22000",
+                "--tctl-temp=90",
+                "--max-performance",
+            ],
+            "18": [
+                "--stapm-limit=18000",
+                "--fast-limit=22000",
+                "--slow-limit=20000",
+                "--tctl-temp=85",
+                "--max-performance",
+            ],
+            "15": [
+                "--stapm-limit=15000",
+                "--fast-limit=18000",
+                "--slow-limit=17000",
+                "--tctl-temp=85",
+                "--max-performance",
+            ],
+            "12": [
+                "--stapm-limit=12000",
+                "--fast-limit=15000",
+                "--slow-limit=15000",
+                "--tctl-temp=85",
+                "--power-saving",
+            ],
+            "9": [
+                "--stapm-limit=9000",
+                "--fast-limit=12000",
+                "--slow-limit=12000",
+                "--tctl-temp=80",
+                "--power-saving",
+            ],
+            "5": [
+                "--stapm-limit=5000",
+                "--fast-limit=9000",
+                "--slow-limit=9000",
+                "--tctl-temp=75",
+                "--power-saving",
+            ],
+        },
+    }
+
+    def vendor(self) -> CpuVendor:
+        for line in self.CPUINFO_PATH.read_text().splitlines():
+            if line.startswith("vendor_id"):
+                raw_vendor = line.split(":", maxsplit=1)[1].strip()
+                try:
+                    return CpuVendor(raw_vendor)
+                except ValueError as exc:
+                    raise click.ClickException(
+                        f"Unsupported CPU vendor: {raw_vendor}"
+                    ) from exc
+
+        raise click.ClickException("Could not detect CPU vendor.")
+
+    def hostname(self) -> str:
+        return self.HOSTNAME_PATH.read_text().strip()
+
+    def amd_presets(self) -> dict[str, list[str]]:
+        hostname = self.hostname()
+        try:
+            return self.AMD_PRESETS_BY_HOST[hostname]
+        except KeyError as exc:
+            raise click.ClickException(
+                f"AMD TDP presets are not configured for {hostname}."
+            ) from exc
+
+    def run(
+        self,
+        cmd: list[str],
+        *,
+        input_text: str | None = None,
+        check: bool = True,
+        echo_output: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        self.log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            input=input_text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.stderr:
+            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+        if echo_output:
+            sys.stdout.write(proc.stdout)
+            sys.stderr.write(proc.stderr)
+        if check and proc.returncode != 0:
+            output = "\n".join(
+                part for part in (proc.stderr.strip(), proc.stdout.strip()) if part
+            )
+            raise click.ClickException(
+                output
+                or f"{cmd[0]} failed with exit code {proc.returncode}."
+            )
+
+        return proc
+
+    def show(self) -> None:
+        match self.vendor():
+            case CpuVendor.INTEL:
+                self.show_intel()
+            case CpuVendor.AMD:
+                self.show_amd()
+
+    def list_values(self) -> None:
+        table = Table(title="tdp set values", box=None)
+        table.add_column("Value", style="bold")
+        table.add_column("Meaning")
+
+        match self.vendor():
+            case CpuVendor.INTEL:
+                for profile in self.intel_profile_choices():
+                    table.add_row(profile, "Intel platform profile")
+            case CpuVendor.AMD:
+                for preset in sorted(self.amd_presets(), key=int, reverse=True):
+                    table.add_row(preset, "AMD RyzenAdj TDP preset")
+                table.add_row("gfx <clock>", "AMD RyzenAdj graphics clock")
+
+        self.console.print(table)
+
+    def normalize_intel_profile(self, profile: str) -> str:
+        choices = self.intel_profile_choices()
+        if profile in choices:
+            return profile
+
+        raise click.ClickException(f"Platform profile unavailable: {profile}")
+
+    def set_intel_profile(self, profile: str) -> None:
+        profile = self.normalize_intel_profile(profile)
+        try:
+            self.PROFILE_PATH.write_text(f"{profile}\n")
+        except (PermissionError, OSError):
+            self.run(["sudo", "tee", str(self.PROFILE_PATH)], input_text=f"{profile}\n")
+
+        self.show_intel()
+        self.console.print(f"Applied: [bold]{profile}[/]")
+
+    def set_amd_preset(self, preset: str) -> None:
+        presets = self.amd_presets()
+        if preset not in presets:
+            raise click.ClickException(
+                f"AMD TDP preset {preset} is not configured for {self.hostname()}."
+            )
+
+        self.run(["sudo", "ryzenadj", *presets[preset]], echo_output=True)
+        self.show_amd()
+        self.console.print(f"Applied: [bold]{preset}[/]")
+
+    def set_amd_gfx(self, clock: str) -> None:
+        self.amd_presets()
+        self.run(["sudo", "ryzenadj", "--gfx-clk", clock], echo_output=True)
+        self.show_amd()
+        self.console.print(f"Applied gfx clock: [bold]{clock}[/]")
+
+    def nvidia_gpu_pci_ids(self) -> list[str]:
+        ids: list[str] = []
+        for device in sorted(self.PCI_DEVICES_PATH.glob("*")):
+            vendor = self.read_optional(device / "vendor")
+            device_class = self.read_optional(device / "class")
+            if (
+                vendor == self.NVIDIA_VENDOR_ID
+                and device_class in self.NVIDIA_GPU_CLASSES
+            ):
+                ids.append(device.name)
+
+        return ids
+
+    def nvidia_gpu_pci_id(self, pci_id: str | None = None) -> str:
+        if pci_id:
+            return pci_id
+
+        pci_ids = self.nvidia_gpu_pci_ids()
+        if not pci_ids:
+            raise click.ClickException("No visible NVIDIA GPU PCI device found.")
+        if len(pci_ids) > 1:
+            raise click.ClickException("Multiple NVIDIA GPUs found; pass --pci.")
+
+        return pci_ids[0]
+
+    def nvidia_pci_functions(self, pci_id: str) -> list[Path]:
+        base = pci_id.rsplit(".", maxsplit=1)[0]
+        functions: list[Path] = []
+        for device in sorted(self.PCI_DEVICES_PATH.glob(f"{base}.*")):
+            if self.read_optional(device / "vendor") == self.NVIDIA_VENDOR_ID:
+                functions.append(device)
+
+        return functions
+
+    def set_nvidia_power_auto(self, pci_id: str) -> None:
+        for device in self.nvidia_pci_functions(pci_id):
+            control = device / "power/control"
+            if control.exists():
+                self.run(["sudo", "tee", str(control)], input_text="auto\n")
+
+    def set_nvidia_persistence(self, pci_id: str, enabled: bool) -> None:
+        self.run(
+            [
+                "sudo",
+                "nvidia-smi",
+                "-i",
+                pci_id,
+                "--persistence-mode=1" if enabled else "--persistence-mode=0",
+            ],
+            echo_output=True,
+        )
+
+    def set_nvidia_drain(self, pci_id: str, enabled: bool) -> None:
+        proc = self.run(
+            [
+                "sudo",
+                "nvidia-smi",
+                "drain",
+                "-p",
+                pci_id,
+                "-m",
+                "1" if enabled else "0",
+            ],
+            check=False,
+        )
+        if proc.returncode == 0:
+            sys.stdout.write(proc.stdout)
+            sys.stderr.write(proc.stderr)
+            return
+
+        state = self.nvidia_drain_state(pci_id)
+        if enabled and state == "draining":
+            return
+        if not enabled and state == "not draining":
+            return
+
+        output = "\n".join(
+            part for part in (proc.stderr.strip(), proc.stdout.strip()) if part
+        )
+        raise click.ClickException(
+            output or f"nvidia-smi drain failed with exit code {proc.returncode}."
+        )
+
+    def nvidia_drain_state(self, pci_id: str) -> str:
+        proc = self.run(["nvidia-smi", "drain", "-q", "-p", pci_id], check=False)
+        output = f"{proc.stdout}\n{proc.stderr}".strip()
+        if proc.returncode != 0:
+            return output or "unknown"
+
+        marker = " is: "
+        if marker in output:
+            return output.split(marker, maxsplit=1)[1].rstrip(".")
+
+        return output or "unknown"
+
+    def nvidia_nodes(self, pci_id: str) -> list[Path]:
+        nodes: list[Path] = []
+        pci_path = self.PCI_DEVICES_PATH / pci_id
+        for card in sorted((pci_path / "drm").glob("card*")):
+            nodes.append(Path("/dev/dri") / card.name)
+            for render in sorted(card.glob("renderD*")):
+                nodes.append(Path("/dev/dri") / render.name)
+
+        for pattern in ("/dev/nvidia*", "/dev/nvidia-caps/nvidia-cap*"):
+            for node in sorted(Path("/").glob(pattern.removeprefix("/"))):
+                if node.exists() and not node.is_dir():
+                    nodes.append(node)
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for node in nodes:
+            if node in seen or not node.exists():
+                continue
+            seen.add(node)
+            unique.append(node)
+
+        return unique
+
+    def nvidia_holders(self, pci_id: str) -> dict[int, list[Path]]:
+        holders: dict[int, list[Path]] = {}
+        for node in self.nvidia_nodes(pci_id):
+            proc = self.run(["fuser", str(node)], check=False)
+            output = f"{proc.stdout}\n{proc.stderr}"
+            for raw_pid in output.split():
+                if raw_pid.isdigit():
+                    holders.setdefault(int(raw_pid), []).append(node)
+
+        return holders
+
+    def print_nvidia_holders(self, holders: dict[int, list[Path]]) -> None:
+        if not holders:
+            self.console.print("[green]No NVIDIA device-node holders.[/]")
+            return
+
+        table = Table(title="NVIDIA holders", box=None)
+        table.add_column("PID", justify="right", style="bold")
+        table.add_column("Command")
+        table.add_column("Nodes")
+        for pid, nodes in sorted(holders.items()):
+            command = self.read_optional(Path("/proc") / str(pid) / "comm") or "?"
+            table.add_row(str(pid), command, "\n".join(str(node) for node in nodes))
+        self.console.print(table)
+
+    def nvidia_power_rows(self) -> list[list[str]]:
+        query = ",".join(
+            [
+                "pci.bus_id",
+                "power.draw",
+                "enforced.power.limit",
+                "power.default_limit",
+                "power.min_limit",
+                "power.max_limit",
+                "memory.used",
+                "pstate",
+            ]
+        )
+        proc = self.run(
+            [
+                "nvidia-smi",
+                f"--query-gpu={query}",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+        )
+
+        rows: list[list[str]] = []
+        for line in proc.stdout.splitlines():
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) == 8:
+                rows.append(fields)
+
+        return rows
+
+    def set_nvidia_power_limit(self, watts: float, pci_id: str | None = None) -> None:
+        gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
+        self.run(
+            ["sudo", "nvidia-smi", "-i", gpu_pci_id, "-pl", f"{watts:g}"],
+            echo_output=True,
+        )
+        self.show_nvidia(gpu_pci_id)
+
+    def show_nvidia(self, pci_id: str | None = None) -> None:
+        self.console.rule("[bold yellow]NVIDIA[/]")
+        pci_ids = (
+            [self.nvidia_gpu_pci_id(pci_id)] if pci_id else self.nvidia_gpu_pci_ids()
+        )
+        if not pci_ids:
+            self.console.print("[yellow]No visible NVIDIA GPU PCI devices.[/]")
+            excluded = self.run(["nvidia-smi", "--list-excluded-gpus"], check=False)
+            if excluded.stdout.strip():
+                self.console.print(Text(excluded.stdout.rstrip()))
+            return
+
+        table = Table(box=None)
+        table.add_column("PCI", style="bold")
+        table.add_column("Drain")
+        table.add_column("Power")
+        table.add_column("Runtime")
+        table.add_column("Holders", justify="right")
+        for gpu_pci_id in pci_ids:
+            device = self.PCI_DEVICES_PATH / gpu_pci_id
+            holders = self.nvidia_holders(gpu_pci_id)
+            table.add_row(
+                gpu_pci_id,
+                self.nvidia_drain_state(gpu_pci_id),
+                self.read_optional(device / "power/control") or "?",
+                self.read_optional(device / "power/runtime_status") or "?",
+                str(len(holders)),
+            )
+        self.console.print(table)
+
+        power_table = Table(title="NVIDIA power limits", box=None)
+        power_table.add_column("PCI", style="bold")
+        power_table.add_column("Draw W", justify="right")
+        power_table.add_column("Current W", justify="right")
+        power_table.add_column("Default W", justify="right")
+        power_table.add_column("Min W", justify="right")
+        power_table.add_column("Max W", justify="right")
+        power_table.add_column("Memory MiB", justify="right")
+        power_table.add_column("P-State")
+        for row in self.nvidia_power_rows():
+            power_table.add_row(*row)
+
+        if power_table.row_count:
+            self.console.print(power_table)
+
+        for gpu_pci_id in pci_ids:
+            self.print_nvidia_holders(self.nvidia_holders(gpu_pci_id))
+
+    def drain_nvidia(self, pci_id: str | None = None) -> None:
+        gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
+        self.set_nvidia_persistence(gpu_pci_id, False)
+        self.set_nvidia_power_auto(gpu_pci_id)
+        self.set_nvidia_drain(gpu_pci_id, True)
+        self.show_nvidia(gpu_pci_id)
+        self.console.print(f"Draining: [bold]{gpu_pci_id}[/]")
+
+    def undrain_nvidia(self, pci_id: str | None = None) -> None:
+        gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
+        self.set_nvidia_drain(gpu_pci_id, False)
+        self.show_nvidia(gpu_pci_id)
+        self.console.print(f"Not draining: [bold]{gpu_pci_id}[/]")
+
+    def remove_nvidia(self, pci_id: str | None = None) -> None:
+        gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
+        self.set_nvidia_persistence(gpu_pci_id, False)
+        self.set_nvidia_power_auto(gpu_pci_id)
+        self.set_nvidia_drain(gpu_pci_id, True)
+
+        holders = self.nvidia_holders(gpu_pci_id)
+        if holders:
+            self.set_nvidia_drain(gpu_pci_id, False)
+            self.print_nvidia_holders(holders)
+            raise click.ClickException(
+                "Cannot remove NVIDIA while processes still hold it. "
+                "Switch to Hyprland Integrated or close the listed processes, then retry."
+            )
+
+        try:
+            self.run(
+                ["sudo", "nvidia-smi", "drain", "-p", gpu_pci_id, "-r"],
+                echo_output=True,
+            )
+        except click.ClickException as exc:
+            self.run([
+                "sudo",
+                "nvidia-smi",
+                "drain",
+                "-p",
+                gpu_pci_id,
+                "-m",
+                "0",
+            ], check=False)
+            raise click.ClickException(f"Failed to remove NVIDIA GPU: {exc}") from exc
+
+        self.console.print(f"Removed NVIDIA GPU: [bold]{gpu_pci_id}[/]")
+        self.show_nvidia()
+
+    def discover_nvidia(self) -> None:
+        self.run(["sudo", "nvidia-smi", "drain", "-d"], check=False, echo_output=True)
+        if not self.nvidia_gpu_pci_ids():
+            self.run(["sudo", "tee", "/sys/bus/pci/rescan"], input_text="1\n")
+
+        for gpu_pci_id in self.nvidia_gpu_pci_ids():
+            self.set_nvidia_power_auto(gpu_pci_id)
+            self.set_nvidia_drain(gpu_pci_id, False)
+
+        self.show_nvidia()
+
+    def intel_profile_choices(self) -> list[str]:
+        if not self.PROFILE_CHOICES_PATH.is_file():
+            raise click.ClickException("Platform profile choices unavailable.")
+
+        return self.PROFILE_CHOICES_PATH.read_text().split()
+
+    def current_intel_profile(self) -> str | None:
+        if not self.PROFILE_PATH.is_file():
+            return None
+
+        return self.PROFILE_PATH.read_text().strip()
+
+    def intel_power_limits(self) -> list[PowerLimit]:
+        limits: list[PowerLimit] = []
+        powercap_path = Path("/sys/class/powercap")
+
+        paths = sorted(
+            powercap_path.glob("intel-rapl-mmio*/constraint_*_power_limit_uw")
+        )
+        if not paths:
+            paths = sorted(
+                powercap_path.glob("intel-rapl*/constraint_*_power_limit_uw")
+            )
+
+        for path in paths:
+            domain = path.parent
+            constraint = path.name.removesuffix("_power_limit_uw")
+            try:
+                microwatts = int(path.read_text().strip())
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+
+            limits.append(
+                PowerLimit(
+                    domain=domain.name,
+                    domain_name=self.read_optional(domain / "name"),
+                    constraint=constraint,
+                    constraint_name=self.read_optional(domain / f"{constraint}_name"),
+                    microwatts=microwatts,
+                )
+            )
+
+        return limits
+
+    def show_intel(self) -> None:
+        choices = self.intel_profile_choices()
+        current = self.current_intel_profile()
+
+        self.console.rule("[bold yellow]Intel platform profiles[/]")
+        self.console.print(f"Current profile: [bold]{current or '?'}[/]")
+
+        profile_table = Table(box=None)
+        profile_table.add_column("Profile", style="bold")
+        profile_table.add_column("State")
+        for profile in choices:
+            state = "current" if profile == current else "available"
+            profile_table.add_row(profile, state)
+        self.console.print(profile_table)
+
+        self.console.rule("[bold yellow]Intel power limits[/]")
+        power_table = Table(box=None)
+        power_table.add_column("Domain", style="bold")
+        power_table.add_column("Constraint")
+        power_table.add_column("µW", justify="right")
+        power_table.add_column("W", justify="right")
+        for limit in self.intel_power_limits():
+            domain = limit.domain
+            if limit.domain_name:
+                domain = f"{domain} ({limit.domain_name})"
+            power_table.add_row(
+                domain,
+                limit.constraint_name or limit.constraint,
+                str(limit.microwatts),
+                limit.watts,
+            )
+
+        if power_table.row_count:
+            self.console.print(power_table)
+        else:
+            self.console.print("[yellow]Power limits unavailable.[/]")
+
+    def show_amd(self) -> None:
+        proc = self.run(["sudo", "ryzenadj", "-i"])
+        if proc.stdout.strip():
+            self.console.print(Text(proc.stdout.rstrip()))
+
+    @staticmethod
+    def read_optional(path: Path) -> str | None:
+        try:
+            text = path.read_text().strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+        return text or None
+
+    def set_value(self, value: str, extra: str | None = None) -> None:
+        match self.vendor():
+            case CpuVendor.INTEL:
+                if extra is not None:
+                    raise click.ClickException(
+                        "Intel profile does not take a second value."
+                    )
+                self.set_intel_profile(value)
+            case CpuVendor.AMD:
+                if value == "gfx":
+                    if extra is None:
+                        raise click.ClickException("Missing gfx clock.")
+                    self.set_amd_gfx(extra)
+                else:
+                    if extra is not None:
+                        raise click.ClickException(
+                            "AMD TDP preset does not take a second value."
+                        )
+                    self.set_amd_preset(value)
+
+    @cli.command("show")
+    def cmd_show() -> None:
+        Tdp().show()
+
+    @cli.command("list")
+    def cmd_list() -> None:
+        Tdp().list_values()
+
+    @cli.command("set")
+    @click.argument("value")
+    @click.argument("extra", required=False)
+    def cmd_set(value: str, extra: str | None) -> None:
+        Tdp().set_value(value, extra)
+
+    @cli.group("nvidia")
+    def cmd_nvidia() -> None:
+        pass
+
+    @cmd_nvidia.command("show")
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_status(pci_id: str | None) -> None:
+        Tdp().show_nvidia(pci_id)
+
+    @cmd_nvidia.command("limit")
+    @click.argument("watts", type=float)
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_limit(watts: float, pci_id: str | None) -> None:
+        Tdp().set_nvidia_power_limit(watts, pci_id)
+
+    @cmd_nvidia.command("drain", hidden=True)
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_drain(pci_id: str | None) -> None:
+        Tdp().drain_nvidia(pci_id)
+
+    @cmd_nvidia.command("undrain", hidden=True)
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_undrain(pci_id: str | None) -> None:
+        Tdp().undrain_nvidia(pci_id)
+
+    @cmd_nvidia.command("remove")
+    @click.option("--pci", "pci_id", help="GPU PCI ID.")
+    def cmd_nvidia_remove(pci_id: str | None) -> None:
+        Tdp().remove_nvidia(pci_id)
+
+    @cmd_nvidia.command("recover")
+    def cmd_nvidia_recover() -> None:
+        Tdp().discover_nvidia()
+
+    @cmd_nvidia.command("discover", hidden=True)
+    def cmd_nvidia_discover() -> None:
+        Tdp().discover_nvidia()
+
+    @cmd_nvidia.command("rescan", hidden=True)
+    def cmd_nvidia_rescan() -> None:
+        Tdp().discover_nvidia()
+
+if __name__ == "__main__":
+    Tdp.cli()
