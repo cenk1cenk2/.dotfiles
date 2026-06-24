@@ -4,14 +4,14 @@ model = "gpt-5.5"
 model_reasoning_effort = "high"
 model_reasoning_summary = "concise"
 
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
 approvals_reviewer = "auto_review"
 
 personality = "pragmatic"
 web_search = "cached"
 
 project_doc_fallback_filenames = ["CLAUDE.md", "GEMINI.md"]
-
-sandbox_mode = "workspace-write"
 
 [history]
 persistence = "save-all"
