@@ -11,6 +11,9 @@ web_search = "cached"
 
 project_doc_fallback_filenames = ["CLAUDE.md", "GEMINI.md"]
 
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
 [history]
 persistence = "save-all"
 

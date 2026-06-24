@@ -120,10 +120,31 @@ hl.bind(("%s + CTRL + SHIFT + C"):format(d.mod), function()
 end)
 
 -- Scratchpad (special workspace)
-hl.bind(("%s + D"):format(d.mod), hl.dsp.workspace.toggle_special("scratch"))
-hl.bind(("%s + SHIFT + D"):format(d.mod), function()
-  -- Toggle the focused window between the scratchpad and the
-  -- current workspace.
+local function scratch_windows()
+  local scratch = hl.get_workspace("special:scratch")
+  if not scratch then
+    return {}
+  end
+
+  return hl.get_workspace_windows(scratch) or {}
+end
+
+local function toggle_scratch()
+  local scratch = hl.get_active_special_workspace()
+  if #scratch_windows() == 0 and not (scratch and scratch.name == "special:scratch") then
+    return
+  end
+
+  hl.dispatch(hl.dsp.workspace.toggle_special("scratch"))
+end
+
+local function toggle_scratch_window()
+  local scratch = hl.get_active_special_workspace()
+  if scratch and scratch.name == "special:scratch" and #scratch_windows() == 0 then
+    toggle_scratch()
+    return
+  end
+
   local active = hl.get_active_window()
   if not active then
     return
@@ -135,7 +156,10 @@ hl.bind(("%s + SHIFT + D"):format(d.mod), function()
   else
     hl.dispatch(hl.dsp.window.move({ workspace = "special:scratch" }))
   end
-end)
+end
+
+hl.bind(("%s + D"):format(d.mod), toggle_scratch)
+hl.bind(("%s + SHIFT + D"):format(d.mod), toggle_scratch_window)
 
 -- Workspace swapping: move every window between the current
 -- workspace and the left/right neighbour on the same monitor.
@@ -237,13 +261,21 @@ hl.bind(("%s + F12"):format(d.mod), hl.dsp.exec_cmd("jumpy display reload"))
 -- gestures
 hl.config({
   gestures = {
-    workspace_swipe_distance = 500,
+    workspace_swipe_distance = 400,
     workspace_swipe_cancel_ratio = 0.5,
+    workspace_swipe_create_new = false,
+    workspace_swipe_forever = false,
     workspace_swipe_invert = false,
   },
 })
 
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "down", action = toggle_scratch })
+hl.gesture({
+  fingers = 3,
+  direction = "up",
+  action = toggle_scratch_window,
+})
 
 -- GLOBAL SHORTCUTS
 -- hyprctl globalshortcuts
