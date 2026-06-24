@@ -18,11 +18,9 @@ from rich.text import Text
 
 from lib import create_logger
 
-
 class CpuVendor(StrEnum):
     INTEL = "GenuineIntel"
     AMD = "AuthenticAMD"
-
 
 @dataclass
 class PowerLimit:
@@ -35,7 +33,6 @@ class PowerLimit:
     @property
     def watts(self) -> str:
         return f"{self.microwatts / 1_000_000:.3g}"
-
 
 class Tdp:
     @click.group(
@@ -622,7 +619,7 @@ class Tdp:
     def cmd_nvidia() -> None:
         pass
 
-    @cmd_nvidia.command("status")
+    @cmd_nvidia.command("show")
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_status(pci_id: str | None) -> None:
         Tdp().show_nvidia(pci_id)
@@ -653,7 +650,6 @@ class Tdp:
     @cmd_nvidia.command("rescan", hidden=True)
     def cmd_nvidia_rescan() -> None:
         Tdp().discover_nvidia()
-
 
 if __name__ == "__main__":
     Tdp.cli()

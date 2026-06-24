@@ -5,6 +5,20 @@ script conventions. Everything below is a rule established in the
 wayland-scripts refactor — apply it to every new script (and every
 touch of an old one) without re-discussion.
 
+## UWSM environment files
+
+- `uwsm/env-*` files are selected and sourced by UWSM's environment
+  preloader for the active compositor/session profile. UWSM exports the
+  resulting environment delta to systemd and D-Bus activation
+  environments, marks those variables for cleanup, and unsets them
+  during session shutdown.
+
+- Do **not** add defensive `unset` lines just because another
+  `uwsm/env-*` profile exports a variable. Profiles do not need to clean
+  up each other's exports. Only unset a variable when it can be
+  inherited from outside the selected UWSM profile and the selected
+  profile must actively neutralize that inherited value.
+
 ## Python scripts
 
 ### Dependencies & entry points

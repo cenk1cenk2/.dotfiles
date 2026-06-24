@@ -1,15 +1,15 @@
 # vim: ft=bash
 
-unset GBM_BACKEND __NV_PRIME_RENDER_OFFLOAD __GLX_VENDOR_LIBRARY_NAME __VK_LAYER_NV_optimus VDPAU_DRIVER LIBVA_DRIVER_NAME NVD_BACKEND
-unset MANGOHUD_CONFIG
-unset PROTON_DXVK_LOWLATENCY PROTON_HIDE_NVIDIA_GPU PROTON_ENABLE_NVAPI DXVK_ENABLE_NVAPI PROTON_ENABLE_NGX_UPDATER VKD3D_CONFIG VKD3D_FEATURE_LEVEL
-
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 export MANGOHUD=0
 export DISABLE_MANGOHUD=1
 export DRI_PRIME=0!
 
-_hypr_card_for_vendor() {
+if [ -r /usr/share/vulkan/icd.d/intel_icd.json ]; then
+  export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/intel_icd.json
+fi
+
+_card_for_vendor() {
   for vendor in /sys/class/drm/card*/device/vendor; do
     [ -r "$vendor" ] || continue
     [ "$(cat "$vendor")" = "$1" ] || continue
@@ -25,12 +25,12 @@ _hypr_card_for_vendor() {
   return 1
 }
 
-_hypr_intel_card="$(_hypr_card_for_vendor 0x8086 || true)"
+_intel_card="$(_card_for_vendor 0x8086 || true)"
 
-if [ -n "$_hypr_intel_card" ]; then
-  export AQ_DRM_DEVICES="$_hypr_intel_card"
+if [ -n "$_intel_card" ]; then
+  export AQ_DRM_DEVICES="$_intel_card"
   export LIBVA_DRIVER_NAME=iHD
 fi
 
-unset _hypr_intel_card
-unset -f _hypr_card_for_vendor
+unset _intel_card
+unset -f _card_for_vendor
