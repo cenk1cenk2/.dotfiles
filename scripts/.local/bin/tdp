@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -157,6 +158,7 @@ class Tdp:
         *,
         input_text: str | None = None,
         check: bool = True,
+        echo_output: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         self.log.debug("spawn: %s", " ".join(cmd))
         proc = subprocess.run(
@@ -169,8 +171,13 @@ class Tdp:
         )
         if proc.stderr:
             self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+        if echo_output:
+            sys.stdout.write(proc.stdout)
+            sys.stderr.write(proc.stderr)
         if check and proc.returncode != 0:
-            output = "\n".join(part for part in (proc.stderr.strip(), proc.stdout.strip()) if part)
+            output = "\n".join(
+                part for part in (proc.stderr.strip(), proc.stdout.strip()) if part
+            )
             raise click.ClickException(
                 output
                 or f"{cmd[0]} failed with exit code {proc.returncode}."
@@ -212,7 +219,7 @@ class Tdp:
         profile = self.normalize_intel_profile(profile)
         try:
             self.PROFILE_PATH.write_text(f"{profile}\n")
-        except PermissionError, OSError:
+        except (PermissionError, OSError):
             self.run(["sudo", "tee", str(self.PROFILE_PATH)], input_text=f"{profile}\n")
 
         self.show_intel()
@@ -225,13 +232,13 @@ class Tdp:
                 f"AMD TDP preset {preset} is not configured for {self.hostname()}."
             )
 
-        self.run(["sudo", "ryzenadj", *presets[preset]])
+        self.run(["sudo", "ryzenadj", *presets[preset]], echo_output=True)
         self.show_amd()
         self.console.print(f"Applied: [bold]{preset}[/]")
 
     def set_amd_gfx(self, clock: str) -> None:
         self.amd_presets()
-        self.run(["sudo", "ryzenadj", "--gfx-clk", clock])
+        self.run(["sudo", "ryzenadj", "--gfx-clk", clock], echo_output=True)
         self.show_amd()
         self.console.print(f"Applied gfx clock: [bold]{clock}[/]")
 
@@ -283,7 +290,8 @@ class Tdp:
                 "-i",
                 pci_id,
                 "--persistence-mode=1" if enabled else "--persistence-mode=0",
-            ]
+            ],
+            echo_output=True,
         )
 
     def set_nvidia_drain(self, pci_id: str, enabled: bool) -> None:
@@ -300,6 +308,8 @@ class Tdp:
             check=False,
         )
         if proc.returncode == 0:
+            sys.stdout.write(proc.stdout)
+            sys.stderr.write(proc.stderr)
             return
 
         state = self.nvidia_drain_state(pci_id)
@@ -308,8 +318,12 @@ class Tdp:
         if not enabled and state == "not draining":
             return
 
-        output = "\n".join(part for part in (proc.stderr.strip(), proc.stdout.strip()) if part)
-        raise click.ClickException(output or f"nvidia-smi drain failed with exit code {proc.returncode}.")
+        output = "\n".join(
+            part for part in (proc.stderr.strip(), proc.stdout.strip()) if part
+        )
+        raise click.ClickException(
+            output or f"nvidia-smi drain failed with exit code {proc.returncode}."
+        )
 
     def nvidia_drain_state(self, pci_id: str) -> str:
         proc = self.run(["nvidia-smi", "drain", "-q", "-p", pci_id], check=False)
@@ -445,7 +459,10 @@ class Tdp:
             )
 
         try:
-            self.run(["sudo", "nvidia-smi", "drain", "-p", gpu_pci_id, "-r"])
+            self.run(
+                ["sudo", "nvidia-smi", "drain", "-p", gpu_pci_id, "-r"],
+                echo_output=True,
+            )
         except click.ClickException as exc:
             self.run([
                 "sudo",
@@ -462,7 +479,7 @@ class Tdp:
         self.show_nvidia()
 
     def discover_nvidia(self) -> None:
-        self.run(["sudo", "nvidia-smi", "drain", "-d"], check=False)
+        self.run(["sudo", "nvidia-smi", "drain", "-d"], check=False, echo_output=True)
         if not self.nvidia_gpu_pci_ids():
             self.run(["sudo", "tee", "/sys/bus/pci/rescan"], input_text="1\n")
 
@@ -501,7 +518,7 @@ class Tdp:
             constraint = path.name.removesuffix("_power_limit_uw")
             try:
                 microwatts = int(path.read_text().strip())
-            except FileNotFoundError, PermissionError, OSError, ValueError:
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
                 continue
 
             limits.append(
@@ -562,7 +579,7 @@ class Tdp:
     def read_optional(path: Path) -> str | None:
         try:
             text = path.read_text().strip()
-        except FileNotFoundError, PermissionError, OSError:
+        except (FileNotFoundError, PermissionError, OSError):
             return None
 
         return text or None
