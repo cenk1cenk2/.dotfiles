@@ -1,46 +1,401 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S sh -c 'exec uv run --script --project "$(dirname "$0")" "$0" "$@"'
+"""Set CPU power profiles and show current limits."""
 
-# vim: ft=bash
+from __future__ import annotations
 
-case "$1" in
-gfx)
-	sudo ryzenadj --gfx-clk $2
-	;;
-30)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=35000 --slow-limit=32000 --tctl-temp=95 --max-performance
-	;;
-28)
-	sudo ryzenadj --stapm-limit=28000 --fast-limit=30000 --slow-limit=30000 --tctl-temp=95 --max-performance
-	;;
-25)
-	sudo ryzenadj --stapm-limit=25000 --fast-limit=28000 --slow-limit=28000 --tctl-temp=90 --max-performance
-	;;
-20)
-	sudo ryzenadj --stapm-limit=20000 --fast-limit=25000 --slow-limit=22000 --tctl-temp=90 --max-performance
-	;;
-18)
-	sudo ryzenadj --stapm-limit=18000 --fast-limit=22000 --slow-limit=20000 --tctl-temp=85 --max-performance
-	;;
-15)
-	sudo ryzenadj --stapm-limit=15000 --fast-limit=18000 --slow-limit=17000 --tctl-temp=85 --max-performance
-	;;
-12)
-	sudo ryzenadj --stapm-limit=12000 --fast-limit=15000 --slow-limit=15000 --tctl-temp=85 --power-saving
-	;;
-9)
-	sudo ryzenadj --stapm-limit=9000 --fast-limit=12000 --slow-limit=12000 --tctl-temp=80 --power-saving
-	;;
-5)
-	sudo ryzenadj --stapm-limit=5000 --fast-limit=9000 --slow-limit=9000 --tctl-temp=75 --power-saving
-	;;
-show) ;;
-*)
-	echo "Power limit unknown."
-	exit 127
-	;;
+import logging
+import subprocess
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import ClassVar
 
-esac
+import click
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
-sudo ryzenadj -i
+from lib import create_logger
 
-echo "Applied: $1"
+
+class CpuVendor(StrEnum):
+    INTEL = "GenuineIntel"
+    AMD = "AuthenticAMD"
+
+
+class TdpCli(click.Group):
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        commands = set(super().list_commands(ctx))
+        try:
+            if Tdp().vendor() == CpuVendor.INTEL:
+                commands.update(Tdp().intel_profile_choices())
+        except click.ClickException:
+            pass
+
+        return sorted(commands)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+
+        try:
+            profile = Tdp().normalize_intel_profile(cmd_name)
+        except click.ClickException:
+            return None
+
+        def cmd_profile() -> None:
+            Tdp().apply_profile(profile)
+
+        return click.Command(
+            cmd_name,
+            callback=cmd_profile,
+            help=f"Set Intel profile to {profile}.",
+        )
+
+
+@dataclass
+class PowerLimit:
+    domain: str
+    domain_name: str | None
+    constraint: str
+    constraint_name: str | None
+    microwatts: int
+
+    @property
+    def watts(self) -> str:
+        return f"{self.microwatts / 1_000_000:.3g}"
+
+
+class Tdp:
+    @click.group(
+        cls=TdpCli,
+        context_settings={"help_option_names": ["-h", "--help"]},
+        invoke_without_command=True,
+    )
+    @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+    @click.pass_context
+    def cli(ctx: click.Context, verbose: bool) -> None:
+        create_logger(verbose, name="tdp")
+        if ctx.invoked_subcommand is None:
+            Tdp().show()
+
+    console: ClassVar[Console] = Console(force_terminal=None)
+    log = logging.getLogger("tdp")
+
+    PROFILE_PATH = Path("/sys/firmware/acpi/platform_profile")
+    PROFILE_CHOICES_PATH = Path("/sys/firmware/acpi/platform_profile_choices")
+    HOSTNAME_PATH = Path("/proc/sys/kernel/hostname")
+    CPUINFO_PATH = Path("/proc/cpuinfo")
+    POWER_SAVER_ALIASES: ClassVar[set[str]] = {
+        "power-saver",
+        "powersaver",
+        "power_save",
+    }
+    AMD_PRESETS_BY_HOST: ClassVar[dict[str, dict[str, list[str]]]] = {
+        "emanet": {
+            "30": [
+                "--stapm-limit=28000",
+                "--fast-limit=35000",
+                "--slow-limit=32000",
+                "--tctl-temp=95",
+                "--max-performance",
+            ],
+            "28": [
+                "--stapm-limit=28000",
+                "--fast-limit=30000",
+                "--slow-limit=30000",
+                "--tctl-temp=95",
+                "--max-performance",
+            ],
+            "25": [
+                "--stapm-limit=25000",
+                "--fast-limit=28000",
+                "--slow-limit=28000",
+                "--tctl-temp=90",
+                "--max-performance",
+            ],
+            "20": [
+                "--stapm-limit=20000",
+                "--fast-limit=25000",
+                "--slow-limit=22000",
+                "--tctl-temp=90",
+                "--max-performance",
+            ],
+            "18": [
+                "--stapm-limit=18000",
+                "--fast-limit=22000",
+                "--slow-limit=20000",
+                "--tctl-temp=85",
+                "--max-performance",
+            ],
+            "15": [
+                "--stapm-limit=15000",
+                "--fast-limit=18000",
+                "--slow-limit=17000",
+                "--tctl-temp=85",
+                "--max-performance",
+            ],
+            "12": [
+                "--stapm-limit=12000",
+                "--fast-limit=15000",
+                "--slow-limit=15000",
+                "--tctl-temp=85",
+                "--power-saving",
+            ],
+            "9": [
+                "--stapm-limit=9000",
+                "--fast-limit=12000",
+                "--slow-limit=12000",
+                "--tctl-temp=80",
+                "--power-saving",
+            ],
+            "5": [
+                "--stapm-limit=5000",
+                "--fast-limit=9000",
+                "--slow-limit=9000",
+                "--tctl-temp=75",
+                "--power-saving",
+            ],
+        },
+    }
+
+    def vendor(self) -> CpuVendor:
+        for line in self.CPUINFO_PATH.read_text().splitlines():
+            if line.startswith("vendor_id"):
+                raw_vendor = line.split(":", maxsplit=1)[1].strip()
+                try:
+                    return CpuVendor(raw_vendor)
+                except ValueError as exc:
+                    raise click.ClickException(
+                        f"Unsupported CPU vendor: {raw_vendor}"
+                    ) from exc
+
+        raise click.ClickException("Could not detect CPU vendor.")
+
+    def hostname(self) -> str:
+        return self.HOSTNAME_PATH.read_text().strip()
+
+    def amd_presets(self) -> dict[str, list[str]]:
+        hostname = self.hostname()
+        try:
+            return self.AMD_PRESETS_BY_HOST[hostname]
+        except KeyError as exc:
+            raise click.ClickException(
+                f"AMD TDP presets are not configured for {hostname}."
+            ) from exc
+
+    def run(
+        self, cmd: list[str], *, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        self.log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            input=input_text,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.stderr:
+            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+        if proc.returncode != 0:
+            raise click.ClickException(
+                proc.stderr.strip()
+                or f"{cmd[0]} failed with exit code {proc.returncode}."
+            )
+
+        return proc
+
+    def show(self) -> None:
+        match self.vendor():
+            case CpuVendor.INTEL:
+                self.show_intel()
+            case CpuVendor.AMD:
+                self.show_amd()
+
+    def normalize_intel_profile(self, profile: str) -> str:
+        choices = self.intel_profile_choices()
+        if profile in choices:
+            return profile
+        if profile in self.POWER_SAVER_ALIASES and "low-power" in choices:
+            return "low-power"
+
+        raise click.ClickException(f"Platform profile unavailable: {profile}")
+
+    def set_intel_profile(self, profile: str) -> None:
+        profile = self.normalize_intel_profile(profile)
+        try:
+            self.PROFILE_PATH.write_text(f"{profile}\n")
+        except (PermissionError, OSError):
+            self.run(["sudo", "tee", str(self.PROFILE_PATH)], input_text=f"{profile}\n")
+
+        self.show_intel()
+        self.console.print(f"Applied: [bold]{profile}[/]")
+
+    def set_amd_preset(self, preset: str) -> None:
+        presets = self.amd_presets()
+        if preset not in presets:
+            raise click.ClickException(
+                f"AMD TDP preset {preset} is not configured for {self.hostname()}."
+            )
+
+        self.run(["sudo", "ryzenadj", *presets[preset]])
+        self.show_amd()
+        self.console.print(f"Applied: [bold]{preset}[/]")
+
+    def set_amd_gfx(self, clock: str) -> None:
+        self.amd_presets()
+        self.run(["sudo", "ryzenadj", "--gfx-clk", clock])
+        self.show_amd()
+        self.console.print(f"Applied gfx clock: [bold]{clock}[/]")
+
+    def intel_profile_choices(self) -> list[str]:
+        if not self.PROFILE_CHOICES_PATH.is_file():
+            raise click.ClickException("Platform profile choices unavailable.")
+
+        return self.PROFILE_CHOICES_PATH.read_text().split()
+
+    def current_intel_profile(self) -> str | None:
+        if not self.PROFILE_PATH.is_file():
+            return None
+
+        return self.PROFILE_PATH.read_text().strip()
+
+    def intel_power_limits(self) -> list[PowerLimit]:
+        limits: list[PowerLimit] = []
+        powercap_path = Path("/sys/class/powercap")
+
+        paths = sorted(powercap_path.glob("intel-rapl-mmio*/constraint_*_power_limit_uw"))
+        if not paths:
+            paths = sorted(powercap_path.glob("intel-rapl*/constraint_*_power_limit_uw"))
+
+        for path in paths:
+            domain = path.parent
+            constraint = path.name.removesuffix("_power_limit_uw")
+            try:
+                microwatts = int(path.read_text().strip())
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+
+            limits.append(
+                PowerLimit(
+                    domain=domain.name,
+                    domain_name=self.read_optional(domain / "name"),
+                    constraint=constraint,
+                    constraint_name=self.read_optional(domain / f"{constraint}_name"),
+                    microwatts=microwatts,
+                )
+            )
+
+        return limits
+
+    def show_intel(self) -> None:
+        choices = self.intel_profile_choices()
+        current = self.current_intel_profile()
+
+        self.console.rule("[bold yellow]Intel platform profiles[/]")
+        self.console.print(f"Current profile: [bold]{current or '?'}[/]")
+
+        profile_table = Table(box=None)
+        profile_table.add_column("Profile", style="bold")
+        profile_table.add_column("State")
+        for profile in choices:
+            state = "current" if profile == current else "available"
+            profile_table.add_row(profile, state)
+        self.console.print(profile_table)
+
+        self.console.rule("[bold yellow]Intel power limits[/]")
+        power_table = Table(box=None)
+        power_table.add_column("Domain", style="bold")
+        power_table.add_column("Constraint")
+        power_table.add_column("µW", justify="right")
+        power_table.add_column("W", justify="right")
+        for limit in self.intel_power_limits():
+            domain = limit.domain
+            if limit.domain_name:
+                domain = f"{domain} ({limit.domain_name})"
+            power_table.add_row(
+                domain,
+                limit.constraint_name or limit.constraint,
+                str(limit.microwatts),
+                limit.watts,
+            )
+
+        if power_table.row_count:
+            self.console.print(power_table)
+        else:
+            self.console.print("[yellow]Power limits unavailable.[/]")
+
+    def show_amd(self) -> None:
+        proc = self.run(["sudo", "ryzenadj", "-i"])
+        if proc.stdout.strip():
+            self.console.print(Text(proc.stdout.rstrip()))
+
+    @staticmethod
+    def read_optional(path: Path) -> str | None:
+        try:
+            text = path.read_text().strip()
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+        return text or None
+
+    def apply_profile(self, profile: str) -> None:
+        match self.vendor():
+            case CpuVendor.INTEL:
+                self.set_intel_profile(profile)
+            case CpuVendor.AMD:
+                raise click.ClickException(
+                    "Platform profiles are only supported on Intel hosts."
+                )
+
+    @cli.command("show")
+    def cmd_show() -> None:
+        Tdp().show()
+
+    @cli.command("gfx")
+    @click.argument("clock")
+    def cmd_gfx(clock: str) -> None:
+        if Tdp().vendor() != CpuVendor.AMD:
+            raise click.ClickException("gfx is only supported on AMD hosts.")
+        Tdp().set_amd_gfx(clock)
+
+    @cli.command("30")
+    def cmd_30() -> None:
+        Tdp().set_amd_preset("30")
+
+    @cli.command("28")
+    def cmd_28() -> None:
+        Tdp().set_amd_preset("28")
+
+    @cli.command("25")
+    def cmd_25() -> None:
+        Tdp().set_amd_preset("25")
+
+    @cli.command("20")
+    def cmd_20() -> None:
+        Tdp().set_amd_preset("20")
+
+    @cli.command("18")
+    def cmd_18() -> None:
+        Tdp().set_amd_preset("18")
+
+    @cli.command("15")
+    def cmd_15() -> None:
+        Tdp().set_amd_preset("15")
+
+    @cli.command("12")
+    def cmd_12() -> None:
+        Tdp().set_amd_preset("12")
+
+    @cli.command("9")
+    def cmd_9() -> None:
+        Tdp().set_amd_preset("9")
+
+    @cli.command("5")
+    def cmd_5() -> None:
+        Tdp().set_amd_preset("5")
+
+if __name__ == "__main__":
+    Tdp.cli()
