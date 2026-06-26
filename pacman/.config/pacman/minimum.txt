@@ -1,4 +1,6 @@
 # libva-vdpau-driver
+# tlp
+# tlpui
 base
 base-devel
 bind
@@ -45,6 +47,8 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr-regex
+hunspell
+hunspell-en_us
 inxi
 iptables-nft
 kanshi
@@ -105,8 +109,6 @@ swaync
 swayosd
 tailscale
 tailscale
-# tlp
-# tlpui
 tmux
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
