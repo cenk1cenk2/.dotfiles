@@ -86,6 +86,7 @@ tasks:
             desktop
             easyeffects
             electron
+            enchant
             fonts
             gitconfig
             gnupg

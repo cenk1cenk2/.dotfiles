@@ -1,4 +1,8 @@
 # libva-vdpau-driver
+# tlp
+# tlpui
+aspell
+aspell-en
 base
 base-devel
 bind
@@ -24,6 +28,7 @@ dhcping
 dmenu
 downgrade
 efibootmgr
+enchant
 ethtool
 ffmpeg
 findutils
@@ -45,6 +50,7 @@ gvfs-nfs
 gvfs-smb
 gzip
 handlr-regex
+hunspell-en_us
 inxi
 iptables-nft
 kanshi
@@ -68,6 +74,7 @@ neomutt
 net-tools
 networkmanager
 nmap
+nuspell
 obs-studio
 obsidian
 openssh
@@ -105,8 +112,6 @@ swaync
 swayosd
 tailscale
 tailscale
-# tlp
-# tlpui
 tmux
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
