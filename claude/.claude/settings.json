@@ -60,11 +60,11 @@
   "effortLevel": "high",
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
+  "tui": "fullscreen",
   "autoMemoryEnabled": true,
   "theme": "custom:onedarker",
   "editorMode": "vim",
   "verbose": false,
   "preferredNotifChannel": "kitty",
-  "showTurnDuration": true,
-  "tui": "fullscreen"
+  "showTurnDuration": true
 }
