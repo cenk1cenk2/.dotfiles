@@ -130,6 +130,7 @@ tasks:
             xsettingsd
             uwsm
             ydotool
+            zathura
           # args: --adopt
       # HACK: little trick to change the configuration for nvidia
       # - task: deploy
