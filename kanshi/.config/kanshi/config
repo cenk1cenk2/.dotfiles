@@ -23,8 +23,15 @@ profile portable {
 }
 
 # lenovo only
-profile portable {
+profile lenovo {
     output "Samsung Display Corp. ATNA60KA04-0  0x00000032" enable mode 3200x2000@120.000Hz position 0,0 scale 1.60 transform normal adaptive_sync off
+    exec notify-send kanshi "Profile lenovo has been applied."
+}
+
+# gpd with portable monitor (MB16QHG)
+profile portable {
+    output "ASUSTek COMPUTER INC MB16QHG T6LMTF161825" enable mode 2560x1600@119.963Hz position 38,0 scale 1.333 transform normal adaptive_sync off
+    output "Samsung Display Corp. ATNA60KA04-0  0x00000032" enable mode 3200x2000@120.000Hz position 0,1201 scale 1.60 transform normal adaptive_sync off
     exec notify-send kanshi "Profile portable has been applied."
 }
 
