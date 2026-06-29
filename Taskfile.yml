@@ -103,6 +103,7 @@ tasks:
             mpv
             neomutt
             obsbot
+            opencode
             pacman
             pipewire
             rofi
@@ -117,6 +118,7 @@ tasks:
             swayosd
             swayr
             sworkstyle
+            uwsm
             waybar
             wayland
             wayland-theme
@@ -128,7 +130,6 @@ tasks:
             xdg-desktop-portal
             xdg-desktop-portal-termfilechooser
             xsettingsd
-            uwsm
             ydotool
             zathura
           # args: --adopt

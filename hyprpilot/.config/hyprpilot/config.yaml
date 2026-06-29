@@ -117,7 +117,6 @@ profiles:
     model: kilic/deepseek-v4-pro:cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/glm-5.2:cloud
@@ -125,7 +124,6 @@ profiles:
     model: kilic/glm-5.2:cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/minimax-m3
@@ -133,7 +131,6 @@ profiles:
     model: kilic/minimax-m3:cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/kimi-k2.7-code:cloud
@@ -141,7 +138,6 @@ profiles:
     model: kilic/kimi-k2.7-code:cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/gemma4:31b-cloud
@@ -149,7 +145,6 @@ profiles:
     model: kilic/gemma4:31b-cloud
     mode: plan
     env:
-      OPENCODE_CONFIG: $HOME/.config/nvim/utils/agents/opencode/config.json
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/codex/gpt-5.5
