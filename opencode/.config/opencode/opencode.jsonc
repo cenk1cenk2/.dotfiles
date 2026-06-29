@@ -1,15 +1,34 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "kilic/glm-5.2:cloud",
+  "small_model": "kilic/gemma4:31b-cloud",
   "enabled_providers": ["openai", "kilic"],
   "autoupdate": false,
+  "instructions": ["CLAUDE.md"],
+  "compaction": { "auto": true, "tail_turns": 10 },
+  "experimental": {
+    "continue_loop_on_deny": true,
+    "batch_tool": true
+  },
   "permission": {
     "*": "ask",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "lsp": "allow",
+    "todowrite": "allow",
+    "question": "allow",
+    "websearch": "allow",
+    "webfetch": "allow",
+    "task": "allow",
+    "external_directory": "allow",
+    "doom_loop": "ask",
     "edit": {
+      "~/.claude/plans/**": "allow",
       "*": "ask",
     },
     "bash": {
-      "*": "ask",
       "git status": "allow",
       "git log": "allow",
       "git diff": "allow",
@@ -25,10 +44,8 @@
       "file": "allow",
       "pwd": "allow",
       "type": "allow",
+      "*": "ask",
     },
-    "webfetch": "allow",
-    "doom_loop": "ask",
-    "external_directory": "allow",
   },
   "provider": {
     "openai": {
