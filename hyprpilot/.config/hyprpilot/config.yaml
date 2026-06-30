@@ -84,6 +84,14 @@ patches:
       spawn: true
     env:
       "$patch": replace
+      CLAUDE_CONFIG_DIR: "${HOME}/.claude"
+
+  - $match:
+      profile: "personal/claude/*"
+      spawn: true
+    env:
+      "$patch": replace
+      CLAUDE_CONFIG_DIR: "${HOME}/.claude-kilic"
 
 agents:
   - id: codex

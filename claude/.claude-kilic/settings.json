@@ -1,0 +1,74 @@
+{
+  "cleanupPeriodDays": 30,
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "true"
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "WebFetch",
+      "WebSearch",
+      "mcp__mcphub",
+      "mcp__plugin_claude-mem_mcp-search",
+      "Grep(*)",
+      "Glob(*)",
+      "Read(*)",
+      "ToolSearch(*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git remote -v:*)",
+      "Bash(git remote get-url:*)",
+      "Bash(git tag:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(stat:*)",
+      "Bash(which:*)",
+      "Bash(file:*)",
+      "Bash(pwd:*)",
+      "Bash(type:*)"
+    ],
+    "deny": [
+      "Bash(sed -i*)",
+      "Bash(sed --in-place*)",
+      "Bash(perl -i*)",
+      "Bash(perl -pi*)",
+      "Bash(perl -p -i*)",
+      "Bash(awk -i inplace*)",
+      "Bash(gawk -i inplace*)"
+    ],
+    "ask": []
+  },
+  "model": "opus[1m]",
+  "enabledPlugins": {
+    "claude-md-management@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "coderabbit@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {},
+  "viewMode": "default",
+  "spinnerTipsEnabled": false,
+  "syntaxHighlightingDisabled": false,
+  "effortLevel": "high",
+  "promptSuggestionEnabled": false,
+  "showClearContextOnPlanAccept": false,
+  "autoUpdatesChannel": "latest",
+  "tui": "fullscreen",
+  "autoMemoryEnabled": true,
+  "theme": "custom:onedarker",
+  "editorMode": "normal",
+  "verbose": false,
+  "preferredNotifChannel": "terminal_bell",
+  "showTurnDuration": true,
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}
