@@ -107,7 +107,7 @@ profiles:
 
   - id: personal/claude/sonnet
     agent: claude-code
-    model: "sonnet[1m]"
+    model: "sonnet"
     mode: plan
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
