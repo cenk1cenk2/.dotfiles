@@ -58,13 +58,17 @@
   "spinnerTipsEnabled": false,
   "syntaxHighlightingDisabled": false,
   "effortLevel": "high",
+  "promptSuggestionEnabled": false,
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
   "autoMemoryEnabled": true,
   "theme": "custom:onedarker",
-  "editorMode": "vim",
+  "editorMode": "normal",
   "verbose": false,
-  "preferredNotifChannel": "kitty",
-  "showTurnDuration": true
+  "preferredNotifChannel": "terminal_bell",
+  "showTurnDuration": true,
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }
