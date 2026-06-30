@@ -112,6 +112,13 @@ profiles:
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
+  - id: personal/claude/haiku
+    agent: claude-code
+    model: "haiku"
+    mode: plan
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
     model: kilic/deepseek-v4-pro:cloud
