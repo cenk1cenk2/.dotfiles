@@ -84,7 +84,7 @@ patches:
       spawn: true
     env:
       "$patch": replace
-      CLAUDE_CONFIG_DIR: "${HOME}/.claude"
+      CLAUDE_CONFIG_DIR: "${HOME}/.claude-laravel"
 
   - $match:
       profile: "personal/claude/*"
