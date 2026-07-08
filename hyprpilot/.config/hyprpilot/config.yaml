@@ -69,6 +69,7 @@ patches:
       skills:
         - dir: ~/.config/nvim/utils/agents/skills/
           ignore:
+            - "*-kilic-*"
             - "*-kilic"
             - gitlab-*
     mcps:
