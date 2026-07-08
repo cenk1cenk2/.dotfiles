@@ -11,5 +11,6 @@ hyprpwcenter
 hyprshutdown
 hyprwhspr
 libnewt
+python-cairo
 uwsm
 xdg-desktop-portal-hyprland
