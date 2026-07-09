@@ -35,10 +35,11 @@ hl.device({
   scroll_factor = 1.0,
 })
 
+-- lenovo touchpad
 hl.device({
   name = "wacf2205:00-04f3:3355-touchpad",
   accel_profile = "flat",
-  sensitivity = 0.5,
+  sensitivity = 0.4,
   scroll_factor = 1.0,
 })
 
