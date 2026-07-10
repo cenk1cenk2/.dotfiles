@@ -4,11 +4,11 @@
   "small_model": "kilic/gemma4:31b-cloud",
   "enabled_providers": ["openai", "kilic"],
   "autoupdate": false,
-  "instructions": ["CLAUDE.md"],
+  "instructions": ["CLAUDE.md", "AGENTS.md"],
   "compaction": { "auto": true, "tail_turns": 10 },
   "experimental": {
     "continue_loop_on_deny": true,
-    "batch_tool": true
+    "batch_tool": true,
   },
   "permission": {
     "*": "ask",
@@ -75,6 +75,9 @@
         },
         "glm-5.2:cloud": {
           "name": "GLM 5.2 Cloud",
+          "options": {
+            "reasoningEffort": "max",
+          },
         },
         "kimi-k2.7-code:cloud": {
           "name": "Kimi K2.7 Code Cloud",
