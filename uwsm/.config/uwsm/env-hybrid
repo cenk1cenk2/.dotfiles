@@ -22,6 +22,20 @@ _gpu_nvidia_card="$(_card_for_vendor 0x10de || true)"
 if [ -n "$_gpu_intel_card" ] && [ -n "$_gpu_nvidia_card" ]; then
   export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
   export LIBVA_DRIVER_NAME=iHD
+
+  # NVIDIA is present but not the compositor's GPU. Proton/DXVK/VKD3D feature
+  # flags are safe to export unconditionally here (only Proton reads them, inert
+  # until a game is actually offloaded to the dGPU). The device-selector vars
+  # (__NV_PRIME_RENDER_OFFLOAD / __GLX_VENDOR_LIBRARY_NAME / GBM_BACKEND) stay
+  # out — they must be per-game launch options, or they force the Intel-primary
+  # compositor onto NVIDIA and black-screen it.
+  export PROTON_DXVK_LOWLATENCY=1
+  export PROTON_HIDE_NVIDIA_GPU=0
+  export PROTON_ENABLE_NVAPI=1
+  export DXVK_ENABLE_NVAPI=1
+  export PROTON_ENABLE_NGX_UPDATER=1
+  export VKD3D_CONFIG=dxr,dxr11
+  export VKD3D_FEATURE_LEVEL=12_2
 fi
 
 unset _gpu_intel_card _gpu_nvidia_card
