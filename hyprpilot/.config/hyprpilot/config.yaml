@@ -102,6 +102,13 @@ agents:
     spawn:
       command: codex
       args: ["--profile", "default"]
+  - id: opencode
+    provider: acp-opencode
+    command: opencode
+    args: ["acp"]
+    spawn:
+      command: opencode
+      args: ["--auto"]
 
 profile:
   default: personal/codex/gpt-5.5
@@ -110,56 +117,56 @@ profiles:
   - id: personal/claude/opus
     agent: claude-code
     model: "opus[1m]"
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/claude/sonnet
     agent: claude-code
     model: "sonnet"
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/claude/haiku
     agent: claude-code
     model: "haiku"
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
     model: kilic/deepseek-v4-pro:cloud
-    mode: plan
+    mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/glm-5.2:cloud
     agent: opencode
     model: kilic/glm-5.2:cloud
-    mode: plan
+    mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/minimax-m3
     agent: opencode
     model: kilic/minimax-m3:cloud
-    mode: plan
+    mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/kimi-k2.7-code:cloud
     agent: opencode
     model: kilic/kimi-k2.7-code:cloud
-    mode: plan
+    mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/gemma4:31b-cloud
     agent: opencode
     model: kilic/gemma4:31b-cloud
-    mode: plan
+    mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
@@ -176,21 +183,21 @@ profiles:
   - id: work/claude/opus
     agent: claude-code
     model: "opus[1m]"
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/sonnet
     agent: claude-code
     model: "sonnet[1m]"
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/haiku
     agent: claude-code
     model: haiku
-    mode: plan
+    mode: auto
     env:
       CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
     system_prompt: []
