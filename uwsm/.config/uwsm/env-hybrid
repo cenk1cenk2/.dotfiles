@@ -44,12 +44,6 @@ if [ -n "$_gpu_intel_card" ] && [ -n "$_gpu_nvidia_card" ]; then
   export PROTON_ENABLE_NGX_UPDATER=1
   export VKD3D_CONFIG=dxr,dxr11
   export VKD3D_FEATURE_LEVEL=12_2
-
-  # MangoHud shows every detected GPU by default, so the idle Intel iGPU
-  # renders next to the dGPU under load. Restrict the overlay to the discrete
-  # NVIDIA (index 1; the iGPU always enumerates first as index 0). Merges over
-  # the shared MangoHud.conf — only overrides GPU selection, keeps all visuals.
-  export MANGOHUD_CONFIG=gpu_list=1
 fi
 
 unset _gpu_intel_card _gpu_nvidia_card
