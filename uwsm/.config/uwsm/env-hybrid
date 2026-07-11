@@ -23,6 +23,14 @@ if [ -n "$_gpu_intel_card" ] && [ -n "$_gpu_nvidia_card" ]; then
   export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
   export LIBVA_DRIVER_NAME=iHD
 
+  # Aquamarine cross-GPU present workaround. Apps offloaded to the NVIDIA dGPU
+  # render fine but black-screen when their frames are presented through the
+  # Intel-primary compositor. NVIDIA's explicit-sync fences on multi-GPU scanout
+  # are the known trigger; disabling them fixes the present. If a black screen
+  # persists, also add: export AQ_NO_MODIFIERS=1 (forces an Intel-importable
+  # buffer layout).
+  export AQ_MGPU_NO_EXPLICIT=1
+
   # NVIDIA is present but not the compositor's GPU. Proton/DXVK/VKD3D feature
   # flags are safe to export unconditionally here (only Proton reads them, inert
   # until a game is actually offloaded to the dGPU). The device-selector vars
