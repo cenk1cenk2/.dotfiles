@@ -99,6 +99,7 @@ tasks:
             khal
             kitty
             mako
+            mangohud
             mimetypes
             mpv
             neomutt
@@ -186,15 +187,3 @@ tasks:
             yabai
             janky-borders
             kitty
-
-  deploy:gaming:
-    desc: Deploy to target.
-    platforms:
-      - linux
-    cmds:
-      - task: deploy
-        vars:
-          to: "~"
-          packages: >-
-            mangohud
-          args: --adopt
