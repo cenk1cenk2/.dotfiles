@@ -50,8 +50,6 @@
   "model": "opus[1m]",
   "enabledPlugins": {
     "claude-md-management@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true,
-    "coderabbit@claude-plugins-official": true,
     "code-simplifier@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
