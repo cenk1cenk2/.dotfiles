@@ -24,7 +24,7 @@ profile portable {
 
 # lenovo only
 profile lenovo {
-    output "Samsung Display Corp. ATNA60KA04-0  0x00000032" enable mode 3200x2000@120.000Hz position 0,0 scale 1.60 transform normal adaptive_sync off
+    output "Samsung Display Corp. ATNA60KA04-0  0x00000032" enable mode 3200x2000@120.000Hz position 0,0 scale 1.67 transform normal adaptive_sync off
     exec notify-send kanshi "Profile lenovo has been applied."
 }
 
