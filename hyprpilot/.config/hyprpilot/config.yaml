@@ -114,6 +114,13 @@ profile:
   default: personal/codex/gpt-5.5
 
 profiles:
+  - id: personal/claude/fable
+    agent: claude-code
+    model: "claude-fable-5[1m]"
+    mode: auto
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+
   - id: personal/claude/opus
     agent: claude-code
     model: "opus[1m]"
@@ -179,6 +186,13 @@ profiles:
     agent: codex
     model: gpt-5.3-codex-spark
     mode: read-only
+
+  - id: work/claude/fable
+    agent: claude-code
+    model: "claude-fable-5[1m]"
+    mode: auto
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/opus
     agent: claude-code
