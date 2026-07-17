@@ -40,7 +40,7 @@ UWSM loads the common file plus profile files selected by the display-manager se
 - `uwsm/.config/uwsm/env-hyprland` - Hyprland desktop identity and Hyprcursor environment.
 - `uwsm/.config/uwsm/env-amd` - AMD media acceleration profile.
 - `uwsm/.config/uwsm/env-nvidia` - NVIDIA-default profile.
-- `uwsm/.config/uwsm/env-hybrid` - Intel-primary/NVIDIA-available profile.
+- `uwsm/.config/uwsm/env-hybrid` - Intel-driven compositor with NVIDIA as offload-only profile.
 - `uwsm/.config/uwsm/env-integrated` - integrated-GPU-only profile.
 
 Common settings include `LIBSEAT_BACKEND=logind`, `WLR_XWAYLAND=/usr/local/bin/Xwayland`, Wayland Qt/GTK variables, cursor variables, `MANGOHUD=1`, `MOZ_ENABLE_WAYLAND=1`, and `DOCKER_BUILDKIT=1`.
@@ -51,12 +51,14 @@ Display-manager entries live in `rootfs/usr/local/share/wayland-sessions/` and s
 
 - **Hyprland AMD** runs `uwsm start -e -D Hyprland:Amd -- hyprland.desktop`.
 - **Hyprland NVIDIA** runs `uwsm start -e -D Hyprland:Nvidia -- hyprland.desktop` and keeps NVIDIA as the default renderer/offload target.
-- **Hyprland Hybrid** runs `uwsm start -e -D Hyprland:Hybrid -- hyprland.desktop` and uses Intel as Hyprland's primary renderer when an Intel iGPU and NVIDIA dGPU are both present.
+- **Hyprland Hybrid** runs `uwsm start -e -D Hyprland:Hybrid -- hyprland.desktop` and gives Hyprland the Intel iGPU only, keeping the NVIDIA dGPU as an on-demand offload target.
 - **Hyprland Integrated** runs `uwsm start -e -D Hyprland:Integrated -- hyprland.desktop` and exposes only the integrated GPU to Hyprland.
 
-`env-hybrid` detects the current `/dev/dri/card*` devices from sysfs vendor IDs at session start and exports `AQ_DRM_DEVICES` with Intel first and NVIDIA second. This avoids machine-specific udev rules while avoiding hard-coded card numbering in the shared dotfiles repo. It does not export global NVIDIA PRIME/offload variables such as `__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, or `GBM_BACKEND=nvidia-drm`.
+`env-hybrid` detects the current `/dev/dri/card*` devices from sysfs vendor IDs at session start and exports `AQ_DRM_DEVICES` with the Intel card only. This avoids machine-specific udev rules while avoiding hard-coded card numbering in the shared dotfiles repo. The NVIDIA card is deliberately left out: a compositor holding the dGPU's KMS node keeps it permanently active and defeats fine-grained RTD3 runtime suspend, while Vulkan device enumeration ignores `AQ_DRM_DEVICES` entirely — DXVK/vkd3d-proton pick the discrete GPU on their own and the driver wakes it from suspend on demand. The trade-off is that outputs wired to the dGPU (the HDMI port, the muxed eDP) cannot be driven in this profile; USB-C/DP outputs sit on the Intel card and keep working. `env-hybrid` does not export global NVIDIA PRIME/offload variables such as `__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`, or `GBM_BACKEND=nvidia-drm` — those are per-game launch options (native OpenGL games need `prime-run`).
 
-Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA. Use `Hyprland Hybrid` for Intel-primary laptop sessions where Hyprland should prefer the iGPU while still seeing the NVIDIA card for outputs/fallbacks. Use `Hyprland Integrated` when the dGPU should stay out of the compositor entirely so NVIDIA runtime power management or `tdp nvidia remove` can suspend/remove it once no applications hold it open.
+dGPU runtime power management support lives in `rootfs/`: `etc/modprobe.d/nvidia-power.conf` (S0ix video memory power management) and `etc/udev/rules.d/80-nvidia-hdmi-audio-power.rules` (runtime PM for the GPU's HDMI audio PCI function, which otherwise blocks RTD3).
+
+Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA or the HDMI port must drive a monitor. Use `Hyprland Hybrid` for laptop sessions: Intel drives all displays, the dGPU sleeps when idle and serves offloaded games. Use `Hyprland Integrated` when the dGPU should stay invisible to applications as well, so `tdp nvidia remove` can remove it entirely.
 
 ## Tool Choices
 

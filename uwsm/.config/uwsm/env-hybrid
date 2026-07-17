@@ -19,24 +19,27 @@ _card_for_vendor() {
 _gpu_intel_card="$(_card_for_vendor 0x8086 || true)"
 _gpu_nvidia_card="$(_card_for_vendor 0x10de || true)"
 
-if [ -n "$_gpu_intel_card" ] && [ -n "$_gpu_nvidia_card" ]; then
-  export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
+if [ -n "$_gpu_intel_card" ]; then
+  # Intel only, on purpose: handing the NVIDIA card to the compositor makes
+  # Hyprland/Xwayland hold its KMS node, which keeps the dGPU permanently
+  # active and defeats fine-grained RTD3 runtime suspend. With the dGPU out of
+  # AQ_DRM_DEVICES it suspends when idle and wakes on demand for offloaded
+  # work. Cost: outputs wired to the dGPU (HDMI, the muxed eDP) cannot be
+  # driven in this profile — USB-C/DP outputs sit on the Intel card and keep
+  # working. Use the "Hyprland NVIDIA" session when HDMI is needed.
+  export AQ_DRM_DEVICES="$_gpu_intel_card"
   export LIBVA_DRIVER_NAME=iHD
+fi
 
-  # Aquamarine cross-GPU present workaround. Apps offloaded to the NVIDIA dGPU
-  # render fine but black-screen when their frames are presented through the
-  # Intel-primary compositor. NVIDIA's explicit-sync fences on multi-GPU scanout
-  # are the known trigger; disabling them fixes the present. If a black screen
-  # persists, also add: export AQ_NO_MODIFIERS=1 (forces an Intel-importable
-  # buffer layout).
-  export AQ_MGPU_NO_EXPLICIT=1
-
-  # NVIDIA is present but not the compositor's GPU. Proton/DXVK/VKD3D feature
-  # flags are safe to export unconditionally here (only Proton reads them, inert
-  # until a game is actually offloaded to the dGPU). The device-selector vars
-  # (__NV_PRIME_RENDER_OFFLOAD / __GLX_VENDOR_LIBRARY_NAME / GBM_BACKEND) stay
-  # out — they must be per-game launch options, or they force the Intel-primary
-  # compositor onto NVIDIA and black-screen it.
+if [ -n "$_gpu_nvidia_card" ]; then
+  # NVIDIA is offload-only here. Vulkan enumeration ignores AQ_DRM_DEVICES, so
+  # games still see the dGPU: DXVK sorts adapters discrete-first and
+  # vkd3d-proton follows that adapter by LUID, so Proton titles land on NVIDIA
+  # with no per-game config. Native OpenGL games still need per-game prime-run.
+  # The device-selector vars (__NV_PRIME_RENDER_OFFLOAD /
+  # __GLX_VENDOR_LIBRARY_NAME / GBM_BACKEND) stay out — they must be per-game
+  # launch options, or they force the Intel-primary compositor onto NVIDIA and
+  # black-screen it. The flags below are only read by Proton, inert otherwise.
   export PROTON_DXVK_LOWLATENCY=1
   export PROTON_HIDE_NVIDIA_GPU=0
   export PROTON_ENABLE_NVAPI=1
