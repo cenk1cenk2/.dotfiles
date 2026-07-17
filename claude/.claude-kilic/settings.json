@@ -68,5 +68,6 @@
   "showTurnDuration": true,
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "skipWorkflowUsageWarning": true
 }

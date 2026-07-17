@@ -334,6 +334,35 @@ class Tdp:
 
         return output or "unknown"
 
+    def pci_device_name(self, pci_id: str) -> str | None:
+        # Resolved from sysfs IDs + the pci.ids database instead of lspci:
+        # config-space reads power a D3cold device back up, sysfs does not.
+        device = self.PCI_DEVICES_PATH / pci_id
+        vendor = (self.read_optional(device / "vendor") or "").removeprefix("0x")
+        model = (self.read_optional(device / "device") or "").removeprefix("0x")
+        if not vendor or not model:
+            return None
+
+        try:
+            lines = Path("/usr/share/hwdata/pci.ids").read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError:
+            return None
+
+        in_vendor = False
+        for line in lines:
+            if not line or line.startswith("#"):
+                continue
+            if not line.startswith("\t"):
+                in_vendor = line[:4].lower() == vendor
+            elif in_vendor and not line.startswith("\t\t"):
+                entry = line.strip()
+                if entry[:4].lower() == model:
+                    return entry[4:].strip()
+
+        return None
+
     def nvidia_nodes(self, pci_id: str) -> list[Path]:
         nodes: list[Path] = []
         pci_path = self.PCI_DEVICES_PATH / pci_id
@@ -418,9 +447,9 @@ class Tdp:
             ["sudo", "nvidia-smi", "-i", gpu_pci_id, "-pl", f"{watts:g}"],
             echo_output=True,
         )
-        self.show_nvidia(gpu_pci_id)
+        self.show_nvidia(gpu_pci_id, smi=True)
 
-    def show_nvidia(self, pci_id: str | None = None) -> None:
+    def show_nvidia(self, pci_id: str | None = None, smi: bool = False) -> None:
         self.console.rule("[bold yellow]NVIDIA[/]")
         pci_ids = (
             [self.nvidia_gpu_pci_id(pci_id)] if pci_id else self.nvidia_gpu_pci_ids()
@@ -432,54 +461,95 @@ class Tdp:
                 self.console.print(Text(excluded.stdout.rstrip()))
             return
 
+        # Snapshot sysfs and holders before any nvidia-smi call: querying smi
+        # powers the GPU up, so reading runtime_status afterwards would always
+        # report "active" even for a GPU that was suspended a moment ago.
+        snapshots = [
+            (
+                gpu_pci_id,
+                self.read_optional(
+                    self.PCI_DEVICES_PATH / gpu_pci_id / "power/control"
+                ),
+                self.read_optional(
+                    self.PCI_DEVICES_PATH / gpu_pci_id / "power/runtime_status"
+                ),
+                self.read_optional(self.PCI_DEVICES_PATH / gpu_pci_id / "power_state"),
+                self.nvidia_holders(gpu_pci_id),
+            )
+            for gpu_pci_id in pci_ids
+        ]
+
         table = Table(box=None)
         table.add_column("PCI", style="bold")
-        table.add_column("Drain")
+        if smi:
+            table.add_column("Drain")
         table.add_column("Power")
         table.add_column("Runtime")
+        table.add_column("D-State")
         table.add_column("Holders", justify="right")
-        for gpu_pci_id in pci_ids:
-            device = self.PCI_DEVICES_PATH / gpu_pci_id
-            holders = self.nvidia_holders(gpu_pci_id)
-            table.add_row(
-                gpu_pci_id,
-                self.nvidia_drain_state(gpu_pci_id),
-                self.read_optional(device / "power/control") or "?",
-                self.read_optional(device / "power/runtime_status") or "?",
-                str(len(holders)),
+        for gpu_pci_id, control, runtime_status, power_state, holders in snapshots:
+            row = [gpu_pci_id]
+            if smi:
+                row.append(self.nvidia_drain_state(gpu_pci_id))
+            state_style = "green" if power_state == "D3cold" else "yellow"
+            row.extend(
+                [
+                    control or "?",
+                    runtime_status or "?",
+                    f"[{state_style}]{power_state}[/]" if power_state else "?",
+                    str(len(holders)),
+                ]
             )
+            table.add_row(*row)
         self.console.print(table)
 
-        power_table = Table(title="NVIDIA power limits", box=None)
-        power_table.add_column("PCI", style="bold")
-        power_table.add_column("Draw W", justify="right")
-        power_table.add_column("Current W", justify="right")
-        power_table.add_column("Default W", justify="right")
-        power_table.add_column("Min W", justify="right")
-        power_table.add_column("Max W", justify="right")
-        power_table.add_column("Memory MiB", justify="right")
-        power_table.add_column("P-State")
-        for row in self.nvidia_power_rows():
-            power_table.add_row(*row)
+        for gpu_pci_id, _control, runtime_status, power_state, holders in snapshots:
+            match runtime_status:
+                case "suspended":
+                    verdict = "[bold green]sleeping[/]"
+                case "active":
+                    verdict = "[bold yellow]awake[/]"
+                case "suspending" | "resuming":
+                    verdict = f"[bold cyan]{runtime_status}[/]"
+                case _:
+                    verdict = f"[bold]{runtime_status or 'unknown'}[/]"
+            name = self.pci_device_name(gpu_pci_id)
+            self.console.print(
+                f"[bold]{gpu_pci_id}[/]{f' {name}' if name else ''} is {verdict}"
+                f" ({power_state or '?'}, {len(holders)} holders)"
+            )
 
-        if power_table.row_count:
-            self.console.print(power_table)
+        if smi:
+            power_table = Table(title="NVIDIA power limits", box=None)
+            power_table.add_column("PCI", style="bold")
+            power_table.add_column("Draw W", justify="right")
+            power_table.add_column("Current W", justify="right")
+            power_table.add_column("Default W", justify="right")
+            power_table.add_column("Min W", justify="right")
+            power_table.add_column("Max W", justify="right")
+            power_table.add_column("Memory MiB", justify="right")
+            power_table.add_column("P-State")
+            for row in self.nvidia_power_rows():
+                power_table.add_row(*row)
 
-        for gpu_pci_id in pci_ids:
-            self.print_nvidia_holders(self.nvidia_holders(gpu_pci_id))
+            if power_table.row_count:
+                self.console.print(power_table)
+
+        for *_ignored, holders in snapshots:
+            self.print_nvidia_holders(holders)
 
     def drain_nvidia(self, pci_id: str | None = None) -> None:
         gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
         self.set_nvidia_persistence(gpu_pci_id, False)
         self.set_nvidia_power_auto(gpu_pci_id)
         self.set_nvidia_drain(gpu_pci_id, True)
-        self.show_nvidia(gpu_pci_id)
+        self.show_nvidia(gpu_pci_id, smi=True)
         self.console.print(f"Draining: [bold]{gpu_pci_id}[/]")
 
     def undrain_nvidia(self, pci_id: str | None = None) -> None:
         gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
         self.set_nvidia_drain(gpu_pci_id, False)
-        self.show_nvidia(gpu_pci_id)
+        self.show_nvidia(gpu_pci_id, smi=True)
         self.console.print(f"Not draining: [bold]{gpu_pci_id}[/]")
 
     def remove_nvidia(self, pci_id: str | None = None) -> None:
@@ -526,7 +596,7 @@ class Tdp:
             self.set_nvidia_power_auto(gpu_pci_id)
             self.set_nvidia_drain(gpu_pci_id, False)
 
-        self.show_nvidia()
+        self.show_nvidia(smi=True)
 
     def intel_profile_choices(self) -> list[str]:
         if not self.PROFILE_CHOICES_PATH.is_file():
@@ -663,8 +733,9 @@ class Tdp:
 
     @cmd_nvidia.command("show")
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
-    def cmd_nvidia_status(pci_id: str | None) -> None:
-        Tdp().show_nvidia(pci_id)
+    @click.option("--smi", is_flag=True, help="Include nvidia-smi data; wakes the GPU.")
+    def cmd_nvidia_status(pci_id: str | None, smi: bool) -> None:
+        Tdp().show_nvidia(pci_id, smi=smi)
 
     @cmd_nvidia.command("limit")
     @click.argument("watts", type=float)

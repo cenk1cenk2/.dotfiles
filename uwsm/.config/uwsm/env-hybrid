@@ -29,6 +29,19 @@ if [ -n "$_gpu_intel_card" ]; then
   # working. Use the "Hyprland NVIDIA" session when HDMI is needed.
   export AQ_DRM_DEVICES="$_gpu_intel_card"
   export LIBVA_DRIVER_NAME=iHD
+
+  # EGL enumeration through GLVND loads the NVIDIA vendor library, which opens
+  # /dev/nvidia0 in every EGL app (compositor, wallpaper daemon, Chromium apps)
+  # and those RM-client handles pin the dGPU awake even with zero contexts.
+  # Restricting EGL to Mesa stops the opens entirely; Vulkan enumeration is a
+  # separate path, so games still see the NVIDIA ICD, and prime-run GL offload
+  # uses the GLX vendor selector, which this does not touch.
+  export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+
+  # GTK4 defaults to its Vulkan renderer, whose device enumeration opens and
+  # holds /dev/nvidia0 (seen with swayosd grabbing nvidia-modeset). Forcing the
+  # GL renderer keeps GTK4 apps on the Mesa-only EGL path above.
+  export GSK_RENDERER=ngl
 fi
 
 if [ -n "$_gpu_nvidia_card" ]; then
