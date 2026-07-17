@@ -58,7 +58,10 @@ Display-manager entries live in `rootfs/usr/local/share/wayland-sessions/` and s
 
 Known residual dGPU holders that no configuration fixes: current Chromium bases (Brave) probe NVML and GBM from the main browser process with no opt-out, and slack-desktop/spotify bundle their own engines that read no flags files — the dGPU sleeps only while those apps are closed. Check holders wake-free with `tdp nvidia show`.
 
-dGPU runtime power management support lives in `rootfs/`: `etc/modprobe.d/nvidia-power.conf` (S0ix video memory power management) and `etc/udev/rules.d/80-nvidia-hdmi-audio-power.rules` (runtime PM for the GPU's HDMI audio PCI function, which otherwise blocks RTD3).
+dGPU runtime power management support lives in `rootfs/`:
+- `etc/modprobe.d/nvidia-power.conf` — `NVreg_DynamicPowerManagement=0x03` (fine-grained RTD3, default for Ampere+), `NVreg_EnableS0ixPowerManagement=1`, `NVreg_PreserveVideoMemoryAllocations=0` (allow suspend while GPU active), `NVreg_DynamicPowerManagementVideoMemoryThreshold=0` (don't keep VRAM warm).
+- `etc/udev/rules.d/80-nvidia-pm.rules` — runtime PM `auto` for the GPU's main PCI function (`0x030000`) and its HDMI audio function (`0x040300`), which otherwise blocks RTD3.
+- `nvidia-persistenced.service` should be enabled on the host (not tracked in dotfiles — it's a systemd unit from `nvidia-utils`).
 
 Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA or the HDMI port must drive a monitor. Use `Hyprland Hybrid` for laptop sessions: Intel drives all displays, the dGPU sleeps when idle and serves offloaded games. Use `Hyprland Integrated` when the dGPU should stay invisible to applications as well, so `tdp nvidia remove` can remove it entirely.
 

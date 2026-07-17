@@ -1,0 +1,4 @@
+# Enable runtime PM for the NVIDIA GPU itself
+ACTION=="add|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", ATTR{power/control}="auto"
+# Enable runtime PM for NVIDIA audio function (blocks RTD3 otherwise)
+ACTION=="add|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", ATTR{power/control}="auto"
