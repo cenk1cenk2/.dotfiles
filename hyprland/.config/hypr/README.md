@@ -59,7 +59,7 @@ Display-manager entries live in `rootfs/usr/local/share/wayland-sessions/` and s
 Known residual dGPU holders that no configuration fixes: current Chromium bases (Brave) probe NVML and GBM from the main browser process with no opt-out, and slack-desktop/spotify bundle their own engines that read no flags files — the dGPU sleeps only while those apps are closed. Check holders wake-free with `tdp nvidia show`.
 
 dGPU runtime power management support lives in `rootfs/`:
-- `etc/modprobe.d/nvidia-power.conf` — `NVreg_DynamicPowerManagement=0x02` (fine-grained RTD3 — `0x03` is the default but Blackwell GPUs need `0x02` explicitly; safe on desktop where RTD3 is disabled regardless), `NVreg_EnableS0ixPowerManagement=1`, `NVreg_PreserveVideoMemoryAllocations=0` (allow suspend while GPU active), `NVreg_DynamicPowerManagementVideoMemoryThreshold=0` (keep VRAM in self-refresh — workaround for NVIDIA issue #905 where the GPU enters D3cold but immediately wakes in a loop).
+- `etc/modprobe.d/nvidia-power.conf` — `NVreg_DynamicPowerManagement=0x03` (default — fine-grained RTD3 on Ampere+ notebooks, disabled on desktop), `NVreg_EnableS0ixPowerManagement=1`, `NVreg_PreserveVideoMemoryAllocations=0` (allow suspend while GPU active), `NVreg_DynamicPowerManagementVideoMemoryThreshold=0` (keep VRAM in self-refresh — workaround for NVIDIA issue #905 where the GPU enters D3cold but immediately wakes in a loop).
 - `etc/udev/rules.d/80-nvidia-pm.rules` — runtime PM `auto` for the GPU's main PCI function (`0x030000`) and its HDMI audio function (`0x040300`), which otherwise blocks RTD3.
 - `nvidia-persistenced.service` should be enabled on the host (not tracked in dotfiles — it's a systemd unit from `nvidia-utils`).
 
