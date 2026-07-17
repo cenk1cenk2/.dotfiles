@@ -16,7 +16,7 @@ M.term = {
 }
 
 -- Application launcher
-M.menu = "rofi -modi 'run,drun' -show drun -terminal " .. M.term.default
+M.menu = "rofi -modi 'run,drun' -show drun -run-command 'uwsm app -- {cmd}' -terminal " .. M.term.default
 
 -- Clipboard manager (clipse)
 M.clipboard = M.term.float .. " --class clipse clipse"
