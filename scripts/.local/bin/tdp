@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 import click
 from rich.console import Console
@@ -34,6 +34,165 @@ class PowerLimit:
     def watts(self) -> str:
         return f"{self.microwatts / 1_000_000:.3g}"
 
+@dataclass
+class BatteryStatus:
+    backend: str
+    limit: str
+    capacity: int | None
+    rows: list[tuple[str, str]]
+
+class BatteryBackend(Protocol):
+    """Charge-limit interface for one detected battery mechanism."""
+
+    name: str
+
+    def status(self) -> BatteryStatus: ...
+    def apply_on(self) -> str: ...
+    def apply_off(self) -> str: ...
+    def apply_limit(self, end: int, start: int | None) -> str: ...
+
+class ThresholdBattery:
+    """Generic kernel charge_control_*_threshold ABI (ThinkPad, ASUS, …)."""
+
+    name = "generic charge threshold"
+    DEFAULT_END = 80
+    POWER_SUPPLY_PATH = Path("/sys/class/power_supply")
+
+    def __init__(self, tdp: Tdp, battery: Path) -> None:
+        self.tdp = tdp
+        self.battery = battery
+
+    @classmethod
+    def create(cls, tdp: Tdp) -> ThresholdBattery | None:
+        matches = sorted(
+            path.parent
+            for path in cls.POWER_SUPPLY_PATH.glob(
+                "*/charge_control_end_threshold"
+            )
+        )
+        if not matches:
+            return None
+
+        return cls(tdp, matches[0])
+
+    @property
+    def end_path(self) -> Path:
+        return self.battery / "charge_control_end_threshold"
+
+    @property
+    def start_path(self) -> Path:
+        return self.battery / "charge_control_start_threshold"
+
+    def read_int(self, path: Path) -> int | None:
+        raw = self.tdp.read_optional(path)
+        return int(raw) if raw and raw.isdigit() else None
+
+    def status(self) -> BatteryStatus:
+        end = self.read_int(self.end_path)
+        start = self.read_int(self.start_path)
+        rows = [
+            ("Battery", self.battery.name),
+            ("End", f"{end}%" if end is not None else "?"),
+        ]
+        if start is not None:
+            rows.append(("Start", f"{start}%"))
+
+        return BatteryStatus(
+            self.name,
+            f"{end}%" if end is not None else "?",
+            self.read_int(self.battery / "capacity"),
+            rows,
+        )
+
+    def set_end(self, end: int, start: int | None) -> None:
+        if start is not None and self.start_path.exists():
+            self.tdp.write_sysfs(self.start_path, f"{start}\n")
+        self.tdp.write_sysfs(self.end_path, f"{end}\n")
+
+    def apply_limit(self, end: int, start: int | None) -> str:
+        if not 1 <= end <= 100:
+            raise click.ClickException("Charge limit must be between 1 and 100.")
+        if start is not None and not 0 <= start < end:
+            raise click.ClickException(
+                "Start threshold must be below the end threshold."
+            )
+        self.set_end(end, start)
+
+        return f"end {end}%" + (f", start {start}%" if start is not None else "")
+
+    def apply_on(self) -> str:
+        current = self.read_int(self.end_path)
+        end = current if current is not None and current < 100 else self.DEFAULT_END
+        self.set_end(end, None)
+
+        return f"on (end {end}%)"
+
+    def apply_off(self) -> str:
+        self.set_end(100, None)
+
+        return "off (end 100%)"
+
+class IdeapadConservationBattery:
+    """Lenovo IdeaPad/Yoga conservation_mode — binary, firmware-fixed ~60% cap."""
+
+    name = "Lenovo conservation mode"
+    CONSERVATION_GLOB = (
+        "sys/bus/platform/drivers/ideapad_acpi/*/conservation_mode"
+    )
+    POWER_SUPPLY_PATH = Path("/sys/class/power_supply")
+
+    def __init__(self, tdp: Tdp, conservation: Path) -> None:
+        self.tdp = tdp
+        self.conservation = conservation
+
+    @classmethod
+    def create(cls, tdp: Tdp) -> IdeapadConservationBattery | None:
+        matches = sorted(Path("/").glob(cls.CONSERVATION_GLOB))
+        if not matches:
+            return None
+
+        return cls(tdp, matches[0])
+
+    def enabled(self) -> bool:
+        return self.tdp.read_optional(self.conservation) == "1"
+
+    def capacity(self) -> int | None:
+        for path in sorted(self.POWER_SUPPLY_PATH.glob("BAT*/capacity")):
+            raw = self.tdp.read_optional(path)
+            if raw and raw.isdigit():
+                return int(raw)
+
+        return None
+
+    def status(self) -> BatteryStatus:
+        on = self.enabled()
+
+        return BatteryStatus(
+            self.name,
+            "on (~60%)" if on else "off",
+            self.capacity(),
+            [
+                ("Conservation", "on" if on else "off"),
+                ("Cap", "~60% (firmware-fixed)"),
+            ],
+        )
+
+    def apply_on(self) -> str:
+        self.tdp.write_sysfs(self.conservation, "1\n")
+
+        return "on (~60%)"
+
+    def apply_off(self) -> str:
+        self.tdp.write_sysfs(self.conservation, "0\n")
+
+        return "off"
+
+    def apply_limit(self, end: int, start: int | None) -> str:
+        raise click.ClickException(
+            "This machine's Lenovo conservation mode is on/off only "
+            "(cap is firmware-fixed ~60%); use `tdp battery on` / `off`."
+        )
+
 class Tdp:
     @click.group(
         context_settings={"help_option_names": ["-h", "--help"]},
@@ -54,6 +213,7 @@ class Tdp:
     HOSTNAME_PATH = Path("/proc/sys/kernel/hostname")
     CPUINFO_PATH = Path("/proc/cpuinfo")
     PCI_DEVICES_PATH = Path("/sys/bus/pci/devices")
+    POWER_SUPPLY_PATH = Path("/sys/class/power_supply")
     NVIDIA_VENDOR_ID = "0x10de"
     NVIDIA_GPU_CLASSES: ClassVar[set[str]] = {"0x030000", "0x030200"}
     AMD_PRESETS_BY_HOST: ClassVar[dict[str, dict[str, list[str]]]] = {
@@ -212,13 +372,15 @@ class Tdp:
 
         raise click.ClickException(f"Platform profile unavailable: {profile}")
 
+    def write_sysfs(self, path: Path, text: str) -> None:
+        try:
+            path.write_text(text)
+        except (PermissionError, OSError):
+            self.run(["sudo", "tee", str(path)], input_text=text)
+
     def set_intel_profile(self, profile: str) -> None:
         profile = self.normalize_intel_profile(profile)
-        try:
-            self.PROFILE_PATH.write_text(f"{profile}\n")
-        except (PermissionError, OSError):
-            self.run(["sudo", "tee", str(self.PROFILE_PATH)], input_text=f"{profile}\n")
-
+        self.write_sysfs(self.PROFILE_PATH, f"{profile}\n")
         self.show_intel()
         self.console.print(f"Applied: [bold]{profile}[/]")
 
@@ -684,6 +846,188 @@ class Tdp:
         if proc.stdout.strip():
             self.console.print(Text(proc.stdout.rstrip()))
 
+    def battery_backend(self) -> BatteryBackend:
+        backends: list[type[ThresholdBattery] | type[IdeapadConservationBattery]] = [
+            ThresholdBattery,
+            IdeapadConservationBattery,
+        ]
+        chosen: BatteryBackend | None = None
+        for backend_cls in backends:
+            candidate = backend_cls.create(self)
+            if candidate is None:
+                continue
+            if chosen is None:
+                chosen = candidate
+            else:
+                self.log.debug(
+                    "battery: %s available but shadowed by %s",
+                    backend_cls.__name__,
+                    type(chosen).__name__,
+                )
+        if chosen is None:
+            raise click.ClickException(
+                "No supported battery charge-limit interface found."
+            )
+
+        return chosen
+
+    def battery_device(self) -> Path | None:
+        candidates = sorted(self.POWER_SUPPLY_PATH.glob("BAT*"))
+        for path in candidates:
+            if self.read_optional(path / "present") == "1":
+                return path
+
+        return candidates[0] if candidates else None
+
+    def battery_details(self, device: Path) -> list[tuple[str, str]]:
+        def num(name: str) -> int | None:
+            raw = self.read_optional(device / name)
+            return int(raw) if raw and raw.lstrip("-").isdigit() else None
+
+        rows: list[tuple[str, str]] = []
+        capacity = num("capacity")
+        if capacity is not None:
+            rows.append(("Charge", f"{capacity}%"))
+        status = self.read_optional(device / "status")
+        if status:
+            rows.append(("Status", status))
+        energy_full = num("energy_full")
+        energy_design = num("energy_full_design")
+        if energy_full and energy_design:
+            health = energy_full / energy_design * 100
+            rows.append(
+                (
+                    "Health",
+                    f"{health:.0f}% "
+                    f"({energy_full / 1e6:.1f}/{energy_design / 1e6:.1f} Wh)",
+                )
+            )
+        energy_now = num("energy_now")
+        if energy_now is not None:
+            rows.append(("Energy", f"{energy_now / 1e6:.1f} Wh"))
+        cycles = num("cycle_count")
+        if cycles is not None:
+            rows.append(("Cycles", str(cycles)))
+        power_now = num("power_now")
+        if power_now is not None:
+            rows.append(("Power draw", f"{power_now / 1e6:.2f} W"))
+        voltage = num("voltage_now")
+        if voltage is not None:
+            rows.append(("Voltage", f"{voltage / 1e6:.2f} V"))
+        technology = self.read_optional(device / "technology")
+        if technology:
+            rows.append(("Technology", technology))
+        maker = self.read_optional(device / "manufacturer")
+        model = self.read_optional(device / "model_name")
+        if maker or model:
+            rows.append(("Model", " ".join(p for p in (maker, model) if p)))
+
+        return rows
+
+    def charge_types_device(self) -> Path | None:
+        for path in sorted(self.POWER_SUPPLY_PATH.glob("BAT*/charge_types")):
+            return path.parent
+
+        return None
+
+    def parse_charge_types(self, device: Path) -> tuple[str | None, list[str]]:
+        """Return (current, choices) from a `charge_types` file's `A [B] C` form."""
+        raw = self.read_optional(device / "charge_types")
+        if not raw:
+            return None, []
+
+        current: str | None = None
+        choices: list[str] = []
+        for token in raw.split():
+            name = token.strip("[]")
+            choices.append(name)
+            if token.startswith("["):
+                current = name
+
+        return current, choices
+
+    def show_battery(self) -> None:
+        status = self.battery_backend().status()
+        self.console.rule("[bold yellow]Battery charge limit[/]")
+        self.console.print(f"Backend: [bold]{status.backend}[/]")
+        self.console.print(f"Limit: [bold]{status.limit}[/]")
+
+        table = Table(box=None)
+        table.add_column("Field", style="bold")
+        table.add_column("Value")
+        for field, value in status.rows:
+            table.add_row(field, value)
+        self.console.print(table)
+
+        device = self.battery_device()
+        if device is not None:
+            details = Table(box=None)
+            details.add_column("Field", style="bold")
+            details.add_column("Value")
+            for field, value in self.battery_details(device):
+                details.add_row(field, value)
+            if details.row_count:
+                self.console.rule("[bold yellow]Battery details[/]")
+                self.console.print(details)
+
+        charge_device = self.charge_types_device()
+        if charge_device is not None:
+            self.console.rule("[bold yellow]Battery charge mode[/]")
+            self.console.print(self.charge_types_table(charge_device))
+
+    def charge_types_table(self, device: Path) -> Table:
+        current, choices = self.parse_charge_types(device)
+        table = Table(box=None)
+        table.add_column("Mode", style="bold")
+        table.add_column("State")
+        for choice in choices:
+            table.add_row(choice, "current" if choice == current else "available")
+
+        return table
+
+    def show_charge_types(self) -> None:
+        device = self.charge_types_device()
+        if device is None:
+            raise click.ClickException(
+                "This battery has no charge-type (charge_types) control."
+            )
+
+        self.console.print(self.charge_types_table(device))
+
+    def set_charge_type(self, value: str) -> None:
+        device = self.charge_types_device()
+        if device is None:
+            raise click.ClickException(
+                "This battery has no charge-type (charge_types) control."
+            )
+
+        _current, choices = self.parse_charge_types(device)
+        normalized = {c.lower().replace("-", "_"): c for c in choices}
+        canonical = normalized.get(value.lower().replace("-", "_"))
+        if canonical is None:
+            raise click.ClickException(
+                f"Unknown charge type {value!r}. Available: {', '.join(choices)}."
+            )
+
+        self.write_sysfs(device / "charge_types", f"{canonical}\n")
+        self.show_battery()
+        self.console.print(f"Applied charge type: [bold]{canonical}[/]")
+
+    def battery_on(self) -> None:
+        summary = self.battery_backend().apply_on()
+        self.show_battery()
+        self.console.print(f"Applied: [bold]{summary}[/]")
+
+    def battery_off(self) -> None:
+        summary = self.battery_backend().apply_off()
+        self.show_battery()
+        self.console.print(f"Applied: [bold]{summary}[/]")
+
+    def battery_limit(self, end: int, start: int | None) -> None:
+        summary = self.battery_backend().apply_limit(end, start)
+        self.show_battery()
+        self.console.print(f"Applied: [bold]{summary}[/]")
+
     @staticmethod
     def read_optional(path: Path) -> str | None:
         try:
@@ -769,6 +1113,36 @@ class Tdp:
     @cmd_nvidia.command("rescan", hidden=True)
     def cmd_nvidia_rescan() -> None:
         Tdp().discover_nvidia()
+
+    @cli.group("battery")
+    def cmd_battery() -> None:
+        pass
+
+    @cmd_battery.command("show")
+    def cmd_battery_show() -> None:
+        Tdp().show_battery()
+
+    @cmd_battery.command("on")
+    def cmd_battery_on() -> None:
+        Tdp().battery_on()
+
+    @cmd_battery.command("off")
+    def cmd_battery_off() -> None:
+        Tdp().battery_off()
+
+    @cmd_battery.command("limit")
+    @click.argument("end", type=int)
+    @click.argument("start", type=int, required=False)
+    def cmd_battery_limit(end: int, start: int | None) -> None:
+        Tdp().battery_limit(end, start)
+
+    @cmd_battery.command("mode")
+    @click.argument("value", required=False)
+    def cmd_battery_mode(value: str | None) -> None:
+        if value is None:
+            Tdp().show_charge_types()
+        else:
+            Tdp().set_charge_type(value)
 
 if __name__ == "__main__":
     Tdp.cli()
