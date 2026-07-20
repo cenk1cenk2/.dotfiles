@@ -169,18 +169,18 @@ class IdeapadConservationBattery:
 
         return BatteryStatus(
             self.name,
-            "on (~60%)" if on else "off",
+            "on" if on else "off",
             self.capacity(),
             [
                 ("Conservation", "on" if on else "off"),
-                ("Cap", "~60% (firmware-fixed)"),
+                ("Cap", "EC-enforced (level not exposed)"),
             ],
         )
 
     def apply_on(self) -> str:
         self.tdp.write_sysfs(self.conservation, "1\n")
 
-        return "on (~60%)"
+        return "on"
 
     def apply_off(self) -> str:
         self.tdp.write_sysfs(self.conservation, "0\n")
@@ -190,7 +190,7 @@ class IdeapadConservationBattery:
     def apply_limit(self, end: int, start: int | None) -> str:
         raise click.ClickException(
             "This machine's Lenovo conservation mode is on/off only "
-            "(cap is firmware-fixed ~60%); use `tdp battery on` / `off`."
+            "(cap is EC-enforced, not settable); use `tdp battery on` / `off`."
         )
 
 class Tdp:
@@ -1136,13 +1136,18 @@ class Tdp:
     def cmd_battery_limit(end: int, start: int | None) -> None:
         Tdp().battery_limit(end, start)
 
-    @cmd_battery.command("mode")
-    @click.argument("value", required=False)
-    def cmd_battery_mode(value: str | None) -> None:
-        if value is None:
-            Tdp().show_charge_types()
-        else:
-            Tdp().set_charge_type(value)
+    @cmd_battery.group("mode")
+    def cmd_battery_mode() -> None:
+        pass
+
+    @cmd_battery_mode.command("show")
+    def cmd_battery_mode_show() -> None:
+        Tdp().show_charge_types()
+
+    @cmd_battery_mode.command("set")
+    @click.argument("value")
+    def cmd_battery_mode_set(value: str) -> None:
+        Tdp().set_charge_type(value)
 
 if __name__ == "__main__":
     Tdp.cli()
