@@ -194,16 +194,10 @@ class IdeapadConservationBattery:
         )
 
 class Tdp:
-    @click.group(
-        context_settings={"help_option_names": ["-h", "--help"]},
-        invoke_without_command=True,
-    )
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
-    @click.pass_context
-    def cli(ctx: click.Context, verbose: bool) -> None:
+    def cli(verbose: bool) -> None:
         create_logger(verbose, name="tdp")
-        if ctx.invoked_subcommand is None:
-            Tdp().show()
 
     console: ClassVar[Console] = Console(force_terminal=None)
     log = logging.getLogger("tdp")
@@ -214,6 +208,19 @@ class Tdp:
     CPUINFO_PATH = Path("/proc/cpuinfo")
     PCI_DEVICES_PATH = Path("/sys/bus/pci/devices")
     POWER_SUPPLY_PATH = Path("/sys/class/power_supply")
+    DMI_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
+    FAN_MODE_GLOB = "sys/bus/platform/devices/VPC2004:*/fan_mode"
+    # ideapad fan_mode: kernel accepts 0/1/2/4 only (3 and >4 rejected).
+    FAN_MODE_VALUES: ClassVar[tuple[str, ...]] = ("0", "1", "2", "4")
+    # Friendly names only apply on Lenovo; other vendors get generic labels.
+    LENOVO_FAN_MODES: ClassVar[dict[str, str]] = {
+        "0": "Super Silent",
+        "1": "Standard",
+        "2": "Dust Cleaning",
+        "4": "Efficient Thermal Dissipation",
+    }
+    # Some firmware reports Super Silent as 133 on read.
+    FAN_READ_ALIASES: ClassVar[dict[str, str]] = {"133": "Super Silent"}
     NVIDIA_VENDOR_ID = "0x10de"
     NVIDIA_GPU_CLASSES: ClassVar[set[str]] = {"0x030000", "0x030200"}
     AMD_PRESETS_BY_HOST: ClassVar[dict[str, dict[str, list[str]]]] = {
@@ -1028,6 +1035,107 @@ class Tdp:
         self.show_battery()
         self.console.print(f"Applied: [bold]{summary}[/]")
 
+    def is_lenovo(self) -> bool:
+        return "lenovo" in (self.read_optional(self.DMI_VENDOR_PATH) or "").lower()
+
+    def fan_modes(self) -> dict[str, str]:
+        """Value -> label; friendly Lenovo names on Lenovo, generic elsewhere."""
+        if self.is_lenovo():
+            return dict(self.LENOVO_FAN_MODES)
+
+        return {value: f"Mode {value}" for value in self.FAN_MODE_VALUES}
+
+    def fan_mode_path(self) -> Path | None:
+        for path in sorted(Path("/").glob(self.FAN_MODE_GLOB)):
+            return path
+
+        return None
+
+    def fan_mode_label(self, raw: str | None) -> str:
+        if raw is None:
+            return "?"
+
+        return (
+            self.fan_modes().get(raw)
+            or self.FAN_READ_ALIASES.get(raw)
+            or f"mode {raw}"
+        )
+
+    def fan_rpms(self) -> list[tuple[str, int]]:
+        rpms: list[tuple[str, int]] = []
+        for inp in sorted(Path("/sys/class/hwmon").glob("hwmon*/fan*_input")):
+            raw = self.read_optional(inp)
+            if raw is None or not raw.isdigit():
+                continue
+            label = self.read_optional(
+                inp.with_name(inp.name.replace("_input", "_label"))
+            )
+            name = self.read_optional(inp.parent / "name")
+            rpms.append((label or name or inp.parent.name, int(raw)))
+
+        return rpms
+
+    @staticmethod
+    def resolve_fan_mode(value: str, modes: dict[str, str]) -> str | None:
+        def norm(text: str) -> str:
+            return text.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+        if value in modes:
+            return value
+        key = norm(value)
+        by_name = {norm(label): num for num, label in modes.items()}
+        if key in by_name:
+            return by_name[key]
+        matches = [num for name, num in by_name.items() if key and key in name]
+
+        return matches[0] if len(matches) == 1 else None
+
+    def show_fan(self) -> None:
+        path = self.fan_mode_path()
+        if path is None:
+            raise click.ClickException("No fan-mode control found.")
+
+        raw = self.read_optional(path)
+        self.console.rule("[bold yellow]Fan[/]")
+        self.console.print(
+            f"Mode: [bold]{self.fan_mode_label(raw)}[/]"
+            + (f" ({raw})" if raw else "")
+        )
+
+        table = Table(box=None)
+        table.add_column("Value", style="bold")
+        table.add_column("Mode")
+        table.add_column("State")
+        for value, label in self.fan_modes().items():
+            table.add_row(value, label, "current" if value == raw else "available")
+        self.console.print(table)
+
+        rpms = self.fan_rpms()
+        if rpms:
+            rpm_table = Table(box=None)
+            rpm_table.add_column("Sensor", style="bold")
+            rpm_table.add_column("RPM", justify="right")
+            for label, rpm in rpms:
+                rpm_table.add_row(label, str(rpm))
+            self.console.print(rpm_table)
+
+    def set_fan_mode(self, value: str) -> None:
+        path = self.fan_mode_path()
+        if path is None:
+            raise click.ClickException("No fan-mode control found.")
+
+        modes = self.fan_modes()
+        num = self.resolve_fan_mode(value, modes)
+        if num is None:
+            choices = ", ".join(f"{v} ({label})" for v, label in modes.items())
+            raise click.ClickException(
+                f"Unknown fan mode {value!r}. Choices: {choices}."
+            )
+
+        self.write_sysfs(path, f"{num}\n")
+        self.show_fan()
+        self.console.print(f"Applied fan mode: [bold]{modes[num]}[/]")
+
     @staticmethod
     def read_optional(path: Path) -> str | None:
         try:
@@ -1148,6 +1256,19 @@ class Tdp:
     @click.argument("value")
     def cmd_battery_mode_set(value: str) -> None:
         Tdp().set_charge_type(value)
+
+    @cli.group("fan")
+    def cmd_fan() -> None:
+        pass
+
+    @cmd_fan.command("show")
+    def cmd_fan_show() -> None:
+        Tdp().show_fan()
+
+    @cmd_fan.command("set")
+    @click.argument("mode")
+    def cmd_fan_set(mode: str) -> None:
+        Tdp().set_fan_mode(mode)
 
 if __name__ == "__main__":
     Tdp.cli()
