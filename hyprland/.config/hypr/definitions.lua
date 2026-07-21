@@ -70,35 +70,45 @@ M.screenshot.window = {
 }
 M.screenshot.snipping_tool = M.screenshot.grimshot .. " --notify save area - | swappy -f -"
 
--- On-screen display (monitor-aware)
-M.osd = [[swayosd-client --monitor $(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')]]
+-- On-screen display (monitor-aware). swayosd-client has no
+-- focused-monitor flag, so the target is resolved per keypress —
+-- in-process via hl.get_active_monitor() instead of the old
+-- `$(hyprctl monitors -j | jq ...)` subshell pair. Returns a function
+-- dispatcher for hl.bind.
+local function osd(args)
+  return function()
+    local mon = hl.get_active_monitor()
+    local target = mon and (" --monitor " .. mon.name) or ""
+    hl.exec_cmd("swayosd-client" .. target .. " " .. args)
+  end
+end
 
 -- Brightness control
 local intel_backlight = io.open("/sys/class/backlight/intel_backlight", "r")
-local brightness_device = intel_backlight and " --device intel_backlight" or ""
+local brightness_device = intel_backlight and "--device intel_backlight " or ""
 
 if intel_backlight then
   intel_backlight:close()
 end
 
 M.brightness = {
-  up = M.osd .. brightness_device .. " --brightness raise",
-  down = M.osd .. brightness_device .. " --brightness lower",
+  up = osd(brightness_device .. "--brightness raise"),
+  down = osd(brightness_device .. "--brightness lower"),
 }
 
 -- Audio control
 M.volume = {
-  up = M.osd .. " --output-volume raise",
-  down = M.osd .. " --output-volume lower",
-  mute = M.osd .. " --output-volume mute-toggle",
-  mic_mute = M.osd .. " --input-volume mute-toggle",
+  up = osd("--output-volume raise"),
+  down = osd("--output-volume lower"),
+  mute = osd("--output-volume mute-toggle"),
+  mic_mute = osd("--input-volume mute-toggle"),
 }
 
 -- Media player control (with OSD feedback)
 M.player = {
-  toggle = M.osd .. " --player spotify --playerctl play-pause",
-  next = M.osd .. " --player spotify --playerctl next",
-  prev = M.osd .. " --player spotify --playerctl previous",
+  toggle = osd("--player spotify --playerctl play-pause"),
+  next = osd("--player spotify --playerctl next"),
+  prev = osd("--player spotify --playerctl previous"),
 }
 
 -- Recording

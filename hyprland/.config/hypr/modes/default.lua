@@ -30,20 +30,33 @@ hl.bind(("%s + SHIFT + P"):format(d.mod), hl.dsp.exec_cmd(d.quick_note))
 hl.bind(("%s + B"):format(d.mod), hl.dsp.exec_cmd("pkill -SIGUSR1 waybar"))
 
 -- Media keys (locked = work on lock screen, repeating = repeatable)
-hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd(d.volume.up), { repeating = true, locked = true })
-hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd(d.volume.down), { repeating = true, locked = true })
-hl.bind("XF86AudioMute", hl.dsp.exec_cmd(d.volume.mute), { locked = true })
-hl.bind("XF86AudioMicMute", hl.dsp.exec_cmd(d.volume.mic_mute), { locked = true })
-hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd(d.brightness.up), { repeating = true, locked = true })
-hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(d.brightness.down), { repeating = true, locked = true })
-hl.bind("XF86AudioPlay", hl.dsp.exec_cmd(d.player.toggle), { locked = true })
-hl.bind("XF86AudioNext", hl.dsp.exec_cmd(d.player.next), { locked = true })
-hl.bind("XF86AudioPrev", hl.dsp.exec_cmd(d.player.prev), { locked = true })
+hl.bind("XF86AudioRaiseVolume", d.volume.up, { repeating = true, locked = true })
+hl.bind("XF86AudioLowerVolume", d.volume.down, { repeating = true, locked = true })
+hl.bind("XF86AudioMute", d.volume.mute, { locked = true })
+hl.bind("XF86AudioMicMute", d.volume.mic_mute, { locked = true })
+hl.bind("XF86MonBrightnessUp", d.brightness.up, { repeating = true, locked = true })
+hl.bind("XF86MonBrightnessDown", d.brightness.down, { repeating = true, locked = true })
+hl.bind("XF86AudioPlay", d.player.toggle, { locked = true })
+hl.bind("XF86AudioNext", d.player.next, { locked = true })
+hl.bind("XF86AudioPrev", d.player.prev, { locked = true })
 hl.bind("XF86Search", hl.dsp.exec_cmd(d.menu))
 hl.bind("XF86PowerOff", hl.dsp.exec_cmd(d.shutdown))
 
--- Touchpad toggle
-hl.bind("XF86TouchpadToggle", hl.dsp.exec_cmd("hyprctl keyword 'device[touchpad]:enabled' toggle"))
+-- Touchpad toggle. Hyprland has no device dispatcher or readable
+-- per-device state (upstream #5645), so hl.device() plus tracked state
+-- is the native mechanism. Hyprland device names are the lowercased,
+-- dash-joined libinput names — discovered from /proc at press time so
+-- any machine's touchpads match.
+local touchpad_enabled = true
+hl.bind("XF86TouchpadToggle", function()
+  touchpad_enabled = not touchpad_enabled
+  for line in io.lines("/proc/bus/input/devices") do
+    local name = line:match('^N: Name="(.-)"')
+    if name and name:lower():find("touchpad", 1, true) then
+      hl.device({ name = (name:lower():gsub(" ", "-")), enabled = touchpad_enabled })
+    end
+  end
+end)
 
 -- Focus movement (vim keys and arrows)
 hl.bind(("%s + h"):format(d.mod), hl.dsp.focus({ direction = "left" }))
