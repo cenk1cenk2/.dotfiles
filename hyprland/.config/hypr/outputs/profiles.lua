@@ -18,11 +18,15 @@
 ---@class ProfilesModule
 ---@field monitors Monitors
 ---@field profiles table<string, Profile>
----@field _applying boolean             Re-entry guard. `auto_apply` returns false while `apply` is in flight. Held true through a settle window after each `apply` because monitor.added/removed events fired by our own `hl.monitor` calls land async — without the window, `auto_apply` runs against intermediate state and matches a different profile that overwrites our rules.
----@field _settle_timer HL.Timer|nil    Oneshot that clears `_applying` after the settle window. Cancelled and re-armed on each `apply`.
+---@field _connected table<string, boolean>       Descriptions of connected KNOWN monitors, including ones a profile disabled. Maintained from monitor.added/removed. Matching reads this, never `hl.get_monitor` — Hyprland's Lua queries see only *enabled* outputs, so a profile that disables a monitor it requires (docked → GPD) would otherwise self-invalidate on the next event.
+---@field _active string|nil                       Name of the last-applied profile. `auto_apply` no-ops when the match is unchanged, so `exec` side effects fire only on real transitions.
+---@field _disabled_by_active table<string, boolean> Descriptions the active profile disabled — what `rescue` re-enables when nothing matches.
+---@field _pending_removed table<string, boolean>   One-shot markers for rule-driven disables in flight. A disable emits exactly one `monitor.removed`; the handler consumes the marker and keeps the monitor in `_connected`. A later removed for the same description (no marker left) is a genuine unplug and drops it — a lifetime shield here would mask real unplugs of profile-disabled monitors forever.
+---@field _debounce HL.Timer|nil                   Re-arming oneshot that coalesces a burst of monitor events into one `auto_apply` after quiescence. Replaces the old fixed settle window — it decides *when* matching runs, never *whether* `_connected` is trusted.
 ---@field match fun(): string|nil
 ---@field apply fun(name: string): boolean
 ---@field auto_apply fun(): boolean
+---@field rescue fun()
 ---@field list fun(): string[]
 
 ---@type ProfilesModule
@@ -45,8 +49,11 @@ local M = {
     SONY_BRAVIA7 = "desc:Sony SONY TV  *30",
   },
   profiles = {},
-  _applying = false,
-  _settle_timer = nil,
+  _connected = {},
+  _active = nil,
+  _disabled_by_active = {},
+  _pending_removed = {},
+  _debounce = nil,
 }
 
 -- Audio routing helper.
@@ -228,7 +235,16 @@ M.profiles = {
     order = 3,
     required = { M.monitors.GPD, M.monitors.ASUS_XG17A },
     monitors = {
-      { output = M.monitors.ASUS_XG17A, mode = "1920x1080@239.964", position = "0x0", scale = "1", disabled = false },
+      -- `transform = 0` is explicit: 0.56 merges rules per selector, so
+      -- omitting it would inherit `main`/`main-bottom`'s XG17A rotation.
+      {
+        output = M.monitors.ASUS_XG17A,
+        mode = "1920x1080@239.964",
+        position = "0x0",
+        scale = "1",
+        transform = 0,
+        disabled = false,
+      },
       { output = M.monitors.GPD, mode = "2560x1600@60.009", position = "350x1080", scale = "2", disabled = false },
     },
   },
@@ -258,7 +274,10 @@ M.profiles = {
         output = M.monitors.SAMSUNG_ATNA60,
         mode = "3200x2000@120",
         position = "0x0",
-        scale = "1.67",
+        -- 1.66667 (200/120), not 1.67: Hyprland only accepts fractional
+        -- scales that are multiples of 1/120, and 1.67×120=200.4 is
+        -- rejected. 200/120 gives a clean 1920×1200 logical.
+        scale = "1.66667",
         bitdepth = 10,
         supports_hdr = 1,
         supports_wide_color = 1,
@@ -280,7 +299,7 @@ M.profiles = {
         output = M.monitors.SAMSUNG_ATNA60,
         mode = "3200x2000@120",
         position = "0x0",
-        scale = "1.67",
+        scale = "1.66667",
         bitdepth = 10,
         supports_hdr = 1,
         supports_wide_color = 1,
@@ -354,15 +373,59 @@ M.profiles = {
 
 -- ── matching ─────────────────────────────────────────────────────────
 
--- All `monitor_present` checks go through `hl.get_monitor(selector)` —
--- Hyprland's own resolver, the same one that binds `hl.monitor(...)`
--- rules to outputs. Inlined at each call site below.
+-- Matching runs over `M._connected`, NOT `hl.get_monitor` — the Lua
+-- query resolver sees only enabled outputs, so it can't observe a
+-- monitor a profile has disabled (docked disables the GPD it requires).
+-- We compare `desc:` selectors ourselves against the tracked set.
+
+-- Strip a selector's `desc:` prefix to the raw description text.
+---@param sel string
+---@return string
+local function needle_of(sel)
+  return sel:sub(1, 5) == "desc:" and sel:sub(6) or sel
+end
+
+-- A description is "known" when it prefix-matches one of the selectors
+-- in `M.monitors`. Only known monitors enter `_connected` — a fallback /
+-- headless output or an unexpected display never gets swept into an ANY
+-- disable rule.
+---@param desc string
+---@return boolean
+local function is_known(desc)
+  for _, sel in pairs(M.monitors) do
+    if sel ~= M.monitors.ANY then
+      local n = needle_of(sel)
+      if desc:sub(1, #n) == n then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
+-- True when a connected description prefix-matches the selector. Plain
+-- (non-pattern) comparison so the literal `*`, `.`, `-` in descriptions
+-- match verbatim — same shape as Hyprland's `desc:` resolver, but over
+-- `_connected` (which includes monitors we disabled).
+---@param sel string
+---@return boolean
+local function selector_present(sel)
+  local n = needle_of(sel)
+  for desc in pairs(M._connected) do
+    if desc:sub(1, #n) == n then
+      return true
+    end
+  end
+
+  return false
+end
 
 ---@param profile Profile
 ---@return boolean
 local function is_profile_satisfied(profile)
   for _, req in ipairs(profile.required) do
-    if not hl.get_monitor(req) then
+    if not selector_present(req) then
       return false
     end
   end
@@ -371,19 +434,24 @@ local function is_profile_satisfied(profile)
 end
 
 -- Pick the most-specific (= largest required set) auto-eligible profile.
--- Ties broken by per-profile `order` — lower wins. Profiles without
--- `order` sink to the bottom.
+-- Ties broken by `order` (lower wins), then by name — `pairs()` order is
+-- undefined, and two profiles equal on (count, order) would otherwise
+-- oscillate between applies.
 ---@return string|nil
 function M.match()
   local best
-  ---@type integer|nil, integer
-  local best_count, best_order = -1, math.huge
+  ---@type integer, integer, string
+  local best_count, best_order, best_name = -1, math.huge, ""
   for name, profile in pairs(M.profiles) do
     if not profile.on_demand and is_profile_satisfied(profile) then
       local count = #profile.required
       local order = profile.order or math.huge
-      if count > best_count or (count == best_count and order < best_order) then
-        best, best_count, best_order = name, count, order
+      if
+        count > best_count
+        or (count == best_count and order < best_order)
+        or (count == best_count and order == best_order and name < best_name)
+      then
+        best, best_count, best_order, best_name = name, count, order, name
       end
     end
   end
@@ -391,7 +459,88 @@ function M.match()
   return best
 end
 
+-- ── state persistence ────────────────────────────────────────────────
+
+-- `hyprctl reload` recreates the Lua VM, wiping module state, and
+-- hyprland.start does not re-fire on a running compositor. Monitors a
+-- profile disabled are invisible to hl.get_monitors(), so a reload
+-- would lose them for good — persist the registry in the instance
+-- runtime dir instead. Scoping the file to the instance signature
+-- means a fresh compositor never reads a previous session's state.
+-- Format is a Lua chunk (`return { ... }`): %q handles all escaping on
+-- write, loadfile is the parser, and external tools can reparse it
+-- with any Lua interpreter.
+local function state_path()
+  local runtime = os.getenv("XDG_RUNTIME_DIR")
+  local instance = os.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+  if not (runtime and instance) then
+    return nil
+  end
+
+  return ("%s/hypr/%s/profiles.state.lua"):format(runtime, instance)
+end
+
+local function save_state()
+  local path = state_path()
+  if not path then
+    return
+  end
+  local f = io.open(path, "w")
+  if not f then
+    return
+  end
+  f:write("return {\n")
+  if M._active then
+    f:write(("  active = %q,\n"):format(M._active))
+  end
+  f:write("  connected = {\n")
+  for desc in pairs(M._connected) do
+    f:write(("    [%q] = true,\n"):format(desc))
+  end
+  f:write("  },\n  disabled = {\n")
+  for desc in pairs(M._disabled_by_active) do
+    f:write(("    [%q] = true,\n"):format(desc))
+  end
+  f:write("  },\n}\n")
+  f:close()
+end
+
+local function load_state()
+  local path = state_path()
+  if not path then
+    return
+  end
+  local chunk = loadfile(path)
+  if not chunk then
+    return
+  end
+  local ok, state = pcall(chunk)
+  if not ok or type(state) ~= "table" then
+    return
+  end
+  M._active = state.active
+  for desc in pairs(state.connected or {}) do
+    M._connected[desc] = true
+  end
+  for desc in pairs(state.disabled or {}) do
+    M._disabled_by_active[desc] = true
+  end
+end
+
 -- ── apply ────────────────────────────────────────────────────────────
+
+-- Record every connected description a `disabled` selector covers, so the
+-- removed handler can tell our own disable from a physical unplug.
+---@param sel string
+---@param into table<string, boolean>
+local function mark_disabled(sel, into)
+  local n = needle_of(sel)
+  for desc in pairs(M._connected) do
+    if desc:sub(1, #n) == n then
+      into[desc] = true
+    end
+  end
+end
 
 ---@param name string
 ---@return boolean
@@ -403,51 +552,55 @@ function M.apply(name)
     return false
   end
 
-  -- Cancel any in-flight settle timer from a prior apply; we'll arm
-  -- a fresh one at the bottom of this call.
-  if M._settle_timer then
-    M._settle_timer:set_enabled(false)
-    M._settle_timer = nil
-  end
-  M._applying = true
+  ---@type table<string, boolean>
+  local disabled = {}
 
-  -- Build the set of selectors this profile explicitly targets.
+  -- Selectors this profile targets explicitly (everything but ANY).
   ---@type table<string, boolean>
   local targeted = {}
   for _, spec in ipairs(profile.monitors) do
-    if spec.output and spec.output ~= "" and spec.output ~= "*" then
+    if spec.output and spec.output ~= "" and spec.output ~= M.monitors.ANY then
       targeted[spec.output] = true
     end
   end
 
   for _, spec in ipairs(profile.monitors) do
-    local sel = spec.output
-    if sel == "*" then
-      -- Wildcard: emit one rule per connected monitor not claimed by
-      -- any targeted selector. Hyprland's own resolver decides which
-      -- monitor each targeted selector claims.
+    if spec.output == M.monitors.ANY then
+      -- Expand ANY over connected known monitors not claimed by a
+      -- targeted selector — one `desc:` rule each. Drawn from
+      -- `_connected` so monitors a previous profile disabled are still
+      -- covered (the enabled-only query would miss them).
       local claimed = {}
       for tgt in pairs(targeted) do
-        local mon = hl.get_monitor(tgt)
-        if mon then
-          claimed[mon.description] = true
+        local n = needle_of(tgt)
+        for desc in pairs(M._connected) do
+          if desc:sub(1, #n) == n then
+            claimed[desc] = true
+          end
         end
       end
-      for _, mon in ipairs(hl.get_monitors()) do
-        if not claimed[mon.description] then
-          local expanded = { output = "desc:" .. mon.description }
+      for desc in pairs(M._connected) do
+        if not claimed[desc] then
+          local expanded = { output = "desc:" .. desc }
           for k, v in pairs(spec) do
             if k ~= "output" then
               expanded[k] = v
             end
           end
           hl.monitor(expanded)
+          if spec.disabled then
+            disabled[desc] = true
+          end
         end
       end
     else
       hl.monitor(spec)
+      if spec.disabled then
+        mark_disabled(spec.output, disabled)
+      end
     end
   end
+
   for _, cmd in ipairs(profile.exec or {}) do
     hl.exec_cmd(cmd)
   end
@@ -458,33 +611,67 @@ function M.apply(name)
     )
   )
 
-  -- Hold the guard for a settle window. monitor.added / monitor.removed
-  -- events triggered by the rules we just registered land async (after
-  -- this function returns); without the window, the next auto_apply
-  -- runs against partially-applied state and re-matches a different
-  -- profile that clobbers our work.
-  M._settle_timer = hl.timer(function()
-    M._applying = false
-    M._settle_timer = nil
-  end, { timeout = 3000, type = "oneshot" })
+  -- Only disables that actually flip a monitor emit `monitor.removed`;
+  -- ones the previous profile already disabled fire nothing, so they
+  -- get no marker — an unconsumed marker would shield a later real
+  -- unplug.
+  ---@type table<string, boolean>
+  local pending = {}
+  for desc in pairs(disabled) do
+    if not M._disabled_by_active[desc] then
+      pending[desc] = true
+    end
+  end
+
+  M._active = name
+  M._disabled_by_active = disabled
+  M._pending_removed = pending
+  save_state()
 
   return true
 end
 
+-- Nothing matched: fall back to enabling every known connected monitor
+-- at preferred/auto so no topology dead-ends dark. Also covers the
+-- undock-to-disabled-panel case — the enabled-only query can't see a
+-- disabled monitor, and re-enabling fires real monitor.added events
+-- that re-drive matching.
+function M.rescue()
+  for desc in pairs(M._connected) do
+    hl.monitor({ output = "desc:" .. desc, disabled = false, mode = "preferred", position = "auto" })
+  end
+  M._disabled_by_active = {}
+  M._pending_removed = {}
+  M._active = nil
+  save_state()
+end
+
 ---@return boolean
 function M.auto_apply()
-  -- Suppress re-entry while a manual `apply` is in flight: our own
-  -- `hl.monitor` calls fire `monitor.added` / `monitor.removed` events
-  -- that would otherwise re-trigger auto_apply mid-stream.
-  if M._applying then
-    return false
-  end
-  local name = M.match()
-  if name then
-    return M.apply(name)
+  -- On-demand stickiness: an on_demand profile (tv) is never chosen by
+  -- `match`, so a manual apply must survive its own layout churn as long
+  -- as it stays satisfiable.
+  if M._active then
+    local active = M.profiles[M._active]
+    if active and active.on_demand and is_profile_satisfied(active) then
+      return true
+    end
   end
 
-  return false
+  local name = M.match()
+  if not name then
+    M.rescue()
+
+    return false
+  end
+  -- Idempotent: same profile → no re-apply, no re-exec. In 0.56 a
+  -- same-profile re-application is a compositor-level no-op that emits no
+  -- events anyway, so even a stray call converges instead of clobbering.
+  if name == M._active then
+    return true
+  end
+
+  return M.apply(name)
 end
 
 -- ── introspection ────────────────────────────────────────────────────
@@ -501,14 +688,71 @@ function M.list()
   return names
 end
 
+-- ── event wiring ─────────────────────────────────────────────────────
+
+-- Coalesce a burst of monitor events into one `auto_apply` after a
+-- quiescence gap. Only decides *when* matching runs — never *whether*
+-- `_connected` is trusted — so a slow hotplug tail (MST, EDID, CEC) costs
+-- one extra converging pass, not a clobber.
+local function schedule()
+  if M._debounce then
+    M._debounce:set_enabled(false)
+  end
+  M._debounce = hl.timer(function()
+    M._debounce = nil
+    M.auto_apply()
+  end, { timeout = 300, type = "oneshot" })
+end
+
 hl.on("hyprland.start", function()
-  M.auto_apply()
+  for _, mon in ipairs(hl.get_monitors()) do
+    if is_known(mon.description) then
+      M._connected[mon.description] = true
+    end
+  end
+  -- Debounced, not direct: boot-time monitors enumerate hundreds of ms
+  -- apart (DP/MST), and a direct apply here would run 2-3 transitional
+  -- profiles (with notify + audio execs) before converging.
+  schedule()
 end)
-hl.on("monitor.added", function()
-  M.auto_apply()
+hl.on("monitor.added", function(mon)
+  if is_known(mon.description) then
+    M._connected[mon.description] = true
+    save_state()
+  end
+  schedule()
 end)
-hl.on("monitor.removed", function()
-  M.auto_apply()
+hl.on("monitor.removed", function(mon)
+  local desc = mon.description
+  if M._pending_removed[desc] then
+    -- Our own rule-disable; consume the one-shot marker and keep the
+    -- monitor in the registry so a profile requiring it still matches.
+    M._pending_removed[desc] = nil
+  else
+    -- Genuine unplug — including of a monitor the profile disabled.
+    M._connected[desc] = nil
+    M._disabled_by_active[desc] = nil
+  end
+  save_state()
+  schedule()
 end)
+-- End-of-batch signal (0.56): fired once after Hyprland finishes an
+-- arrange pass. The honest "settled" edge the old fixed timer faked.
+hl.on("monitor.layout_changed", function()
+  schedule()
+end)
+
+-- Top level runs on cold boot (before monitors exist — the start hook
+-- and added events cover those) and again on every `hyprctl reload`,
+-- where it restores the registry the fresh VM lost: persisted state
+-- brings back profile-disabled monitors the live query can't see, the
+-- live query brings back everything else.
+load_state()
+for _, mon in ipairs(hl.get_monitors()) do
+  if is_known(mon.description) then
+    M._connected[mon.description] = true
+  end
+end
+schedule()
 
 return M
