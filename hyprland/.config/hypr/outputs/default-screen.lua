@@ -26,6 +26,13 @@ hl.config({
 
 local function apply_monitor_extras()
   hl.monitor({
+    output = "desc:Samsung Display Corp. ATNA60KA04-0",
+    bitdepth = 10,
+    supports_hdr = 1,
+    supports_wide_color = 1,
+    vrr = true,
+  })
+  hl.monitor({
     output = "desc:Sony SONY TV  *30",
     bitdepth = 10,
     supports_hdr = 1,
