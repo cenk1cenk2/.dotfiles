@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import subprocess
 from pathlib import Path
 import click
 
@@ -27,23 +25,32 @@ class LaunchApp:
             "if app == nil then os.exit(2) end; "
             "io.write(app)"
         )
-        cmd = ["lua", "-e", lua]
-        env = os.environ.copy()
-        env["HYPR_DEFINITIONS"] = str(self._definitions)
-        env["HYPR_APP"] = name
-        self.log.debug("spawn: %s", " ".join(cmd))
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
-        if proc.stderr:
-            self.log.debug("lua stderr: %s", proc.stderr.strip())
+        proc = self._hypr.run_lua(lua, {"HYPR_DEFINITIONS": str(self._definitions), "HYPR_APP": name})
         if proc.returncode == 2:
             raise click.ClickException(f"unknown app: {name}")
         if proc.returncode != 0:
-            raise click.ClickException("failed to read Hyprland definitions.lua")
+            detail = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else f"exit {proc.returncode}"
+            raise click.ClickException(f"failed to read Hyprland definitions.lua: {detail}")
         command = proc.stdout.strip()
         if not command:
             raise click.ClickException(f"empty app command: {name}")
 
         return command
+
+    def names(self) -> list[str]:
+        lua = (
+            "local definitions = dofile(os.getenv('HYPR_DEFINITIONS')); "
+            "local names = {}; "
+            "for name in pairs(definitions.apps) do names[#names + 1] = name end; "
+            "table.sort(names); "
+            "io.write(table.concat(names, '\\n'))"
+        )
+        proc = self._hypr.run_lua(lua, {"HYPR_DEFINITIONS": str(self._definitions)})
+        if proc.returncode != 0:
+            detail = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else f"exit {proc.returncode}"
+            raise click.ClickException(f"failed to read Hyprland definitions.lua: {detail}")
+
+        return proc.stdout.split()
 
     def launch(self, name: str, *, print_only: bool = False) -> None:
         command = self.command_for(name)
@@ -58,17 +65,27 @@ class LaunchApp:
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.argument("name")
+@click.argument("name", required=False)
 @click.option("--definitions", type=click.Path(path_type=Path), help="Path to definitions.lua.")
 @click.option("--print", "print_only", is_flag=True, help="Print the resolved command.")
+@click.option("--list", "list_apps", is_flag=True, help="List app names.")
 @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
-def cmd_main(name: str, definitions: Path | None, print_only: bool, verbose: bool) -> None:
+def cmd_main(
+    name: str | None, definitions: Path | None, print_only: bool, list_apps: bool, verbose: bool
+) -> None:
     create_logger(verbose, name="launch-app")
     script_dir = Path(__file__).resolve().parent
-    LaunchApp(
+    app = LaunchApp(
         definitions=definitions or script_dir.parent / "definitions.lua",
         hypr=Hyprctl(),
-    ).launch(name, print_only=print_only)
+    )
+    if list_apps:
+        for n in app.names():
+            click.echo(n)
+        return
+    if not name:
+        raise click.UsageError("NAME is required unless --list is given.")
+    app.launch(name, print_only=print_only)
 
 
 LaunchApp.cli = cmd_main
