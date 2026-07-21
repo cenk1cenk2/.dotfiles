@@ -12,6 +12,7 @@
 ---@field ASUS_XG17A string
 ---@field ASUS_MB16 string
 ---@field GPD string
+---@field SAMSUNG_ATNA60 string
 ---@field SONY_BRAVIA7 string
 
 ---@class ProfilesModule
@@ -40,6 +41,7 @@ local M = {
     ASUS_XG17A = "desc:ASUSTek COMPUTER INC ASUS XG17A",
     ASUS_MB16 = "desc:ASUSTek COMPUTER INC MB16QHG",
     GPD = "desc:Japan Display Inc. GPD1001H",
+    SAMSUNG_ATNA60 = "desc:Samsung Display Corp. ATNA60KA04-0",
     SONY_BRAVIA7 = "desc:Sony SONY TV  *30",
   },
   profiles = {},
@@ -243,6 +245,59 @@ M.profiles = {
         disabled = false,
       },
       { output = M.monitors.GPD, mode = "2560x1600@60.009", position = "300x1200", scale = "2", disabled = false },
+    },
+  },
+
+  -- ── laptop (Yoga OLED) layouts ─────────────────────────────────────
+
+  ["lenovo"] = {
+    order = 1,
+    required = { M.monitors.SAMSUNG_ATNA60 },
+    monitors = {
+      {
+        output = M.monitors.SAMSUNG_ATNA60,
+        mode = "3200x2000@120",
+        position = "0x0",
+        scale = "1.67",
+        bitdepth = 10,
+        supports_hdr = 1,
+        supports_wide_color = 1,
+        vrr = true,
+        disabled = false,
+      },
+      {
+        output = M.monitors.ANY,
+        disabled = true,
+      },
+    },
+  },
+
+  ["portable-mb16qhg-lenovo"] = {
+    order = 3,
+    required = { M.monitors.SAMSUNG_ATNA60, M.monitors.ASUS_MB16 },
+    monitors = {
+      {
+        output = M.monitors.SAMSUNG_ATNA60,
+        mode = "3200x2000@120",
+        position = "0x0",
+        scale = "1.67",
+        bitdepth = 10,
+        supports_hdr = 1,
+        supports_wide_color = 1,
+        vrr = true,
+        disabled = false,
+      },
+      {
+        output = M.monitors.ASUS_MB16,
+        mode = "2560x1600@119.963",
+        position = "1920x0",
+        scale = "1.333",
+        disabled = false,
+      },
+      {
+        output = M.monitors.ANY,
+        disabled = true,
+      },
     },
   },
 
