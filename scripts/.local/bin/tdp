@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -1136,6 +1137,46 @@ class Tdp:
         self.show_fan()
         self.console.print(f"Applied fan mode: [bold]{modes[num]}[/]")
 
+    def hyprland_monitors(self) -> list[dict]:
+        proc = self.run(["hyprctl", "-j", "monitors"])
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                "Could not parse hyprctl monitors output."
+            ) from exc
+
+    def show_screen(self) -> None:
+        monitors = self.hyprland_monitors()
+        self.console.rule("[bold yellow]Screens[/]")
+        if not monitors:
+            self.console.print("[yellow]No monitors reported.[/]")
+            return
+
+        table = Table(box=None)
+        table.add_column("Monitor", style="bold")
+        table.add_column("Resolution")
+        table.add_column("DPMS")
+        for monitor in monitors:
+            on = monitor.get("dpmsStatus", True)
+            state = "[green]on[/]" if on else "[yellow]off[/]"
+            resolution = f"{monitor.get('width', '?')}x{monitor.get('height', '?')}"
+            table.add_row(monitor.get("name", "?"), resolution, state)
+        self.console.print(table)
+
+    def set_dpms(self, on: bool, monitor: str | None) -> None:
+        # 0.55+ parses `dispatch` as a Lua expr — the legacy `dpms off`
+        # verb form errors, so call the dispatcher directly. No monitor
+        # arg targets every output; mouse_move/key_press_enables_dpms are
+        # both on, so any input wakes them back.
+        state = "on" if on else "off"
+        args = f'"{state}"' + (f', "{monitor}"' if monitor else "")
+        self.run(["hyprctl", "dispatch", f"hl.dsp.dpms({args})"])
+        self.show_screen()
+        self.console.print(
+            f"Applied DPMS {state}: [bold]{monitor or 'all monitors'}[/]"
+        )
+
     @staticmethod
     def read_optional(path: Path) -> str | None:
         try:
@@ -1269,6 +1310,24 @@ class Tdp:
     @click.argument("mode")
     def cmd_fan_set(mode: str) -> None:
         Tdp().set_fan_mode(mode)
+
+    @cli.group("screen")
+    def cmd_screen() -> None:
+        pass
+
+    @cmd_screen.command("show")
+    def cmd_screen_show() -> None:
+        Tdp().show_screen()
+
+    @cmd_screen.command("off")
+    @click.argument("monitor", required=False)
+    def cmd_screen_off(monitor: str | None) -> None:
+        Tdp().set_dpms(False, monitor)
+
+    @cmd_screen.command("on")
+    @click.argument("monitor", required=False)
+    def cmd_screen_on(monitor: str | None) -> None:
+        Tdp().set_dpms(True, monitor)
 
 if __name__ == "__main__":
     Tdp.cli()
