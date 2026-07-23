@@ -11,8 +11,7 @@ logging:
 patches:
   # Unscoped — every profile inherits the shared cwd, system_prompt and
   # default mcp/skills config.
-  - cwd: ~/notes
-    system_prompt:
+  - system_prompt:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
     mcp:
       enabled: true
