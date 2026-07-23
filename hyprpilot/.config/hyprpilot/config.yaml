@@ -1,45 +1,26 @@
-remote:
-  enabled: true
-
-ui:
-  zoom: 1.4
-
-daemon:
-  window:
-    mode: anchor
-    anchor:
-      edge: right
-      margin: 0
-      width: 40%
-
-autostart:
-  # TODO: fix this later on when installed via aur
-  enabled: false
-
+---
 logging:
   level: info
 
-# Root-level [[patches]] — each entry is a partial ProfileConfig
-# overlay applied to whichever profile is picked at resolve time.
-# Optional `$match.profile` glob filters which profiles a patch
-# reaches. Replaces the per-field root fallback shape (system_prompt,
-# mcps, mcp.skills) the daemon shipped through 0.x.
+# Root-level [[patches]] — each entry is a partial ProfileConfig overlay
+# folded onto whichever profile is picked at resolve time. Optional
+# `$match.profile` glob filters which profiles a patch reaches (globset;
+# crosses `/`). Bodies fold via the strategic `$patch` engine
+# (`$patch: replace`, keyed-array merge by id, primitive append+dedupe,
+# `$deleteFromPrimitiveList/<field>`).
 patches:
-  # Unscoped — every profile inherits the shared cwd, system_prompt
-  # and default mcp/skills config. Captain-specific tuning (the
-  # personal/* vs work/* mcps split) lives in the scoped patches below.
+  # Unscoped — every profile inherits the shared cwd, system_prompt and
+  # default mcp/skills config.
   - cwd: ~/notes
     system_prompt:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
-        inject:
-          on_create: true
-          on_update: true
     mcp:
       enabled: true
-      autoAcceptTools: ["*"]
+      autoAcceptTools:
+        - "*"
       autoRejectTools: []
 
-  # personal/* + kilic/* profiles share one mcps ignore list.
+  # personal/* + kilic/* profiles share one mcps/skills ignore list.
   - $match:
       profile: "personal/*"
     mcp:
@@ -75,39 +56,38 @@ patches:
           - gitlab
           - playwright
 
-  # Direct-spawn-only override for work Claude profiles.
+  # Work Claude profiles point CLAUDE_CONFIG_DIR at the work config dir.
   - $match:
       profile: "work/claude/*"
-      spawn: true
     env:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-laravel"
 
   - $match:
       profile: "personal/claude/*"
-      spawn: true
     env:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-kilic"
 
+# [[agents]] — vendor registry. `command`/`args` are the NATIVE vendor
+# CLI the launcher exec()s directly (no ACP bridge, no nested `spawn`).
+# claude-code is inherited from the built-in defaults; these two override
+# codex/opencode with the native flags you want.
 agents:
   - id: codex
-    provider: acp-codex
-    command: bunx
-    args: ["--bun", "-y", "@zed-industries/codex-acp@latest"]
-    spawn:
-      command: codex
-      args: ["--profile", "default"]
+    provider: codex
+    command: codex
+    args:
+      - "--profile"
+      - "default"
   - id: opencode
-    provider: acp-opencode
+    provider: opencode
     command: opencode
-    args: ["acp"]
-    spawn:
-      command: opencode
-      args: ["--auto"]
+    args:
+      - "--auto"
 
 profile:
-  default: personal/codex/gpt-5.5
+  default: personal/claude/opus
 
 profiles:
   - id: personal/claude/fable
