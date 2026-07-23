@@ -1,6 +1,6 @@
 ---
 logging:
-  level: info
+  level: error
 
 # Root-level [[patches]] — each entry is a partial ProfileConfig overlay
 # folded onto whichever profile is picked at resolve time. Optional
