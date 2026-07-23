@@ -1,0 +1,8 @@
+# Nodes whose audio must NOT inhibit idle. Regex-matched against the
+# pipewire node fields: name = node.name, app_name = application.name,
+# media_class / media_role / media_software. A node matching any filter
+# is ignored, so background music from these apps still lets the screen
+# blank/lock on the normal idle timers.
+
+[[node_blacklist]]
+name = "spotify"

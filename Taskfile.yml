@@ -122,6 +122,7 @@ tasks:
             uwsm
             waybar
             wayland
+            wayland-pipewire-idle-inhibit
             wayland-theme
             wiremix
             wireplumber
