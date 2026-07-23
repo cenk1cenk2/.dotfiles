@@ -13,6 +13,7 @@ local services = {
   "poweralertd.service",
   "input-remapper-autoload.service",
   "ydotool.service",
+  "wayland-pipewire-idle-inhibit.service",
 }
 
 hl.on("hyprland.start", function()
