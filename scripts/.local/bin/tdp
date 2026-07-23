@@ -224,10 +224,6 @@ class Tdp:
     FAN_READ_ALIASES: ClassVar[dict[str, str]] = {"133": "Super Silent"}
     NVIDIA_VENDOR_ID = "0x10de"
     NVIDIA_GPU_CLASSES: ClassVar[set[str]] = {"0x030000", "0x030200"}
-    # Linux has no "is OLED" flag; match the panel model instead
-    # (SDC ATNA* = Samsung OLED laptop panels).
-    OLED_MODEL_SIGNATURES: ClassVar[tuple[str, ...]] = ("ATNA",)
-    OLED_EDID_GLOB = "sys/class/drm/*-eDP-*/edid"
     AMD_PRESETS_BY_HOST: ClassVar[dict[str, dict[str, list[str]]]] = {
         "emanet": {
             "30": [
@@ -1150,27 +1146,6 @@ class Tdp:
                 "Could not parse hyprctl monitors output."
             ) from exc
 
-    def internal_panels(self) -> list[dict]:
-        return [
-            m for m in self.hyprland_monitors()
-            if m.get("name", "").startswith("eDP")
-        ]
-
-    def is_oled(self) -> bool:
-        """Internal panel OLED? Reads the eDP EDID from sysfs — compositor-
-        independent — and matches the OLED model signatures. The product
-        name lives in the EDID as ASCII, so a byte-substring search suffices.
-        """
-        for edid in sorted(Path("/").glob(self.OLED_EDID_GLOB)):
-            try:
-                text = edid.read_bytes().decode("latin-1", "ignore").upper()
-            except OSError:
-                continue
-            if any(sig in text for sig in self.OLED_MODEL_SIGNATURES):
-                return True
-
-        return False
-
     def show_screen(self) -> None:
         monitors = self.hyprland_monitors()
         self.console.rule("[bold yellow]Screens[/]")
@@ -1188,12 +1163,6 @@ class Tdp:
             resolution = f"{monitor.get('width', '?')}x{monitor.get('height', '?')}"
             table.add_row(monitor.get("name", "?"), resolution, state)
         self.console.print(table)
-
-        oled = self.is_oled()
-        for panel in self.internal_panels():
-            model = panel.get("model") or panel.get("description") or "?"
-            tech = "[magenta]OLED[/]" if oled else "non-OLED"
-            self.console.print(f"[bold]{panel['name']}[/] {model} — {tech}")
 
     def set_dpms(self, on: bool, monitor: str | None) -> None:
         # 0.55+ parses `dispatch` as a Lua expr — the legacy `dpms off`
@@ -1349,11 +1318,6 @@ class Tdp:
     @cmd_screen.command("show")
     def cmd_screen_show() -> None:
         Tdp().show_screen()
-
-    @cmd_screen.command("is-oled")
-    def cmd_screen_is_oled() -> None:
-        """Exit 0 if the internal panel is OLED, 1 otherwise."""
-        sys.exit(0 if Tdp().is_oled() else 1)
 
     @cmd_screen.command("off")
     @click.argument("monitor", required=False)
