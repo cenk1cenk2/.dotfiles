@@ -191,26 +191,38 @@ The scratchpad uses Hyprland's native `special:scratch` workspace feature - no p
 
 ## Recording Mode
 
-The recording mode provides quick access to screen recording and speech-to-text features:
+`$mod + R` enters recording mode — screen recording, speech-to-text, and the
+copywriter all live in this one submap (mirrors the sway recording mode; there
+is no separate AI mode).
 
 ### Screen Recording
 
 - **r** - Toggle recording (start/stop)
-- **p** - Pause/resume recording
+- **R** (Shift+r) - Pause/resume recording
 - **o** - Open OBS window
-- **q** - Stop recording
+- **Q** (Shift+q) - Stop recording
+- **z** - Toggle zoom (hypr-zoom)
 
 ### Speech-to-Text
 
-- **s** - Speech-to-text to clipboard (wl-copy)
-- **S** (Shift+s) - Speech-to-text direct typing (ydotool)
-- **Q** (Shift+q) - Cancel speech recording
+- **s** - Speech → type, AI-enriched
+- **S** (Shift+s) - Speech → type, raw
+- **c** - Speech → clipboard, AI-enriched
+- **C** (Shift+c) - Speech → clipboard, raw
+- **q** - Stop speech-to-text
+
+### Copywriter
+
+- **w** - Refine clipboard through the copywriter
+- **W** (Shift+w) - Kill copywriter
 
 ### General
 
 - **Esc** - Exit recording mode
 
-Recordings are managed via the recorder script. Speech-to-text uses `hyprwhspr` with Whisper AI for voice transcription via OpenWebUI.
+Recording is driven by `recorder.py`, speech-to-text by `speech.py` (the
+`--enrich` variants pass the transcript through the configured LLM enricher
+first), and clipboard refinement by `copywriter.py`.
 
 ## Scripts to Port
 
@@ -267,9 +279,9 @@ The following scripts have been successfully ported to Hyprland:
 
 ### Modes
 
-- `$mod + R` - Resize mode
+- `$mod + Shift + R` - Resize mode
 - `$mod + S` - Screenshot mode
-- `$mod + Shift + R` - Recording mode
+- `$mod + R` - Recording mode
 
 ### Quick Access
 
