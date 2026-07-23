@@ -6,6 +6,3 @@
 
 [[node_blacklist]]
 name = "spotify"
-
-[[node_blacklist]]
-name = "slack"
