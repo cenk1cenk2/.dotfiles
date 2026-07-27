@@ -131,13 +131,6 @@ profiles:
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
-  - id: personal/kilic/minimax-m3
-    agent: opencode
-    model: kilic/minimax-m3:cloud
-    mode: build
-    env:
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
-
   - id: personal/kilic/kimi-k3:cloud
     agent: opencode
     model: kilic/kimi-k3:cloud

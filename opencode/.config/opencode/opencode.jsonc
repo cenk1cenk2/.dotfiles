@@ -82,9 +82,6 @@
         "kimi-k3:cloud": {
           "name": "Kimi K3 Code Cloud",
         },
-        "minimax-m3:cloud": {
-          "name": "Minimax M3 Cloud",
-        },
         "gemma4:31b-cloud": {
           "name": "Gemma4 Cloud",
         },
