@@ -17,8 +17,10 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XCURSOR_THEME=Breeze_Light
 export XCURSOR_SIZE=24
 
+# needs proton plus to install proton-ge for these
 export PROTON_ENABLE_HDR=1
 export PROTON_ENABLE_WAYLAND=1
+
 export MANGOHUD=1
 export STEAM_FRAME_FORCE_CLOSE=1
 

@@ -2,6 +2,7 @@ gamemode
 gamescope
 goverlay
 mangohud
+protonplus
 steam
 wine
 winetricks
