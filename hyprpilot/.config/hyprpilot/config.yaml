@@ -138,9 +138,9 @@ profiles:
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
-  - id: personal/kilic/kimi-k2.7-code:cloud
+  - id: personal/kilic/kimi-k3:cloud
     agent: opencode
-    model: kilic/kimi-k2.7-code:cloud
+    model: kilic/kimi-k3:cloud
     mode: build
     env:
       AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
