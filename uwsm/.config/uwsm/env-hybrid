@@ -41,7 +41,8 @@ if [ -n "$_gpu_intel_card" ]; then
   # dlopens libnvidia-ml, and NVML opens /dev/nvidia0. The config blacklist
   # does not help: it only suppresses the overlay, long after the library and
   # NVML have loaded. Disabling MangoHud is the only lever that stops the open.
-  export MANGOHUD=0
+  # TODO: this might be removed in the future but currently did not work
+  # export MANGOHUD=0
 
   # GLVND loads every vendor listed here just to query it, and libEGL_nvidia
   # opens /dev/nvidia0 as it initializes — so listing NVIDIA at all pins the
