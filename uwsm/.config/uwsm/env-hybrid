@@ -34,6 +34,25 @@ if [ -n "$_gpu_intel_card" ]; then
   # holds /dev/nvidia0 (seen with swayosd grabbing nvidia-modeset). Forcing the
   # GL renderer keeps GTK4 apps on the Mesa-only EGL path above.
   export GSK_RENDERER=ngl
+
+  # MangoHud ships an implicit Vulkan layer, so the loader injects libMangoHud
+  # into anything that creates an instance — Chromium's startup GPU probe
+  # counts, even with --disable-features=Vulkan. Layer init unconditionally
+  # dlopens libnvidia-ml, and NVML opens /dev/nvidia0. The config blacklist
+  # does not help: it only suppresses the overlay, long after the library and
+  # NVML have loaded. Disabling MangoHud is the only lever that stops the open.
+  export MANGOHUD=0
+
+  # GLVND loads every vendor listed here just to query it, and libEGL_nvidia
+  # opens /dev/nvidia0 as it initializes — so listing NVIDIA at all pins the
+  # dGPU, whichever vendor ends up selected. Mesa-only keeps the compositor and
+  # every non-offloaded app off the device node entirely.
+  # TODO: this also breaks the games honestly
+  # export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+
+  # Both of the above are handed back by the local prime-run, which is how
+  # games are launched in this profile — Vulkan titles reach the dGPU without
+  # it, but they render EGL on the iGPU and lose the overlay.
 fi
 
 if [ -n "$_gpu_nvidia_card" ]; then

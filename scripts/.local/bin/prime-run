@@ -1,0 +1,20 @@
+#!/bin/sh
+# Shadows /usr/bin/prime-run — ~/.local/bin precedes /usr/bin in PATH.
+#
+# The packaged script only flips the GLX vendor selector, which is enough on
+# the NVIDIA-primary sessions. The hybrid profile additionally pins EGL to Mesa
+# and disables MangoHud so nothing opens /dev/nvidia0 and holds the dGPU out of
+# RTD3; both have to be handed back for an offloaded process or it silently
+# renders EGL on the iGPU and loses the overlay. Inert in the other profiles:
+# NVIDIA stays first in the vendor list and MangoHud is enabled there anyway.
+#
+# Vulkan-only titles (DXVK/vkd3d) reach the dGPU without this — Vulkan
+# enumeration ignores both variables. OpenGL overlays still need the mangohud
+# wrapper for its LD_PRELOAD, chained as `prime-run mangohud <game>`.
+exec env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __VK_LAYER_NV_optimus=NVIDIA_only \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  MANGOHUD=1 \
+  "$@"

@@ -194,6 +194,46 @@ class IdeapadConservationBattery:
             "(cap is EC-enforced, not settable); use `tdp battery on` / `off`."
         )
 
+@dataclass
+class NvidiaSnapshot:
+    """Passive sysfs view of one NVIDIA PCI function, plus its node holders.
+
+    Captured before any nvidia-smi call, which would power the GPU up and
+    make every reading report an awake device.
+    """
+
+    pci_id: str
+    control: str | None
+    runtime_status: str | None
+    power_state: str | None
+    active_ms: int | None
+    suspended_ms: int | None
+    holders: dict[int, list[Path]]
+
+    @property
+    def sleep_ratio(self) -> float | None:
+        if self.active_ms is None or self.suspended_ms is None:
+            return None
+        total = self.active_ms + self.suspended_ms
+        if total == 0:
+            return None
+
+        return self.suspended_ms / total
+
+    @staticmethod
+    def format_duration(milliseconds: int | None) -> str:
+        if milliseconds is None:
+            return "?"
+        seconds, ms = divmod(milliseconds, 1000)
+        minutes, s = divmod(seconds, 60)
+        hours, m = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h{m:02d}m"
+        if minutes:
+            return f"{m}m{s:02d}s"
+
+        return f"{s}.{ms // 100}s"
+
 class Tdp:
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
@@ -535,11 +575,13 @@ class Tdp:
 
     def nvidia_nodes(self, pci_id: str) -> list[Path]:
         nodes: list[Path] = []
-        pci_path = self.PCI_DEVICES_PATH / pci_id
-        for card in sorted((pci_path / "drm").glob("card*")):
-            nodes.append(Path("/dev/dri") / card.name)
-            for render in sorted(card.glob("renderD*")):
-                nodes.append(Path("/dev/dri") / render.name)
+        # card* and renderD* are siblings under drm/, not nested. Globbing
+        # renderD* inside the card directory finds nothing, which silently
+        # hides the render node — the one GBM/dmabuf clients actually hold,
+        # and it pins the GPU exactly like /dev/nvidia0 does.
+        drm_path = self.PCI_DEVICES_PATH / pci_id / "drm"
+        for node in sorted(drm_path.glob("card*")) + sorted(drm_path.glob("renderD*")):
+            nodes.append(Path("/dev/dri") / node.name)
 
         for pattern in ("/dev/nvidia*", "/dev/nvidia-caps/nvidia-cap*"):
             for node in sorted(Path("/").glob(pattern.removeprefix("/"))):
@@ -635,16 +677,24 @@ class Tdp:
         # powers the GPU up, so reading runtime_status afterwards would always
         # report "active" even for a GPU that was suspended a moment ago.
         snapshots = [
-            (
-                gpu_pci_id,
-                self.read_optional(
+            NvidiaSnapshot(
+                pci_id=gpu_pci_id,
+                control=self.read_optional(
                     self.PCI_DEVICES_PATH / gpu_pci_id / "power/control"
                 ),
-                self.read_optional(
+                runtime_status=self.read_optional(
                     self.PCI_DEVICES_PATH / gpu_pci_id / "power/runtime_status"
                 ),
-                self.read_optional(self.PCI_DEVICES_PATH / gpu_pci_id / "power_state"),
-                self.nvidia_holders(gpu_pci_id),
+                power_state=self.read_optional(
+                    self.PCI_DEVICES_PATH / gpu_pci_id / "power_state"
+                ),
+                active_ms=self.read_optional_int(
+                    self.PCI_DEVICES_PATH / gpu_pci_id / "power/runtime_active_time"
+                ),
+                suspended_ms=self.read_optional_int(
+                    self.PCI_DEVICES_PATH / gpu_pci_id / "power/runtime_suspended_time"
+                ),
+                holders=self.nvidia_holders(gpu_pci_id),
             )
             for gpu_pci_id in pci_ids
         ]
@@ -656,24 +706,36 @@ class Tdp:
         table.add_column("Power")
         table.add_column("Runtime")
         table.add_column("D-State")
+        table.add_column("Awake", justify="right")
+        table.add_column("Asleep", justify="right")
+        table.add_column("Sleep %", justify="right")
         table.add_column("Holders", justify="right")
-        for gpu_pci_id, control, runtime_status, power_state, holders in snapshots:
-            row = [gpu_pci_id]
+        for snapshot in snapshots:
+            row = [snapshot.pci_id]
             if smi:
-                row.append(self.nvidia_drain_state(gpu_pci_id))
-            state_style = "green" if power_state == "D3cold" else "yellow"
+                row.append(self.nvidia_drain_state(snapshot.pci_id))
+            state_style = "green" if snapshot.power_state == "D3cold" else "yellow"
+            ratio = snapshot.sleep_ratio
+            ratio_style = "green" if ratio and ratio >= 0.5 else "yellow"
             row.extend(
                 [
-                    control or "?",
-                    runtime_status or "?",
-                    f"[{state_style}]{power_state}[/]" if power_state else "?",
-                    str(len(holders)),
+                    snapshot.control or "?",
+                    snapshot.runtime_status or "?",
+                    f"[{state_style}]{snapshot.power_state}[/]"
+                    if snapshot.power_state
+                    else "?",
+                    snapshot.format_duration(snapshot.active_ms),
+                    snapshot.format_duration(snapshot.suspended_ms),
+                    f"[{ratio_style}]{ratio:.1%}[/]" if ratio is not None else "?",
+                    str(len(snapshot.holders)),
                 ]
             )
             table.add_row(*row)
         self.console.print(table)
 
-        for gpu_pci_id, _control, runtime_status, power_state, holders in snapshots:
+        for snapshot in snapshots:
+            gpu_pci_id, power_state = snapshot.pci_id, snapshot.power_state
+            holders, runtime_status = snapshot.holders, snapshot.runtime_status
             match runtime_status:
                 case "suspended":
                     verdict = "[bold green]sleeping[/]"
@@ -705,7 +767,8 @@ class Tdp:
             if power_table.row_count:
                 self.console.print(power_table)
 
-        for *_ignored, holders in snapshots:
+        for snapshot in snapshots:
+            holders = snapshot.holders
             self.print_nvidia_holders(holders)
 
     def drain_nvidia(self, pci_id: str | None = None) -> None:
@@ -1185,6 +1248,14 @@ class Tdp:
             return None
 
         return text or None
+
+    @classmethod
+    def read_optional_int(cls, path: Path) -> int | None:
+        text = cls.read_optional(path)
+        if text is None or not text.lstrip("-").isdigit():
+            return None
+
+        return int(text)
 
     def set_value(self, value: str, extra: str | None = None) -> None:
         match self.vendor():

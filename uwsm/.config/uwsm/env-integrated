@@ -30,6 +30,7 @@ _intel_card="$(_card_for_vendor 0x8086 || true)"
 if [ -n "$_intel_card" ]; then
   export AQ_DRM_DEVICES="$_intel_card"
   export LIBVA_DRIVER_NAME=iHD
+  export MANGOHUD=0
 fi
 
 unset _intel_card
