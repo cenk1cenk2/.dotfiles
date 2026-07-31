@@ -15,6 +15,12 @@ patches:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
     mcp:
       enabled: true
+      serve:
+        enabled: true
+      skills:
+        enabled: true
+      harness:
+        enabled: true
       autoAcceptTools:
         - "*"
       autoRejectTools: []
@@ -24,12 +30,13 @@ patches:
       profile: "personal/*"
     mcp:
       skills:
-        - dir: ~/.config/nvim/utils/agents/skills/
-          ignore:
-            - "*-laravel"
-            - "*-laravel-*"
-            - notion-*
-            - spacelift-*
+        dirs:
+          - dir: ~/.config/nvim/utils/agents/skills/
+            ignore:
+              - "*-laravel"
+              - "*-laravel-*"
+              - notion-*
+              - spacelift-*
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
@@ -43,11 +50,12 @@ patches:
       profile: "work/*"
     mcp:
       skills:
-        - dir: ~/.config/nvim/utils/agents/skills/
-          ignore:
-            - "*-kilic-*"
-            - "*-kilic"
-            - gitlab-*
+        dirs:
+          - dir: ~/.config/nvim/utils/agents/skills/
+            ignore:
+              - "*-kilic-*"
+              - "*-kilic"
+              - gitlab-*
     mcps:
       - file: ~/.config/nvim/utils/mcphub/servers.json
         ignore:
