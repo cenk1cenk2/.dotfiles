@@ -25,9 +25,11 @@ patches:
         - "*"
       autoRejectTools: []
 
-  # personal/* + kilic/* profiles share one mcps/skills ignore list.
+  # personal/* + kilic/* profiles
   - $match:
       profile: "personal/*"
+    harness:
+      enabled: true
     mcp:
       skills:
         dirs:
@@ -44,8 +46,7 @@ patches:
           - aws-docs
           - terraform
 
-  # work/* profiles use a different ignore set (gitlab + playwright
-  # excluded; aws-docs allowed).
+  # work/* profiles
   - $match:
       profile: "work/*"
     mcp:
@@ -70,6 +71,7 @@ patches:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-laravel"
 
+  # Personal Claude profiles point CLAUDE_CONFIG_DIR at the personal config dir.
   - $match:
       profile: "personal/claude/*"
     env:
@@ -101,29 +103,22 @@ profiles:
     agent: claude-code
     model: "claude-fable-5[1m]"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/claude/opus
     agent: claude-code
     model: "opus[1m]"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/claude/sonnet
     agent: claude-code
     model: "sonnet"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
 
   - id: personal/claude/haiku
     agent: claude-code
     model: "haiku"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_KILIC}"
+    system_prompt: []
 
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
@@ -167,27 +162,19 @@ profiles:
     agent: claude-code
     model: "claude-fable-5[1m]"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/opus
     agent: claude-code
     model: "opus[1m]"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/sonnet
     agent: claude-code
     model: "sonnet[1m]"
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
 
   - id: work/claude/haiku
     agent: claude-code
     model: haiku
     mode: auto
-    env:
-      CLAUDE_CODE_OAUTH_TOKEN: "${NVIM_CLAUDE_ACP_WORK}"
     system_prompt: []
