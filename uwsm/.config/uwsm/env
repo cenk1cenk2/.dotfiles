@@ -3,7 +3,6 @@
 export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
 
 export LIBSEAT_BACKEND=logind
-export WLR_XWAYLAND=/usr/local/bin/Xwayland
 
 export QT_QPA_PLATFORM=wayland
 export QT_QPA_PLATFORMTHEME=gtk3

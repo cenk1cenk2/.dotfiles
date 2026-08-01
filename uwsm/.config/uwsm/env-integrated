@@ -2,7 +2,6 @@
 
 export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 export MANGOHUD=0
-export DISABLE_MANGOHUD=1
 export DRI_PRIME=0!
 
 if [ -r /usr/share/vulkan/icd.d/intel_icd.json ]; then
