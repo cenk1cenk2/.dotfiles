@@ -78,19 +78,6 @@ patches:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-kilic"
 
-  # Register the harness MCP as a Claude *channel*, so a detached
-  # `spawn { wait: false }` wakes this session when it finishes instead
-  # of exiting into silence. Channels have no settings.json key — the
-  # opt-in is launch-flag-only — and a bare `--mcp-config` server is
-  # never on the Anthropic allowlist, so the development flag is the
-  # only registration path. Costs a confirm dialog per launch.
-  # Interactive-only: `claude -p` never delivers channel events.
-  - $match:
-      profile: "*/claude/*"
-    args:
-      - "--dangerously-load-development-channels"
-      - "server:hyprpilot_harness"
-
 # [[agents]] — vendor registry. `command`/`args` are the NATIVE vendor
 # CLI the launcher exec()s directly (no ACP bridge, no nested `spawn`).
 # claude-code is inherited from the built-in defaults; these two override
