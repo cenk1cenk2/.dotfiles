@@ -1,0 +1,21 @@
+[Unit]
+Description=Pimsync - Calendar synchronisation daemon
+Documentation=https://pimsync.whynothugo.nl/
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Urls resolve before the daemon reports ready, and a missing file aborts the
+# entire config - but naming a pair limits resolution to that pair's storages.
+# Url filenames are pair names, so this runs exactly the calendars set up here.
+ExecCondition=/bin/sh -c 'command -v pimsync && ls %h/.config/pimsync/urls | grep -q .'
+ExecStart=/bin/sh -c 'exec pimsync daemon $(ls %h/.config/pimsync/urls)'
+Restart=on-failure
+RestartSec=30
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

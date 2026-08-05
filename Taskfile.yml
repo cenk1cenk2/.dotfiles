@@ -106,6 +106,7 @@ tasks:
             obsbot
             opencode
             pacman
+            pimsync
             pipewire
             rofi
             scripts

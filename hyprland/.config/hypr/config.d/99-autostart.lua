@@ -14,6 +14,7 @@ local services = {
   "input-remapper-autoload.service",
   "ydotool.service",
   "wayland-pipewire-idle-inhibit.service",
+  "pimsync.service",
 }
 
 hl.on("hyprland.start", function()

@@ -1,3 +1,7 @@
 Brewfile.lock.json
 .DS_Store
 __pycache__/
+
+# calendar feed URLs are bearer credentials, machine-local only
+pimsync/.config/pimsync/urls/*
+!pimsync/.config/pimsync/urls/.gitkeep
