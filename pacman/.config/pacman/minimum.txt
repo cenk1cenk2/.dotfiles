@@ -34,6 +34,7 @@ ffmpeg
 findutils
 fprintd
 gawk
+geoclue
 git
 git-lfs
 gnome-keyring
@@ -48,6 +49,7 @@ gvfs
 gvfs-mtp
 gvfs-nfs
 gvfs-smb
+gweather-locations
 gzip
 handlr-regex
 hunspell-en_us

@@ -1,0 +1,13 @@
+[Unit]
+Description=Set system timezone from geoclue location
+After=network-online.target suspend.target geoclue.service geoclue-agent.service
+Wants=network-online.target
+Requires=geoclue-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/geo-timezone update
+TimeoutStartSec=90
+
+[Install]
+WantedBy=suspend.target

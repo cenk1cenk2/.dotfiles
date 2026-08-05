@@ -1,0 +1,9 @@
+[Unit]
+Description=Periodic timezone recheck from geoclue
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""Set the system timezone from the machine's geoclue location."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import re
+import signal
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
+
+class GeoTimezone:
+    # tzdata's zone1970.tab carries one point per zone, and at 312 points the
+    # nearest is routinely in the wrong country — it puts Izmir in
+    # Europe/Athens. libgweather's station list has 8286 and gets it right.
+    LOCATIONS = Path("/usr/share/gweather-locations/Locations.xml")
+
+    BUS = "org.freedesktop.GeoClue2"
+    MANAGER = "/org/freedesktop/GeoClue2/Manager"
+    DESKTOP_ID = "geo-timezone"
+
+    # Lower levels never engage the WiFi source, leaving geoclue's GeoIP
+    # fallback to decide the zone from whatever the egress IP looks like.
+    ACCURACY_EXACT = 8
+
+    FIX_TIMEOUT_MS = 45_000
+
+    # When no WiFi access point is known to BeaconDB, geoclue falls back to
+    # GeoIP, which resolves the exit node rather than us. Matched against the
+    # route to the internet, so an idle tailscale0 with no exit node selected
+    # does not count.
+    TUNNEL_PREFIXES = ("tailscale", "wg", "tun", "ppp")
+
+    GEOIP_ACCURACY_M = 5_000
+
+    def _log(self, message: str) -> None:
+        print(f"geo-timezone: {message}", file=sys.stderr)
+
+    def _egress(self) -> str | None:
+        cmd = ["ip", "route", "get", "1.1.1.1"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        match = re.search(r"\bdev\s+(\S+)", proc.stdout)
+
+        return match.group(1) if match else None
+
+    def _tunnelled(self) -> bool:
+        egress = self._egress()
+
+        return bool(egress) and egress.startswith(self.TUNNEL_PREFIXES)
+
+    def _source(self, accuracy: float) -> str:
+        # BeaconDB answers a known access point within a few hundred metres and
+        # its GeoIP fallback with tens of kilometres, so the radius says which
+        # one replied — and therefore whether the fix would follow a VPN.
+        return "geoip" if accuracy > self.GEOIP_ACCURACY_M else "wifi"
+
+    def _points(self) -> list[tuple[float, float, str]]:
+        if not self.LOCATIONS.is_file():
+            self._log(f"{self.LOCATIONS} missing — install gweather-locations")
+            sys.exit(1)
+
+        points: list[tuple[float, float, str]] = []
+
+        def walk(node: ET.Element, zone: str | None) -> None:
+            # Stations inherit the enclosing tz-hint; most carry none of their own.
+            zone = node.findtext("tz-hint") or zone
+            coordinates = node.findtext("coordinates")
+            if coordinates and zone:
+                lat, lon = (float(v) for v in coordinates.split())
+                points.append((lat, lon, zone))
+            for child in node:
+                walk(child, zone)
+
+        walk(ET.parse(self.LOCATIONS).getroot(), None)
+
+        return points
+
+    def zone_for(self, lat: float, lon: float) -> str | None:
+        points = self._points()
+        if not points:
+            self._log(f"{self.LOCATIONS} yielded no stations")
+            return None
+
+        def distance(point: tuple[float, float, str]) -> float:
+            lat1, lon1 = math.radians(lat), math.radians(lon)
+            lat2, lon2 = math.radians(point[0]), math.radians(point[1])
+            a = (
+                math.sin((lat2 - lat1) / 2) ** 2
+                + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+            )
+            return 2 * math.asin(math.sqrt(a))
+
+        return min(points, key=distance)[2]
+
+    def _call(
+        self,
+        bus: Gio.DBusConnection,
+        path: str,
+        interface: str,
+        method: str,
+        params: GLib.Variant | None = None,
+        reply: str | None = None,
+    ):
+        return bus.call_sync(
+            self.BUS,
+            path,
+            interface,
+            method,
+            params,
+            GLib.VariantType(reply) if reply else None,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None,
+        )
+
+    def _set_property(
+        self, bus: Gio.DBusConnection, path: str, name: str, value: GLib.Variant
+    ) -> None:
+        self._call(
+            bus,
+            path,
+            "org.freedesktop.DBus.Properties",
+            "Set",
+            GLib.Variant("(ssv)", (f"{self.BUS}.Client", name, value)),
+        )
+
+    def locate(self) -> tuple[float, float, float] | None:
+        # One bus connection throughout: geoclue ties the client to its D-Bus
+        # peer and destroys it when that peer disconnects. GetClient also parks
+        # forever unless an agent is registered for our UID, hence
+        # geoclue-agent.service running as the same user.
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            client = self._call(
+                bus, self.MANAGER, f"{self.BUS}.Manager", "GetClient", None, "(o)"
+            ).unpack()[0]
+            self._set_property(
+                bus, client, "DesktopId", GLib.Variant("s", self.DESKTOP_ID)
+            )
+            self._set_property(
+                bus,
+                client,
+                "RequestedAccuracyLevel",
+                GLib.Variant("u", self.ACCURACY_EXACT),
+            )
+        except GLib.Error as err:
+            self._log(f"geoclue unavailable: {err.message}")
+            return None
+
+        loop = GLib.MainLoop()
+        found: list[str] = []
+
+        def on_update(_conn, _sender, _path, _iface, _signal, params, _data) -> None:
+            found.append(params.unpack()[1])
+            loop.quit()
+
+        subscription = bus.signal_subscribe(
+            self.BUS,
+            f"{self.BUS}.Client",
+            "LocationUpdated",
+            client,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            on_update,
+            None,
+        )
+        expired: list[bool] = []
+
+        def on_timeout() -> bool:
+            expired.append(True)
+            loop.quit()
+
+            return GLib.SOURCE_REMOVE
+
+        timeout = GLib.timeout_add(self.FIX_TIMEOUT_MS, on_timeout)
+
+        try:
+            self._call(bus, client, f"{self.BUS}.Client", "Start")
+            loop.run()
+        except GLib.Error as err:
+            self._log(f"geoclue refused to start: {err.message}")
+            return None
+        finally:
+            if not expired:
+                GLib.source_remove(timeout)
+            bus.signal_unsubscribe(subscription)
+            try:
+                self._call(bus, client, f"{self.BUS}.Client", "Stop")
+            except GLib.Error:
+                pass
+
+        if not found or found[0] == "/":
+            self._log(f"no fix within {self.FIX_TIMEOUT_MS // 1000}s")
+            return None
+
+        return self._read_location(bus, found[0])
+
+    def _read_location(
+        self, bus: Gio.DBusConnection, path: str
+    ) -> tuple[float, float, float] | None:
+        def prop(name: str) -> float:
+            return self._call(
+                bus,
+                path,
+                "org.freedesktop.DBus.Properties",
+                "Get",
+                GLib.Variant("(ss)", (f"{self.BUS}.Location", name)),
+                "(v)",
+            ).unpack()[0]
+
+        try:
+            return prop("Latitude"), prop("Longitude"), prop("Accuracy")
+        except GLib.Error as err:
+            self._log(f"location unreadable: {err.message}")
+            return None
+
+    def current(self) -> str:
+        cmd = ["timedatectl", "show", "--property=Timezone", "--value"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        return proc.stdout.strip()
+
+    def cmd_update(self, dry_run: bool) -> None:
+        current = self.current()
+
+        if self._tunnelled():
+            self._log(f"keeping {current}: {self._egress()} carries the route")
+            return
+
+        fix = self.locate()
+        if fix is None:
+            self._log(f"keeping {current}: no location")
+            sys.exit(1)
+
+        lat, lon, accuracy = fix
+        zone = self.zone_for(lat, lon)
+        if zone is None:
+            self._log(f"keeping {current}: no zone for {lat:.4f}, {lon:.4f}")
+            sys.exit(1)
+
+        origin = f"{lat:.4f}, {lon:.4f} {self._source(accuracy)} +/-{accuracy:.0f}m"
+        if zone == current:
+            self._log(f"keeping {current}: {origin}")
+            return
+
+        if dry_run:
+            self._log(f"would change {current} to {zone}: {origin}")
+            return
+
+        subprocess.run(["timedatectl", "set-timezone", zone], check=True)
+        self._log(f"changed {current} to {zone}: {origin}")
+
+    def cmd_show(self) -> None:
+        print(f"current:  {self.current()}")
+        print(f"stations: {len(self._points())}")
+        print(f"egress:   {self._egress() or 'none'}{' (skipped)' if self._tunnelled() else ''}")
+
+        fix = self.locate()
+        if fix is None:
+            print("geoclue:  no fix")
+            sys.exit(1)
+
+        lat, lon, accuracy = fix
+        print(
+            f"geoclue:  {lat:.4f}, {lon:.4f} "
+            f"{self._source(accuracy)} +/-{accuracy:.0f}m"
+        )
+        print(f"zone:     {self.zone_for(lat, lon)}")
+
+    def _build_parser(self) -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser(
+            prog="geo-timezone",
+            description="Set the system timezone from the geoclue location.",
+        )
+        sub = parser.add_subparsers(dest="command", required=True)
+
+        update = sub.add_parser("update", help="Resolve the location and apply it.")
+        update.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Report the change without applying it.",
+        )
+
+        sub.add_parser("show", help="Report the fix and the zone it resolves to.")
+
+        return parser
+
+    def run(self, argv: list[str] | None = None) -> None:
+        # Most of the runtime blocks inside GLib's C code, where Python never
+        # gets to run its own handler — Ctrl-C would sit unhandled for the whole
+        # D-Bus timeout. geoclue drops the client when our peer vanishes, so
+        # dying outright leaves nothing behind.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+        ns = self._build_parser().parse_args(argv)
+
+        match ns.command:
+            case "update":
+                self.cmd_update(ns.dry_run)
+            case "show":
+                self.cmd_show()
+
+if __name__ == "__main__":
+    GeoTimezone().run()

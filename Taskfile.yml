@@ -157,6 +157,9 @@ tasks:
             chrome
             dex
           # args: --adopt
+          #
+      - systemctl --user daemon-reload
+      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
 
   deploy:linux:system:
     desc: Deploy to target.
@@ -173,8 +176,12 @@ tasks:
       - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
       - sudo install -d -m 0755 /etc/modprobe.d
       - sudo install -m 0644 rootfs/etc/modprobe.d/*.conf /etc/modprobe.d/
-      - systemctl --user daemon-reload
-      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
+      - sudo install -d -m 0755 /etc/geoclue/conf.d /etc/NetworkManager/dispatcher.d
+      - sudo install -m 0644 geoclue/etc/geoclue/conf.d/*.conf /etc/geoclue/conf.d/
+      - sudo install -m 0644 geoclue/etc/systemd/system/* /etc/systemd/system/
+      - sudo install -m 0755 geoclue/etc/NetworkManager/dispatcher.d/09-timezone /etc/NetworkManager/dispatcher.d/
+      - sudo install -m 0755 geoclue/usr/local/bin/geo-timezone /usr/local/bin/
+      - sudo systemctl daemon-reload
 
   deploy:macos:
     desc: Deploy to target.
