@@ -1,12 +1,17 @@
 [calendars]
 
-[[personal]]
-path = ~/.calendars/Personal/cenk1cenk2cenk3@gmail.com/
-color = light blue
+# Pimsync mirrors these one-way from Google's iCal feeds, so anything written
+# here is deleted on the next sync. Edits belong in Google Calendar.
 
-[[holidays]]
-path = ~/.calendars/Personal/cln2sobledq74qb1dohmgrrcd5i62ua0ctp6utbg5pr2sor1dhimsp31e8n6errfctm6abj3dtmg@virtual
-color = light magenta
+[[personal]]
+path = ~/.calendars/personal
+color = light blue
+readonly = True
+
+[[laravel]]
+path = ~/.calendars/laravel
+color = light red
+readonly = True
 
 [locale]
 timeformat = %H:%M
