@@ -31,6 +31,13 @@ patches:
     harness:
       enabled: true
     mcp:
+      # A personal session delegates only to personal profiles. `harness`
+      # above is the TARGET side (may this profile be driven, by anyone);
+      # this is the LAUNCHER side (what may THIS session drive). Both must
+      # pass, so the glob only narrows — it cannot nominate.
+      harness:
+        includeProfiles:
+          - "personal/*"
       skills:
         dirs:
           - dir: ~/.config/nvim/utils/agents/skills/
@@ -50,6 +57,15 @@ patches:
   - $match:
       profile: "work/*"
     mcp:
+      # Mirror of the personal scope, and the one that closes the actual
+      # hole: without it a work session's harness could reach every
+      # `personal/*` profile, since nomination says nothing about who is
+      # delegating. No `work/*` profile carries `harness.enabled` today, so
+      # this currently resolves to an empty candidate list — add that block
+      # to the profiles a work session should be able to drive.
+      harness:
+        includeProfiles:
+          - "work/*"
       skills:
         dirs:
           - dir: ~/.config/nvim/utils/agents/skills/
