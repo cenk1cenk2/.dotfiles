@@ -16,10 +16,8 @@ from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_ENRICH_MODE,
     DEFAULT_TIMEOUT,
     EnrichAdapter,
-    EnrichMode,
     EnrichProvider,
     EnrichSpec,
     InputAdapter,
@@ -209,12 +207,6 @@ class Copywriter:
         help="Enrichment backend.",
     )
     @click.option(
-        "--mode",
-        type=click.Choice([m.value for m in EnrichMode], case_sensitive=False),
-        default=DEFAULT_ENRICH_MODE.value,
-        help="Capability ceiling.",
-    )
-    @click.option(
         "--base-url",
         default=DEFAULT_BASE_URL,
         help="HTTP backend base URL.",
@@ -224,7 +216,11 @@ class Copywriter:
         default=DEFAULT_API_KEY_ENV,
         help="Env var holding the HTTP backend key.",
     )
-    @click.option("--model", default=None, help="Provider-specific model.")
+    @click.option(
+        "--model",
+        default=None,
+        help="Model id, or hyprpilot profile id.",
+    )
     @click.option("--temperature", type=float, default=None)
     @click.option("--top-p", type=float, default=None)
     @click.option(
@@ -244,7 +240,6 @@ class Copywriter:
         output,
         input_,
         provider,
-        mode,
         base_url,
         api_key_env,
         model,
@@ -267,7 +262,6 @@ class Copywriter:
         spec = EnrichSpec(
             provider=EnrichProvider(provider),
             model=model,
-            mode=EnrichMode(mode),
             timeout=timeout,
             base_url=base_url,
             api_key_env=api_key_env,

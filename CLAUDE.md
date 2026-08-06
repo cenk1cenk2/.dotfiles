@@ -164,9 +164,9 @@ adapter class with a `Protocol` interface. The CLI flag picks the
 adapter; the rest of the code never knows which one.
 
 - Protocols live next to the adapters (`lib/enrich.py` has
-  `EnrichAdapter` + `EnrichProvider` enum + four concrete
-  classes). New adapters are pluggable by adding an enum value +
-  a class; no core changes.
+  `EnrichAdapter` + `EnrichProvider` enum + two concrete classes).
+  New adapters are pluggable by adding an enum value + a class; no
+  core changes.
 
 - **One call site: `match` inline.** CLI wiring is a `match` on the
   Provider enum value inside the click command callback — no factory,
@@ -181,12 +181,20 @@ adapter; the rest of the code never knows which one.
   into supporting fewer options than the CLI path. Don't reach for
   this until the duplication is real.
 
-- Backend vocabularies get normalised at the boundary, not pushed
-  onto callers. `EnrichMode` (read-only / edit / unsafe) maps per
-  adapter to claude `--permission-mode`, opencode `--agent`, codex
-  `--sandbox`; the values are not interchangeable and passing one
-  backend's spelling to another fails silently. Default is the
-  least-privileged rung.
+- **Delegate the vendor matrix rather than modelling it.** The
+  claude / opencode / codex adapters collapsed into one that shells
+  out to `hyprpilot <profile> --file`: the profile already carries
+  model, permission mode, MCP set and the vendor's config-dir env,
+  so a new agent backend is a hyprpilot config entry, not a class.
+  `spec.model` names a model id for http and a profile id for
+  hyprpilot — one flag, resolved per adapter.
+
+- hyprpilot only ever passes `--append-system-prompt`, so an agent
+  profile keeps its vendor's own agent identity. Enrichment
+  profiles therefore need `mcp.enabled: false` and a
+  `system_prompt` reset, and those must be set in a **patch**, not
+  on the profile body — patches fold over profiles, so a profile
+  field silently loses to the root patch.
 
 - Secrets cross process boundaries as the *name* of an env var, not
   the value — `EnrichSpec.api_key_env` is resolved at call time, so

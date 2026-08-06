@@ -20,10 +20,8 @@ from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_ENRICH_MODE,
     DEFAULT_TIMEOUT,
     EnrichAdapter,
-    EnrichMode,
     EnrichProvider,
     EnrichSpec,
     OutputAdapter,
@@ -481,19 +479,17 @@ class Speech:
         type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
         default=DEFAULT_ENRICH_ADAPTER.value,
     )
-    @click.option(
-        "--enrich-mode",
-        type=click.Choice([m.value for m in EnrichMode], case_sensitive=False),
-        default=DEFAULT_ENRICH_MODE.value,
-        help="Capability ceiling.",
-    )
     @click.option("--enrich-base-url", default=DEFAULT_BASE_URL)
     @click.option(
         "--enrich-api-key-env",
         default=DEFAULT_API_KEY_ENV,
         help="Env var holding the HTTP backend key.",
     )
-    @click.option("--enrich-model", default=None)
+    @click.option(
+        "--enrich-model",
+        default=None,
+        help="Model id, or hyprpilot profile id.",
+    )
     @click.option("--enrich-temperature", type=float, default=None)
     @click.option("--enrich-top-p", type=float, default=None)
     @click.option(
@@ -513,7 +509,6 @@ class Speech:
         output,
         enrich,
         enrich_provider,
-        enrich_mode,
         enrich_base_url,
         enrich_api_key_env,
         enrich_model,
@@ -542,7 +537,6 @@ class Speech:
             enrich_spec = EnrichSpec(
                 provider=EnrichProvider(enrich_provider),
                 model=enrich_model,
-                mode=EnrichMode(enrich_mode),
                 timeout=enrich_timeout,
                 base_url=enrich_base_url,
                 api_key_env=enrich_api_key_env,

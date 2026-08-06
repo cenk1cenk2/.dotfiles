@@ -1,10 +1,13 @@
 """AI enrichment backends.
 
-Four interchangeable backends behind one `enrich(text) -> str | None`
-call: an OpenAI-compatible HTTP endpoint and the claude / opencode /
-codex CLIs. Callers configure every one of them through a single
-`EnrichSpec` and instantiate via `build_enricher` — the per-backend
-flag vocabulary stays inside the adapters."""
+Two backends behind one `enrich(text) -> str | None` call: an
+OpenAI-compatible HTTP endpoint, and every agent CLI at once through
+hyprpilot. Callers configure both through a single `EnrichSpec` and
+instantiate via `build_enricher`.
+
+Picking an agent is picking a hyprpilot profile — model, permission
+mode, MCP set and the vendor's config-dir env all live there, so a new
+backend is a config entry rather than a class here."""
 
 from __future__ import annotations
 
@@ -18,31 +21,17 @@ import urllib.request
 import uuid
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from .cli import run
 
 class EnrichProvider(StrEnum):
     HTTP = "http"
-    CLAUDE = "claude"
-    OPENCODE = "opencode"
-    CODEX = "codex"
-
-class EnrichMode(StrEnum):
-    """Capability ceiling, normalised across backends.
-
-    Every CLI spells this differently — claude `--permission-mode`,
-    opencode `--agent`, codex `--sandbox` — and the values are not
-    interchangeable, so callers speak this enum and each adapter
-    translates through its own table."""
-
-    READ_ONLY = "read-only"
-    EDIT = "edit"
-    UNSAFE = "unsafe"
+    HYPRPILOT = "hyprpilot"
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
-# A rewrite has no business touching the filesystem; opting up is explicit.
-DEFAULT_ENRICH_MODE = EnrichMode.READ_ONLY
+# Cheap, fast, and patched to carry no MCP servers and a read-only mode.
+DEFAULT_PROFILE = "personal/claude/haiku"
 # OpenWebUI's own `/api/v1` answers `{"detail":"Model not found"}` for every
 # model it lists; the ollama passthrough completes against the same ids. The
 # OpenWebUI-only extensions below (tool_ids, files) are inert on this route.
@@ -62,9 +51,11 @@ class EnrichSpec:
     call time, which also keeps it out of the IPC JSON."""
 
     provider: EnrichProvider = DEFAULT_ENRICH_ADAPTER
-    model: Optional[str] = None
-    mode: EnrichMode = DEFAULT_ENRICH_MODE
     timeout: float = DEFAULT_TIMEOUT
+
+    # Whatever names the thing that answers: a model id for http, a hyprpilot
+    # profile id for hyprpilot. Each adapter falls back to its own default.
+    model: Optional[str] = None
 
     base_url: str = DEFAULT_BASE_URL
     api_key_env: str = DEFAULT_API_KEY_ENV
@@ -75,15 +66,6 @@ class EnrichSpec:
     tool_ids: Optional[list[str]] = None
     files: Optional[list[dict[str, Any]]] = None
     user_agent: str = "enrich/1.0"
-
-    claude_config_dir: Optional[str] = None
-
-    opencode_provider: Optional[str] = None
-    opencode_config_dir: Optional[str] = None
-    opencode_db: Optional[str] = None
-
-    codex_home: Optional[str] = None
-    codex_reasoning_effort: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -100,16 +82,15 @@ class EnrichSpec:
         reads as "no session running" and answers by starting a second
         one over the live recorder."""
         kwargs = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
-        for field, enum in (("provider", EnrichProvider), ("mode", EnrichMode)):
-            raw = kwargs.get(field)
-            if raw is None:
-                kwargs.pop(field, None)
-                continue
+        raw = kwargs.get("provider")
+        if raw is None:
+            kwargs.pop("provider", None)
+        else:
             try:
-                kwargs[field] = enum(raw)
+                kwargs["provider"] = EnrichProvider(raw)
             except ValueError:
-                log.warning("unknown %s %r; falling back to default", field, raw)
-                kwargs.pop(field)
+                log.warning("unknown provider %r; falling back to default", raw)
+                kwargs.pop("provider")
 
         return cls(**kwargs)
 
@@ -214,21 +195,17 @@ class EnrichAdapterHttp:
 
         return result
 
-class EnrichAdapterClaude:
-    """Claude CLI wrapper. Defaults to haiku for fast one-shot rewrites."""
+class EnrichAdapterHyprpilot:
+    """Any agent CLI, addressed by hyprpilot profile.
 
-    provider = EnrichProvider.CLAUDE
-    DEFAULT_MODEL = "haiku"
-    # Enrichment is a personal-context tool; without this it would inherit
-    # whatever CLAUDE_CONFIG_DIR the launching session happened to carry and
-    # a dictation rewrite fired from a work profile would land in the work
-    # config's history.
-    DEFAULT_CONFIG_DIR = os.path.expanduser("~/.claude-kilic")
-    PERMISSION_MODES: ClassVar[dict[EnrichMode, str]] = {
-        EnrichMode.READ_ONLY: "plan",
-        EnrichMode.EDIT: "acceptEdits",
-        EnrichMode.UNSAFE: "bypassPermissions",
-    }
+    `spec.model` is a profile id here. The profile carries the real model,
+    permission mode, MCP set and the vendor's config-dir env, so switching or
+    adding a backend is a hyprpilot config change and never a code change
+    here. Prompts go in through `--file`: clipboard and transcript text is
+    unbounded, argv is not."""
+
+    provider = EnrichProvider.HYPRPILOT
+    DEFAULT_MODEL = DEFAULT_PROFILE
 
     def __init__(
         self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
@@ -236,215 +213,37 @@ class EnrichAdapterClaude:
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.spec = spec
-        self.model = spec.model or self.DEFAULT_MODEL
-        self.config_dir = spec.claude_config_dir or self.DEFAULT_CONFIG_DIR
-
-    def enrich(self, text: str) -> Optional[str]:
-        permission_mode = self.PERMISSION_MODES[self.spec.mode]
-        cmd = [
-            "claude",
-            "-p",
-            "--model",
-            self.model,
-            # No --mcp-config alongside it, so this loads no MCP servers at
-            # all. A rewrite needs none, and the startup saving is most of
-            # the wall clock.
-            "--strict-mcp-config",
-            "--permission-mode",
-            permission_mode,
-            "--system-prompt",
-            self.system_prompt,
-            self.user_prompt_template.format(text=text),
-        ]
-        env = os.environ.copy()
-        env["CLAUDE_CONFIG_DIR"] = self.config_dir
-
-        log.info(
-            "claude enrichment: model=%s permission-mode=%s",
-            self.model,
-            permission_mode,
-        )
-        try:
-            result = run(
-                cmd, log=log, env=env, tag="claude", timeout=self.spec.timeout
-            )
-        except subprocess.TimeoutExpired:
-            log.error("claude enrichment timed out after %.0fs", self.spec.timeout)
-            return None
-        if result.returncode != 0 or not result.stdout.strip():
-            log.error(
-                "claude enrichment failed (exit=%d) stderr=%s",
-                result.returncode,
-                result.stderr.strip(),
-            )
-            return None
-        return result.stdout.strip()
-
-class EnrichAdapterOpenCode:
-    """OpenCode CLI in one-shot mode.
-
-    One `opencode run` per call. It has no ephemeral flag — every call
-    persists a session row — so the db is pinned explicitly rather than
-    left to seed opencode's XDG default. Models are addressed as
-    `<provider>/<model>`."""
-
-    provider = EnrichProvider.OPENCODE
-    DEFAULT_MODEL = "gemma4:31b-cloud"
-    DEFAULT_PROVIDER = "kilic"
-    DEFAULT_CONFIG_DIR = os.path.expanduser("~/.config/opencode-kilic")
-    DEFAULT_DB = os.path.expanduser("~/.local/share/opencode-kilic/opencode.db")
-    AGENTS: ClassVar[dict[EnrichMode, str]] = {
-        EnrichMode.READ_ONLY: "plan",
-        EnrichMode.EDIT: "build",
-        EnrichMode.UNSAFE: "build",
-    }
-
-    def __init__(
-        self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
-    ):
-        self.system_prompt = system_prompt
-        self.user_prompt_template = user_prompt_template
-        self.spec = spec
-        self.model = spec.model or self.DEFAULT_MODEL
-        self.provider_name = spec.opencode_provider or self.DEFAULT_PROVIDER
-        self.config_dir = spec.opencode_config_dir or self.DEFAULT_CONFIG_DIR
-        self.db_path = spec.opencode_db or self.DEFAULT_DB
+        self.profile = spec.model or self.DEFAULT_MODEL
 
     def enrich(self, text: str) -> Optional[str]:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
-        model_spec = f"{self.provider_name}/{self.model}"
-        agent = self.AGENTS[self.spec.mode]
-        argv = [
-            "opencode",
-            "run",
-            "--pure",
-            "--format",
-            "default",
-            "--model",
-            model_spec,
-            "--agent",
-            agent,
-        ]
-        if self.spec.mode == EnrichMode.UNSAFE:
-            argv.append("--auto")
-        argv.append(prompt)
+        with tempfile.TemporaryDirectory(prefix="enrich-") as tmp:
+            prompt_path = os.path.join(tmp, "prompt.txt")
+            with open(prompt_path, "w") as fh:
+                fh.write(prompt)
 
-        env = os.environ.copy()
-        env["OPENCODE_CONFIG_DIR"] = self.config_dir
-        env["OPENCODE_DB"] = self.db_path
-
-        log.info("opencode enrichment: model=%s agent=%s", model_spec, agent)
-        try:
-            result = run(
-                argv, log=log, env=env, tag="opencode", timeout=self.spec.timeout
-            )
-        except subprocess.TimeoutExpired:
-            log.error("opencode enrichment timed out after %.0fs", self.spec.timeout)
-            return None
-        if result.returncode != 0 or not result.stdout.strip():
-            log.error(
-                "opencode enrichment failed (exit=%d) stderr=%s",
-                result.returncode,
-                result.stderr.strip(),
-            )
-            return None
-        return result.stdout.strip()
-
-class EnrichAdapterCodex:
-    """Codex CLI in exec (non-interactive) mode.
-
-    Codex has no system-prompt flag, so the system prompt is folded into
-    the message the way the opencode adapter does. `--ignore-user-config`
-    keeps `~/.codex/config.toml` — which turns on workspace-write, web
-    search, memories and MCP — out of a plain text rewrite; auth still
-    resolves through CODEX_HOME."""
-
-    provider = EnrichProvider.CODEX
-    # gpt-5.3-codex-spark would be the cheap counterpart to claude's haiku,
-    # but a ChatGPT-account login rejects it at the API: "not supported when
-    # using Codex with a ChatGPT account".
-    DEFAULT_MODEL = "gpt-5.5"
-    SANDBOXES: ClassVar[dict[EnrichMode, str]] = {
-        EnrichMode.READ_ONLY: "read-only",
-        EnrichMode.EDIT: "workspace-write",
-        EnrichMode.UNSAFE: "danger-full-access",
-    }
-
-    def __init__(
-        self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
-    ):
-        self.system_prompt = system_prompt
-        self.user_prompt_template = user_prompt_template
-        self.spec = spec
-        self.model = spec.model or self.DEFAULT_MODEL
-
-    def enrich(self, text: str) -> Optional[str]:
-        prompt = (
-            f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
-        )
-        sandbox = self.SANDBOXES[self.spec.mode]
-        env = os.environ.copy()
-        if self.spec.codex_home:
-            env["CODEX_HOME"] = self.spec.codex_home
-
-        # `--output-last-message` isolates the final assistant turn; stdout
-        # also carries it today but would pick up reasoning summaries the
-        # moment a config or default enables them. The path is opened only
-        # after codex exits, so a write-then-rename writer reads correctly
-        # instead of yielding "" and silently falling back to raw stdout.
-        with tempfile.TemporaryDirectory(prefix="enrich-codex-") as tmp:
-            last_message = os.path.join(tmp, "last-message.txt")
-            argv = [
-                "codex",
-                "exec",
-                "--ignore-user-config",
-                "--skip-git-repo-check",
-                "--ephemeral",
-                "--color",
-                "never",
-                "--sandbox",
-                sandbox,
-                "--model",
-                self.model,
-                "--output-last-message",
-                last_message,
-            ]
-            if self.spec.codex_reasoning_effort:
-                argv.extend(
-                    ["-c", f"model_reasoning_effort={self.spec.codex_reasoning_effort}"]
-                )
-            argv.append(prompt)
-
-            log.info(
-                "codex enrichment: model=%s sandbox=%s", self.model, sandbox
-            )
+            argv = ["hyprpilot", self.profile, "--file", prompt_path]
+            log.info("hyprpilot enrichment: profile=%s", self.profile)
             try:
                 result = run(
-                    argv, log=log, env=env, tag="codex", timeout=self.spec.timeout
+                    argv, log=log, tag="hyprpilot", timeout=self.spec.timeout
                 )
             except subprocess.TimeoutExpired:
-                log.error("codex enrichment timed out after %.0fs", self.spec.timeout)
-                return None
-            if result.returncode != 0:
                 log.error(
-                    "codex enrichment failed (exit=%d) stderr=%s",
-                    result.returncode,
-                    result.stderr.strip(),
+                    "hyprpilot enrichment timed out after %.0fs", self.spec.timeout
                 )
                 return None
-            try:
-                with open(last_message) as fh:
-                    output = fh.read().strip()
-            except OSError:
-                output = ""
-            output = output or result.stdout.strip()
 
-        if not output:
-            log.error("codex enrichment produced no output")
+        if result.returncode != 0 or not result.stdout.strip():
+            log.error(
+                "hyprpilot enrichment failed (exit=%d) stderr=%s",
+                result.returncode,
+                result.stderr.strip(),
+            )
             return None
-        return output
+        return result.stdout.strip()
 
 def build_enricher(
     spec: EnrichSpec, system_prompt: str, user_prompt_template: str
@@ -453,11 +252,7 @@ def build_enricher(
     match spec.provider:
         case EnrichProvider.HTTP:
             return EnrichAdapterHttp(system_prompt, user_prompt_template, spec)
-        case EnrichProvider.CLAUDE:
-            return EnrichAdapterClaude(system_prompt, user_prompt_template, spec)
-        case EnrichProvider.OPENCODE:
-            return EnrichAdapterOpenCode(system_prompt, user_prompt_template, spec)
-        case EnrichProvider.CODEX:
-            return EnrichAdapterCodex(system_prompt, user_prompt_template, spec)
+        case EnrichProvider.HYPRPILOT:
+            return EnrichAdapterHyprpilot(system_prompt, user_prompt_template, spec)
         case _:
             raise ValueError(f"unknown enrich provider: {spec.provider!r}")

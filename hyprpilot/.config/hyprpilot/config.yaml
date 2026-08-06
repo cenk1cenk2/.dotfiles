@@ -2,15 +2,9 @@
 logging:
   level: error
 
-# Root-level [[patches]] — each entry is a partial ProfileConfig overlay
-# folded onto whichever profile is picked at resolve time. Optional
-# `$match.profile` glob filters which profiles a patch reaches (globset;
-# crosses `/`). Bodies fold via the strategic `$patch` engine
-# (`$patch: replace`, keyed-array merge by id, primitive append+dedupe,
-# `$deleteFromPrimitiveList/<field>`).
+# Partial ProfileConfig overlays folded onto the resolved profile.
+# `$match.profile` is a globset and crosses `/`.
 patches:
-  # Unscoped — every profile inherits the shared cwd, system_prompt and
-  # default mcp/skills config.
   - system_prompt:
       - file: ~/.config/nvim/utils/agents/AGENTS.md
     mcp:
@@ -25,15 +19,13 @@ patches:
         - "*"
       autoRejectTools: []
 
-  # personal/* + kilic/* profiles
   - $match:
       profile: "personal/*"
     harness:
       enabled: true
     mcp:
-      # A personal session delegates only to personal profiles. `harness`
-      # above is the TARGET side (may this profile be driven, by anyone);
-      # this is the LAUNCHER side (what may THIS session drive). Both must
+      # `harness` above is the target side (may this profile be driven);
+      # this is the launcher side (what may this session drive). Both must
       # pass, so the glob only narrows — it cannot nominate.
       harness:
         includeProfiles:
@@ -53,16 +45,11 @@ patches:
           - aws-docs
           - terraform
 
-  # work/* profiles
   - $match:
       profile: "work/*"
     mcp:
-      # Mirror of the personal scope, and the one that closes the actual
-      # hole: without it a work session's harness could reach every
-      # `personal/*` profile, since nomination says nothing about who is
-      # delegating. No `work/*` profile carries `harness.enabled` today, so
-      # this currently resolves to an empty candidate list — add that block
-      # to the profiles a work session should be able to drive.
+      # No `work/*` profile sets `harness.enabled`, so this resolves to an
+      # empty candidate list until one does.
       harness:
         includeProfiles:
           - "work/*"
@@ -80,26 +67,20 @@ patches:
           - gitlab
           - playwright
 
-  # Work Claude profiles point CLAUDE_CONFIG_DIR at the work config dir.
   - $match:
       profile: "work/claude/*"
     env:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-laravel"
 
-  # Personal Claude profiles point CLAUDE_CONFIG_DIR at the personal config dir.
   - $match:
       profile: "personal/claude/*"
     env:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-kilic"
 
-  # opencode has no single config-dir knob: OPENCODE_CONFIG_DIR only moves the
-  # config, while sessions and credentials live in the sqlite file OPENCODE_DB
-  # points at. Both are needed for the same isolation CLAUDE_CONFIG_DIR gives.
-  # Note OPENCODE_CONFIG_DIR *overlays* rather than replaces — the stow package
-  # deliberately ships no ~/.config/opencode/opencode.jsonc so there is nothing
-  # underneath to leak across contexts.
+  # OPENCODE_CONFIG_DIR moves only the config; sessions and credentials live
+  # in the sqlite file OPENCODE_DB points at. Both are needed.
   - $match:
       profile: "personal/kilic/*"
     env:
@@ -116,10 +97,29 @@ patches:
       OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-laravel"
       OPENCODE_DB: "${HOME}/.local/share/opencode-laravel/opencode.db"
 
-# [[agents]] — vendor registry. `command`/`args` are the NATIVE vendor
-# CLI the launcher exec()s directly (no ACP bridge, no nested `spawn`).
-# claude-code is inherited from the built-in defaults; these two override
-# codex/opencode with the native flags you want.
+  # haiku + gemma drive one-shot text rewrites: no MCP, no shared prompt.
+  # Has to live here rather than on the profiles — patches fold over profile
+  # bodies, so the root patch above would win.
+  - $match:
+      profile: "*/haiku"
+    mcp:
+      enabled: false
+    mcps:
+      - "$patch": replace
+    system_prompt:
+      - "$patch": replace
+
+  - $match:
+      profile: "*/gemma4*"
+    mcp:
+      enabled: false
+    mcps:
+      - "$patch": replace
+    system_prompt:
+      - "$patch": replace
+
+# Native vendor CLIs the launcher exec()s directly. claude-code comes from
+# the built-in defaults.
 agents:
   - id: codex
     provider: codex
@@ -152,15 +152,19 @@ profiles:
     model: "sonnet"
     mode: auto
 
+  # haiku + gemma drive one-shot text rewrites; the patch strips their MCP
+  # and system prompt. Not `plan` — Claude Code's plan mode answers a rewrite
+  # with planning commentary instead of the rewrite.
   - id: personal/claude/haiku
     agent: claude-code
     model: "haiku"
-    mode: auto
+    mode: dontAsk
     system_prompt: []
+    mcp:
+      enabled: false
 
-  # The AI_KILIC_DEV_API_KEY passthrough lives on the `personal/kilic/*` patch,
-  # which folds onto these with `$patch: replace` and would clobber a per-profile
-  # env block anyway.
+  # AI_KILIC_DEV_API_KEY comes from the `personal/kilic/*` patch, which
+  # replaces any per-profile env block.
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
     model: kilic/deepseek-v4-pro:cloud
@@ -179,18 +183,21 @@ profiles:
   - id: personal/kilic/gemma4:31b-cloud
     agent: opencode
     model: kilic/gemma4:31b-cloud
-    mode: build
+    mode: plan
     system_prompt: []
+    mcp:
+      enabled: false
 
   - id: personal/codex/gpt-5.5
     agent: codex
     model: gpt-5.5
     mode: read-only
 
-  - id: personal/codex/gpt-5.3-codex-spark
-    agent: codex
-    model: gpt-5.3-codex-spark
-    mode: read-only
+  # Rejected by the API on a ChatGPT-account login.
+  # - id: personal/codex/gpt-5.3-codex-spark
+  #   agent: codex
+  #   model: gpt-5.3-codex-spark
+  #   mode: read-only
 
   - id: work/claude/fable
     agent: claude-code
@@ -210,11 +217,13 @@ profiles:
   - id: work/claude/haiku
     agent: claude-code
     model: haiku
-    mode: auto
+    mode: dontAsk
     system_prompt: []
+    mcp:
+      enabled: false
 
-  # Ollama Cloud direct — model ids carry no `:cloud` / `-cloud` suffix; that
-  # tag only exists on the local-ollama-shaped API the kilic proxy fronts.
+  # Ollama Cloud model ids carry no `:cloud` suffix; that tag only exists on
+  # the local-ollama-shaped API the kilic proxy fronts.
   - id: work/ollama/deepseek-v4-pro
     agent: opencode
     model: ollama/deepseek-v4-pro
@@ -225,9 +234,7 @@ profiles:
     model: ollama/glm-5.2
     mode: build
 
-  # Re-enable alongside the matching `kimi-k3` entry in
-  # `~/.config/opencode-laravel/opencode.jsonc` — a profile whose model is not
-  # in the custom provider's `models` map resolves to nothing.
+  # Needs the matching `kimi-k3` entry in opencode-laravel first.
   # - id: work/ollama/kimi-k3
   #   agent: opencode
   #   model: ollama/kimi-k3
@@ -236,5 +243,7 @@ profiles:
   - id: work/ollama/gemma4:31b
     agent: opencode
     model: ollama/gemma4:31b
-    mode: build
+    mode: plan
     system_prompt: []
+    mcp:
+      enabled: false
