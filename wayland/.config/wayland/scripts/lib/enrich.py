@@ -186,7 +186,12 @@ class EnrichAdapterOpenCode:
     DEFAULT_MODEL = "gemma4:31b-cloud"
     DEFAULT_PROVIDER = "kilic"
     DEFAULT_CONFIG_PATH = os.path.expanduser(
-        "~/.config/nvim/utils/agents/opencode/kilic.json"
+        "~/.config/opencode-kilic/opencode.jsonc"
+    )
+    # Enrichment is a personal-context tool, so it shares the kilic session
+    # store rather than materialising a third db at opencode's XDG default.
+    DEFAULT_DB_PATH = os.path.expanduser(
+        "~/.local/share/opencode-kilic/opencode.db"
     )
 
     def __init__(self, system_prompt: str, user_prompt_template: str, **kwargs):
@@ -195,6 +200,7 @@ class EnrichAdapterOpenCode:
         self.model = kwargs.get("model") or self.DEFAULT_MODEL
         self.mode = kwargs.get("mode")
         self.config_path = kwargs.get("config_path") or self.DEFAULT_CONFIG_PATH
+        self.db_path = kwargs.get("db_path") or self.DEFAULT_DB_PATH
         self.provider_name = kwargs.get("provider_name") or self.DEFAULT_PROVIDER
 
     def enrich(self, text: str) -> Optional[str]:
@@ -217,6 +223,8 @@ class EnrichAdapterOpenCode:
         env = os.environ.copy()
         if self.config_path and os.path.exists(self.config_path):
             env["OPENCODE_CONFIG"] = self.config_path
+        if self.db_path:
+            env["OPENCODE_DB"] = self.db_path
 
         log.info(
             "opencode enrichment: model=%s agent=%s", model_spec, self.mode or "default"

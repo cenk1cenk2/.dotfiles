@@ -78,6 +78,28 @@ patches:
       "$patch": replace
       CLAUDE_CONFIG_DIR: "${HOME}/.claude-kilic"
 
+  # opencode has no single config-dir knob: OPENCODE_CONFIG_DIR only moves the
+  # config, while sessions and credentials live in the sqlite file OPENCODE_DB
+  # points at. Both are needed for the same isolation CLAUDE_CONFIG_DIR gives.
+  # Note OPENCODE_CONFIG_DIR *overlays* rather than replaces — the stow package
+  # deliberately ships no ~/.config/opencode/opencode.jsonc so there is nothing
+  # underneath to leak across contexts.
+  - $match:
+      profile: "personal/kilic/*"
+    env:
+      "$patch": replace
+      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+      OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-kilic"
+      OPENCODE_DB: "${HOME}/.local/share/opencode-kilic/opencode.db"
+
+  - $match:
+      profile: "work/ollama/*"
+    env:
+      "$patch": replace
+      LARAVEL_OLLAMA_API_KEY: "${LARAVEL_OLLAMA_API_KEY}"
+      OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-laravel"
+      OPENCODE_DB: "${HOME}/.local/share/opencode-laravel/opencode.db"
+
 # [[agents]] — vendor registry. `command`/`args` are the NATIVE vendor
 # CLI the launcher exec()s directly (no ACP bridge, no nested `spawn`).
 # claude-code is inherited from the built-in defaults; these two override
@@ -120,33 +142,29 @@ profiles:
     mode: auto
     system_prompt: []
 
+  # The AI_KILIC_DEV_API_KEY passthrough lives on the `personal/kilic/*` patch,
+  # which folds onto these with `$patch: replace` and would clobber a per-profile
+  # env block anyway.
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
     model: kilic/deepseek-v4-pro:cloud
     mode: build
-    env:
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/glm-5.2:cloud
     agent: opencode
     model: kilic/glm-5.2:cloud
     mode: build
-    env:
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/kimi-k3:cloud
     agent: opencode
     model: kilic/kimi-k3:cloud
     mode: build
-    env:
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
 
   - id: personal/kilic/gemma4:31b-cloud
     agent: opencode
     model: kilic/gemma4:31b-cloud
     mode: build
-    env:
-      AI_KILIC_DEV_API_KEY: "${AI_KILIC_DEV_API_KEY}"
+    system_prompt: []
 
   - id: personal/codex/gpt-5.5
     agent: codex
@@ -177,4 +195,30 @@ profiles:
     agent: claude-code
     model: haiku
     mode: auto
+    system_prompt: []
+
+  # Ollama Cloud direct — model ids carry no `:cloud` / `-cloud` suffix; that
+  # tag only exists on the local-ollama-shaped API the kilic proxy fronts.
+  - id: work/ollama/deepseek-v4-pro
+    agent: opencode
+    model: ollama/deepseek-v4-pro
+    mode: build
+
+  - id: work/ollama/glm-5.2
+    agent: opencode
+    model: ollama/glm-5.2
+    mode: build
+
+  # Re-enable alongside the matching `kimi-k3` entry in
+  # `~/.config/opencode-laravel/opencode.jsonc` — a profile whose model is not
+  # in the custom provider's `models` map resolves to nothing.
+  # - id: work/ollama/kimi-k3
+  #   agent: opencode
+  #   model: ollama/kimi-k3
+  #   mode: build
+
+  - id: work/ollama/gemma4:31b
+    agent: opencode
+    model: ollama/gemma4:31b
+    mode: build
     system_prompt: []
