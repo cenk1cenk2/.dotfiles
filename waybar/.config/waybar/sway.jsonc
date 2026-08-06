@@ -70,7 +70,7 @@
     "format": "{}",
     "exec": "~/.config/wayland/scripts/speech.py status",
     "exec-if": "~/.config/wayland/scripts/speech.py is-recording",
-    "on-click": "~/.config/wayland/scripts/speech.py toggle clipboard",
+    "on-click": "~/.config/wayland/scripts/speech.py toggle --output clipboard",
     "signal": 10,
   },
 

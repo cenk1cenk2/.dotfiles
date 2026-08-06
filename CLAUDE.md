@@ -146,6 +146,16 @@ for per-item results (`log.info("  filler: [red]%s[/]", …)`).
 - Level policy: INFO for one-off user-facing spawns (enrichment
   CLIs, agent processes). DEBUG for waybar-polling / status spawns.
 
+- **Every spawn that can block gets a `timeout`.** `lib.cli.run`
+  starts the child in its own session and a timeout kills the whole
+  process group, then `wait()`s it. Both matter: the AI CLIs fork
+  children of their own (claude runs node, opencode spawns a local
+  server), so killing the direct child orphans the rest, and an
+  unreaped child stays a zombie for the life of the parent — which
+  for a forked `copywriter` worker is unbounded. Callers catch
+  `subprocess.TimeoutExpired`; `run` re-raises it rather than
+  folding it into a returncode.
+
 ### Adapter pattern
 
 Where a script talks to multiple providers (enrichment backends,
@@ -154,13 +164,33 @@ adapter class with a `Protocol` interface. The CLI flag picks the
 adapter; the rest of the code never knows which one.
 
 - Protocols live next to the adapters (`lib/enrich.py` has
-  `EnrichAdapter` + `EnrichProvider` enum + three concrete
+  `EnrichAdapter` + `EnrichProvider` enum + four concrete
   classes). New adapters are pluggable by adding an enum value +
   a class; no core changes.
 
-- CLI wiring is a `match` on the Provider enum value inside the
-  click command callback. No factory functions, no indirection
-  layers — the match lives with the flag it reads from.
+- **One call site: `match` inline.** CLI wiring is a `match` on the
+  Provider enum value inside the click command callback — no factory,
+  no indirection, the match lives with the flag it reads from.
+
+- **Three or more call sites: one spec dataclass + one factory.**
+  `lib/enrich.py` carries `EnrichSpec` (every knob every backend
+  takes) and `build_enricher(spec, …)`; callers fill the spec from
+  their flags and never name an adapter class. This replaced three
+  duplicated `match` blocks — `copywriter.py` plus two in
+  `speech.py`, where the socket override path had silently drifted
+  into supporting fewer options than the CLI path. Don't reach for
+  this until the duplication is real.
+
+- Backend vocabularies get normalised at the boundary, not pushed
+  onto callers. `EnrichMode` (read-only / edit / unsafe) maps per
+  adapter to claude `--permission-mode`, opencode `--agent`, codex
+  `--sandbox`; the values are not interchangeable and passing one
+  backend's spelling to another fails silently. Default is the
+  least-privileged rung.
+
+- Secrets cross process boundaries as the *name* of an env var, not
+  the value — `EnrichSpec.api_key_env` is resolved at call time, so
+  the key never enters speech's socket JSON.
 
 ### Typing & style
 

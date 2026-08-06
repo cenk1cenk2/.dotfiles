@@ -13,12 +13,15 @@ import click
 import psutil
 
 from lib import (
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_ENRICH_MODE,
+    DEFAULT_TIMEOUT,
     EnrichAdapter,
-    EnrichAdapterClaude,
-    EnrichAdapterHttp,
-    EnrichAdapterOpenCode,
+    EnrichMode,
     EnrichProvider,
+    EnrichSpec,
     InputAdapter,
     InputAdapterClipboard,
     InputAdapterStdin,
@@ -28,6 +31,7 @@ from lib import (
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
+    build_enricher,
     create_logger,
     load_prompt,
     notify,
@@ -205,9 +209,20 @@ class Copywriter:
         help="Enrichment backend.",
     )
     @click.option(
+        "--mode",
+        type=click.Choice([m.value for m in EnrichMode], case_sensitive=False),
+        default=DEFAULT_ENRICH_MODE.value,
+        help="Capability ceiling.",
+    )
+    @click.option(
         "--base-url",
-        default="https://ai.kilic.dev/api/v1",
+        default=DEFAULT_BASE_URL,
         help="HTTP backend base URL.",
+    )
+    @click.option(
+        "--api-key-env",
+        default=DEFAULT_API_KEY_ENV,
+        help="Env var holding the HTTP backend key.",
     )
     @click.option("--model", default=None, help="Provider-specific model.")
     @click.option("--temperature", type=float, default=None)
@@ -219,8 +234,25 @@ class Copywriter:
         help="Reasoning depth.",
     )
     @click.option("--num-ctx", type=int, default=None)
+    @click.option(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="Backend deadline in seconds.",
+    )
     def cmd_run(
-        output, input_, provider, base_url, model, temperature, top_p, thinking, num_ctx
+        output,
+        input_,
+        provider,
+        mode,
+        base_url,
+        api_key_env,
+        model,
+        temperature,
+        top_p,
+        thinking,
+        num_ctx,
+        timeout,
     ):
         """Refine once and emit to the chosen sink."""
         input_mode = InputMode(input_)
@@ -232,32 +264,22 @@ class Copywriter:
             case _:
                 raise click.UsageError(f"unknown input mode: {input_mode!r}")
 
-        model_kw = {"model": model} if model else {}
-        provider_enum = EnrichProvider(provider)
-        match provider_enum:
-            case EnrichProvider.HTTP:
-                enricher: EnrichAdapter = EnrichAdapterHttp(
-                    Copywriter.SYSTEM_PROMPT,
-                    Copywriter.USER_PROMPT,
-                    base_url=base_url,
-                    api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                    temperature=temperature,
-                    top_p=top_p,
-                    thinking=thinking,
-                    num_ctx=num_ctx,
-                    user_agent="copywriter/1.0",
-                    **model_kw,
-                )
-            case EnrichProvider.CLAUDE:
-                enricher = EnrichAdapterClaude(
-                    Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT, **model_kw
-                )
-            case EnrichProvider.OPENCODE:
-                enricher = EnrichAdapterOpenCode(
-                    Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT, **model_kw
-                )
-            case _:
-                raise click.UsageError(f"unknown enrich provider: {provider_enum!r}")
+        spec = EnrichSpec(
+            provider=EnrichProvider(provider),
+            model=model,
+            mode=EnrichMode(mode),
+            timeout=timeout,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            temperature=temperature,
+            top_p=top_p,
+            thinking=thinking,
+            num_ctx=num_ctx,
+            user_agent="copywriter/1.0",
+        )
+        enricher = build_enricher(
+            spec, Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT
+        )
 
         output_mode = OutputMode(output)
         match output_mode:

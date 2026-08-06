@@ -10,12 +10,20 @@ from .cli import (
     run as run,
 )
 from .enrich import (
+    DEFAULT_API_KEY_ENV as DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL as DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER as DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_ENRICH_MODE as DEFAULT_ENRICH_MODE,
+    DEFAULT_TIMEOUT as DEFAULT_TIMEOUT,
     EnrichAdapter as EnrichAdapter,
     EnrichAdapterClaude as EnrichAdapterClaude,
+    EnrichAdapterCodex as EnrichAdapterCodex,
     EnrichAdapterHttp as EnrichAdapterHttp,
     EnrichAdapterOpenCode as EnrichAdapterOpenCode,
+    EnrichMode as EnrichMode,
     EnrichProvider as EnrichProvider,
+    EnrichSpec as EnrichSpec,
+    build_enricher as build_enricher,
 )
 from .input import (
     InputAdapter as InputAdapter,

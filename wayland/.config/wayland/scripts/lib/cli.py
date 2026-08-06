@@ -8,6 +8,8 @@ command output (waybar JSON, stdout sinks)."""
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -86,6 +88,10 @@ def run(
         env=env,
         cwd=cwd,
         text=True,
+        # Own process group so a timeout can take the whole tree down. The AI
+        # CLIs fork children of their own — claude runs node, opencode spawns a
+        # local server — and killing only the direct child orphans those.
+        start_new_session=True,
     )
 
     stdout_chunks: list[str] = []
@@ -117,7 +123,13 @@ def run(
             proc.stdin.close()
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        # Reap, or the killed child lingers as a zombie until this process
+        # exits — which for a forked copywriter worker can be a long time.
+        proc.wait()
         for t in threads:
             t.join(timeout=1)
         raise

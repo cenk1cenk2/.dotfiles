@@ -17,17 +17,21 @@ from typing import Optional, Protocol
 import click
 
 from lib import (
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_ENRICH_MODE,
+    DEFAULT_TIMEOUT,
     EnrichAdapter,
-    EnrichAdapterClaude,
-    EnrichAdapterHttp,
-    EnrichAdapterOpenCode,
+    EnrichMode,
     EnrichProvider,
+    EnrichSpec,
     OutputAdapter,
     OutputAdapterClipboard,
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
+    build_enricher,
     create_logger,
     load_prompt,
     notify,
@@ -81,31 +85,6 @@ class Phase(StrEnum):
     RECORDING = "recording"
     WORKING = "working"
     OUTPUT = "output"
-
-
-@dataclass
-class EnrichSpec:
-    provider: EnrichProvider
-    base_url: Optional[str] = None
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    thinking: str = "none"
-    num_ctx: Optional[int] = None
-
-    @classmethod
-    def from_dict(cls, d: dict) -> EnrichSpec:
-        return cls(
-            provider=EnrichProvider(d["provider"]),
-            base_url=d.get("base_url"),
-            model=d.get("model"),
-            api_key=d.get("api_key"),
-            temperature=d.get("temperature"),
-            top_p=d.get("top_p"),
-            thinking=d.get("thinking", "none"),
-            num_ctx=d.get("num_ctx"),
-        )
 
 
 @dataclass
@@ -222,17 +201,38 @@ class Session:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket):
+        # A dropped reply is indistinguishable from "no session listening" to
+        # the client, which answers by starting a second session that rebinds
+        # the socket over the live recorder — so every path must answer.
         try:
-            raw = conn.recv(1024).decode("utf-8", errors="replace").strip()
-            response = self._dispatch(raw)
-            conn.sendall(json.dumps(asdict(response)).encode())
+            response = self._dispatch(self._recv_request(conn))
         except Exception as e:
             self.log.warning("socket handler error: %s", e)
+            response = Response(ok=False, error=str(e))
+        try:
+            conn.sendall(json.dumps(asdict(response)).encode())
+        except OSError as e:
+            self.log.warning("socket reply failed: %s", e)
         finally:
             try:
                 conn.close()
             except OSError:
                 pass
+
+    @staticmethod
+    def _recv_request(conn: socket.socket) -> str:
+        """Read one newline-framed request.
+
+        The enrich spec travels in this payload and grows with every field
+        added to it, so a single fixed recv() would eventually truncate."""
+        buf = b""
+        while b"\n" not in buf:
+            data = conn.recv(4096)
+            if not data:
+                break
+            buf += data
+
+        return buf.decode("utf-8", errors="replace").strip()
 
     def _dispatch(self, raw: str) -> Response:
         try:
@@ -246,11 +246,13 @@ class Session:
             with self._lock:
                 return Response(ok=True, state=SessionState(**asdict(self.state)))
         if cmd is Command.STOP:
+            # Stop first: an override that raises must not leave the recorder
+            # running with no second toggle able to reach it.
+            self._adapter.stop()
             if "enrich" in obj:
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
                 self._apply_output_override(OutputMode(obj["output"]))
-            self._adapter.stop()
             return Response(ok=True)
         if cmd is Command.KILL:
             self._adapter.cancel()
@@ -261,32 +263,11 @@ class Session:
     def _apply_enrich_override(self, spec_dict: Optional[dict]) -> None:
         new_enricher: Optional[EnrichAdapter] = None
         if spec_dict:
-            spec = EnrichSpec.from_dict(spec_dict)
-            model_kw = {"model": spec.model} if spec.model else {}
-            match spec.provider:
-                case EnrichProvider.HTTP:
-                    new_enricher = EnrichAdapterHttp(
-                        Speech.SYSTEM_PROMPT,
-                        Speech.USER_PROMPT,
-                        base_url=spec.base_url or "https://ai.kilic.dev/api/v1",
-                        api_key=spec.api_key or "",
-                        temperature=spec.temperature,
-                        top_p=spec.top_p,
-                        thinking=spec.thinking,
-                        num_ctx=spec.num_ctx,
-                        user_agent="speech/1.0",
-                        **model_kw,
-                    )
-                case EnrichProvider.CLAUDE:
-                    new_enricher = EnrichAdapterClaude(
-                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
-                    )
-                case EnrichProvider.OPENCODE:
-                    new_enricher = EnrichAdapterOpenCode(
-                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
-                    )
-                case _:
-                    raise ValueError(f"unknown enrich provider: {spec.provider!r}")
+            new_enricher = build_enricher(
+                EnrichSpec.from_dict(spec_dict),
+                Speech.SYSTEM_PROMPT,
+                Speech.USER_PROMPT,
+            )
         self.set_enricher(new_enricher)
 
     def _apply_output_override(self, mode: OutputMode) -> None:
@@ -393,7 +374,7 @@ class Speech:
         output_mode: OutputMode,
         save: bool,
     ) -> None:
-        enrich_payload = asdict(enrich_spec) if enrich_spec else None
+        enrich_payload = enrich_spec.to_dict() if enrich_spec else None
         if self._send(Command.STOP, enrich=enrich_payload, output=output_mode.value) is not None:
             self.log.info("press-2: signaled running session to stop")
             return
@@ -500,7 +481,18 @@ class Speech:
         type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
         default=DEFAULT_ENRICH_ADAPTER.value,
     )
-    @click.option("--enrich-base-url", default="https://ai.kilic.dev/api/v1")
+    @click.option(
+        "--enrich-mode",
+        type=click.Choice([m.value for m in EnrichMode], case_sensitive=False),
+        default=DEFAULT_ENRICH_MODE.value,
+        help="Capability ceiling.",
+    )
+    @click.option("--enrich-base-url", default=DEFAULT_BASE_URL)
+    @click.option(
+        "--enrich-api-key-env",
+        default=DEFAULT_API_KEY_ENV,
+        help="Env var holding the HTTP backend key.",
+    )
     @click.option("--enrich-model", default=None)
     @click.option("--enrich-temperature", type=float, default=None)
     @click.option("--enrich-top-p", type=float, default=None)
@@ -510,17 +502,26 @@ class Speech:
         default="none",
     )
     @click.option("--enrich-num-ctx", type=int, default=None)
+    @click.option(
+        "--enrich-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="Backend deadline in seconds.",
+    )
     @click.option("--save/--no-save", default=True, help="Copy raw transcript to clipboard first.")
     def cmd_toggle(
         output,
         enrich,
         enrich_provider,
+        enrich_mode,
         enrich_base_url,
+        enrich_api_key_env,
         enrich_model,
         enrich_temperature,
         enrich_top_p,
         enrich_thinking,
         enrich_num_ctx,
+        enrich_timeout,
         save,
     ):
         """Start a session, or toggle an existing one."""
@@ -538,42 +539,22 @@ class Speech:
         enrich_spec: Optional[EnrichSpec] = None
         enricher: Optional[EnrichAdapter] = None
         if enrich:
-            provider_enum = EnrichProvider(enrich_provider)
             enrich_spec = EnrichSpec(
-                provider=provider_enum,
-                base_url=enrich_base_url,
+                provider=EnrichProvider(enrich_provider),
                 model=enrich_model,
-                api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
+                mode=EnrichMode(enrich_mode),
+                timeout=enrich_timeout,
+                base_url=enrich_base_url,
+                api_key_env=enrich_api_key_env,
                 temperature=enrich_temperature,
                 top_p=enrich_top_p,
                 thinking=enrich_thinking,
                 num_ctx=enrich_num_ctx,
+                user_agent="speech/1.0",
             )
-            model_kw = {"model": enrich_model} if enrich_model else {}
-            match provider_enum:
-                case EnrichProvider.HTTP:
-                    enricher = EnrichAdapterHttp(
-                        Speech.SYSTEM_PROMPT,
-                        Speech.USER_PROMPT,
-                        base_url=enrich_base_url,
-                        api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
-                        temperature=enrich_temperature,
-                        top_p=enrich_top_p,
-                        thinking=enrich_thinking,
-                        num_ctx=enrich_num_ctx,
-                        user_agent="speech/1.0",
-                        **model_kw,
-                    )
-                case EnrichProvider.CLAUDE:
-                    enricher = EnrichAdapterClaude(
-                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
-                    )
-                case EnrichProvider.OPENCODE:
-                    enricher = EnrichAdapterOpenCode(
-                        Speech.SYSTEM_PROMPT, Speech.USER_PROMPT, **model_kw
-                    )
-                case _:
-                    raise click.UsageError(f"unknown enrich provider: {provider_enum!r}")
+            enricher = build_enricher(
+                enrich_spec, Speech.SYSTEM_PROMPT, Speech.USER_PROMPT
+            )
 
         Speech(HyprwhsprAdapter(), enricher, output_adapter).run_once(
             enrich_spec=enrich_spec,
