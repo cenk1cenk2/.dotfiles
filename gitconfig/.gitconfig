@@ -83,6 +83,7 @@
   external = difft
   tool = diffview
   context = 5
+	colorMoved = dimmed-zebra
 
 [difftool "diffview"]
   cmd = "CK_FLATTEN_HANDLER=gittool DIFFVIEW_GITTOOL_MODE=diff DIFFVIEW_LEFT=\"$LOCAL\" DIFFVIEW_RIGHT=\"$REMOTE\" DIFFVIEW_OUTPUT=\"$MERGED\" nvim -b -n /dev/null \"+lua require('ck.modules.gittool').open_from_gittool()\""
@@ -115,61 +116,62 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
   driver = mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L
 
 [color "status"]
-  branch = normal
-  added = 10 normal
-  updated = 10 normal
-  localbranch = normal
-  changed = 11 normal
-  header = normal
-  remotebranch = normal
-  nobranch = normal bold
-  unmerged = 9 normal
-  untracked = normal dim
+	branch = 4 normal bold
+	added = 2 normal bold
+	updated = 2 normal bold
+	localbranch = 4 normal bold
+	changed = 0 3
+	header = normal
+	remotebranch = 6 normal bold
+	nobranch = normal bold
+	unmerged = 7 1
+	untracked = 8 normal
 [color "branch"]
-  plain = normal
-  remote = normal
-  current = normal reverse
-  local = normal
-  upstream = normal
+	plain = normal
+	remote = 6 normal bold
+	current = 4 2
+	local = 4 normal bold
+	upstream = 6 normal bold
 [color "remote"]
-  hint = normal dim
-  success = 2 normal
-  error = 1 normal
-  warning = 3 normal
+	hint = 8 normal
+	success = 2 normal bold
+	error = 7 1
+	warning = 0 3
 [color "interactive"]
-  header = normal dim bold
-  prompt = 15 4
-  help = normal dim
-  error = normal bold
+	header = 8 normal bold
+	prompt = 4 2
+	help = 8 normal
+	error = 7 1
 [color "diff"]
-  commit = normal
-  newMoved = 11 normal
-  oldMovedAlternativeDimmed = 4 normal dim
-  frag = normal dim
-  oldMovedAlternative = 4 normal
-  contextBold = normal bold
-  newBold = 10 normal bold
-  context = normal
-  oldMoved = 3 normal
-  oldBold = 1 normal bold
-  newMovedDimmed = 11 normal dim
-  func = normal bold dim
-  meta = normal italic
-  newDimmed = 10 normal dim
-  newMovedAlternative = 12 normal
-  new = 10 normal
-  newMovedAlternativeDimmed = 12 normal dim
-  whitespace = normal 9
-  oldMovedDimmed = 3 normal dim
-  oldDimmed = 1 normal dim
-  old = 1 normal
+	commit = 3 0
+	newMoved = 11 0
+	oldMovedAlternativeDimmed = 6 0 dim
+	frag = 8 normal
+	oldMovedAlternative = 6 0
+	contextBold = normal bold
+	newBold = 10 0 bold
+	context = normal
+	oldMoved = 3 0
+	oldBold = 1 0 bold
+	newMovedDimmed = 11 normal
+	func = 8 normal
+	meta = 8 normal
+	newDimmed = 10 normal
+	newMovedAlternative = 14 0
+	new = 10 0
+	newMovedAlternativeDimmed = 11 normal
+	whitespace = normal 3
+	oldMovedDimmed = 3 0 dim
+	oldDimmed = 1 0 dim
+	old = 1 0
+	contextDimmed = normal dim
 [color "decorate"]
-  branch = normal
-  tag = normal
-  remotebranch = normal
-  stash = normal dim
-  grafted = normal bold
-  HEAD = normal italic
+	branch = 4 normal bold
+	tag = 5 normal bold
+	remotebranch = 6 normal bold
+	stash = 3 0
+	grafted = normal bold
+	HEAD = 0 2
 
 [includeIf "gitdir/i:~/development/work/"]
   path = ~/development/work/.gitconfig
