@@ -2,7 +2,63 @@
 
 # vim: ft=bash
 
+# Emitted from here rather than kept in the zsh config so the command surface
+# and its completion cannot drift apart.
+cmd_completion() {
+  case "${1:-zsh}" in
+  zsh) ;;
+  *)
+    echo "yay-dep completion: only zsh is supported" >&2
+    exit 1
+    ;;
+  esac
+
+  cat <<'EOF'
+_yay_dep_completion() {
+  local context state state_descr line
+  typeset -A opt_args
+  local -a commands
+  commands=(
+    'clean:Remove all orphaned packages'
+    'list:List all orphaned packages'
+    'mark-explicit:Mark packages as explicitly installed'
+    'mark-dependency:Mark packages as dependencies'
+    'completion:Print the shell completion script'
+  )
+
+  _arguments -C \
+    '1:command:->command' \
+    '*::package:->package'
+
+  case "$state" in
+  command)
+    _describe 'yay-dep command' commands
+    ;;
+  package)
+    # Offer only what the mark would actually change: currently-dependency
+    # packages for mark-explicit, currently-explicit ones for mark-dependency.
+    case "$line[1]" in
+    mark-explicit)
+      _values -w 'dependency package' ${(f)"$(pacman -Qdq 2>/dev/null)"}
+      ;;
+    mark-dependency)
+      _values -w 'explicit package' ${(f)"$(pacman -Qeq 2>/dev/null)"}
+      ;;
+    completion)
+      _arguments '1:shell:(zsh)'
+      ;;
+    esac
+    ;;
+  esac
+}
+EOF
+}
+
 case "$1" in
+completion)
+  shift
+  cmd_completion "$@"
+  ;;
 clean)
   echo "All orphaned packages will be removed."
 
@@ -24,7 +80,7 @@ mark-dependency)
   yay -D --asdeps "${@:2}"
   ;;
 *)
-  echo "Usage: $0 [clean|mark-explicit|mark-dependency] [packages?...]"
+  echo "Usage: $0 [clean|list|mark-explicit|mark-dependency|completion] [packages?...]"
   exit 1
   ;;
 esac

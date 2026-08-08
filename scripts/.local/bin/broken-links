@@ -14,11 +14,13 @@ usage() {
 Usage:
   broken-links ls [<dir>...]
   broken-links rm [-f | --force] [<dir>...]
+  broken-links completion [zsh]
 
 Commands:
   ls [<dir>...]                 List broken symlinks under each <dir>.
   rm [-f|--force] [<dir>...]    Delete broken symlinks. Prompts for each
                                 unless -f / --force is given.
+  completion [zsh]              Print the shell completion script.
 
 Directories default to "." when none are given.
 
@@ -27,6 +29,54 @@ Examples:
   broken-links rm -f ~/.cache
 EOF
     exit 1
+}
+
+# Emitted from here rather than kept in the zsh config so the command surface
+# and its completion cannot drift apart.
+cmd_completion() {
+    case "${1:-zsh}" in
+        zsh) ;;
+        *) echo "broken-links completion: only zsh is supported" >&2; exit 1 ;;
+    esac
+
+    cat <<'EOF'
+_broken_links_completion() {
+  local context state state_descr line
+  typeset -A opt_args
+  local -a commands
+  commands=(
+    'ls:List broken symlinks under each directory'
+    'rm:Delete broken symlinks, prompting unless forced'
+    'completion:Print the shell completion script'
+  )
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[Show usage]' \
+    '1:command:->command' \
+    '*::args:->args'
+
+  case "$state" in
+  command)
+    _describe 'broken-links command' commands
+    ;;
+  args)
+    case "$line[1]" in
+    rm)
+      _arguments \
+        '(-f --force)'{-f,--force}'[Delete without prompting for each link]' \
+        '*:directory:_files -/'
+      ;;
+    ls)
+      _arguments '*:directory:_files -/'
+      ;;
+    completion)
+      _arguments '1:shell:(zsh)'
+      ;;
+    esac
+    ;;
+  esac
+}
+EOF
 }
 
 require() {
@@ -87,6 +137,7 @@ cmd_rm() {
 case "${1:-}" in
     ls) shift; cmd_ls "$@" ;;
     rm) shift; cmd_rm "$@" ;;
+    completion) shift; cmd_completion "$@" ;;
     "" | -h | --help) usage ;;
     *) echo "broken-links: unknown command: $1" >&2; usage ;;
 esac

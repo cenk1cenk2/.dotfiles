@@ -24,6 +24,95 @@ class DisplayBackend(StrEnum):
     KANSHI = "kanshi"
     NATIVE = "native"
 
+# Emitted by `jumpy completion zsh` rather than kept in the zsh config, so the
+# command surface and its completion cannot drift apart. The dynamic candidate
+# lists come back through `jumpy completion --list`, which parses pw-dump in
+# Python — the human-facing `sound ls` table is quoted CSV and shell-parsing it
+# would break on any device name containing a comma.
+ZSH_COMPLETION = """\
+_jumpy_completion() {
+  local context state state_descr line
+  typeset -A opt_args
+  local -a commands
+  commands=(
+    'sound:Set default audio device via wireplumber'
+    'display:Apply or list Hyprland monitor profiles'
+    'completion:Print the shell completion script'
+  )
+
+  _arguments -C \\
+    '1:command:->command' \\
+    '*::args:->args'
+
+  case "$state" in
+  command)
+    _describe 'jumpy command' commands
+    ;;
+  args)
+    case "$line[1]" in
+    sound) _jumpy_sound ;;
+    display) _jumpy_display ;;
+    completion) _arguments '1:shell:(zsh)' ;;
+    esac
+    ;;
+  esac
+}
+
+_jumpy_sound() {
+  local context state state_descr line
+  typeset -A opt_args
+  local -a values
+  local name
+
+  _arguments -C \\
+    '1:media class:->class' \\
+    '2:device:->device'
+
+  case "$state" in
+  class)
+    values=('ls:List available devices and their classes')
+    for name in ${(f)"$(jumpy completion --list sound-classes 2>/dev/null)"}; do
+      values+=("$name:media class")
+    done
+    _describe -t classes 'media class' values
+    ;;
+  device)
+    [[ "$line[1]" == ls ]] && return
+    values=()
+    for name in ${(f)"$(jumpy completion --list sound-devices --media-class "$line[1]" 2>/dev/null)"}; do
+      values+=("$name:device")
+    done
+    _describe -t devices 'device' values
+    ;;
+  esac
+}
+
+_jumpy_display() {
+  local context state state_descr line
+  typeset -A opt_args
+  local -a values
+  local name backend
+
+  _arguments -C \\
+    '--backend[Profile backend]:backend:(kanshi native)' \\
+    '1:profile:->profile'
+
+  case "$state" in
+  profile)
+    backend=${opt_args[--backend]:-kanshi}
+    values=(
+      'ls:List available profiles'
+      'reload:Re-run auto-match'
+    )
+    for name in ${(f)"$(jumpy display ls --backend $backend 2>/dev/null)"}; do
+      values+=("$name:$backend profile")
+    done
+    _describe -t profiles 'profile' values
+    ;;
+  esac
+}
+"""
+
 class Jumpy:
     AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
     DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
@@ -57,6 +146,28 @@ class Jumpy:
                 for k in ("media.class", "alsa.card_name", "media.name")
             )
             print(row)
+
+    def sound_classes(self) -> None:
+        """Distinct media.class values, one per line, for shell completion."""
+        seen: list[str] = []
+        for node in self._pw_nodes():
+            value = node.get("info", {}).get("props", {}).get("media.class")
+            if value and value not in seen:
+                seen.append(value)
+        print("\n".join(seen))
+
+    def sound_devices(self, media_class: str) -> None:
+        """Names `sound_apply` accepts for a class, one per line, for completion."""
+        seen: list[str] = []
+        for node in self._pw_nodes():
+            props = node.get("info", {}).get("props", {})
+            if props.get("media.class") != media_class:
+                continue
+            for key in ("alsa.card_name", "media.name"):
+                value = props.get(key)
+                if value and value not in seen:
+                    seen.append(value)
+        print("\n".join(seen))
 
     def sound_apply(self, media_class: str, card_name: str) -> None:
         for node in self._pw_nodes():
@@ -192,6 +303,20 @@ class Jumpy:
         )
         display.add_argument("args", nargs="*")
 
+        completion = sub.add_parser(
+            "completion",
+            help="Print the shell completion script.",
+        )
+        completion.add_argument("shell", nargs="?", default="zsh", choices=["zsh"])
+        # Candidate lists the emitted completion calls back for; hidden because
+        # they are machine-readable output, not a user-facing command.
+        completion.add_argument(
+            "--list",
+            choices=["sound-classes", "sound-devices"],
+            help=argparse.SUPPRESS,
+        )
+        completion.add_argument("--media-class", default="", help=argparse.SUPPRESS)
+
         return parser
 
     def run(self, argv: list[str] | None = None) -> None:
@@ -223,6 +348,14 @@ class Jumpy:
                     case _:
                         parser.parse_args(["display", "--help"])
                         sys.exit(2)
+            case "completion":
+                match ns.list:
+                    case "sound-classes":
+                        self.sound_classes()
+                    case "sound-devices":
+                        self.sound_devices(ns.media_class)
+                    case _:
+                        sys.stdout.write(ZSH_COMPLETION)
 
 if __name__ == "__main__":
     Jumpy().run()
