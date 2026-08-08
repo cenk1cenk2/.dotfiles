@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cache
 from pathlib import Path
 from typing import ClassVar, Protocol
 
@@ -22,6 +25,81 @@ from lib import create_logger
 class CpuVendor(StrEnum):
     INTEL = "GenuineIntel"
     AMD = "AuthenticAMD"
+
+class SmiMode(StrEnum):
+    """Whether a view may call nvidia-smi, which powers a sleeping GPU up.
+
+    AUTO only queries a GPU that sysfs already reports as active, so a
+    read-only status view never becomes the reason the GPU woke.
+    """
+
+    AUTO = "auto"
+    YES = "yes"
+    NO = "no"
+
+@dataclass
+class GpuCard:
+    """One DRM card, read from sysfs only.
+
+    Model comes from the pci.ids database rather than lspci: lspci reads
+    PCI config space, which resumes a D3cold device.
+    """
+
+    name: str
+    pci_id: str
+    vendor_id: str
+    device_id: str
+    subsystem_vendor_id: str | None
+    subsystem_device_id: str | None
+    class_id: str
+    driver: str | None
+    power_control: str | None
+    runtime_status: str | None
+    label: str | None
+    model: str | None
+    nodes: list[Path]
+
+    VENDOR_NAMES: ClassVar[dict[str, str]] = {
+        "0x1002": "AMD",
+        "0x10de": "NVIDIA",
+        "0x8086": "Intel",
+    }
+
+    @property
+    def vendor(self) -> str:
+        return self.VENDOR_NAMES.get(self.vendor_id, self.vendor_id)
+
+    @property
+    def short_model(self) -> str:
+        model = self.model or self.label or self.device_id
+        # pci.ids wraps the marketing name in brackets after the die name,
+        # e.g. "GA107M [GeForce RTX 3050 Mobile]" — keep the marketing half.
+        bracketed = re.search(r"\[([^\]]+)\]", model)
+        if bracketed:
+            model = bracketed.group(1)
+        model = re.sub(r"\s+", " ", model).strip()
+        # Some pci.ids names repeat the vendor ("Intel Graphics"); the table
+        # already carries a vendor column.
+        model = re.sub(rf"^{re.escape(self.vendor)} (?=\S)", "", model)
+
+        return model or self.device_id
+
+    @property
+    def is_nvidia(self) -> bool:
+        return self.vendor_id == Tdp.NVIDIA_VENDOR_ID
+
+    @property
+    def is_active(self) -> bool:
+        return self.runtime_status == "active"
+
+@dataclass
+class GpuHolder:
+    pid: int
+    ppid: int | None
+    state: str
+    command: str
+    args: str
+    nodes: list[Path]
 
 @dataclass
 class PowerLimit:
@@ -208,7 +286,7 @@ class NvidiaSnapshot:
     power_state: str | None
     active_ms: int | None
     suspended_ms: int | None
-    holders: dict[int, list[Path]]
+    holders: list[GpuHolder]
 
     @property
     def sleep_ratio(self) -> float | None:
@@ -544,6 +622,19 @@ class Tdp:
 
         return output or "unknown"
 
+    @staticmethod
+    @cache
+    def pci_ids_lines() -> tuple[str, ...]:
+        """Cached pci.ids database, so a multi-card scan reads the file once."""
+        try:
+            text = Path("/usr/share/hwdata/pci.ids").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return ()
+
+        return tuple(text.splitlines())
+
     def pci_device_name(self, pci_id: str) -> str | None:
         # Resolved from sysfs IDs + the pci.ids database instead of lspci:
         # config-space reads power a D3cold device back up, sysfs does not.
@@ -553,15 +644,8 @@ class Tdp:
         if not vendor or not model:
             return None
 
-        try:
-            lines = Path("/usr/share/hwdata/pci.ids").read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        except OSError:
-            return None
-
         in_vendor = False
-        for line in lines:
+        for line in self.pci_ids_lines():
             if not line or line.startswith("#"):
                 continue
             if not line.startswith("\t"):
@@ -598,29 +682,89 @@ class Tdp:
 
         return unique
 
-    def nvidia_holders(self, pci_id: str) -> dict[int, list[Path]]:
-        holders: dict[int, list[Path]] = {}
-        for node in self.nvidia_nodes(pci_id):
+    def node_holders(self, nodes: list[Path]) -> list[GpuHolder]:
+        """Processes holding any of `nodes` open, with their /proc details.
+
+        Only fuser's stdout carries bare PIDs; its stderr holds the filename
+        and the access-mode letters, and scanning that too would read the
+        trailing digit of `/dev/dri/card0` as a PID.
+        """
+        held: dict[int, list[Path]] = {}
+        for node in nodes:
             proc = self.run(["fuser", str(node)], check=False)
-            output = f"{proc.stdout}\n{proc.stderr}"
-            for raw_pid in output.split():
+            for raw_pid in proc.stdout.split():
                 if raw_pid.isdigit():
-                    holders.setdefault(int(raw_pid), []).append(node)
+                    held.setdefault(int(raw_pid), []).append(node)
+
+        holders: list[GpuHolder] = []
+        for pid in sorted(held):
+            proc_path = Path("/proc") / str(pid)
+            try:
+                # comm can contain spaces and parens, so ppid/state are taken
+                # relative to the final ')' rather than by field index.
+                stat = (proc_path / "stat").read_text()
+                fields = stat[stat.rindex(")") + 1 :].split()
+                state, ppid = fields[0], int(fields[1])
+            except (FileNotFoundError, PermissionError, OSError, ValueError, IndexError):
+                state, ppid = "?", None
+
+            command = self.read_optional(proc_path / "comm") or "?"
+            args = (self.read_optional(proc_path / "cmdline") or "").replace(
+                "\x00", " "
+            ).strip()
+            holders.append(
+                GpuHolder(
+                    pid=pid,
+                    ppid=ppid,
+                    state=state,
+                    command=command,
+                    args=args or command,
+                    nodes=held[pid],
+                )
+            )
 
         return holders
 
-    def print_nvidia_holders(self, holders: dict[int, list[Path]]) -> None:
+    def nvidia_holders(self, pci_id: str) -> list[GpuHolder]:
+        return self.node_holders(self.nvidia_nodes(pci_id))
+
+    def print_holders(
+        self,
+        holders: list[GpuHolder],
+        title: str,
+        labels: dict[Path, str] | None = None,
+        detailed: bool = False,
+    ) -> None:
         if not holders:
-            self.console.print("[green]No NVIDIA device-node holders.[/]")
+            self.console.print(f"[green]No {title.lower()}.[/]")
             return
 
-        table = Table(title="NVIDIA holders", box=None)
+        table = Table(title=title, box=None)
         table.add_column("PID", justify="right", style="bold")
+        if detailed:
+            table.add_column("PPID", justify="right")
+            table.add_column("State")
         table.add_column("Command")
         table.add_column("Nodes")
-        for pid, nodes in sorted(holders.items()):
-            command = self.read_optional(Path("/proc") / str(pid) / "comm") or "?"
-            table.add_row(str(pid), command, "\n".join(str(node) for node in nodes))
+        if detailed:
+            table.add_column("Args")
+
+        for holder in holders:
+            row = [str(holder.pid)]
+            if detailed:
+                row.extend(
+                    [str(holder.ppid) if holder.ppid is not None else "?", holder.state]
+                )
+            row.append(holder.command)
+            row.append(
+                "\n".join(
+                    (labels or {}).get(node, str(node)) for node in holder.nodes
+                )
+            )
+            if detailed:
+                row.append(holder.args)
+            table.add_row(*row)
+
         self.console.print(table)
 
     def nvidia_power_rows(self) -> list[list[str]]:
@@ -659,9 +803,24 @@ class Tdp:
             ["sudo", "nvidia-smi", "-i", gpu_pci_id, "-pl", f"{watts:g}"],
             echo_output=True,
         )
-        self.show_nvidia(gpu_pci_id, smi=True)
+        self.show_nvidia(gpu_pci_id, smi=SmiMode.YES)
 
-    def show_nvidia(self, pci_id: str | None = None, smi: bool = False) -> None:
+    def resolve_smi(self, mode: SmiMode, active: bool) -> bool:
+        """Whether nvidia-smi may run; AUTO refuses to be the cause of a wake."""
+        if mode is SmiMode.NO or not shutil.which("nvidia-smi"):
+            return False
+        if mode is SmiMode.YES:
+            return True
+        if not active:
+            self.console.print(
+                "[dim]Skipped nvidia-smi because no NVIDIA GPU is active; "
+                "querying it would wake the GPU. Use --smi to query anyway.[/]"
+            )
+            return False
+
+        return True
+
+    def show_nvidia(self, pci_id: str | None = None, smi: SmiMode = SmiMode.NO) -> None:
         self.console.rule("[bold yellow]NVIDIA[/]")
         pci_ids = (
             [self.nvidia_gpu_pci_id(pci_id)] if pci_id else self.nvidia_gpu_pci_ids()
@@ -698,10 +857,13 @@ class Tdp:
             )
             for gpu_pci_id in pci_ids
         ]
+        use_smi = self.resolve_smi(
+            smi, any(snapshot.runtime_status == "active" for snapshot in snapshots)
+        )
 
         table = Table(box=None)
         table.add_column("PCI", style="bold")
-        if smi:
+        if use_smi:
             table.add_column("Drain")
         table.add_column("Power")
         table.add_column("Runtime")
@@ -712,7 +874,7 @@ class Tdp:
         table.add_column("Holders", justify="right")
         for snapshot in snapshots:
             row = [snapshot.pci_id]
-            if smi:
+            if use_smi:
                 row.append(self.nvidia_drain_state(snapshot.pci_id))
             state_style = "green" if snapshot.power_state == "D3cold" else "yellow"
             ratio = snapshot.sleep_ratio
@@ -751,7 +913,7 @@ class Tdp:
                 f" ({power_state or '?'}, {len(holders)} holders)"
             )
 
-        if smi:
+        if use_smi:
             power_table = Table(title="NVIDIA power limits", box=None)
             power_table.add_column("PCI", style="bold")
             power_table.add_column("Draw W", justify="right")
@@ -768,21 +930,20 @@ class Tdp:
                 self.console.print(power_table)
 
         for snapshot in snapshots:
-            holders = snapshot.holders
-            self.print_nvidia_holders(holders)
+            self.print_holders(snapshot.holders, "NVIDIA holders")
 
     def drain_nvidia(self, pci_id: str | None = None) -> None:
         gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
         self.set_nvidia_persistence(gpu_pci_id, False)
         self.set_nvidia_power_auto(gpu_pci_id)
         self.set_nvidia_drain(gpu_pci_id, True)
-        self.show_nvidia(gpu_pci_id, smi=True)
+        self.show_nvidia(gpu_pci_id, smi=SmiMode.YES)
         self.console.print(f"Draining: [bold]{gpu_pci_id}[/]")
 
     def undrain_nvidia(self, pci_id: str | None = None) -> None:
         gpu_pci_id = self.nvidia_gpu_pci_id(pci_id)
         self.set_nvidia_drain(gpu_pci_id, False)
-        self.show_nvidia(gpu_pci_id, smi=True)
+        self.show_nvidia(gpu_pci_id, smi=SmiMode.YES)
         self.console.print(f"Not draining: [bold]{gpu_pci_id}[/]")
 
     def remove_nvidia(self, pci_id: str | None = None) -> None:
@@ -794,7 +955,7 @@ class Tdp:
         holders = self.nvidia_holders(gpu_pci_id)
         if holders:
             self.set_nvidia_drain(gpu_pci_id, False)
-            self.print_nvidia_holders(holders)
+            self.print_holders(holders, "NVIDIA holders")
             raise click.ClickException(
                 "Cannot remove NVIDIA while processes still hold it. "
                 "Switch to Hyprland Integrated or close the listed processes, then retry."
@@ -829,7 +990,185 @@ class Tdp:
             self.set_nvidia_power_auto(gpu_pci_id)
             self.set_nvidia_drain(gpu_pci_id, False)
 
-        self.show_nvidia(smi=True)
+        self.show_nvidia(smi=SmiMode.YES)
+
+    def gpu_cards(self) -> list[GpuCard]:
+        cards: list[GpuCard] = []
+        for card_path in sorted(Path("/sys/class/drm").glob("card*")):
+            if not re.fullmatch(r"card\d+", card_path.name):
+                continue
+            pci_path = self.resolve_optional(card_path / "device")
+            if pci_path is None:
+                continue
+
+            nodes = [Path("/dev/dri") / card_path.name]
+            nodes.extend(
+                Path("/dev/dri") / render.name
+                for render in sorted((pci_path / "drm").glob("renderD*"))
+            )
+            driver = self.resolve_optional(pci_path / "driver")
+
+            cards.append(
+                GpuCard(
+                    name=card_path.name,
+                    pci_id=pci_path.name,
+                    vendor_id=self.read_optional(pci_path / "vendor") or "unknown",
+                    device_id=self.read_optional(pci_path / "device") or "unknown",
+                    subsystem_vendor_id=self.read_optional(
+                        pci_path / "subsystem_vendor"
+                    ),
+                    subsystem_device_id=self.read_optional(
+                        pci_path / "subsystem_device"
+                    ),
+                    class_id=self.read_optional(pci_path / "class") or "unknown",
+                    driver=driver.name if driver else None,
+                    power_control=self.read_optional(pci_path / "power/control"),
+                    runtime_status=self.read_optional(
+                        pci_path / "power/runtime_status"
+                    ),
+                    label=self.read_optional(pci_path / "label"),
+                    model=self.pci_device_name(pci_path.name),
+                    nodes=nodes,
+                )
+            )
+
+        return cards
+
+    def gpu_device_nodes(self, cards: list[GpuCard]) -> list[Path]:
+        nodes = [node for card in cards for node in card.nodes]
+        for pattern in ("dev/nvidia*", "dev/nvidia-caps/nvidia-cap*"):
+            nodes.extend(sorted(Path("/").glob(pattern)))
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for node in nodes:
+            if node in seen or not node.exists() or node.is_dir():
+                continue
+            seen.add(node)
+            unique.append(node)
+
+        return unique
+
+    def gpu_node_labels(
+        self, cards: list[GpuCard], nodes: list[Path]
+    ) -> dict[Path, str]:
+        """Name each device node after the card it belongs to, for holder rows."""
+        labels: dict[Path, str] = {}
+        for card in cards:
+            for node in card.nodes:
+                role = "card" if node.name.startswith("card") else "render"
+                labels[node] = f"{card.vendor} {card.short_model} {role} {node.name}"
+
+        # /dev/nvidia* are driver nodes with no sysfs link back to a card, so
+        # they can only be attributed when exactly one NVIDIA card exists.
+        nvidia_cards = [card for card in cards if card.is_nvidia]
+        if len(nvidia_cards) == 1:
+            card = nvidia_cards[0]
+            for node in nodes:
+                if str(node).startswith("/dev/nvidia"):
+                    labels[node] = (
+                        f"{card.vendor} {card.short_model} driver {node.name}"
+                    )
+
+        return labels
+
+    def print_gpu_cards(self, cards: list[GpuCard]) -> None:
+        table = Table(title="DRM cards", box=None)
+        table.add_column("Card", style="bold")
+        table.add_column("Vendor")
+        table.add_column("Model")
+        table.add_column("PCI")
+        table.add_column("IDs")
+        table.add_column("Driver")
+        table.add_column("Power")
+        table.add_column("Nodes")
+
+        for card in cards:
+            power = Text(f"{card.power_control or '?'} / {card.runtime_status or '?'}")
+            if card.runtime_status == "active":
+                power.stylize("red")
+            elif card.runtime_status == "suspended":
+                power.stylize("green")
+
+            ids = (
+                f"vendor={card.vendor_id}\n"
+                f"device={card.device_id}\n"
+                f"class={card.class_id}"
+            )
+            if card.subsystem_vendor_id and card.subsystem_device_id:
+                ids += (
+                    f"\nsubsystem={card.subsystem_vendor_id}:"
+                    f"{card.subsystem_device_id}"
+                )
+
+            table.add_row(
+                card.name,
+                card.vendor,
+                card.short_model,
+                card.pci_id,
+                ids,
+                card.driver or "?",
+                power,
+                "\n".join(str(node) for node in card.nodes),
+            )
+
+        self.console.print(table)
+
+    def print_gpu_smi(self) -> None:
+        power_table = Table(title="NVIDIA power limits", box=None)
+        power_table.add_column("PCI", style="bold")
+        power_table.add_column("Draw W", justify="right")
+        power_table.add_column("Current W", justify="right")
+        power_table.add_column("Default W", justify="right")
+        power_table.add_column("Min W", justify="right")
+        power_table.add_column("Max W", justify="right")
+        power_table.add_column("Memory MiB", justify="right")
+        power_table.add_column("P-State")
+        for row in self.nvidia_power_rows():
+            power_table.add_row(*row)
+
+        if power_table.row_count:
+            self.console.print(power_table)
+
+        proc = self.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_gpu_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            check=False,
+        )
+        apps = Table(title="NVIDIA compute apps", box=None)
+        apps.add_column("PID", justify="right", style="bold")
+        apps.add_column("Process")
+        apps.add_column("Memory MiB", justify="right")
+        for line in proc.stdout.splitlines():
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) == 3:
+                apps.add_row(*fields)
+
+        if apps.row_count:
+            self.console.print(apps)
+
+    def show_gpu(self, smi: SmiMode = SmiMode.AUTO) -> None:
+        cards = self.gpu_cards()
+        self.console.rule("[bold yellow]GPU[/]")
+        if not cards:
+            self.console.print("[yellow]No DRM cards found.[/]")
+            return
+
+        # Every reading above comes from sysfs, so the holder scan and the card
+        # table are safe on a sleeping GPU; nvidia-smi is the only wake risk.
+        nodes = self.gpu_device_nodes(cards)
+        holders = self.node_holders(nodes)
+        labels = self.gpu_node_labels(cards, nodes)
+        self.print_gpu_cards(cards)
+        self.print_holders(
+            holders, "GPU holders", labels=labels, detailed=True
+        )
+
+        if self.resolve_smi(smi, any(card.is_nvidia and card.is_active for card in cards)):
+            self.print_gpu_smi()
 
     def intel_profile_choices(self) -> list[str]:
         if not self.PROFILE_CHOICES_PATH.is_file():
@@ -1249,6 +1588,13 @@ class Tdp:
 
         return text or None
 
+    @staticmethod
+    def resolve_optional(path: Path) -> Path | None:
+        try:
+            return path.resolve(strict=True)
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
     @classmethod
     def read_optional_int(cls, path: Path) -> int | None:
         text = cls.read_optional(path)
@@ -1297,8 +1643,17 @@ class Tdp:
 
     @cmd_nvidia.command("show")
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
-    @click.option("--smi", is_flag=True, help="Include nvidia-smi data; wakes the GPU.")
-    def cmd_nvidia_status(pci_id: str | None, smi: bool) -> None:
+    @click.option(
+        "--smi",
+        "smi",
+        flag_value=SmiMode.YES,
+        default=SmiMode.AUTO,
+        help="Always query nvidia-smi; wakes a sleeping GPU.",
+    )
+    @click.option(
+        "--no-smi", "smi", flag_value=SmiMode.NO, help="Never query nvidia-smi."
+    )
+    def cmd_nvidia_status(pci_id: str | None, smi: SmiMode) -> None:
         Tdp().show_nvidia(pci_id, smi=smi)
 
     @cmd_nvidia.command("limit")
@@ -1333,6 +1688,24 @@ class Tdp:
     @cmd_nvidia.command("rescan", hidden=True)
     def cmd_nvidia_rescan() -> None:
         Tdp().discover_nvidia()
+
+    @cli.group("gpu")
+    def cmd_gpu() -> None:
+        pass
+
+    @cmd_gpu.command("show")
+    @click.option(
+        "--smi",
+        "smi",
+        flag_value=SmiMode.YES,
+        default=SmiMode.AUTO,
+        help="Always query nvidia-smi; wakes a sleeping GPU.",
+    )
+    @click.option(
+        "--no-smi", "smi", flag_value=SmiMode.NO, help="Never query nvidia-smi."
+    )
+    def cmd_gpu_show(smi: SmiMode) -> None:
+        Tdp().show_gpu(smi)
 
     @cli.group("battery")
     def cmd_battery() -> None:
