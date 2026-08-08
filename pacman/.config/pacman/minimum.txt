@@ -53,6 +53,7 @@ gweather-locations
 gzip
 handlr-regex
 hunspell-en_us
+imagemagick
 inxi
 iptables-nft
 kanshi
