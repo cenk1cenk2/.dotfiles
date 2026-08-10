@@ -834,9 +834,9 @@ class Tdp:
         timer, so polling `tdp nvidia show` on an active GPU kept it active
         forever. Passive unless explicitly asked.
         """
-        if mode is SmiMode.YES:
+        if mode == SmiMode.YES:
             return bool(shutil.which("nvidia-smi"))
-        if mode is SmiMode.AUTO:
+        if mode == SmiMode.AUTO:
             self.console.print(
                 "[dim]Skipped nvidia-smi: querying wakes a sleeping GPU and "
                 "resets an active GPU's idle timer. Use --smi to query.[/]"
