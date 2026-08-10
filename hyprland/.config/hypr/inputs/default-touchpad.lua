@@ -40,7 +40,7 @@ hl.device({
   name = "wacf2205:00-04f3:3355-touchpad",
   accel_profile = "flat",
   sensitivity = 0.4,
-  scroll_factor = 1.0,
+  scroll_factor = 0.5,
 })
 
 hl.device({
