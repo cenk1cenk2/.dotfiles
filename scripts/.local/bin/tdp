@@ -101,14 +101,17 @@ class GpuHolder:
     args: str
     nodes: list[Path]
 
-    # /dev/nvidiactl opens short-circuit to nvidia_ctl_open() and never reach
-    # nv_start_device(), the only path that refs dynamic power — a ctl-only
-    # holder cannot block RTD3. Every other node holds the device itself.
-    NON_PINNING: ClassVar[set[Path]] = {Path("/dev/nvidiactl")}
+    # Only /dev/nvidia<N> and /dev/nvidia-uvm* opens ref dynamic power via
+    # nv_start_device(). /dev/nvidiactl short-circuits to nvidia_ctl_open()
+    # and DRM nodes take no ref at all (nv_drm_open assigns an id and
+    # returns) — holders of those cannot block RTD3.
+    PINNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^/dev/nvidia(\d+|-uvm)"
+    )
 
     @property
     def pins(self) -> bool:
-        return any(node not in self.NON_PINNING for node in self.nodes)
+        return any(self.PINNING_PATTERN.match(str(node)) for node in self.nodes)
 
 @dataclass
 class PowerLimit:
@@ -674,8 +677,8 @@ class Tdp:
         nodes: list[Path] = []
         # card* and renderD* are siblings under drm/, not nested. Globbing
         # renderD* inside the card directory finds nothing, which silently
-        # hides the render node — the one GBM/dmabuf clients actually hold,
-        # and it pins the GPU exactly like /dev/nvidia0 does.
+        # hides the render node — worth listing even though bare DRM opens
+        # take no power ref (see GpuHolder.PINNING_PATTERN).
         drm_path = self.PCI_DEVICES_PATH / pci_id / "drm"
         for node in sorted(drm_path.glob("card*")) + sorted(drm_path.glob("renderD*")):
             nodes.append(Path("/dev/dri") / node.name)
@@ -774,7 +777,9 @@ class Tdp:
             node_lines = []
             for node in holder.nodes:
                 label = (labels or {}).get(node, str(node))
-                style = "dim" if node in GpuHolder.NON_PINNING else "red"
+                style = (
+                    "red" if GpuHolder.PINNING_PATTERN.match(str(node)) else "dim"
+                )
                 node_lines.append(f"[{style}]{label}[/]")
             row.append("\n".join(node_lines))
             if detailed:
