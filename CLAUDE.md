@@ -27,12 +27,11 @@ these need re-checking.
 
 ### What blocks sleep (all three must hold, independently)
 
-- **Open fds on `/dev/nvidia0`** take a device-lifetime power ref when SW
-  persistence is off; with `nvidia-persistenced` running from boot the first
-  open takes a self-cancelling FINE ref instead and idle fds stop pinning
-  (`nv.c`, `nv_start_device`). `/dev/nvidiactl` never pins (control opens
-  bypass `nv_start_device`). Bare `/dev/dri/renderD*` opens take no ref
-  (`nv_drm_open` assigns an id and returns).
+- **Open fds on `/dev/nvidia0`** hold a power ref for as long as any fd is
+  open: the first open takes a COARSE ref, the last close releases it
+  (`nv.c`, `nv_start_device`/`nv_stop_device`). `/dev/nvidiactl` never pins
+  (control opens bypass `nv_start_device`). Bare `/dev/dri/renderD*` opens
+  take no ref (`nv_drm_open` assigns an id and returns).
 - **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
   toggle**: GCOFF (full power-off) requires used vidmem <= threshold. RM keeps
   ~2MiB allocated, so a threshold of 0 forbids power-off permanently. Leave it
@@ -44,10 +43,16 @@ these need re-checking.
 
 ### Standing constraints
 
-- `nvidia-persistenced` is enabled and must only be toggled across a reboot.
-  A live start/stop flips the persistence flag against in-flight power refs;
-  the refcount desyncs silently (asserts are compiled out of release builds)
-  and the GPU stops attempting suspend until the module reloads.
+- `nvidia-persistenced` stays **disabled**. The daemon opens `/dev/nvidia0`
+  before it enables SW persistence, so its own fds hold the COARSE ref for
+  the daemon's lifetime and the GPU never sleeps while it runs. The FINE-ref
+  open path (`nv_start_device` with `NV_FLAG_PERSISTENT_SW_STATE` set) only
+  helps clients whose first open happens after the flag is set — the daemon
+  itself defeats it. Never toggle the daemon or `nvidia-smi -pm` live: it
+  flips the flag against in-flight refs, the refcount desyncs silently
+  (asserts are compiled out of release builds), and the GPU stops attempting
+  suspend until reboot. The signature of that state: zero rpm trace events
+  with zero holders.
 - `NVreg_DynamicPowerManagement=0x03` stays pinned although it equals the
   built-in default: the `nv_allow_runtime_suspend()` path is gated on the
   regkey being exactly DEFAULT — an explicit `0x02` (FINE) skips it.
@@ -61,6 +66,17 @@ these need re-checking.
 - `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by the Taskfile — edits
   need a re-install (`task` or `sudo install`). `rootfs/etc/udev/rules.d/*`
   is stow-symlinked and live on save.
+
+### Known blocker (610.43.03 and 610.57.04, unresolved)
+
+- With every userspace pin fixed, the GPU sleeps only until the desktop
+  session's first wake of the device, then never again: RM never re-indicates
+  idle, so the driver's runtime-PM usage count sticks at 1 (visible as
+  `cnt-1` in `rpm:*` trace events after toggling `power/control` on→auto).
+  The decision lives in RM core / GSP firmware (`nv-kernel.o` prebuilt, GCx
+  prerequisite evaluated GSP-side) — not debuggable from the OS layer.
+  `nvidia-drm.fbdev=0` does not help. Suspected driver bug on GB206M;
+  re-test on driver updates before re-opening the userspace investigation.
 
 ### Verifying without waking the GPU
 
