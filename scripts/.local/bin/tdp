@@ -101,6 +101,15 @@ class GpuHolder:
     args: str
     nodes: list[Path]
 
+    # /dev/nvidiactl opens short-circuit to nvidia_ctl_open() and never reach
+    # nv_start_device(), the only path that refs dynamic power — a ctl-only
+    # holder cannot block RTD3. Every other node holds the device itself.
+    NON_PINNING: ClassVar[set[Path]] = {Path("/dev/nvidiactl")}
+
+    @property
+    def pins(self) -> bool:
+        return any(node not in self.NON_PINNING for node in self.nodes)
+
 @dataclass
 class PowerLimit:
     domain: str
@@ -287,6 +296,10 @@ class NvidiaSnapshot:
     active_ms: int | None
     suspended_ms: int | None
     holders: list[GpuHolder]
+
+    @property
+    def pinning_holders(self) -> list[GpuHolder]:
+        return [holder for holder in self.holders if holder.pins]
 
     @property
     def sleep_ratio(self) -> float | None:
@@ -745,6 +758,7 @@ class Tdp:
             table.add_column("PPID", justify="right")
             table.add_column("State")
         table.add_column("Command")
+        table.add_column("Pins")
         table.add_column("Nodes")
         if detailed:
             table.add_column("Args")
@@ -756,11 +770,13 @@ class Tdp:
                     [str(holder.ppid) if holder.ppid is not None else "?", holder.state]
                 )
             row.append(holder.command)
-            row.append(
-                "\n".join(
-                    (labels or {}).get(node, str(node)) for node in holder.nodes
-                )
-            )
+            row.append("[red]yes[/]" if holder.pins else "[dim]no[/]")
+            node_lines = []
+            for node in holder.nodes:
+                label = (labels or {}).get(node, str(node))
+                style = "dim" if node in GpuHolder.NON_PINNING else "red"
+                node_lines.append(f"[{style}]{label}[/]")
+            row.append("\n".join(node_lines))
             if detailed:
                 row.append(holder.args)
             table.add_row(*row)
@@ -889,7 +905,8 @@ class Tdp:
                     snapshot.format_duration(snapshot.active_ms),
                     snapshot.format_duration(snapshot.suspended_ms),
                     f"[{ratio_style}]{ratio:.1%}[/]" if ratio is not None else "?",
-                    str(len(snapshot.holders)),
+                    f"[{'red' if snapshot.pinning_holders else 'green'}]"
+                    f"{len(snapshot.pinning_holders)}[/]/{len(snapshot.holders)}",
                 ]
             )
             table.add_row(*row)
@@ -908,9 +925,10 @@ class Tdp:
                 case _:
                     verdict = f"[bold]{runtime_status or 'unknown'}[/]"
             name = self.pci_device_name(gpu_pci_id)
+            pinning = len(snapshot.pinning_holders)
             self.console.print(
                 f"[bold]{gpu_pci_id}[/]{f' {name}' if name else ''} is {verdict}"
-                f" ({power_state or '?'}, {len(holders)} holders)"
+                f" ({power_state or '?'}, {pinning} of {len(holders)} holders pinning)"
             )
 
         if use_smi:

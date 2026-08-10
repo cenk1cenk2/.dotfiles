@@ -35,25 +35,29 @@ if [ -n "$_gpu_intel_card" ]; then
   # GL renderer keeps GTK4 apps on the Mesa-only EGL path above.
   export GSK_RENDERER=ngl
 
-  # MangoHud ships an implicit Vulkan layer, so the loader injects libMangoHud
-  # into anything that creates an instance — Chromium's startup GPU probe
-  # counts, even with --disable-features=Vulkan. Layer init unconditionally
-  # dlopens libnvidia-ml, and NVML opens /dev/nvidia0. The config blacklist
-  # does not help: it only suppresses the overlay, long after the library and
-  # NVML have loaded. Disabling MangoHud is the only lever that stops the open.
-  # TODO: this might be removed in the future but currently did not work
-  # export MANGOHUD=0
+  # MangoHud ships an implicit Vulkan layer whose manifest gates on
+  # enable_environment MANGOHUD=1 — and the base env exports MANGOHUD=1, so the
+  # loader injects libMangoHud into anything that creates an instance:
+  # Chromium's startup GPU probe counts, even with --disable-features=Vulkan.
+  # Layer init unconditionally dlopens libnvidia-ml, and NVML opens and holds
+  # /dev/nvidia0, blocking RTD3. The config blacklist does not help: it only
+  # suppresses the overlay, long after NVML has loaded. MANGOHUD=0 fails the
+  # gate so the layer never loads; prime-run hands MANGOHUD=1 back per game.
+  export MANGOHUD=0
 
   # GLVND loads every vendor listed here just to query it, and libEGL_nvidia
   # opens /dev/nvidia0 as it initializes — so listing NVIDIA at all pins the
-  # dGPU, whichever vendor ends up selected. Mesa-only keeps the compositor and
-  # every non-offloaded app off the device node entirely.
-  # TODO: this also breaks the games honestly
-  # export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+  # dGPU, whichever vendor ends up selected. Worse, with 10_nvidia.json sorting
+  # first, libnvidia-glsi gets pulled into Intel-primary EGL clients with no
+  # working device and Proton titles abort inside it (libnvidia-glsi+0x40355) —
+  # leaving this UNSET is what broke the games, not setting it. Mesa-only keeps
+  # everything off the device node; Vulkan picks devices from icd.d, so
+  # offloaded games still land on the dGPU.
+  export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 
-  # Both of the above are handed back by the local prime-run, which is how
-  # games are launched in this profile — Vulkan titles reach the dGPU without
-  # it, but they render EGL on the iGPU and lose the overlay.
+  # Fixing either one alone is not enough: Hyprland/hyprpaper hold nvidia0 via
+  # EGL only, Spotify via MangoHud/NVML only, Chromium/Electron via both. Any
+  # single open fd on /dev/nvidia0 pins the GPU out of D3cold by design.
 fi
 
 if [ -n "$_gpu_nvidia_card" ]; then

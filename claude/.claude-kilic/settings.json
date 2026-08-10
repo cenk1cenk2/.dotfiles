@@ -63,6 +63,7 @@
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
   "autoMemoryEnabled": true,
+  "skipWorkflowUsageWarning": true,
   "theme": "custom:onedarker",
   "editorMode": "normal",
   "verbose": false,
@@ -70,6 +71,5 @@
   "showTurnDuration": true,
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true,
-  "skipWorkflowUsageWarning": true
+  "agentPushNotifEnabled": true
 }
