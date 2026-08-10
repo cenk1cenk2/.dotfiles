@@ -1,9 +1,9 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions. Everything below is a rule established in the
-wayland-scripts refactor — apply it to every new script (and every
-touch of an old one) without re-discussion.
+script conventions and NVIDIA dGPU runtime power. Everything below is
+an established rule — apply it to every new script (and every touch of
+an old one) without re-discussion.
 
 ## UWSM environment files
 
@@ -18,6 +18,60 @@ touch of an old one) without re-discussion.
   up each other's exports. Only unset a variable when it can be
   inherited from outside the selected UWSM profile and the selected
   profile must actively neutralize that inherited value.
+
+## NVIDIA dGPU runtime power (hybrid profile, RTX 5070 / nvidia-open)
+
+Goal state: the dGPU reaches D3cold whenever idle. Verified against driver
+source at `/usr/src/nvidia-<version>/` — read the source, not the docs, when
+these need re-checking.
+
+### What blocks sleep (all three must hold, independently)
+
+- **Open fds on `/dev/nvidia0`** take a device-lifetime power ref when SW
+  persistence is off; with `nvidia-persistenced` running from boot the first
+  open takes a self-cancelling FINE ref instead and idle fds stop pinning
+  (`nv.c`, `nv_start_device`). `/dev/nvidiactl` never pins (control opens
+  bypass `nv_start_device`). Bare `/dev/dri/renderD*` opens take no ref
+  (`nv_drm_open` assigns an id and returns).
+- **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
+  toggle**: GCOFF (full power-off) requires used vidmem <= threshold. RM keeps
+  ~2MiB allocated, so a threshold of 0 forbids power-off permanently. Leave it
+  at the default (200).
+- **Any `nvidia-smi` invocation resets the runtime-PM idle timer** as well as
+  waking a sleeping GPU — polling it keeps an active GPU active forever.
+  `tdp nvidia show` is passive (sysfs only) precisely for this; smi runs only
+  with `--smi`.
+
+### Standing constraints
+
+- `nvidia-persistenced` is enabled and must only be toggled across a reboot.
+  A live start/stop flips the persistence flag against in-flight power refs;
+  the refcount desyncs silently (asserts are compiled out of release builds)
+  and the GPU stops attempting suspend until the module reloads.
+- `NVreg_DynamicPowerManagement=0x03` stays pinned although it equals the
+  built-in default: the `nv_allow_runtime_suspend()` path is gated on the
+  regkey being exactly DEFAULT — an explicit `0x02` (FINE) skips it.
+- `env-hybrid` pins `__EGL_VENDOR_LIBRARY_FILENAMES` to Mesa and sets
+  `MANGOHUD=0`; both are required at once (compositor holds `nvidia0` via
+  GLVND EGL enumeration, Chromium/Electron additionally via the MangoHud
+  implicit Vulkan layer's unconditional NVML load). Either alone leaves
+  holders. `prime-run` hands `MANGOHUD=1` back per game and deliberately does
+  NOT hand NVIDIA EGL back — NVIDIA EGL in the Intel-primary session has no
+  device and crashes titles inside `libnvidia-glsi`.
+- `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by the Taskfile — edits
+  need a re-install (`task` or `sudo install`). `rootfs/etc/udev/rules.d/*`
+  is stow-symlinked and live on save.
+
+### Verifying without waking the GPU
+
+- `tdp nvidia show` — passive; marks pinning holders vs harmless
+  (`nvidiactl`-only) ones. Unprivileged `fuser` cannot see other users'
+  processes, so root daemons (persistenced) are invisible in its holder list.
+- `cat /sys/class/drm/card1/device/power_state` / `power/runtime_status` —
+  sysfs reads never wake it. `nvidia-smi`, `btop`, `lspci` all do.
+- Kernel-side truth: `sudo /sys/kernel/tracing` rpm events show whether the
+  driver even attempts suspend; zero events with zero holders means the
+  driver-internal refcount is desynced (reboot).
 
 ## Python scripts
 
