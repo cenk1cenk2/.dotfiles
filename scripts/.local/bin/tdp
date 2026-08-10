@@ -822,19 +822,22 @@ class Tdp:
         self.show_nvidia(gpu_pci_id, smi=SmiMode.YES)
 
     def resolve_smi(self, mode: SmiMode, active: bool) -> bool:
-        """Whether nvidia-smi may run; AUTO refuses to be the cause of a wake."""
-        if mode is SmiMode.NO or not shutil.which("nvidia-smi"):
-            return False
-        if mode is SmiMode.YES:
-            return True
-        if not active:
-            self.console.print(
-                "[dim]Skipped nvidia-smi because no NVIDIA GPU is active; "
-                "querying it would wake the GPU. Use --smi to query anyway.[/]"
-            )
-            return False
+        """Whether nvidia-smi may run; AUTO never runs it.
 
-        return True
+        AUTO used to allow smi while the GPU was already active, reasoning it
+        could not cause a wake — but every smi call resets the runtime PM idle
+        timer, so polling `tdp nvidia show` on an active GPU kept it active
+        forever. Passive unless explicitly asked.
+        """
+        if mode is SmiMode.YES:
+            return bool(shutil.which("nvidia-smi"))
+        if mode is SmiMode.AUTO:
+            self.console.print(
+                "[dim]Skipped nvidia-smi: querying wakes a sleeping GPU and "
+                "resets an active GPU's idle timer. Use --smi to query.[/]"
+            )
+
+        return False
 
     def show_nvidia(self, pci_id: str | None = None, smi: SmiMode = SmiMode.NO) -> None:
         self.console.rule("[bold yellow]NVIDIA[/]")
