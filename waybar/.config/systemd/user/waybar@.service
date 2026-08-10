@@ -11,6 +11,10 @@ Type=simple
 # Type=dbus
 # BusName=org.kde.StatusNotifierWatcher
 ExecCondition=/bin/sh -c 'command -v waybar'
+# Selects ~/.config/waybar/hosts/<host>.jsonc from the bar config's include
+# list. %l is the short hostname; nothing exports HOST/HOSTNAME into the
+# systemd user environment, so waybar cannot pick it up on its own.
+Environment=WAYBAR_HOST=%l
 ExecStart=waybar -c %h/.config/waybar/%i.jsonc
 ExecStartPost=/usr/bin/gdbus wait --session --timeout=15 org.kde.StatusNotifierWatcher
 Restart=on-failure

@@ -1,0 +1,10 @@
+{
+  // AMD. k10temp binds to the family 17h+ SMN function at 00:18.3;
+  // temp1_input is Tctl. Path carried over from the pre-overlay config,
+  // which listed hwmon4 and hwmon6 side by side to work around the
+  // per-boot renumbering that hwmon-path-abs removes outright.
+  "temperature#cpu": {
+    "hwmon-path-abs": "/sys/devices/pci0000:00/0000:00:18.3/hwmon",
+    "input-filename": "temp1_input",
+  },
+}

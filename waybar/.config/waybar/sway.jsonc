@@ -1,5 +1,19 @@
 {
   // -------------------------------------------------------------------------
+  // Per-host overlay
+  // -------------------------------------------------------------------------
+  // WAYBAR_HOST is set by waybar@.service from systemd's %l (short
+  // hostname). Objects merge key by key and the FIRST definition wins:
+  // this file beats hosts/<name>.jsonc beats hosts/defaults.jsonc. So a
+  // key a host has to be able to override must not be set here — push it
+  // down to hosts/defaults.jsonc instead. A host file that doesn't exist
+  // only logs a warning, so a new machine still comes up on the defaults.
+  "include": [
+    "~/.config/waybar/hosts/$WAYBAR_HOST.jsonc",
+    "~/.config/waybar/hosts/defaults.jsonc",
+  ],
+
+  // -------------------------------------------------------------------------
   // Global configuration
   // -------------------------------------------------------------------------
   "layer": "bottom",
@@ -283,14 +297,11 @@
     "on-click": "swaymsg exec \\$calendar",
   },
 
+  // The sensor itself comes from the host overlay (hwmon-path-abs +
+  // input-filename); setting it here would shadow hosts/<name>.jsonc.
   "temperature#cpu": {
     "warning-threshold": 72,
     "critical-threshold": 78,
-    "hwmon-path": [
-      "/sys/devices/platform/coretemp.0/hwmon/hwmon7/temp1_input",
-      "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon6/temp1_input",
-      "/sys/devices/pci0000:00/0000:00:18.3/hwmon/hwmon4/temp1_input",
-    ],
     "interval": 3,
     "format": "{icon} {temperatureC}°C",
     "format-icons": ["", "", "", "", "", "", "", ""],
