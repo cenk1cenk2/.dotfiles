@@ -984,7 +984,7 @@ class Tdp:
             self.print_holders(holders, "NVIDIA holders")
             raise click.ClickException(
                 "Cannot remove NVIDIA while processes still hold it. "
-                "Switch to Hyprland Integrated or close the listed processes, then retry."
+                "Close the listed processes, then retry."
             )
 
         try:
