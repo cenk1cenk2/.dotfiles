@@ -50,8 +50,6 @@ patches:
     harness:
       enabled: true
     mcp:
-      # No `work/*` profile sets `harness.enabled`, so this resolves to an
-      # empty candidate list until one does.
       harness:
         includeProfiles:
           - "work/*"
