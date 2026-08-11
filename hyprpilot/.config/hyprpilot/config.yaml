@@ -39,7 +39,7 @@ patches:
               - notion-*
               - spacelift-*
     mcps:
-      - file: ~/.config/nvim/utils/mcphub/servers.json
+      - file: ~/.config/nvim/utils/agents/mcp/servers.json
         ignore:
           - "*-laravel"
           - aws-docs
@@ -61,7 +61,7 @@ patches:
               - "*-kilic"
               - gitlab-*
     mcps:
-      - file: ~/.config/nvim/utils/mcphub/servers.json
+      - file: ~/.config/nvim/utils/agents/mcp/servers.json
         ignore:
           - "*-kilic"
           - gitlab
