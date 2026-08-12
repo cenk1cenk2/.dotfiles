@@ -53,7 +53,7 @@ if [ -n "$_gpu_intel_card" ]; then
   #
   # Re-enable both only if a driver update restores runtime suspend, and expect
   # to trade Proton's dGPU access for it.
-  export MANGOHUD=0
+  # export MANGOHUD=0
   # export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 fi
 
