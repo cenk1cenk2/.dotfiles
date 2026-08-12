@@ -56,13 +56,21 @@ these need re-checking.
 - `NVreg_DynamicPowerManagement=0x03` stays pinned although it equals the
   built-in default: the `nv_allow_runtime_suspend()` path is gated on the
   regkey being exactly DEFAULT — an explicit `0x02` (FINE) skips it.
-- `env-hybrid` pins `__EGL_VENDOR_LIBRARY_FILENAMES` to Mesa and sets
-  `MANGOHUD=0`; both are required at once (compositor holds `nvidia0` via
-  GLVND EGL enumeration, Chromium/Electron additionally via the MangoHud
-  implicit Vulkan layer's unconditional NVML load). Either alone leaves
-  holders. `prime-run` hands `MANGOHUD=1` back per game and deliberately does
-  NOT hand NVIDIA EGL back — NVIDIA EGL in the Intel-primary session has no
-  device and crashes titles inside `libnvidia-glsi`.
+- `env-hybrid` keeps `__EGL_VENDOR_LIBRARY_FILENAMES` and `MANGOHUD=0`
+  commented out. Both do remove `/dev/nvidia0` holders (GLVND EGL vendor
+  enumeration for the compositor, the MangoHud implicit Vulkan layer's NVML
+  load for Chromium/Electron), but that buys nothing while the driver bug
+  below stands, and the Mesa EGL pin actively hides the dGPU from Proton:
+  `winewayland.drv` presents through EGL, so without NVIDIA EGL, Wine offers
+  a one-device list and every game lands on the iGPU. Hyprland and hyprpaper
+  holding `nvidia0` is the expected, currently free consequence.
+- Proton titles reach the dGPU via `DXVK_FILTER_DEVICE_NAME=NVIDIA` and
+  `VKD3D_FILTER_DEVICE_NAME=NVIDIA` in `env-hybrid` — read by DXVK/vkd3d
+  inside the pressure-vessel container. `prime-run` cannot do this job for
+  Steam: the steam-runtime launcher resets `PATH`, so `prime-run %command%`
+  resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
+  because pressure-vessel does not import `nvidia_layers.json` into the
+  container. Use `MANGOHUD=1 %command%` for the overlay.
 - `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by the Taskfile — edits
   need a re-install (`task` or `sudo install`). `rootfs/etc/udev/rules.d/*`
   is stow-symlinked and live on save.
