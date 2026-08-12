@@ -20,14 +20,22 @@ _gpu_intel_card="$(_card_for_vendor 0x8086 || true)"
 _gpu_nvidia_card="$(_card_for_vendor 0x10de || true)"
 
 if [ -n "$_gpu_intel_card" ]; then
-  # Intel only, on purpose: handing the NVIDIA card to the compositor makes
-  # Hyprland/Xwayland hold its KMS node, which keeps the dGPU permanently
-  # active and defeats fine-grained RTD3 runtime suspend. With the dGPU out of
-  # AQ_DRM_DEVICES it suspends when idle and wakes on demand for offloaded
-  # work. Cost: outputs wired to the dGPU (HDMI, the muxed eDP) cannot be
-  # driven in this profile — USB-C/DP outputs sit on the Intel card and keep
-  # working. Use the "Hyprland NVIDIA" session when HDMI is needed.
-  export AQ_DRM_DEVICES="$_gpu_intel_card"
+  # Colon-separated, first entry is the primary renderer: Intel draws the
+  # desktop, the dGPU is listed only so the compositor knows it exists. Both
+  # are required for Proton — a game rendering on the dGPU has to present to
+  # this compositor, and with the card missing that cross-GPU path faults in
+  # vkGetPastPresentationTimingEXT (0xc0000005) seconds after launch. Listing
+  # it also makes outputs wired to the dGPU (HDMI, the muxed eDP) usable.
+  #
+  # It does hold the dGPU's KMS node and so blocks RTD3, which is why this was
+  # once Intel-only. That trade-off is currently free: the driver stops
+  # re-indicating idle after the session's first wake regardless (see the
+  # known-blocker section in the repo CLAUDE.md), so no sleep is lost.
+  if [ -n "$_gpu_nvidia_card" ]; then
+    export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
+  else
+    export AQ_DRM_DEVICES="$_gpu_intel_card"
+  fi
   export LIBVA_DRIVER_NAME=iHD
 
   # GTK4 defaults to its Vulkan renderer, whose device enumeration opens and
