@@ -43,16 +43,19 @@ these need re-checking.
 
 ### Standing constraints
 
-- `nvidia-persistenced` stays **disabled**. The daemon opens `/dev/nvidia0`
-  before it enables SW persistence, so its own fds hold the COARSE ref for
-  the daemon's lifetime and the GPU never sleeps while it runs. The FINE-ref
-  open path (`nv_start_device` with `NV_FLAG_PERSISTENT_SW_STATE` set) only
-  helps clients whose first open happens after the flag is set — the daemon
-  itself defeats it. Never toggle the daemon or `nvidia-smi -pm` live: it
-  flips the flag against in-flight refs, the refcount desyncs silently
-  (asserts are compiled out of release builds), and the GPU stops attempting
-  suspend until reboot. The signature of that state: zero rpm trace events
-  with zero holders.
+- `nvidia-persistenced` is **enabled, and required for Proton**. Without it
+  the kernel tears device state down whenever no client holds the GPU, and
+  vkd3d-proton then fails swapchain creation with `VK_ERROR_UNKNOWN` (-13)
+  in `dxgi_vk_swap_chain_recreate_swapchain_in_present_task`, followed by a
+  `vkGetPastPresentationTimingEXT` fault — a crash seconds in, or an endless
+  retry loop showing as a black screen. It does pin the GPU awake (the daemon
+  opens `/dev/nvidia0` before enabling SW persistence, so its own fds hold a
+  COARSE ref for its lifetime), which costs nothing while the driver bug
+  below makes sleep unreachable anyway. Never toggle the daemon or
+  `nvidia-smi -pm` live: it flips the persistence flag against in-flight
+  refs, the refcount desyncs silently (asserts are compiled out of release
+  builds), and the GPU stops attempting suspend until reboot. The signature
+  of that state: zero rpm trace events with zero holders.
 - `NVreg_DynamicPowerManagement=0x03` stays pinned although it equals the
   built-in default: the `nv_allow_runtime_suspend()` path is gated on the
   regkey being exactly DEFAULT — an explicit `0x02` (FINE) skips it.
