@@ -15,6 +15,9 @@ patches:
         enabled: true
       harness:
         enabled: true
+        mcp:
+          harness:
+            enabled: false
       autoAcceptTools:
         - "*"
       autoRejectTools: []
