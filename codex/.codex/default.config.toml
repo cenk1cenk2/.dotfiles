@@ -37,6 +37,29 @@ notification_method = "bel"
 notification_condition = "always"
 show_tooltips = false
 
+# Desktop notifications alongside the bell above. `notification_method` is a
+# single-value enum (auto/osc9/bel), so bel and a native notification cannot
+# both come from [tui] — hooks are independent of it and stack on top.
+# Hooks run with the session cwd as their working directory and take the event
+# JSON on stdin. Codex requires trusting each hook definition once (`/hooks`);
+# editing a command changes its hash and re-triggers the review.
+
+[[hooks.PermissionRequest]]
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = '''jq -r '.tool_name // "a tool"' | { read -r t; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Needs approval to run $t"; } 2>/dev/null || true'''
+async = true
+timeout = 5
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = '''cat >/dev/null 2>&1; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Turn finished" 2>/dev/null || true'''
+async = true
+timeout = 5
+
 status_line = [
   "model-with-reasoning",
   "run-state",

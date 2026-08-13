@@ -53,6 +53,20 @@
   "enabledPlugins": {
     "claude-md-management@claude-plugins-official": true
   },
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '[((.cwd // \"/\") | split(\"/\") | last), (.message // \"Waiting for input\")] | @tsv' | { IFS=$'\\t' read -r d m; notify-send -a \"Claude Code\" -i utilities-terminal -u normal \"Claude Code (laravel) — $d\" \"$m\"; } 2>/dev/null || true",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ]
+  },
   "extraKnownMarketplaces": {},
   "viewMode": "default",
   "spinnerTipsEnabled": false,
