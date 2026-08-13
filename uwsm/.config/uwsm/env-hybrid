@@ -20,17 +20,9 @@ _gpu_intel_card="$(_card_for_vendor 0x8086 || true)"
 _gpu_nvidia_card="$(_card_for_vendor 0x10de || true)"
 
 if [ -n "$_gpu_intel_card" ]; then
-  # Colon-separated, first entry is the primary renderer: Intel draws the
-  # desktop, the dGPU is listed only so the compositor knows it exists. Both
-  # are required for Proton — a game rendering on the dGPU has to present to
-  # this compositor, and with the card missing that cross-GPU path faults in
-  # vkGetPastPresentationTimingEXT (0xc0000005) seconds after launch. Listing
-  # it also makes outputs wired to the dGPU (HDMI, the muxed eDP) usable.
-  #
-  # It does hold the dGPU's KMS node and so blocks RTD3, which is why this was
-  # once Intel-only. That trade-off is currently free: the driver stops
-  # re-indicating idle after the session's first wake regardless (see the
-  # known-blocker section in the repo CLAUDE.md), so no sleep is lost.
+  # First entry is the primary renderer. The dGPU must be listed or Proton
+  # cannot present from it, and dGPU-wired outputs (HDMI, muxed eDP) go dark.
+  # Listing it holds its KMS node, blocking RTD3.
   if [ -n "$_gpu_nvidia_card" ]; then
     export AQ_DRM_DEVICES="$_gpu_intel_card:$_gpu_nvidia_card"
   else
@@ -38,53 +30,30 @@ if [ -n "$_gpu_intel_card" ]; then
   fi
   export LIBVA_DRIVER_NAME=iHD
 
-  # GTK4 defaults to its Vulkan renderer, whose device enumeration opens and
-  # holds /dev/nvidia0 (seen with swayosd grabbing nvidia-modeset). The GL
-  # renderer skips that probe and follows AQ_DRM_DEVICES to the iGPU.
+  # GTK4's Vulkan renderer probes every device, opening and holding
+  # /dev/nvidia0. The GL renderer skips that probe.
   export GSK_RENDERER=ngl
 
-  # Both levers below are deliberately OFF. They were added to keep every
-  # process off /dev/nvidia0 so the dGPU could reach D3cold, and they did that
-  # — MANGOHUD=0 stops the implicit MangoHud Vulkan layer dlopening NVML, and
-  # pinning GLVND to Mesa stops libEGL_nvidia opening the node during vendor
-  # enumeration. They are off because the goal they served is unreachable and
-  # the EGL one costs gaming:
-  #
-  # - RTD3 is broken in the driver regardless (see the known-blocker section in
-  #   the repo CLAUDE.md): the GPU stops re-indicating idle after the session's
-  #   first wake, so removing holders buys nothing. Hyprland and hyprpaper hold
-  #   /dev/nvidia0 as a result, which is expected and currently free.
-  # - Worse, the Mesa pin hides the dGPU from Proton: winewayland.drv presents
-  #   through EGL, so with NVIDIA EGL unavailable Wine offers a one-device list
-  #   and DXVK sees only the iGPU. Unpinned, it enumerates both and the filters
-  #   below select NVIDIA.
-  #
-  # Re-enable both only if a driver update restores runtime suspend, and expect
-  # to trade Proton's dGPU access for it.
+  # Both keep processes off /dev/nvidia0 for RTD3, at the cost of gaming:
+  # MANGOHUD=0 stops the implicit Vulkan layer dlopening NVML, and the Mesa EGL
+  # pin stops libEGL_nvidia opening the node during vendor enumeration — but
+  # winewayland.drv presents through EGL, so pinning it hides the dGPU from
+  # Proton entirely. Enable only if runtime suspend becomes reachable.
   # export MANGOHUD=0
   # export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 fi
 
 if [ -n "$_gpu_nvidia_card" ]; then
-  # NVIDIA is offload-only here, and games do not pick it on their own: Wine
-  # enumerates the iGPU first and DXVK/vkd3d take the first adapter, so Proton
-  # titles land on Intel. prime-run cannot fix that — Steam's runtime resets
-  # PATH so `prime-run %command%` resolves to /usr/bin/prime-run rather than
-  # the local one, and its __VK_LAYER_NV_optimus=NVIDIA_only is inert anyway
-  # because pressure-vessel does not import nvidia_layers.json into the
-  # container (only the MangoHud layers are there). Filtering by device name is
-  # read by DXVK/vkd3d themselves, inside the container, with no layer or path
-  # dependency — verified against the strings in Proton's own d3d11.dll and
-  # d3d12core.dll. Requires NVIDIA EGL to stay available (see above), or Wine
-  # never offers the dGPU for these to match.
+  # DXVK/vkd3d take the first adapter Wine offers, which is the iGPU. These are
+  # read inside the pressure-vessel container, unlike prime-run's Optimus layer
+  # (absent there) or PATH-based wrappers (Steam resets PATH). Needs NVIDIA EGL
+  # available, or Wine never offers the dGPU to match against.
   export DXVK_FILTER_DEVICE_NAME=NVIDIA
   export VKD3D_FILTER_DEVICE_NAME=NVIDIA
 
-  # The device-selector vars (__NV_PRIME_RENDER_OFFLOAD /
-  # __GLX_VENDOR_LIBRARY_NAME / GBM_BACKEND) stay out — they must be per-game
-  # launch options, or they force the Intel-primary compositor onto NVIDIA and
-  # black-screen it. The flags below are only read by Proton/DXVK/vkd3d, inert
-  # otherwise.
+  # __NV_PRIME_RENDER_OFFLOAD / __GLX_VENDOR_LIBRARY_NAME / GBM_BACKEND stay out
+  # — session-wide they force the Intel-primary compositor onto NVIDIA and
+  # black-screen it. Per-game launch options instead. The rest is Proton-only.
   export PROTON_HIDE_NVIDIA_GPU=0
   export DXVK_ENABLE_NVAPI=1
   export VKD3D_CONFIG=dxr,dxr11

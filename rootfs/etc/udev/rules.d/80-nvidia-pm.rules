@@ -1,4 +1,13 @@
-# Enable runtime PM for the NVIDIA GPU itself
-ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", ATTR{power/control}="auto"
-# Enable runtime PM for NVIDIA audio function (blocks RTD3 otherwise)
-ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", ATTR{power/control}="auto"
+# bind, not just add: add fires before the nvidia driver attaches, and binding
+# resets power/control. TEST skips the write when the attribute is absent.
+# 0x030000 is this machine's VGA controller, 0x030200 the 3D-controller class
+# other Optimus laptops expose.
+ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
+ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"
+
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
+
+# The HDMI audio function blocks RTD3 at "on". Runtime PM rather than removal,
+# since the dGPU drives the HDMI port here.
+ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", TEST=="power/control", ATTR{power/control}="auto"
