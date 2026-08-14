@@ -49,7 +49,7 @@ show_tooltips = false
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = '''jq -r '.tool_name // "a tool"' | { read -r t; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Needs approval to run $t"; } 2>/dev/null || true'''
-async = true
+# async = true
 timeout = 5
 
 [[hooks.Stop]]
@@ -57,7 +57,7 @@ timeout = 5
 [[hooks.Stop.hooks]]
 type = "command"
 command = '''cat >/dev/null 2>&1; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Turn finished" 2>/dev/null || true'''
-async = true
+# async = true
 timeout = 5
 
 status_line = [
