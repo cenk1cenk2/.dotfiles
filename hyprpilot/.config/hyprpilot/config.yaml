@@ -129,6 +129,8 @@ agents:
     command: codex
     # `--approve-for-me` selects workspace-write; explicit `mode` conflicts.
     args:
+      - "--profile"
+      - "default"
       - "--approve-for-me"
   - id: opencode
     provider: opencode
