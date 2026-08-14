@@ -127,6 +127,9 @@ agents:
   - id: codex
     provider: codex
     command: codex
+    # `--approve-for-me` selects workspace-write; explicit `mode` conflicts.
+    args:
+      - "--approve-for-me"
   - id: opencode
     provider: opencode
     command: opencode
@@ -191,17 +194,17 @@ profiles:
   - id: personal/codex/gpt-5.6-sol
     agent: codex
     model: gpt-5.6-sol
-    mode: read-only
+    mode: workspace-write
 
   - id: personal/codex/gpt-5.6-terra
     agent: codex
     model: gpt-5.6-terra
-    mode: read-only
+    mode: workspace-write
 
   - id: personal/codex/gpt-5.6-luna
     agent: codex
     model: gpt-5.6-luna
-    mode: read-only
+    mode: workspace-write
 
   # Rejected by the API on a ChatGPT-account login.
   # - id: personal/codex/gpt-5.3-codex-spark
