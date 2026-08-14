@@ -194,17 +194,17 @@ profiles:
   - id: personal/codex/gpt-5.6-sol
     agent: codex
     model: gpt-5.6-sol
-    mode: workspace-write
+    # mode: workspace-write
 
   - id: personal/codex/gpt-5.6-terra
     agent: codex
     model: gpt-5.6-terra
-    mode: workspace-write
+    # mode: workspace-write
 
   - id: personal/codex/gpt-5.6-luna
     agent: codex
     model: gpt-5.6-luna
-    mode: workspace-write
+    # mode: workspace-write
 
   # Rejected by the API on a ChatGPT-account login.
   # - id: personal/codex/gpt-5.3-codex-spark
