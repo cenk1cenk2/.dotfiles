@@ -127,9 +127,6 @@ agents:
   - id: codex
     provider: codex
     command: codex
-    args:
-      - "--profile"
-      - "default"
   - id: opencode
     provider: opencode
     command: opencode
