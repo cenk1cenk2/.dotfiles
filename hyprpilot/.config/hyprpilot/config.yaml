@@ -191,9 +191,19 @@ profiles:
     mcp:
       enabled: false
 
-  - id: personal/codex/gpt-5.5
+  - id: personal/codex/gpt-5.6-sol
     agent: codex
-    model: gpt-5.5
+    model: gpt-5.6-sol
+    mode: read-only
+
+  - id: personal/codex/gpt-5.6-terra
+    agent: codex
+    model: gpt-5.6-terra
+    mode: read-only
+
+  - id: personal/codex/gpt-5.6-luna
+    agent: codex
+    model: gpt-5.6-luna
     mode: read-only
 
   # Rejected by the API on a ChatGPT-account login.
