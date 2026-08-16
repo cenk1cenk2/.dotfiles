@@ -189,7 +189,7 @@ hl.window_rule({
 
 hl.window_rule({
   name = "obsidian",
-  match = { class = "obsidian" },
+  match = { class = "md.obsidian.Obsidian" },
   float = true,
   size = "(monitor_w*0.95) (monitor_h*0.95)",
   opaque = true,
