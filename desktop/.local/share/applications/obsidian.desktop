@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Obsidian
-Exec=obsidian %U
-Terminal=false
-Type=Application
-Icon=obsidian
-StartupWMClass=md.obsidian.Obsidian
 Comment=Obsidian
+Icon=obsidian
+Terminal=false
+TryExec=obsidian
+Exec=obsidian %U
+Type=Application
+StartupWMClass=md.obsidian.Obsidian
 MimeType=x-scheme-handler/obsidian;
 Categories=Office;

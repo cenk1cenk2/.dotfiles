@@ -1,0 +1,24 @@
+#!/bin/bash
+# Shadows /usr/bin/obsidian — ~/.local/bin precedes /usr/bin in PATH.
+#
+# Identical to the packaged script apart from the runtime: it execs electron39
+# rather than the electron43 the package depends on. Electron 43 registers its
+# StatusNotifierItem under a well-known bus name
+# (org.freedesktop.StatusNotifierItem-<pid>-<n>) instead of the connection's
+# unique name, and only answers property calls addressed to that well-known
+# name. Waybar's GDBus proxy resolves to the unique name, gets an empty
+# property cache, and drops the item as invalid — no tray icon, no error the
+# user can see. Tracked as Alexays/Waybar#5240; electron39 still registers
+# under the unique name, so the icon renders.
+#
+# Drop this file once that lands and Obsidian goes back to its packaged runtime.
+
+OBSIDIAN_USER_FLAGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/obsidian/user-flags.conf"
+
+# Allow users to override command-line options
+if [[ -f "${OBSIDIAN_USER_FLAGS_FILE}" ]]; then
+   OBSIDIAN_USER_FLAGS=$(grep -v '^#' "$OBSIDIAN_USER_FLAGS_FILE")
+fi
+
+# Launch
+exec electron39 /usr/lib/obsidian/app.asar $OBSIDIAN_USER_FLAGS "$@"
