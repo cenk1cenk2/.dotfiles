@@ -24,6 +24,11 @@ M.clipboard = M.term.float .. " --class clipse clipse"
 -- Quick note -> clipboard (nvim scratch; on :w pipes buffer to cbcp)
 M.quick_note = M.term.float .. " zsh -c '~/.config/wayland/scripts/quick-note.sh'"
 
+-- Obsidian show/hide, handled by the patched tray plugin. Electron's
+-- globalShortcut never reaches the compositor under wayland, and re-running
+-- `obsidian` only lands in its CLI, so the URI is the one route that works.
+M.obsidian = "xdg-open obsidian://tray/toggleWindows"
+
 -- Lockscreen configuration
 M.locking = "hyprlock"
 

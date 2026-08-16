@@ -235,6 +235,7 @@ hl.bind(("%s + SHIFT + M"):format(d.mod), hl.dsp.exec_cmd(d.apps.bluetooth))
 hl.bind(("%s + T"):format(d.mod), hl.dsp.exec_cmd(d.apps.process_manager))
 hl.bind(("%s + SHIFT + T"):format(d.mod), hl.dsp.exec_cmd(d.apps.sensors))
 hl.bind(("%s + G"):format(d.mod), hl.dsp.exec_cmd(d.apps.calendar))
+hl.bind("CTRL + SHIFT + O", hl.dsp.exec_cmd(d.obsidian))
 
 -- Fullscreen
 hl.bind(("%s + F"):format(d.mod), hl.dsp.window.fullscreen({ mode = "maximized" })) -- legacy 1
@@ -289,9 +290,3 @@ hl.gesture({
   direction = "up",
   action = toggle_scratch_window,
 })
-
--- GLOBAL SHORTCUTS
--- hyprctl globalshortcuts
-
--- for obsidian toggle
-hl.bind("CTRL + SHIFT + O", hl.dsp.global("org.chromium.Chromium:47BF238FE34FA2C60B7414B87DA7C4AF-Ctrl+Shift+O"))
