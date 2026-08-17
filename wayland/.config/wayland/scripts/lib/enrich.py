@@ -18,7 +18,6 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
-import uuid
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Optional, Protocol
@@ -32,10 +31,7 @@ class EnrichProvider(StrEnum):
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 # Cheap, fast, and patched to carry no MCP servers and a read-only mode.
 DEFAULT_PROFILE = "personal/claude/haiku"
-# OpenWebUI's own `/api/v1` answers `{"detail":"Model not found"}` for every
-# model it lists; the ollama passthrough completes against the same ids. The
-# OpenWebUI-only extensions below (tool_ids, files) are inert on this route.
-DEFAULT_BASE_URL = "https://ai.kilic.dev/ollama/v1"
+DEFAULT_BASE_URL = "https://ai.kilic.dev/v1"
 DEFAULT_API_KEY_ENV = "AI_KILIC_DEV_API_KEY"
 DEFAULT_TIMEOUT = 120.0
 
@@ -107,7 +103,7 @@ class EnrichAdapterHttp:
     """OpenAI-compatible chat-completions endpoint."""
 
     provider = EnrichProvider.HTTP
-    DEFAULT_MODEL = "gemma4:31b-cloud"
+    DEFAULT_MODEL = "kilic.dev/cheap"
 
     def __init__(
         self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
@@ -119,14 +115,6 @@ class EnrichAdapterHttp:
 
     def enrich(self, text: str) -> Optional[str]:
         spec = self.spec
-        # OpenWebUI ≥0.9.5 crashes (`process_chat:2013`,
-        # `metadata['chat_id'].startswith('local:')` on None) when an
-        # external client omits chat_id — the masked 400 reads
-        # `{"detail":"'NoneType' object has no attribute 'startswith'"}`.
-        # Just `chat_id` is enough; sending session_id/id/parent_id too
-        # makes the server route this as a UI background task and return
-        # `{status, task_ids, chat_id}` instead of OpenAI choices.
-        # Ref: open-webui/open-webui#24550, #24575.
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -136,11 +124,7 @@ class EnrichAdapterHttp:
                     "content": self.user_prompt_template.format(text=text),
                 },
             ],
-            "chat_id": f"speech-{uuid.uuid4()}",
         }
-        # OpenWebUI's reasoning router only accepts high/medium/low; sending
-        # "none" makes its task-model lookup return None and the middleware
-        # then `.startswith()`s that None.
         if spec.thinking in ("high", "medium", "low"):
             body["reasoning_effort"] = spec.thinking
         if spec.temperature is not None:
