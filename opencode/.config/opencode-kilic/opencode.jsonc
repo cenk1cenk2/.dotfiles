@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "kilic/kimi-k3:cloud",
-  "small_model": "kilic/gemma4:31b-cloud",
+  "model": "kilic/kilic.dev/default",
+  "small_model": "kilic/kilic.dev/cheap",
   "enabled_providers": ["kilic"],
   "autoupdate": false,
   "instructions": ["CLAUDE.md", "AGENTS.md"],
@@ -52,30 +52,24 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "kilic",
       "options": {
-        "baseURL": "https://ai.kilic.dev/ollama/v1",
+        "baseURL": "https://ai.kilic.dev/v1",
         "apiKey": "{env:AI_KILIC_DEV_API_KEY}",
       },
       "models": {
-        "deepseek-v4-pro:cloud": {
-          "name": "DeepSeek V4 Pro",
+        "kilic.dev/cheap": {
+          "name": "Cheap",
         },
-        "glm-5.2:cloud": {
-          "name": "GLM 5.2 Cloud",
+        "kilic.dev/default": {
+          "name": "Default",
+        },
+        "kilic.dev/smart": {
+          "name": "Smart",
           "options": {
             "reasoningEffort": "max",
           },
         },
-        "kimi-k3:cloud": {
-          "name": "Kimi K3 Code Cloud",
-        },
-        "gemma4:31b-cloud": {
-          "name": "Gemma4 Cloud",
-        },
-        "deepseek-v4-flash:cloud": {
-          "name": "DeepSeek V4 Flash",
-        },
-        "gemma4:e2b": {
-          "name": "Gemma4 e2b",
+        "kilic.dev/max": {
+          "name": "Max",
         },
       },
     },

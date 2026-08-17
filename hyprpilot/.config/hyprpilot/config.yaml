@@ -100,9 +100,9 @@ patches:
       OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-laravel"
       OPENCODE_DB: "${HOME}/.local/share/opencode-laravel/opencode.db"
 
-  # haiku + gemma drive one-shot text rewrites: no MCP, no shared prompt.
-  # Has to live here rather than on the profiles — patches fold over profile
-  # bodies, so the root patch above would win.
+  # haiku, gemma and the cheap tier drive one-shot text rewrites: no MCP, no
+  # shared prompt. Has to live here rather than on the profiles — patches fold
+  # over profile bodies, so the root patch above would win.
   - $match:
       profile: "*/haiku"
     mcp:
@@ -113,7 +113,7 @@ patches:
       - "$patch": replace
 
   - $match:
-      profile: "*/gemma4*"
+      profile: "*/{gemma4*,cheap}"
     mcp:
       enabled: false
     mcps:
@@ -170,24 +170,24 @@ profiles:
 
   # AI_KILIC_DEV_API_KEY comes from the `personal/kilic/*` patch, which
   # replaces any per-profile env block.
-  - id: personal/kilic/deepseek-v4-pro:cloud
+  - id: personal/kilic/max
     agent: opencode
-    model: kilic/deepseek-v4-pro:cloud
+    model: kilic/kilic.dev/max
     mode: build
 
-  - id: personal/kilic/glm-5.2:cloud
+  - id: personal/kilic/smart
     agent: opencode
-    model: kilic/glm-5.2:cloud
+    model: kilic/kilic.dev/smart
     mode: build
 
-  - id: personal/kilic/kimi-k3:cloud
+  - id: personal/kilic/default
     agent: opencode
-    model: kilic/kimi-k3:cloud
+    model: kilic/kilic.dev/default
     mode: build
 
-  - id: personal/kilic/gemma4:31b-cloud
+  - id: personal/kilic/cheap
     agent: opencode
-    model: kilic/gemma4:31b-cloud
+    model: kilic/kilic.dev/cheap
     mode: plan
     system_prompt: []
     mcp:

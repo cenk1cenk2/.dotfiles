@@ -2013,12 +2013,12 @@ class Remsi:
     )
     @click.option(
         "--http-base-url",
-        default="https://ai.kilic.dev/api/v1",
+        default="https://ai.kilic.dev/v1",
         help="HTTP STT base URL.",
     )
     @click.option(
         "--http-model",
-        default="distil-large-v3",
+        default="distil-whisper/distil-large-v3.5-ct2",
         help="HTTP STT model name.",
     )
     @click.option(
