@@ -100,9 +100,9 @@ patches:
       OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-laravel"
       OPENCODE_DB: "${HOME}/.local/share/opencode-laravel/opencode.db"
 
-  # haiku + gemma drive one-shot text rewrites: no MCP, no shared prompt.
-  # Has to live here rather than on the profiles — patches fold over profile
-  # bodies, so the root patch above would win.
+  # haiku and gemma drive one-shot text rewrites: no MCP, no shared prompt. Has
+  # to live here rather than on the profiles — patches fold over profile bodies,
+  # so the root patch above would win.
   - $match:
       profile: "*/haiku"
     mcp:
@@ -172,22 +172,22 @@ profiles:
   # replaces any per-profile env block.
   - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
-    model: kilic/deepseek-v4-pro:cloud
+    model: kilic/ollama/cloud/deepseek-v4-pro:cloud
     mode: build
 
   - id: personal/kilic/glm-5.2:cloud
     agent: opencode
-    model: kilic/glm-5.2:cloud
+    model: kilic/ollama/cloud/glm-5.2:cloud
     mode: build
 
   - id: personal/kilic/kimi-k3:cloud
     agent: opencode
-    model: kilic/kimi-k3:cloud
+    model: kilic/ollama/cloud/kimi-k3:cloud
     mode: build
 
   - id: personal/kilic/gemma4:31b-cloud
     agent: opencode
-    model: kilic/gemma4:31b-cloud
+    model: kilic/ollama/cloud/gemma4:31b-cloud
     mode: plan
     system_prompt: []
     mcp:
@@ -237,8 +237,8 @@ profiles:
     mcp:
       enabled: false
 
-  # Ollama Cloud model ids carry no `:cloud` suffix; that tag only exists on
-  # the local-ollama-shaped API the kilic proxy fronts.
+  # Ollama Cloud accepts the tagged and untagged spelling of the same id, so
+  # these stay untagged while the kilic ones keep their `:cloud` tag.
   - id: work/ollama/deepseek-v4-pro
     agent: opencode
     model: ollama/deepseek-v4-pro
