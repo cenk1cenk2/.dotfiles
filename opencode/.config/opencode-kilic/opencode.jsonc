@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "kilic/kilic.dev/default",
-  "small_model": "kilic/kilic.dev/cheap",
+  "model": "kilic/ollama/cloud/kimi-k3:cloud",
+  "small_model": "kilic/ollama/cloud/gemma4:31b-cloud",
   "enabled_providers": ["kilic"],
   "autoupdate": false,
   "instructions": ["CLAUDE.md", "AGENTS.md"],
@@ -70,21 +70,6 @@
         },
         "ollama/cloud/gemma4:31b-cloud": {
           "name": "Gemma4 Cloud",
-        },
-        "kilic.dev/cheap": {
-          "name": "Cheap",
-        },
-        "kilic.dev/default": {
-          "name": "Default",
-        },
-        "kilic.dev/smart": {
-          "name": "Smart",
-          "options": {
-            "reasoningEffort": "max",
-          },
-        },
-        "kilic.dev/max": {
-          "name": "Max",
         },
       },
     },

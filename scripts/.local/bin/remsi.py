@@ -1998,7 +1998,7 @@ class Remsi:
     @click.option(
         "--stt-provider",
         type=click.Choice([p.value for p in TranscriptionProvider]),
-        default=TranscriptionProvider.WHISPER_CPP.value,
+        default=TranscriptionProvider.HTTP.value,
         help="STT provider.",
     )
     @click.option(
@@ -2018,7 +2018,7 @@ class Remsi:
     )
     @click.option(
         "--http-model",
-        default="distil-whisper/distil-large-v3.5-ct2",
+        default="kilic.dev/voice",
         help="HTTP STT model name.",
     )
     @click.option(

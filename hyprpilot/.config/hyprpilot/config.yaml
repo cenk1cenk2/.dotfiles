@@ -100,9 +100,9 @@ patches:
       OPENCODE_CONFIG_DIR: "${HOME}/.config/opencode-laravel"
       OPENCODE_DB: "${HOME}/.local/share/opencode-laravel/opencode.db"
 
-  # haiku, gemma and the cheap tier drive one-shot text rewrites: no MCP, no
-  # shared prompt. Has to live here rather than on the profiles — patches fold
-  # over profile bodies, so the root patch above would win.
+  # haiku and gemma drive one-shot text rewrites: no MCP, no shared prompt. Has
+  # to live here rather than on the profiles — patches fold over profile bodies,
+  # so the root patch above would win.
   - $match:
       profile: "*/haiku"
     mcp:
@@ -113,7 +113,7 @@ patches:
       - "$patch": replace
 
   - $match:
-      profile: "*/{gemma4*,cheap}"
+      profile: "*/gemma4*"
     mcp:
       enabled: false
     mcps:
@@ -192,31 +192,6 @@ profiles:
     system_prompt: []
     mcp:
       enabled: false
-
-  # The tiers resolve gateway-side, so these track whatever `kilic.dev/*`
-  # currently points at instead of pinning a model the way the four above do.
-  - id: personal/kilic/cheap
-    agent: opencode
-    model: kilic/kilic.dev/cheap
-    mode: plan
-    system_prompt: []
-    mcp:
-      enabled: false
-
-  - id: personal/kilic/default
-    agent: opencode
-    model: kilic/kilic.dev/default
-    mode: build
-
-  - id: personal/kilic/smart
-    agent: opencode
-    model: kilic/kilic.dev/smart
-    mode: build
-
-  - id: personal/kilic/max
-    agent: opencode
-    model: kilic/kilic.dev/max
-    mode: build
 
   - id: personal/codex/gpt-5.6-sol
     agent: codex
