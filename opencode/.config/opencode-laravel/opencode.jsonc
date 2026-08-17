@@ -48,9 +48,8 @@
     },
   },
   "provider": {
-    // Ollama Cloud direct. Unlike the kilic proxy, cloud model ids carry no
-    // `:cloud` / `-cloud` tag suffix — that suffix only exists on the
-    // local-ollama-shaped API the proxy exposes.
+    // Ollama Cloud direct. It accepts the tagged and untagged spelling of the
+    // same id, so these stay untagged while the kilic ones keep their tag.
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "ollama",

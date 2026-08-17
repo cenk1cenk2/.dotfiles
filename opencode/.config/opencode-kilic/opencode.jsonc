@@ -56,6 +56,21 @@
         "apiKey": "{env:AI_KILIC_DEV_API_KEY}",
       },
       "models": {
+        "ollama/cloud/deepseek-v4-pro:cloud": {
+          "name": "DeepSeek V4 Pro",
+        },
+        "ollama/cloud/glm-5.2:cloud": {
+          "name": "GLM 5.2 Cloud",
+          "options": {
+            "reasoningEffort": "max",
+          },
+        },
+        "ollama/cloud/kimi-k3:cloud": {
+          "name": "Kimi K3 Code Cloud",
+        },
+        "ollama/cloud/gemma4:31b-cloud": {
+          "name": "Gemma4 Cloud",
+        },
         "kilic.dev/cheap": {
           "name": "Cheap",
         },

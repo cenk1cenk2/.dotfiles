@@ -170,21 +170,31 @@ profiles:
 
   # AI_KILIC_DEV_API_KEY comes from the `personal/kilic/*` patch, which
   # replaces any per-profile env block.
-  - id: personal/kilic/max
+  - id: personal/kilic/deepseek-v4-pro:cloud
     agent: opencode
-    model: kilic/kilic.dev/max
+    model: kilic/ollama/cloud/deepseek-v4-pro:cloud
     mode: build
 
-  - id: personal/kilic/smart
+  - id: personal/kilic/glm-5.2:cloud
     agent: opencode
-    model: kilic/kilic.dev/smart
+    model: kilic/ollama/cloud/glm-5.2:cloud
     mode: build
 
-  - id: personal/kilic/default
+  - id: personal/kilic/kimi-k3:cloud
     agent: opencode
-    model: kilic/kilic.dev/default
+    model: kilic/ollama/cloud/kimi-k3:cloud
     mode: build
 
+  - id: personal/kilic/gemma4:31b-cloud
+    agent: opencode
+    model: kilic/ollama/cloud/gemma4:31b-cloud
+    mode: plan
+    system_prompt: []
+    mcp:
+      enabled: false
+
+  # The tiers resolve gateway-side, so these track whatever `kilic.dev/*`
+  # currently points at instead of pinning a model the way the four above do.
   - id: personal/kilic/cheap
     agent: opencode
     model: kilic/kilic.dev/cheap
@@ -192,6 +202,21 @@ profiles:
     system_prompt: []
     mcp:
       enabled: false
+
+  - id: personal/kilic/default
+    agent: opencode
+    model: kilic/kilic.dev/default
+    mode: build
+
+  - id: personal/kilic/smart
+    agent: opencode
+    model: kilic/kilic.dev/smart
+    mode: build
+
+  - id: personal/kilic/max
+    agent: opencode
+    model: kilic/kilic.dev/max
+    mode: build
 
   - id: personal/codex/gpt-5.6-sol
     agent: codex
@@ -237,8 +262,8 @@ profiles:
     mcp:
       enabled: false
 
-  # Ollama Cloud model ids carry no `:cloud` suffix; that tag only exists on
-  # the local-ollama-shaped API the kilic proxy fronts.
+  # Ollama Cloud accepts the tagged and untagged spelling of the same id, so
+  # these stay untagged while the kilic ones keep their `:cloud` tag.
   - id: work/ollama/deepseek-v4-pro
     agent: opencode
     model: ollama/deepseek-v4-pro
