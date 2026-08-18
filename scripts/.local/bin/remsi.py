@@ -2018,7 +2018,7 @@ class Remsi:
     )
     @click.option(
         "--http-model",
-        default="kilic.dev/voice",
+        default="kilic.dev/stt",
         help="HTTP STT model name.",
     )
     @click.option(
