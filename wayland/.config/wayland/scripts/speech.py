@@ -11,10 +11,14 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.error
+import urllib.request
+import uuid
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Protocol
 
 import click
@@ -382,6 +386,110 @@ class SttSession(SocketSession):
             case _:
                 raise ValueError(f"unsupported output mode: {mode!r}")
 
+# Whisper build the transcription endpoint serves by default.
+DEFAULT_STT_MODEL = "distil-whisper/distil-large-v3.5-ct2"
+
+def env_first(*names: str) -> str:
+    """First non-empty environment value among `names`, or ""."""
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+def transcode_to_wav(input_path: str, output_path: str) -> None:
+    """Normalise any input audio to 16 kHz mono WAV.
+
+    The endpoint accepts a narrow set of containers, and messaging apps
+    hand us whatever they recorded (Slack sends OGG/Opus), so everything
+    goes through ffmpeg rather than guessing which files would pass."""
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        input_path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "wav",
+        output_path,
+    ]
+    Stt.log.debug("spawn: %s", " ".join(cmd))
+    result = subprocess.run(
+        cmd, check=True, capture_output=True, text=True, timeout=300
+    )
+    Stt.log.debug("ffmpeg stderr: %s", result.stderr.strip())
+
+def _multipart_body(model: str, wav_path: Path) -> tuple[bytes, str]:
+    boundary = f"----speech-stt-{uuid.uuid4().hex}"
+    parts = [
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="model"\r\n\r\n'
+        f"{model}\r\n".encode(),
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+        "Content-Type: audio/wav\r\n\r\n".encode(),
+        wav_path.read_bytes(),
+        b"\r\n",
+        f"--{boundary}--\r\n".encode(),
+    ]
+    return b"".join(parts), boundary
+
+def request_transcript(base_url: str, api_key: str, model: str, wav_path: Path) -> str:
+    """POST the WAV to an OpenAI-compatible transcription endpoint.
+
+    Response shapes vary by backend, so the known text keys are tried in
+    turn, then segment concatenation, then the raw body — a backend that
+    answers in plain text still works."""
+    body, boundary = _multipart_body(model, wav_path)
+    url = f"{base_url.rstrip('/')}/audio/transcriptions"
+    Stt.log.info("transcribing %s via %s (model=%s)", wav_path.name, url, model)
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "speech/1.0",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            raw = response.read().decode("utf-8", errors="replace").strip()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"STT endpoint returned HTTP {exc.code}: {detail}") from exc
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+    if isinstance(parsed, dict):
+        for key in ("text", "transcript", "content"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        segments = parsed.get("segments")
+        if isinstance(segments, list):
+            joined = " ".join(
+                str(segment.get("text", "")).strip()
+                for segment in segments
+                if isinstance(segment, dict) and segment.get("text")
+            ).strip()
+            if joined:
+                return joined
+
+    return raw
+
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
@@ -649,6 +757,64 @@ class Stt:
         else:
             Stt.log.warning("enrichment empty; emitting raw text")
             output_adapter.write(text.strip())
+
+    @cli.command("transcribe")
+    @click.argument("input_path")
+    @click.argument("output_path")
+    @click.argument("model", required=False, default="")
+    @click.option(
+        "--enrich/--no-enrich", default=True, help="Enrich transcription through AI."
+    )
+    @enrich_options("enrich")
+    def cmd_transcribe(
+        input_path,
+        output_path,
+        model,
+        enrich,
+        **enrich_opts,
+    ):
+        """Transcribe an audio file into a text file.
+
+        The whole pipeline in one call — ffmpeg, the STT endpoint, then
+        optionally the same cleanup prompt `toggle` runs — for callers
+        that hand over a recording rather than drive a live session
+        (Hermes' STT command provider). No recorder, no socket, no
+        waybar."""
+        stt_model = model or env_first("STT_OPENAI_MODEL") or DEFAULT_STT_MODEL
+        base_url = env_first("STT_OPENAI_BASE_URL") or DEFAULT_BASE_URL
+        api_key = env_first(
+            "AI_KILIC_DEV_API_KEY",
+            "VOICE_TOOLS_OPENAI_KEY",
+            "OPENAI_API_KEY",
+        )
+        if not api_key:
+            Stt.log.error(
+                "one of AI_KILIC_DEV_API_KEY, VOICE_TOOLS_OPENAI_KEY or "
+                "OPENAI_API_KEY is required"
+            )
+            sys.exit(2)
+
+        with tempfile.TemporaryDirectory(prefix="speech-stt-") as tmpdir:
+            wav_path = Path(tmpdir) / "audio.wav"
+            transcode_to_wav(input_path, str(wav_path))
+            text = request_transcript(base_url, api_key, stt_model, wav_path).strip()
+
+        if not text:
+            Stt.log.warning("empty transcription")
+
+        if enrich and text:
+            spec = spec_from_options(enrich_opts, "speech/1.0", "enrich")
+            enricher = build_enricher(spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
+            enriched = enricher.enrich(text)
+            if enriched and enriched.strip():
+                text = enriched.strip()
+            else:
+                Stt.log.warning("enrichment empty; keeping raw transcription")
+
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        Stt.log.info("wrote %d chars to %s", len(text), out)
 
     @cli.command("stop")
     def cmd_stop():
