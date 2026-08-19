@@ -87,14 +87,24 @@
     "signal": 8,
   },
 
-  "custom/speech": {
+  "custom/stt": {
     "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py status",
-    "exec-if": "~/.config/wayland/scripts/speech.py is-recording",
-    "on-click": "~/.config/wayland/scripts/speech.py toggle --output clipboard",
+    "exec": "~/.config/wayland/scripts/speech.py stt status",
+    "exec-if": "~/.config/wayland/scripts/speech.py stt is-recording",
+    "on-click": "~/.config/wayland/scripts/speech.py stt toggle --output clipboard",
     "signal": 10,
+  },
+
+  "custom/tts": {
+    "interval": 3,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/wayland/scripts/speech.py tts status",
+    "exec-if": "~/.config/wayland/scripts/speech.py tts is-speaking",
+    "on-click": "~/.config/wayland/scripts/speech.py tts toggle",
+    "signal": 13,
   },
 
   "custom/copywriter": {
@@ -189,7 +199,8 @@
   "modules-left": ["hyprland/workspaces"],
   "modules-center": [
     "custom/recorder",
-    "custom/speech",
+    "custom/stt",
+    "custom/tts",
     "custom/copywriter",
     "custom/hyprpilot",
     "hyprland/submap",
