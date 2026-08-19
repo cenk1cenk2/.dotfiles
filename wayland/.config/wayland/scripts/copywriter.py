@@ -12,13 +12,7 @@ import click
 import psutil
 
 from lib import (
-    DEFAULT_API_KEY_ENV,
-    DEFAULT_BASE_URL,
-    DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_TIMEOUT,
     EnrichAdapter,
-    EnrichProvider,
-    EnrichSpec,
     InputAdapter,
     InputAdapterClipboard,
     InputAdapterStdin,
@@ -30,9 +24,11 @@ from lib import (
     OutputMode,
     build_enricher,
     create_logger,
+    enrich_options,
     load_prompt,
     notify,
     signal_waybar,
+    spec_from_options,
 )
 
 class Copywriter:
@@ -199,54 +195,11 @@ class Copywriter:
         default=InputMode.CLIPBOARD.value,
         help="Text source.",
     )
-    @click.option(
-        "--provider",
-        type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
-        default=DEFAULT_ENRICH_ADAPTER.value,
-        help="Enrichment backend.",
-    )
-    @click.option(
-        "--base-url",
-        default=DEFAULT_BASE_URL,
-        help="HTTP backend base URL.",
-    )
-    @click.option(
-        "--api-key-env",
-        default=DEFAULT_API_KEY_ENV,
-        help="Env var holding the HTTP backend key.",
-    )
-    @click.option(
-        "--model",
-        default=None,
-        help="Model id, or hyprpilot profile id.",
-    )
-    @click.option("--temperature", type=float, default=None)
-    @click.option("--top-p", type=float, default=None)
-    @click.option(
-        "--thinking",
-        type=click.Choice(["high", "medium", "low", "none"]),
-        default="none",
-        help="Reasoning depth.",
-    )
-    @click.option("--num-ctx", type=int, default=None)
-    @click.option(
-        "--timeout",
-        type=float,
-        default=DEFAULT_TIMEOUT,
-        help="Backend deadline in seconds.",
-    )
+    @enrich_options()
     def cmd_run(
         output,
         input_,
-        provider,
-        base_url,
-        api_key_env,
-        model,
-        temperature,
-        top_p,
-        thinking,
-        num_ctx,
-        timeout,
+        **enrich_opts,
     ):
         """Refine once and emit to the chosen sink."""
         input_mode = InputMode(input_)
@@ -258,18 +211,7 @@ class Copywriter:
             case _:
                 raise click.UsageError(f"unknown input mode: {input_mode!r}")
 
-        spec = EnrichSpec(
-            provider=EnrichProvider(provider),
-            model=model,
-            timeout=timeout,
-            base_url=base_url,
-            api_key_env=api_key_env,
-            temperature=temperature,
-            top_p=top_p,
-            thinking=thinking,
-            num_ctx=num_ctx,
-            user_agent="copywriter/1.0",
-        )
+        spec = spec_from_options(enrich_opts, "copywriter/1.0")
         enricher = build_enricher(
             spec, Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT
         )

@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+import click
+
 from .cli import run
 
 class EnrichProvider(StrEnum):
@@ -34,6 +36,7 @@ DEFAULT_PROFILE = "personal/claude/haiku"
 DEFAULT_BASE_URL = "https://ai.kilic.dev/v1"
 DEFAULT_API_KEY_ENV = "AI_KILIC_DEV_API_KEY"
 DEFAULT_TIMEOUT = 120.0
+THINKING_LEVELS = ("high", "medium", "low", "none")
 
 log = logging.getLogger(__name__)
 
@@ -234,3 +237,77 @@ def build_enricher(
             return EnrichAdapterHyprpilot(system_prompt, user_prompt_template, spec)
         case _:
             raise ValueError(f"unknown enrich provider: {spec.provider!r}")
+
+def enrich_options(prefix: str = ""):
+    """Stack the backend knobs every enriching command shares.
+
+    `prefix` namespaces the flags and the callback kwargs together, so a
+    script that only enriches takes `--model` while one where enrichment
+    is a single step takes `--enrich-model` and keeps `--model` for its
+    own use. Pair with `spec_from_options`, which reads the same prefix."""
+    head = f"--{prefix}-" if prefix else "--"
+    options = [
+        click.option(
+            f"{head}provider",
+            type=click.Choice(
+                [p.value for p in EnrichProvider], case_sensitive=False
+            ),
+            default=DEFAULT_ENRICH_ADAPTER.value,
+            help="Enrichment backend.",
+        ),
+        click.option(
+            f"{head}base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL."
+        ),
+        click.option(
+            f"{head}api-key-env",
+            default=DEFAULT_API_KEY_ENV,
+            help="Env var holding the HTTP backend key.",
+        ),
+        click.option(
+            f"{head}model", default=None, help="Model id, or hyprpilot profile id."
+        ),
+        click.option(f"{head}temperature", type=float, default=None),
+        click.option(f"{head}top-p", type=float, default=None),
+        click.option(
+            f"{head}thinking",
+            type=click.Choice(THINKING_LEVELS),
+            default="none",
+            help="Reasoning depth.",
+        ),
+        click.option(f"{head}num-ctx", type=int, default=None),
+        click.option(
+            f"{head}timeout",
+            type=float,
+            default=DEFAULT_TIMEOUT,
+            help="Backend deadline in seconds.",
+        ),
+    ]
+
+    def decorate(f):
+        for option in reversed(options):
+            f = option(f)
+        return f
+
+    return decorate
+
+def spec_from_options(
+    options: dict[str, Any], user_agent: str, prefix: str = ""
+) -> EnrichSpec:
+    """Fill a spec from the kwargs `enrich_options` injected."""
+    head = f"{prefix}_" if prefix else ""
+
+    def value(name: str) -> Any:
+        return options[f"{head}{name}"]
+
+    return EnrichSpec(
+        provider=EnrichProvider(value("provider")),
+        model=value("model"),
+        timeout=value("timeout"),
+        base_url=value("base_url"),
+        api_key_env=value("api_key_env"),
+        temperature=value("temperature"),
+        top_p=value("top_p"),
+        thinking=value("thinking"),
+        num_ctx=value("num_ctx"),
+        user_agent=user_agent,
+    )

@@ -22,8 +22,6 @@ import click
 from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
-    DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_TIMEOUT,
     DEFAULT_TTS_MAX_CHARS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
@@ -53,9 +51,11 @@ from lib import (
     build_enricher,
     copy_audio,
     create_logger,
+    enrich_options,
     load_prompt,
     notify,
     signal_waybar,
+    spec_from_options,
 )
 
 class SttAdapter(Protocol):
@@ -555,52 +555,15 @@ class Stt:
         help="Output sink.",
     )
     @click.option("--enrich", is_flag=True, help="Enrich transcription through AI.")
-    @click.option(
-        "--enrich-provider",
-        type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
-        default=DEFAULT_ENRICH_ADAPTER.value,
-    )
-    @click.option("--enrich-base-url", default=DEFAULT_BASE_URL)
-    @click.option(
-        "--enrich-api-key-env",
-        default=DEFAULT_API_KEY_ENV,
-        help="Env var holding the HTTP backend key.",
-    )
-    @click.option(
-        "--enrich-model",
-        default=None,
-        help="Model id, or hyprpilot profile id.",
-    )
-    @click.option("--enrich-temperature", type=float, default=None)
-    @click.option("--enrich-top-p", type=float, default=None)
-    @click.option(
-        "--enrich-thinking",
-        type=click.Choice(["high", "medium", "low", "none"]),
-        default="none",
-    )
-    @click.option("--enrich-num-ctx", type=int, default=None)
-    @click.option(
-        "--enrich-timeout",
-        type=float,
-        default=DEFAULT_TIMEOUT,
-        help="Backend deadline in seconds.",
-    )
+    @enrich_options("enrich")
     @click.option(
         "--save/--no-save", default=True, help="Copy raw transcript to clipboard first."
     )
     def cmd_toggle(
         output,
         enrich,
-        enrich_provider,
-        enrich_base_url,
-        enrich_api_key_env,
-        enrich_model,
-        enrich_temperature,
-        enrich_top_p,
-        enrich_thinking,
-        enrich_num_ctx,
-        enrich_timeout,
         save,
+        **enrich_opts,
     ):
         """Start a session, or toggle an existing one."""
         output_mode = OutputMode(output)
@@ -617,18 +580,7 @@ class Stt:
         enrich_spec: EnrichSpec | None = None
         enricher: EnrichAdapter | None = None
         if enrich:
-            enrich_spec = EnrichSpec(
-                provider=EnrichProvider(enrich_provider),
-                model=enrich_model,
-                timeout=enrich_timeout,
-                base_url=enrich_base_url,
-                api_key_env=enrich_api_key_env,
-                temperature=enrich_temperature,
-                top_p=enrich_top_p,
-                thinking=enrich_thinking,
-                num_ctx=enrich_num_ctx,
-                user_agent="speech/1.0",
-            )
+            enrich_spec = spec_from_options(enrich_opts, "speech/1.0", "enrich")
             enricher = build_enricher(enrich_spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
 
         Stt(HyprwhsprAdapter(), enricher, output_adapter).run_once(
@@ -717,6 +669,11 @@ class TtsSession(SocketSession):
     def _socket_path() -> str:
         return _TTS_PATHS.socket_path
 
+    def set_chars(self, chars: int) -> None:
+        with self._lock:
+            self.state.chars = chars
+        self._signal_waybar()
+
     def _dispatch(self, raw: str) -> TtsResponse:
         try:
             obj = json.loads(raw) if raw else {}
@@ -738,6 +695,8 @@ class Tts:
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
+    SYSTEM_PROMPT = load_prompt("tts.md", relative_to=__file__)
+    USER_PROMPT = "Rewrite the following text to be read aloud:\n<text>\n{text}\n</text>"
 
     log = logging.getLogger("speech.tts")
 
@@ -747,11 +706,13 @@ class Tts:
         input: InputAdapter | None = None,
         player: PlayerAdapter | None = None,
         copy: bool = False,
+        enricher: EnrichAdapter | None = None,
     ):
         self._spec = spec or TtsSpec()
         self._input = input
         self._player = player
         self._copy = copy
+        self._enricher = enricher
 
     # ── core ──────────────────────────────────────────────────────
 
@@ -817,6 +778,19 @@ class Tts:
         session = TtsSession(spec.voice, len(text))
         session.start()
         try:
+            # Enrich before synthesis, not after: the backend reads whatever
+            # it is handed, so the rewrite has to land before the audio does.
+            if self._enricher is not None:
+                self._notify("Rewriting for speech...", timeout=3000)
+                rewritten = self._enricher.enrich(text)
+                if rewritten and rewritten.strip():
+                    text = rewritten.strip()
+                    session.set_chars(len(text))
+                    self.log.info("rewritten to %d chars", len(text))
+                else:
+                    self.log.warning("rewrite empty; speaking raw")
+                    self._notify("Rewrite failed, speaking raw text")
+
             buffer = io.BytesIO() if self._copy else None
             # A dead backend and a dead player are different faults with
             # different fixes, so the notification has to tell them apart.
@@ -956,6 +930,12 @@ class Tts:
     @click.option(
         "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
     )
+    @click.option(
+        "--enrich/--no-enrich",
+        default=True,
+        help="Rewrite the text to be readable aloud.",
+    )
+    @enrich_options("enrich")
     def cmd_speak(
         input_,
         voice,
@@ -969,6 +949,8 @@ class Tts:
         timeout,
         max_chars,
         copy,
+        enrich,
+        **enrich_opts,
     ):
         """Synthesize the input text and play it."""
         input_mode = InputMode(input_)
@@ -1008,7 +990,15 @@ class Tts:
             user_agent="speech/1.0",
         )
 
-        Tts(spec, input_adapter, player_adapter, copy).speak()
+        enricher: EnrichAdapter | None = None
+        if enrich:
+            enricher = build_enricher(
+                spec_from_options(enrich_opts, "speech/1.0", "enrich"),
+                Tts.SYSTEM_PROMPT,
+                Tts.USER_PROMPT,
+            )
+
+        Tts(spec, input_adapter, player_adapter, copy, enricher).speak()
 
     @cli.command("toggle")
     @click.pass_context

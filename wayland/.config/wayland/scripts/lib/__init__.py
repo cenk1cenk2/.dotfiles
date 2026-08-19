@@ -14,12 +14,15 @@ from .enrich import (
     DEFAULT_BASE_URL as DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER as DEFAULT_ENRICH_ADAPTER,
     DEFAULT_TIMEOUT as DEFAULT_TIMEOUT,
+    THINKING_LEVELS as THINKING_LEVELS,
     EnrichAdapter as EnrichAdapter,
     EnrichAdapterHttp as EnrichAdapterHttp,
     EnrichAdapterHyprpilot as EnrichAdapterHyprpilot,
     EnrichProvider as EnrichProvider,
     EnrichSpec as EnrichSpec,
     build_enricher as build_enricher,
+    enrich_options as enrich_options,
+    spec_from_options as spec_from_options,
 )
 from .input import (
     InputAdapter as InputAdapter,
