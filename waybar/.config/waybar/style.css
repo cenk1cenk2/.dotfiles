@@ -208,22 +208,37 @@ window#waybar .modules-right {
   color: @bg_color_100;
 }
 
-#custom-speech {
+#custom-stt {
   color: @bg_color_100;
   border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
 
-#custom-speech.recording {
+#custom-stt.recording {
   background-color: @error_color;
 }
 
-#custom-speech.working {
+#custom-stt.working {
   background-color: @warning_color;
 }
 
-#custom-speech.output {
+#custom-stt.output {
+  background-color: @success_color;
+}
+
+#custom-tts {
+  color: @bg_color_100;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-weight: bold;
+}
+
+#custom-tts.working {
+  background-color: @warning_color;
+}
+
+#custom-tts.speaking {
   background-color: @success_color;
 }
 

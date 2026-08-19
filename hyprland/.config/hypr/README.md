@@ -201,9 +201,9 @@ The scratchpad uses Hyprland's native `special:scratch` workspace feature - no p
 
 ## Recording Mode
 
-`$mod + R` enters recording mode — screen recording, speech-to-text, and the
-copywriter all live in this one submap (mirrors the sway recording mode; there
-is no separate AI mode).
+`$mod + R` enters recording mode — screen recording, speech-to-text,
+text-to-speech and the copywriter all live in this one submap (mirrors the sway
+recording mode; there is no separate AI mode).
 
 ### Screen Recording
 
@@ -213,13 +213,18 @@ is no separate AI mode).
 - **Q** (Shift+q) - Stop recording
 - **z** - Toggle zoom (hypr-zoom)
 
-### Speech-to-Text
+### Speech-to-Text (stt)
 
-- **s** - Speech → type, AI-enriched
-- **S** (Shift+s) - Speech → type, raw
-- **c** - Speech → clipboard, AI-enriched
-- **C** (Shift+c) - Speech → clipboard, raw
-- **q** - Stop speech-to-text
+- **s** - stt → type, AI-enriched
+- **S** (Shift+s) - stt → type, raw
+- **c** - stt → clipboard, AI-enriched
+- **C** (Shift+c) - stt → clipboard, raw
+- **q** - Stop stt
+
+### Text-to-Speech (tts)
+
+- **t** - tts play/stop — reads the clipboard aloud, stops it when already speaking
+- **T** (Shift+t) - Stop speaking
 
 ### Copywriter
 
@@ -230,9 +235,10 @@ is no separate AI mode).
 
 - **Esc** - Exit recording mode
 
-Recording is driven by `recorder.py`, speech-to-text by `speech.py` (the
+Recording is driven by `recorder.py`, speech-to-text by `speech.py stt` (the
 `--enrich` variants pass the transcript through the configured LLM enricher
-first), and clipboard refinement by `copywriter.py`.
+first), text-to-speech by `speech.py tts` (Kokoro through speaches, streamed as
+raw PCM into `ffplay`), and clipboard refinement by `copywriter.py`.
 
 ## Scripts to Port
 
