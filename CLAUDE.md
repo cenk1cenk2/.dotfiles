@@ -1,9 +1,9 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions and NVIDIA dGPU runtime power. Everything below is
-an established rule — apply it to every new script (and every touch of
-an old one) without re-discussion.
+script conventions, waybar module wiring, and NVIDIA dGPU runtime
+power. Everything below is an established rule — apply it to every new
+script (and every touch of an old one) without re-discussion.
 
 ## UWSM environment files
 
@@ -306,8 +306,29 @@ adapter; the rest of the code never knows which one.
 
 ### Exception handling
 
-- Parenthesise multi-type `except` tuples:
-  `except (FileNotFoundError, ConnectionRefusedError):`. Some
-  linters in the toolchain strip the parens to the Py2
-  `except A, B:` form, which Py3 rejects as a `SyntaxError`. Keep
-  an eye on this after auto-format runs.
+- Multi-type `except` clauses go **unparenthesised**:
+  `except FileNotFoundError, ConnectionRefusedError:`. PEP 758 made
+  that form legal in 3.14, `requires-python` pins `>=3.14`, and ruff's
+  formatter strips the parens once it infers that target. Adding them
+  back starts an edit war with the next format run.
+
+## Waybar modules
+
+- Waybar reads its config once at startup and never re-reads it —
+  `reload_style_on_change` covers `style.css` only. Renaming a
+  script's CLI, or any `exec` / `exec-if` string, needs
+  `systemctl --user restart waybar@<compositor>.service`. Without
+  it the bar keeps invoking the old command and the module silently
+  vanishes: a failing `exec-if` hides a module rather than reporting
+  anything, and the command's own error surfaces only in the waybar
+  journal (`journalctl --user -u 'waybar*'`).
+
+- `hyprland.jsonc` and `sway.jsonc` are separate bars, so a module
+  each compositor shares has to be edited in both. Only that
+  compositor's own modules belong in its file — a `sway/*` module
+  listed in the Hyprland bar (or the reverse) is instantiated and
+  fails, since the backing IPC is absent.
+
+- Custom module `signal` numbers come from `waybar-signal.sh`, which
+  is the whole map: a module whose number is missing there is never
+  poked and only refreshes on its `interval`.
