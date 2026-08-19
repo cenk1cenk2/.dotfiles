@@ -696,7 +696,9 @@ class Tts:
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
     SYSTEM_PROMPT = load_prompt("tts.md", relative_to=__file__)
-    USER_PROMPT = "Rewrite the following text to be read aloud:\n<text>\n{text}\n</text>"
+    USER_PROMPT = (
+        "Rewrite the following text to be read aloud:\n<text>\n{text}\n</text>"
+    )
 
     log = logging.getLogger("speech.tts")
 
@@ -889,7 +891,7 @@ class Tts:
     )
     @click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id.")
     @click.option("--model", default=None, help="TTS model id.")
-    @click.option("--speed", type=float, default=1.1, help="Speaking rate multiplier.")
+    @click.option("--speed", type=float, default=1.25, help="Speaking rate multiplier.")
     @click.option(
         "--format",
         "response_format",
