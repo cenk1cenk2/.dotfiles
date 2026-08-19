@@ -7,9 +7,9 @@ signal[playerctl]=5
 signal[scratchpad]=7
 signal[recorder]=8
 signal[clipboard]=9
-signal[speech]=10
+signal[stt]=10
 signal[copywriter]=11
-signal[speech-tts]=13
+signal[tts]=13
 signal[pacman]=14
 signal[idle]=15
 

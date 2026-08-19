@@ -38,18 +38,17 @@ from .output import (
 from .prompts import load_prompt as load_prompt
 from .prompts import load_relative_file as load_relative_file
 from .tts import (
-    DEFAULT_MAX_CHARS as DEFAULT_MAX_CHARS,
-    DEFAULT_PLAYER as DEFAULT_PLAYER,
-    DEFAULT_SAMPLE_RATE as DEFAULT_SAMPLE_RATE,
+    DEFAULT_TTS_MAX_CHARS as DEFAULT_TTS_MAX_CHARS,
+    DEFAULT_TTS_PLAYER as DEFAULT_TTS_PLAYER,
+    DEFAULT_TTS_SAMPLE_RATE as DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT as DEFAULT_TTS_TIMEOUT,
-    DEFAULT_VOICE as DEFAULT_VOICE,
+    DEFAULT_TTS_VOICE as DEFAULT_TTS_VOICE,
+    AudioFormat as AudioFormat,
     PlayerAdapter as PlayerAdapter,
     PlayerAdapterFfplay as PlayerAdapterFfplay,
     PlayerAdapterPaplay as PlayerAdapterPaplay,
     PlayerAdapterPwCat as PlayerAdapterPwCat,
     PlayerMode as PlayerMode,
-    ResponseFormat as ResponseFormat,
-    SynthAdapter as SynthAdapter,
     SynthAdapterHttp as SynthAdapterHttp,
     TeeReader as TeeReader,
     TtsSpec as TtsSpec,

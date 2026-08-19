@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) speech→type | (c/C) speech→clip | (t/T) speak/stop | (w/W) copywriter | (z) zoom | (q/Q) stop speech/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T) tts play/stop | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 

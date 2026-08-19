@@ -87,7 +87,7 @@
     "signal": 8,
   },
 
-  "custom/speech": {
+  "custom/stt": {
     "interval": 3,
     "return-type": "json",
     "format": "{}",
@@ -97,7 +97,7 @@
     "signal": 10,
   },
 
-  "custom/speech-tts": {
+  "custom/tts": {
     "interval": 3,
     "return-type": "json",
     "format": "{}",
@@ -199,8 +199,8 @@
   "modules-left": ["hyprland/workspaces"],
   "modules-center": [
     "custom/recorder",
-    "custom/speech",
-    "custom/speech-tts",
+    "custom/stt",
+    "custom/tts",
     "custom/copywriter",
     "custom/hyprpilot",
     "hyprland/submap",

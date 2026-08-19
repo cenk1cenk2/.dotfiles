@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import logging
@@ -11,9 +12,10 @@ import socket
 import subprocess
 import sys
 import threading
+import urllib.error
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 import click
 
@@ -21,12 +23,13 @@ from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
-    DEFAULT_MAX_CHARS,
-    DEFAULT_PLAYER,
-    DEFAULT_SAMPLE_RATE,
     DEFAULT_TIMEOUT,
+    DEFAULT_TTS_MAX_CHARS,
+    DEFAULT_TTS_PLAYER,
+    DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
-    DEFAULT_VOICE,
+    DEFAULT_TTS_VOICE,
+    AudioFormat,
     EnrichAdapter,
     EnrichProvider,
     EnrichSpec,
@@ -44,7 +47,6 @@ from lib import (
     PlayerAdapterPaplay,
     PlayerAdapterPwCat,
     PlayerMode,
-    ResponseFormat,
     SynthAdapterHttp,
     TeeReader,
     TtsSpec,
@@ -57,7 +59,7 @@ from lib import (
 )
 
 
-class STTAdapter(Protocol):
+class SttAdapter(Protocol):
     """Speech-to-text backend contract."""
 
     def is_recording(self) -> bool: ...
@@ -134,20 +136,20 @@ class Response:
 
 
 @dataclass(frozen=True)
-class SpeechPaths:
+class SttPaths:
     socket_path: str
     suffix: str = ""
 
     @classmethod
-    def from_suffix(cls, suffix: str) -> SpeechPaths:
+    def from_suffix(cls, suffix: str) -> SttPaths:
         suffix = suffix or ""
         runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-        stem = f"wayland-speech-{suffix}" if suffix else "wayland-speech"
+        stem = f"wayland-stt-{suffix}" if suffix else "wayland-stt"
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
 
 # Populated by the `stt` click callback once `--session` is known.
-_PATHS: SpeechPaths = SpeechPaths.from_suffix("")
+_STT_PATHS: SttPaths = SttPaths.from_suffix("")
 
 log = logging.getLogger("speech.rpc")
 
@@ -203,40 +205,31 @@ def _rpc(socket_path: str, cmd: str, **kwargs) -> Optional[str]:
         sock.close()
 
 
-class Session:
-    """UNIX-socket-backed live recording session."""
+class SocketSession:
+    """UNIX-socket-backed live session: bind, serve, dispatch, unlink.
 
-    log = logging.getLogger("speech.session")
+    Subclasses carry their own state dataclass, response type, waybar
+    module and `_dispatch`. The socket path is resolved per call rather
+    than captured at construction, because the click group callback
+    rebinds the module-level paths once `--session` is known."""
 
-    def __init__(
-        self,
-        output: OutputAdapter,
-        enricher: Optional[EnrichAdapter],
-        adapter: STTAdapter,
-    ):
-        self.state = SessionState(
-            phase=Phase.RECORDING,
-            output=output.mode,
-            enrich=enricher.provider if enricher else None,
-        )
-        self.output = output
-        self.enricher = enricher
-        self._adapter = adapter
+    WAYBAR_MODULE: str
+    # Response dataclass the handler answers with when `_dispatch` raises.
+    RESPONSE: type
+    log: logging.Logger
+    state: Any
+
+    def __init__(self):
         self._lock = threading.Lock()
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
 
-    def set_enricher(self, enricher: Optional[EnrichAdapter]) -> None:
-        with self._lock:
-            self.enricher = enricher
-            self.state.enrich = enricher.provider if enricher else None
-        self._signal_waybar()
+    @staticmethod
+    def _socket_path() -> str:
+        raise NotImplementedError
 
-    def set_output(self, output: OutputAdapter) -> None:
-        with self._lock:
-            self.output = output
-            self.state.output = output.mode
-        self._signal_waybar()
+    def _dispatch(self, raw: str) -> Any:
+        raise NotImplementedError
 
     def start(self):
         # Session leader → KILL reaches every child subprocess.
@@ -245,22 +238,23 @@ class Session:
         except OSError as e:
             self.log.warning("setpgrp failed: %s", e)
 
+        path = self._socket_path()
         try:
-            os.unlink(_PATHS.socket_path)
+            os.unlink(path)
         except FileNotFoundError:
             pass
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(_PATHS.socket_path)
-        os.chmod(_PATHS.socket_path, 0o600)
+        self._sock.bind(path)
+        os.chmod(path, 0o600)
         self._sock.listen(4)
-        self.log.debug("listening on %s", _PATHS.socket_path)
+        self.log.debug("listening on %s", path)
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
         self._signal_waybar()
 
-    @staticmethod
-    def _signal_waybar():
-        signal_waybar("speech")
+    @classmethod
+    def _signal_waybar(cls):
+        signal_waybar(cls.WAYBAR_MODULE)
 
     def _serve(self):
         assert self._sock is not None
@@ -273,13 +267,13 @@ class Session:
 
     def _handle(self, conn: socket.socket):
         # A dropped reply is indistinguishable from "no session listening" to
-        # the client, which answers by starting a second session that rebinds
-        # the socket over the live recorder — so every path must answer.
+        # the client, which answers by starting a second session over the live
+        # one and rebinding its socket — so every path must answer.
         try:
             response = self._dispatch(_recv_request(conn))
         except Exception as e:
             self.log.warning("socket handler error: %s", e)
-            response = Response(ok=False, error=str(e))
+            response = self.RESPONSE(ok=False, error=str(e))
         try:
             conn.sendall(json.dumps(asdict(response)).encode())
         except OSError as e:
@@ -289,6 +283,65 @@ class Session:
                 conn.close()
             except OSError:
                 pass
+
+    def set_phase(self, phase: StrEnum):
+        with self._lock:
+            self.state.phase = phase
+        self._signal_waybar()
+
+    def stop(self):
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        try:
+            os.unlink(self._socket_path())
+        except FileNotFoundError:
+            pass
+        self._signal_waybar()
+
+
+class SttSession(SocketSession):
+    """Live recording session."""
+
+    WAYBAR_MODULE = "stt"
+    RESPONSE = Response
+
+    log = logging.getLogger("speech.stt.session")
+
+    def __init__(
+        self,
+        output: OutputAdapter,
+        enricher: Optional[EnrichAdapter],
+        adapter: SttAdapter,
+    ):
+        super().__init__()
+        self.state = SessionState(
+            phase=Phase.RECORDING,
+            output=output.mode,
+            enrich=enricher.provider if enricher else None,
+        )
+        self.output = output
+        self.enricher = enricher
+        self._adapter = adapter
+
+    @staticmethod
+    def _socket_path() -> str:
+        return _STT_PATHS.socket_path
+
+    def set_enricher(self, enricher: Optional[EnrichAdapter]) -> None:
+        with self._lock:
+            self.enricher = enricher
+            self.state.enrich = enricher.provider if enricher else None
+        self._signal_waybar()
+
+    def set_output(self, output: OutputAdapter) -> None:
+        with self._lock:
+            self.output = output
+            self.state.output = output.mode
+        self._signal_waybar()
 
     def _dispatch(self, raw: str) -> Response:
         try:
@@ -321,8 +374,8 @@ class Session:
         if spec_dict:
             new_enricher = build_enricher(
                 EnrichSpec.from_dict(spec_dict),
-                Speech.SYSTEM_PROMPT,
-                Speech.USER_PROMPT,
+                Stt.SYSTEM_PROMPT,
+                Stt.USER_PROMPT,
             )
         self.set_enricher(new_enricher)
 
@@ -337,38 +390,20 @@ class Session:
             case _:
                 raise ValueError(f"unsupported output mode: {mode!r}")
 
-    def set_phase(self, phase: Phase):
-        with self._lock:
-            self.state.phase = phase
-        self._signal_waybar()
 
-    def stop(self):
-        if self._sock:
-            try:
-                self._sock.close()
-            except OSError:
-                pass
-            self._sock = None
-        try:
-            os.unlink(_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        self._signal_waybar()
-
-
-class Speech:
+class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
-    SYSTEM_PROMPT = load_prompt("speech.md", relative_to=__file__)
+    SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
     USER_PROMPT = (
         "Clean up the following speech transcription:\n"
         "<transcription>\n{text}\n</transcription>"
     )
 
-    log = logging.getLogger("speech")
+    log = logging.getLogger("speech.stt")
 
     def __init__(
         self,
-        adapter: STTAdapter,
+        adapter: SttAdapter,
         enricher: Optional[EnrichAdapter] = None,
         output: Optional[OutputAdapter] = None,
     ):
@@ -383,7 +418,7 @@ class Speech:
 
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> Optional[Response]:
-        raw = _rpc(_PATHS.socket_path, cmd.value, **kwargs)
+        raw = _rpc(_STT_PATHS.socket_path, cmd.value, **kwargs)
         if raw is None:
             return None
         try:
@@ -416,7 +451,7 @@ class Speech:
             self._enricher.provider.value if self._enricher else None,
         )
 
-        server = Session(self._output, self._enricher, self._adapter)
+        server = SttSession(self._output, self._enricher, self._adapter)
         server.start()
         try:
             capture = self._adapter.capture()
@@ -455,12 +490,12 @@ class Speech:
     def stop(self):
         if self._send(Command.STOP) is None:
             self._adapter.stop()
-            Session._signal_waybar()
+            SttSession._signal_waybar()
 
     def kill(self):
         if self._send(Command.KILL) is None:
             self._adapter.cancel()
-            Session._signal_waybar()
+            SttSession._signal_waybar()
 
     def status_json(self) -> str:
         resp = self._send(Command.STATUS)
@@ -493,8 +528,8 @@ class Speech:
     @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Socket-path suffix.")
     def cli(session_suffix: str):
         """Control speech-to-text via an STT adapter."""
-        global _PATHS
-        _PATHS = SpeechPaths.from_suffix(session_suffix or "")
+        global _STT_PATHS
+        _STT_PATHS = SttPaths.from_suffix(session_suffix or "")
 
     @cli.command("toggle")
     @click.option(
@@ -577,10 +612,10 @@ class Speech:
                 user_agent="speech/1.0",
             )
             enricher = build_enricher(
-                enrich_spec, Speech.SYSTEM_PROMPT, Speech.USER_PROMPT
+                enrich_spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT
             )
 
-        Speech(HyprwhsprAdapter(), enricher, output_adapter).run_once(
+        Stt(HyprwhsprAdapter(), enricher, output_adapter).run_once(
             enrich_spec=enrich_spec,
             output_mode=output_mode,
             save=save,
@@ -589,26 +624,26 @@ class Speech:
     @cli.command("stop")
     def cmd_stop():
         """Stop the active session."""
-        Speech(HyprwhsprAdapter()).stop()
+        Stt(HyprwhsprAdapter()).stop()
 
     @cli.command("kill")
     def cmd_kill():
         """Kill the session's process group."""
-        Speech(HyprwhsprAdapter()).kill()
+        Stt(HyprwhsprAdapter()).kill()
 
     @cli.command("status")
     def cmd_status():
         """Print waybar-shaped status JSON."""
-        sys.stdout.write(Speech(HyprwhsprAdapter()).status_json() + "\n")
+        sys.stdout.write(Stt(HyprwhsprAdapter()).status_json() + "\n")
 
     @cli.command("is-recording")
     def cmd_is_recording():
         """Exit 0 if a recording is live."""
-        sys.exit(0 if Speech(HyprwhsprAdapter()).is_recording() else 1)
+        sys.exit(0 if Stt(HyprwhsprAdapter()).is_recording() else 1)
 
 
 class TtsPhase(StrEnum):
-    FETCHING = "fetching"
+    WORKING = "working"
     SPEAKING = "speaking"
 
 
@@ -656,70 +691,21 @@ class TtsPaths:
 _TTS_PATHS: TtsPaths = TtsPaths.from_suffix("")
 
 
-class TtsSession:
-    """UNIX-socket-backed live playback session."""
+class TtsSession(SocketSession):
+    """Live playback session."""
 
-    WAYBAR_MODULE = "speech-tts"
+    WAYBAR_MODULE = "tts"
+    RESPONSE = TtsResponse
 
     log = logging.getLogger("speech.tts.session")
 
     def __init__(self, voice: str, chars: int):
-        self.state = TtsState(phase=TtsPhase.FETCHING, voice=voice, chars=chars)
-        self._lock = threading.Lock()
-        self._sock: Optional[socket.socket] = None
-        self._thread: Optional[threading.Thread] = None
+        super().__init__()
+        self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
 
-    def start(self):
-        # Session leader → KILL reaches the player subprocess too.
-        try:
-            os.setpgrp()
-        except OSError as e:
-            self.log.warning("setpgrp failed: %s", e)
-
-        try:
-            os.unlink(_TTS_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(_TTS_PATHS.socket_path)
-        os.chmod(_TTS_PATHS.socket_path, 0o600)
-        self._sock.listen(4)
-        self.log.debug("listening on %s", _TTS_PATHS.socket_path)
-        self._thread = threading.Thread(target=self._serve, daemon=True)
-        self._thread.start()
-        self._signal_waybar()
-
-    @classmethod
-    def _signal_waybar(cls):
-        signal_waybar(cls.WAYBAR_MODULE)
-
-    def _serve(self):
-        assert self._sock is not None
-        while True:
-            try:
-                conn, _ = self._sock.accept()
-            except OSError:
-                return
-            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
-
-    def _handle(self, conn: socket.socket):
-        # A dropped reply reads as "no session listening" to the client, which
-        # answers by starting a second one over the live playback — so every
-        # path must answer.
-        try:
-            response = self._dispatch(_recv_request(conn))
-        except Exception as e:
-            self.log.warning("socket handler error: %s", e)
-            response = TtsResponse(ok=False, error=str(e))
-        try:
-            conn.sendall(json.dumps(asdict(response)).encode())
-        except OSError as e:
-            self.log.warning("socket reply failed: %s", e)
-        finally:
-            try:
-                conn.close()
-            except OSError:
-                pass
+    @staticmethod
+    def _socket_path() -> str:
+        return _TTS_PATHS.socket_path
 
     def _dispatch(self, raw: str) -> TtsResponse:
         try:
@@ -737,27 +723,9 @@ class TtsSession:
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
 
-    def set_phase(self, phase: TtsPhase):
-        with self._lock:
-            self.state.phase = phase
-        self._signal_waybar()
-
-    def stop(self):
-        if self._sock:
-            try:
-                self._sock.close()
-            except OSError:
-                pass
-            self._sock = None
-        try:
-            os.unlink(_TTS_PATHS.socket_path)
-        except FileNotFoundError:
-            pass
-        self._signal_waybar()
-
 
 class Tts:
-    ICON = "/usr/share/icons/Adwaita/symbolic/legacy/multimedia-volume-control-symbolic.svg"
+    ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
@@ -843,14 +811,32 @@ class Tts:
         session.start()
         try:
             buffer = io.BytesIO() if self._copy else None
+            # A dead backend and a dead player are different faults with
+            # different fixes, so the notification has to tell them apart.
+            # Backend first: URLError and TimeoutError are OSError subclasses
+            # too, and the player clause below would otherwise swallow them.
             try:
                 with SynthAdapterHttp(spec).synth(text) as stream:
                     session.set_phase(TtsPhase.SPEAKING)
                     source = TeeReader(stream, buffer) if buffer else stream
-                    written = self._player.play(source, spec.sample_rate)
-            except Exception as e:
+                    written, code = self._player.play(source, spec.sample_rate)
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                http.client.IncompleteRead,
+                TimeoutError,
+            ) as e:
                 self.log.error("synthesis failed: %s", e)
                 self._notify("Synthesis failed")
+                return
+            except (FileNotFoundError, BrokenPipeError, OSError) as e:
+                self.log.error("playback failed: %s", e)
+                self._notify("Playback failed")
+                return
+
+            if code != 0:
+                self.log.error("%s exit=%d", self._player.mode.value, code)
+                self._notify("Playback failed")
                 return
 
             if not written:
@@ -881,7 +867,7 @@ class Tts:
             )
 
         mapping = {
-            TtsPhase.FETCHING: (
+            TtsPhase.WORKING: (
                 "󰧑 󰕾",
                 f"Synthesizing {state.chars} chars ({state.voice})",
             ),
@@ -910,26 +896,26 @@ class Tts:
         default=InputMode.CLIPBOARD.value,
         help="Text source.",
     )
-    @click.option("--voice", default=DEFAULT_VOICE, help="Backend voice id.")
+    @click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id.")
     @click.option("--model", default=None, help="TTS model id.")
     @click.option("--speed", type=float, default=1.0, help="Speaking rate multiplier.")
     @click.option(
         "--format",
         "response_format",
-        type=click.Choice([f.value for f in ResponseFormat], case_sensitive=False),
-        default=ResponseFormat.PCM.value,
+        type=click.Choice([f.value for f in AudioFormat], case_sensitive=False),
+        default=AudioFormat.PCM.value,
         help="Audio encoding.",
     )
     @click.option(
         "--sample-rate",
         type=int,
-        default=DEFAULT_SAMPLE_RATE,
+        default=DEFAULT_TTS_SAMPLE_RATE,
         help="Output rate in Hz.",
     )
     @click.option(
         "--player",
         type=click.Choice([p.value for p in PlayerMode], case_sensitive=False),
-        default=DEFAULT_PLAYER.value,
+        default=DEFAULT_TTS_PLAYER.value,
         help="Playback sink.",
     )
     @click.option("--base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL.")
@@ -947,7 +933,7 @@ class Tts:
     @click.option(
         "--max-chars",
         type=int,
-        default=DEFAULT_MAX_CHARS,
+        default=DEFAULT_TTS_MAX_CHARS,
         help="Truncate longer input.",
     )
     @click.option("--copy/--no-copy", default=False, help="Copy the audio to the clipboard.")
@@ -975,9 +961,9 @@ class Tts:
             case _:
                 raise click.UsageError(f"unknown input mode: {input_mode!r}")
 
-        fmt = ResponseFormat(response_format)
+        fmt = AudioFormat(response_format)
         player_mode = PlayerMode(player)
-        if fmt is not ResponseFormat.PCM and player_mode is not PlayerMode.FFPLAY:
+        if fmt is not AudioFormat.PCM and player_mode is not PlayerMode.FFPLAY:
             raise click.UsageError(f"{player_mode.value} plays raw pcm only")
 
         match player_mode:
@@ -1039,7 +1025,7 @@ def cli(verbose: bool):
     create_logger(verbose)
 
 
-cli.add_command(Speech.cli, "stt")
+cli.add_command(Stt.cli, "stt")
 cli.add_command(Tts.cli, "tts")
 
 

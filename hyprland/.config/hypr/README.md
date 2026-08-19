@@ -201,9 +201,9 @@ The scratchpad uses Hyprland's native `special:scratch` workspace feature - no p
 
 ## Recording Mode
 
-`$mod + R` enters recording mode — screen recording, speech-to-text, and the
-copywriter all live in this one submap (mirrors the sway recording mode; there
-is no separate AI mode).
+`$mod + R` enters recording mode — screen recording, speech-to-text,
+text-to-speech and the copywriter all live in this one submap (mirrors the sway
+recording mode; there is no separate AI mode).
 
 ### Screen Recording
 
@@ -213,17 +213,17 @@ is no separate AI mode).
 - **Q** (Shift+q) - Stop recording
 - **z** - Toggle zoom (hypr-zoom)
 
-### Speech-to-Text
+### Speech-to-Text (stt)
 
-- **s** - Speech → type, AI-enriched
-- **S** (Shift+s) - Speech → type, raw
-- **c** - Speech → clipboard, AI-enriched
-- **C** (Shift+c) - Speech → clipboard, raw
-- **q** - Stop speech-to-text
+- **s** - stt → type, AI-enriched
+- **S** (Shift+s) - stt → type, raw
+- **c** - stt → clipboard, AI-enriched
+- **C** (Shift+c) - stt → clipboard, raw
+- **q** - Stop stt
 
-### Text-to-Speech
+### Text-to-Speech (tts)
 
-- **t** - Read the clipboard aloud (toggles: speaks when idle, stops when speaking)
+- **t** - tts play/stop — reads the clipboard aloud, stops it when already speaking
 - **T** (Shift+t) - Stop speaking
 
 ### Copywriter

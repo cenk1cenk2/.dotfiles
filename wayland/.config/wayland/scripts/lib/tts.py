@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 import wave
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Optional, Protocol
@@ -29,7 +29,7 @@ from typing import Any, Optional, Protocol
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
 
-class ResponseFormat(StrEnum):
+class AudioFormat(StrEnum):
     PCM = "pcm"
     MP3 = "mp3"
     WAV = "wav"
@@ -44,11 +44,11 @@ class PlayerMode(StrEnum):
 
 DEFAULT_TTS_MODEL = "kilic.dev/tts"
 # American male — the least robotic of the Kokoro voices.
-DEFAULT_VOICE = "am_michael"
-DEFAULT_SAMPLE_RATE = 24000
-DEFAULT_MAX_CHARS = 5000
+DEFAULT_TTS_VOICE = "am_michael"
+DEFAULT_TTS_SAMPLE_RATE = 24000
+DEFAULT_TTS_MAX_CHARS = 5000
 DEFAULT_TTS_TIMEOUT = 120.0
-DEFAULT_PLAYER = PlayerMode.FFPLAY
+DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
 
 # Big enough that the pump is not syscall-bound, small enough that the
 # first chunk lands at the sink well inside a human's patience.
@@ -65,14 +65,14 @@ class TtsSpec:
     the adapter resolves it at call time."""
 
     model: Optional[str] = None
-    voice: str = DEFAULT_VOICE
+    voice: str = DEFAULT_TTS_VOICE
     speed: float = 1.0
-    response_format: ResponseFormat = ResponseFormat.PCM
-    sample_rate: int = DEFAULT_SAMPLE_RATE
+    response_format: AudioFormat = AudioFormat.PCM
+    sample_rate: int = DEFAULT_TTS_SAMPLE_RATE
     base_url: str = DEFAULT_BASE_URL
     api_key_env: str = DEFAULT_API_KEY_ENV
     timeout: float = DEFAULT_TTS_TIMEOUT
-    max_chars: int = DEFAULT_MAX_CHARS
+    max_chars: int = DEFAULT_TTS_MAX_CHARS
     user_agent: str = "tts/1.0"
 
 
@@ -80,14 +80,6 @@ class ByteStream(Protocol):
     """Readable byte source — the slice of a file object the pump uses."""
 
     def read(self, size: int = -1) -> bytes: ...
-
-
-class SynthAdapter(Protocol):
-    """Text-to-speech backend contract."""
-
-    def synth(self, text: str) -> AbstractContextManager[ByteStream]:
-        """Open an audio stream for `text`. Raises on failure."""
-        ...
 
 
 class SynthAdapterHttp:
@@ -164,17 +156,25 @@ class PlayerAdapter(Protocol):
 
     mode: PlayerMode
 
-    def play(self, stream: ByteStream, sample_rate: int) -> int:
-        """Drain `stream` into the sink; returns the bytes played."""
+    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
+        """Drain `stream` into the sink; returns (bytes played, exit code).
+
+        The exit code comes back rather than being logged and dropped so
+        the caller can tell the user that playback failed."""
         ...
 
 
-def _stream_to_player(cmd: list[str], stream: ByteStream) -> int:
-    """Pump `stream` into `cmd`'s stdin, returning the bytes written.
+def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
+    """Pump `stream` into `cmd`'s stdin, returning (bytes written, exit code).
 
     The player deliberately stays in our process group so the session's
     `killpg` reaches it. A BrokenPipeError only means it exited first —
-    killed mid-utterance, or `-autoexit` beating the tail of the body."""
+    killed mid-utterance, or `-autoexit` beating the tail of the body.
+
+    The `wait()` is deliberately untimed: it blocks for exactly as long as
+    the audio lasts, which `--max-chars` already bounds. The session's
+    socket thread keeps answering while it runs, so `tts kill` stays the
+    escape hatch for a player that never returns."""
     log.debug("spawn: %s", " ".join(cmd))
     proc = subprocess.Popen(
         cmd,
@@ -198,9 +198,7 @@ def _stream_to_player(cmd: list[str], stream: ByteStream) -> int:
             pass
         proc.wait()
 
-    if proc.returncode != 0:
-        log.warning("%s exit=%d", cmd[0], proc.returncode)
-    return written
+    return written, proc.returncode
 
 
 class PlayerAdapterFfplay:
@@ -208,10 +206,10 @@ class PlayerAdapterFfplay:
 
     mode = PlayerMode.FFPLAY
 
-    def __init__(self, response_format: ResponseFormat = ResponseFormat.PCM):
+    def __init__(self, response_format: AudioFormat = AudioFormat.PCM):
         self.response_format = response_format
 
-    def play(self, stream: ByteStream, sample_rate: int) -> int:
+    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
         cmd = [
             "ffplay",
             "-hide_banner",
@@ -222,7 +220,7 @@ class PlayerAdapterFfplay:
         ]
         # Raw PCM carries no rate or channel count, so it has to be declared;
         # every other format is self-describing and probing it is enough.
-        if self.response_format is ResponseFormat.PCM:
+        if self.response_format is AudioFormat.PCM:
             cmd += ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1"]
         cmd += ["-i", "pipe:0"]
         return _stream_to_player(cmd, stream)
@@ -233,7 +231,7 @@ class PlayerAdapterPwCat:
 
     mode = PlayerMode.PW_CAT
 
-    def play(self, stream: ByteStream, sample_rate: int) -> int:
+    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
         cmd = [
             "pw-cat",
             "-p",
@@ -254,7 +252,7 @@ class PlayerAdapterPaplay:
 
     mode = PlayerMode.PAPLAY
 
-    def play(self, stream: ByteStream, sample_rate: int) -> int:
+    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
         cmd = [
             "paplay",
             "--raw",
@@ -267,10 +265,10 @@ class PlayerAdapterPaplay:
 
 
 _CLIPBOARD_MIMES = {
-    ResponseFormat.PCM: "audio/wav",
-    ResponseFormat.WAV: "audio/wav",
-    ResponseFormat.MP3: "audio/mpeg",
-    ResponseFormat.FLAC: "audio/flac",
+    AudioFormat.PCM: "audio/wav",
+    AudioFormat.WAV: "audio/wav",
+    AudioFormat.MP3: "audio/mpeg",
+    AudioFormat.FLAC: "audio/flac",
 }
 
 
@@ -281,7 +279,7 @@ def copy_audio(data: bytes, spec: TtsSpec) -> None:
     its rate nor its channel count, so whatever pastes it has nothing to
     play back."""
     mime = _CLIPBOARD_MIMES[spec.response_format]
-    if spec.response_format is ResponseFormat.PCM:
+    if spec.response_format is AudioFormat.PCM:
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
             wav.setnchannels(1)
