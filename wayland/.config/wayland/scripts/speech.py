@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -20,16 +21,35 @@ from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     DEFAULT_ENRICH_ADAPTER,
+    DEFAULT_MAX_CHARS,
+    DEFAULT_PLAYER,
+    DEFAULT_SAMPLE_RATE,
     DEFAULT_TIMEOUT,
+    DEFAULT_TTS_TIMEOUT,
+    DEFAULT_VOICE,
     EnrichAdapter,
     EnrichProvider,
     EnrichSpec,
+    InputAdapter,
+    InputAdapterClipboard,
+    InputAdapterStdin,
+    InputMode,
     OutputAdapter,
     OutputAdapterClipboard,
     OutputAdapterStdout,
     OutputAdapterType,
     OutputMode,
+    PlayerAdapter,
+    PlayerAdapterFfplay,
+    PlayerAdapterPaplay,
+    PlayerAdapterPwCat,
+    PlayerMode,
+    ResponseFormat,
+    SynthAdapterHttp,
+    TeeReader,
+    TtsSpec,
     build_enricher,
+    copy_audio,
     create_logger,
     load_prompt,
     notify,
@@ -126,8 +146,61 @@ class SpeechPaths:
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
 
-# Populated by the root click callback once `--session` is known.
+# Populated by the `stt` click callback once `--session` is known.
 _PATHS: SpeechPaths = SpeechPaths.from_suffix("")
+
+log = logging.getLogger("speech.rpc")
+
+
+def _recv_request(conn: socket.socket) -> str:
+    """Read one newline-framed request.
+
+    The enrich spec travels in this payload and grows with every field
+    added to it, so a single fixed recv() would eventually truncate."""
+    buf = b""
+    while b"\n" not in buf:
+        data = conn.recv(4096)
+        if not data:
+            break
+        buf += data
+
+    return buf.decode("utf-8", errors="replace").strip()
+
+
+def _rpc(socket_path: str, cmd: str, **kwargs) -> Optional[str]:
+    """Send one newline-framed command to `socket_path`; return the raw reply.
+
+    None means nothing answered — no session, a stale socket (which is
+    unlinked on the way out), or a dropped reply. Callers read all three
+    as "no session listening"."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    try:
+        sock.connect(socket_path)
+    except (FileNotFoundError, ConnectionRefusedError):
+        try:
+            os.unlink(socket_path)
+        except FileNotFoundError:
+            pass
+        return None
+    except OSError as e:
+        log.warning("socket connect failed: %s", e)
+        return None
+
+    try:
+        payload = json.dumps({"cmd": cmd, **kwargs}) + "\n"
+        log.debug("rpc send: %s", payload.rstrip())
+        sock.sendall(payload.encode())
+        chunks = []
+        while True:
+            data = sock.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+        raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
+        return raw or None
+    finally:
+        sock.close()
 
 
 class Session:
@@ -203,7 +276,7 @@ class Session:
         # the client, which answers by starting a second session that rebinds
         # the socket over the live recorder — so every path must answer.
         try:
-            response = self._dispatch(self._recv_request(conn))
+            response = self._dispatch(_recv_request(conn))
         except Exception as e:
             self.log.warning("socket handler error: %s", e)
             response = Response(ok=False, error=str(e))
@@ -216,21 +289,6 @@ class Session:
                 conn.close()
             except OSError:
                 pass
-
-    @staticmethod
-    def _recv_request(conn: socket.socket) -> str:
-        """Read one newline-framed request.
-
-        The enrich spec travels in this payload and grows with every field
-        added to it, so a single fixed recv() would eventually truncate."""
-        buf = b""
-        while b"\n" not in buf:
-            data = conn.recv(4096)
-            if not data:
-                break
-            buf += data
-
-        return buf.decode("utf-8", errors="replace").strip()
 
     def _dispatch(self, raw: str) -> Response:
         try:
@@ -325,40 +383,14 @@ class Speech:
 
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> Optional[Response]:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        try:
-            sock.connect(_PATHS.socket_path)
-        except (FileNotFoundError, ConnectionRefusedError):
-            try:
-                os.unlink(_PATHS.socket_path)
-            except FileNotFoundError:
-                pass
+        raw = _rpc(_PATHS.socket_path, cmd.value, **kwargs)
+        if raw is None:
             return None
-        except OSError as e:
-            cls.log.warning("socket connect failed: %s", e)
-            return None
-
         try:
-            payload = json.dumps({"cmd": cmd.value, **kwargs}) + "\n"
-            cls.log.debug("rpc send: %s", payload.rstrip())
-            sock.sendall(payload.encode())
-            chunks = []
-            while True:
-                data = sock.recv(4096)
-                if not data:
-                    break
-                chunks.append(data)
-            raw = b"".join(chunks).decode("utf-8", errors="replace").strip()
-            if not raw:
-                return None
-            try:
-                return Response.from_json(raw)
-            except (json.JSONDecodeError, KeyError, ValueError) as e:
-                cls.log.warning("bad response: %s (raw=%r)", e, raw)
-                return None
-        finally:
-            sock.close()
+            return Response.from_json(raw)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            cls.log.warning("bad response: %s (raw=%r)", e, raw)
+            return None
 
     def is_recording(self) -> bool:
         if self._send(Command.STATUS) is not None:
@@ -457,12 +489,10 @@ class Speech:
 
     # ── CLI ───────────────────────────────────────────────────────
 
-    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    @click.group()
     @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Socket-path suffix.")
-    def cli(verbose: bool, session_suffix: str):
+    def cli(session_suffix: str):
         """Control speech-to-text via an STT adapter."""
-        create_logger(verbose)
         global _PATHS
         _PATHS = SpeechPaths.from_suffix(session_suffix or "")
 
@@ -577,5 +607,441 @@ class Speech:
         sys.exit(0 if Speech(HyprwhsprAdapter()).is_recording() else 1)
 
 
+class TtsPhase(StrEnum):
+    FETCHING = "fetching"
+    SPEAKING = "speaking"
+
+
+@dataclass
+class TtsState:
+    phase: TtsPhase
+    voice: str
+    chars: int
+
+
+@dataclass
+class TtsResponse:
+    ok: bool
+    state: Optional[TtsState] = None
+    error: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, raw: str) -> TtsResponse:
+        obj = json.loads(raw)
+        state = None
+        sd = obj.get("state")
+        if sd:
+            state = TtsState(
+                phase=TtsPhase(sd["phase"]),
+                voice=sd["voice"],
+                chars=int(sd["chars"]),
+            )
+        return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
+
+
+@dataclass(frozen=True)
+class TtsPaths:
+    socket_path: str
+    suffix: str = ""
+
+    @classmethod
+    def from_suffix(cls, suffix: str) -> TtsPaths:
+        suffix = suffix or ""
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        stem = f"wayland-tts-{suffix}" if suffix else "wayland-tts"
+        return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
+
+
+# Populated by the `tts` click callback once `--session` is known.
+_TTS_PATHS: TtsPaths = TtsPaths.from_suffix("")
+
+
+class TtsSession:
+    """UNIX-socket-backed live playback session."""
+
+    WAYBAR_MODULE = "speech-tts"
+
+    log = logging.getLogger("speech.tts.session")
+
+    def __init__(self, voice: str, chars: int):
+        self.state = TtsState(phase=TtsPhase.FETCHING, voice=voice, chars=chars)
+        self._lock = threading.Lock()
+        self._sock: Optional[socket.socket] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        # Session leader → KILL reaches the player subprocess too.
+        try:
+            os.setpgrp()
+        except OSError as e:
+            self.log.warning("setpgrp failed: %s", e)
+
+        try:
+            os.unlink(_TTS_PATHS.socket_path)
+        except FileNotFoundError:
+            pass
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(_TTS_PATHS.socket_path)
+        os.chmod(_TTS_PATHS.socket_path, 0o600)
+        self._sock.listen(4)
+        self.log.debug("listening on %s", _TTS_PATHS.socket_path)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+        self._signal_waybar()
+
+    @classmethod
+    def _signal_waybar(cls):
+        signal_waybar(cls.WAYBAR_MODULE)
+
+    def _serve(self):
+        assert self._sock is not None
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket):
+        # A dropped reply reads as "no session listening" to the client, which
+        # answers by starting a second one over the live playback — so every
+        # path must answer.
+        try:
+            response = self._dispatch(_recv_request(conn))
+        except Exception as e:
+            self.log.warning("socket handler error: %s", e)
+            response = TtsResponse(ok=False, error=str(e))
+        try:
+            conn.sendall(json.dumps(asdict(response)).encode())
+        except OSError as e:
+            self.log.warning("socket reply failed: %s", e)
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _dispatch(self, raw: str) -> TtsResponse:
+        try:
+            obj = json.loads(raw) if raw else {}
+            cmd = Command(obj.get("cmd", ""))
+        except (json.JSONDecodeError, ValueError):
+            return TtsResponse(ok=False, error=f"bad request: {raw!r}")
+
+        self.log.info("socket cmd: %s", cmd.value)
+        if cmd is Command.STATUS:
+            with self._lock:
+                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+        if cmd is Command.KILL:
+            os.killpg(0, signal.SIGKILL)
+
+        return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
+
+    def set_phase(self, phase: TtsPhase):
+        with self._lock:
+            self.state.phase = phase
+        self._signal_waybar()
+
+    def stop(self):
+        if self._sock:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        try:
+            os.unlink(_TTS_PATHS.socket_path)
+        except FileNotFoundError:
+            pass
+        self._signal_waybar()
+
+
+class Tts:
+    ICON = "/usr/share/icons/Adwaita/symbolic/legacy/multimedia-volume-control-symbolic.svg"
+    # wl-paste also advertises the legacy X11 selection atoms, and some
+    # toolkits offer nothing else for plain text.
+    TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
+
+    log = logging.getLogger("speech.tts")
+
+    def __init__(
+        self,
+        spec: Optional[TtsSpec] = None,
+        input: Optional[InputAdapter] = None,
+        player: Optional[PlayerAdapter] = None,
+        copy: bool = False,
+    ):
+        self._spec = spec or TtsSpec()
+        self._input = input
+        self._player = player
+        self._copy = copy
+
+    # ── core ──────────────────────────────────────────────────────
+
+    def _notify(self, message, timeout=None):
+        notify("Text-to-Speech", message, self.ICON, timeout)
+
+    @classmethod
+    def _send(cls, cmd: Command, **kwargs) -> Optional[TtsResponse]:
+        raw = _rpc(_TTS_PATHS.socket_path, cmd.value, **kwargs)
+        if raw is None:
+            return None
+        try:
+            return TtsResponse.from_json(raw)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            cls.log.warning("bad response: %s (raw=%r)", e, raw)
+            return None
+
+    def is_speaking(self) -> bool:
+        return self._send(Command.STATUS) is not None
+
+    def _read_text(self) -> Optional[str]:
+        """Text to speak, or None with the user already notified why."""
+        assert self._input is not None
+        if self._input.mode is InputMode.CLIPBOARD:
+            types = InputAdapterClipboard.list_mime_types()
+            if not any(
+                t.startswith("text/") or t in self.TEXT_ATOMS for t in types
+            ):
+                self.log.warning("clipboard holds no text: %s", types)
+                self._notify("Clipboard holds no text")
+                return None
+
+        text = self._input.read()
+        if not text or not text.strip():
+            self.log.warning("%s was empty", self._input.mode.value)
+            self._notify(f"{self._input.mode.value.capitalize()} is empty")
+            return None
+
+        text = text.strip()
+        if len(text) > self._spec.max_chars:
+            self.log.warning(
+                "truncating %d chars to %d", len(text), self._spec.max_chars
+            )
+            self._notify(f"Truncated to {self._spec.max_chars} characters")
+            text = text[: self._spec.max_chars]
+        return text
+
+    def speak(self) -> None:
+        assert self._input is not None, "speak requires an input adapter"
+        assert self._player is not None, "speak requires a player adapter"
+        spec = self._spec
+
+        # Refuse rather than rebind: a second bind would drop the running
+        # session's socket and leave its player unreachable to `kill`.
+        if self.is_speaking():
+            self.log.info("a session is already speaking; bailing")
+            self._notify("Already speaking")
+            return
+
+        text = self._read_text()
+        if text is None:
+            return
+
+        self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
+        session = TtsSession(spec.voice, len(text))
+        session.start()
+        try:
+            buffer = io.BytesIO() if self._copy else None
+            try:
+                with SynthAdapterHttp(spec).synth(text) as stream:
+                    session.set_phase(TtsPhase.SPEAKING)
+                    source = TeeReader(stream, buffer) if buffer else stream
+                    written = self._player.play(source, spec.sample_rate)
+            except Exception as e:
+                self.log.error("synthesis failed: %s", e)
+                self._notify("Synthesis failed")
+                return
+
+            if not written:
+                self.log.warning("backend returned no audio")
+                self._notify("No audio returned")
+                return
+
+            self.log.info("played %d bytes through %s", written, self._player.mode.value)
+            if buffer is not None:
+                copy_audio(buffer.getvalue(), spec)
+                self._notify("Audio copied to clipboard", timeout=3000)
+        finally:
+            session.stop()
+
+    def kill(self) -> None:
+        # No reply is the *expected* outcome: the session killpg's itself
+        # before it can answer, so there is nothing here to branch on.
+        self._send(Command.KILL)
+        TtsSession._signal_waybar()
+
+    def status_json(self) -> str:
+        resp = self._send(Command.STATUS)
+        state = resp.state if resp and resp.ok else None
+
+        if state is None:
+            return json.dumps(
+                {"class": "idle", "text": "", "tooltip": "Text-to-speech ready"}
+            )
+
+        mapping = {
+            TtsPhase.FETCHING: (
+                "󰧑 󰕾",
+                f"Synthesizing {state.chars} chars ({state.voice})",
+            ),
+            TtsPhase.SPEAKING: (
+                "󰕾",
+                f"Speaking {state.chars} chars ({state.voice})",
+            ),
+        }
+        text, tooltip = mapping[state.phase]
+        return json.dumps({"class": state.phase.value, "text": text, "tooltip": tooltip})
+
+    # ── CLI ───────────────────────────────────────────────────────
+
+    @click.group()
+    @click.option("--session", "session_suffix", default="", metavar="SUFFIX", help="Socket-path suffix.")
+    def cli(session_suffix: str):
+        """Read text aloud through a TTS backend."""
+        global _TTS_PATHS
+        _TTS_PATHS = TtsPaths.from_suffix(session_suffix or "")
+
+    @cli.command("speak")
+    @click.option(
+        "--input",
+        "input_",
+        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        default=InputMode.CLIPBOARD.value,
+        help="Text source.",
+    )
+    @click.option("--voice", default=DEFAULT_VOICE, help="Backend voice id.")
+    @click.option("--model", default=None, help="TTS model id.")
+    @click.option("--speed", type=float, default=1.0, help="Speaking rate multiplier.")
+    @click.option(
+        "--format",
+        "response_format",
+        type=click.Choice([f.value for f in ResponseFormat], case_sensitive=False),
+        default=ResponseFormat.PCM.value,
+        help="Audio encoding.",
+    )
+    @click.option(
+        "--sample-rate",
+        type=int,
+        default=DEFAULT_SAMPLE_RATE,
+        help="Output rate in Hz.",
+    )
+    @click.option(
+        "--player",
+        type=click.Choice([p.value for p in PlayerMode], case_sensitive=False),
+        default=DEFAULT_PLAYER.value,
+        help="Playback sink.",
+    )
+    @click.option("--base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL.")
+    @click.option(
+        "--api-key-env",
+        default=DEFAULT_API_KEY_ENV,
+        help="Env var holding the HTTP backend key.",
+    )
+    @click.option(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TTS_TIMEOUT,
+        help="Backend deadline in seconds.",
+    )
+    @click.option(
+        "--max-chars",
+        type=int,
+        default=DEFAULT_MAX_CHARS,
+        help="Truncate longer input.",
+    )
+    @click.option("--copy/--no-copy", default=False, help="Copy the audio to the clipboard.")
+    def cmd_speak(
+        input_,
+        voice,
+        model,
+        speed,
+        response_format,
+        sample_rate,
+        player,
+        base_url,
+        api_key_env,
+        timeout,
+        max_chars,
+        copy,
+    ):
+        """Synthesize the input text and play it."""
+        input_mode = InputMode(input_)
+        match input_mode:
+            case InputMode.CLIPBOARD:
+                input_adapter: InputAdapter = InputAdapterClipboard()
+            case InputMode.STDIN:
+                input_adapter = InputAdapterStdin()
+            case _:
+                raise click.UsageError(f"unknown input mode: {input_mode!r}")
+
+        fmt = ResponseFormat(response_format)
+        player_mode = PlayerMode(player)
+        if fmt is not ResponseFormat.PCM and player_mode is not PlayerMode.FFPLAY:
+            raise click.UsageError(f"{player_mode.value} plays raw pcm only")
+
+        match player_mode:
+            case PlayerMode.FFPLAY:
+                player_adapter: PlayerAdapter = PlayerAdapterFfplay(fmt)
+            case PlayerMode.PW_CAT:
+                player_adapter = PlayerAdapterPwCat()
+            case PlayerMode.PAPLAY:
+                player_adapter = PlayerAdapterPaplay()
+            case _:
+                raise click.UsageError(f"unsupported player: {player_mode!r}")
+
+        spec = TtsSpec(
+            model=model,
+            voice=voice,
+            speed=speed,
+            response_format=fmt,
+            sample_rate=sample_rate,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            timeout=timeout,
+            max_chars=max_chars,
+            user_agent="speech/1.0",
+        )
+
+        Tts(spec, input_adapter, player_adapter, copy).speak()
+
+    @cli.command("toggle")
+    @click.pass_context
+    def cmd_toggle(ctx: click.Context):
+        """Kill an active session, or speak the clipboard."""
+        if Tts().is_speaking():
+            Tts().kill()
+            return
+        # Defaults come from `speak`'s own options, so the two paths can
+        # never drift.
+        ctx.invoke(Tts.cmd_speak)
+
+    @cli.command("kill")
+    def cmd_kill():
+        """Kill the session's process group, player included."""
+        Tts().kill()
+
+    @cli.command("status")
+    def cmd_status():
+        """Print waybar-shaped status JSON."""
+        sys.stdout.write(Tts().status_json() + "\n")
+
+    @cli.command("is-speaking")
+    def cmd_is_speaking():
+        """Exit 0 if playback is live."""
+        sys.exit(0 if Tts().is_speaking() else 1)
+
+
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def cli(verbose: bool):
+    """Speech-to-text capture and text-to-speech playback."""
+    create_logger(verbose)
+
+
+cli.add_command(Speech.cli, "stt")
+cli.add_command(Tts.cli, "tts")
+
+
 if __name__ == "__main__":
-    Speech.cli()
+    cli()

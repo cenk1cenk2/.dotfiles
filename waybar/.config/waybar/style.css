@@ -227,6 +227,21 @@ window#waybar .modules-right {
   background-color: @success_color;
 }
 
+#custom-speech-tts {
+  color: @bg_color_100;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-weight: bold;
+}
+
+#custom-speech-tts.fetching {
+  background-color: @warning_color;
+}
+
+#custom-speech-tts.speaking {
+  background-color: @success_color;
+}
+
 #custom-copywriter {
   color: @bg_color_100;
   border-radius: 8px;

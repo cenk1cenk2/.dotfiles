@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) speech→type | (c/C) speech→clip | (w/W) copywriter | (z) zoom | (q/Q) stop speech/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) speech→type | (c/C) speech→clip | (t/T) speak/stop | (w/W) copywriter | (z) zoom | (q/Q) stop speech/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -28,16 +28,22 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + q", exec_then_reset(("%s stop"):format(d.recorder)))
 
   -- Speech-to-text direct typing with AI enrichment
-  hl.bind("s", exec_then_reset(("%s toggle --output type --enrich"):format(d.speech)))
+  hl.bind("s", exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)))
 
   -- Speech-to-text direct typing (raw, no enrichment)
-  hl.bind("SHIFT + s", exec_then_reset(("%s toggle --output type"):format(d.speech)))
+  hl.bind("SHIFT + s", exec_then_reset(("%s stt toggle --output type"):format(d.speech)))
 
   -- Speech-to-text to clipboard with AI enrichment
-  hl.bind("c", exec_then_reset(("%s toggle --output clipboard --enrich"):format(d.speech)))
+  hl.bind("c", exec_then_reset(("%s stt toggle --output clipboard --enrich"):format(d.speech)))
 
   -- Speech-to-text to clipboard (raw, no enrichment)
-  hl.bind("SHIFT + c", exec_then_reset(("%s toggle --output clipboard"):format(d.speech)))
+  hl.bind("SHIFT + c", exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech)))
+
+  -- Read clipboard aloud
+  hl.bind("t", exec_then_reset(("%s tts toggle"):format(d.speech)))
+
+  -- Stop speaking
+  hl.bind("SHIFT + t", exec_then_reset(("%s tts kill"):format(d.speech)))
 
   -- Copywriter: refine clipboard through AI
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))
@@ -49,7 +55,7 @@ hl.define_submap(submap, function()
   hl.bind("z", exec_then_reset("hypr-zoom -easing=InOutCubic -interp=Linear -target 1.5"))
 
   -- Stop speech-to-text
-  hl.bind("q", exec_then_reset(("%s kill"):format(d.speech)))
+  hl.bind("q", exec_then_reset(("%s stt kill"):format(d.speech)))
 
   -- Exit recording mode
   hl.bind("escape", hl.dsp.submap("reset"))

@@ -221,6 +221,11 @@ is no separate AI mode).
 - **C** (Shift+c) - Speech → clipboard, raw
 - **q** - Stop speech-to-text
 
+### Text-to-Speech
+
+- **t** - Read the clipboard aloud (toggles: speaks when idle, stops when speaking)
+- **T** (Shift+t) - Stop speaking
+
 ### Copywriter
 
 - **w** - Refine clipboard through the copywriter
@@ -230,9 +235,10 @@ is no separate AI mode).
 
 - **Esc** - Exit recording mode
 
-Recording is driven by `recorder.py`, speech-to-text by `speech.py` (the
+Recording is driven by `recorder.py`, speech-to-text by `speech.py stt` (the
 `--enrich` variants pass the transcript through the configured LLM enricher
-first), and clipboard refinement by `copywriter.py`.
+first), text-to-speech by `speech.py tts` (Kokoro through speaches, streamed as
+raw PCM into `ffplay`), and clipboard refinement by `copywriter.py`.
 
 ## Scripts to Port
 

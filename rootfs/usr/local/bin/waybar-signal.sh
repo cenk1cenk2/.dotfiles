@@ -9,6 +9,7 @@ signal[recorder]=8
 signal[clipboard]=9
 signal[speech]=10
 signal[copywriter]=11
+signal[speech-tts]=13
 signal[pacman]=14
 signal[idle]=15
 
