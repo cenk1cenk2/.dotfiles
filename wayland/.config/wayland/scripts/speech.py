@@ -589,6 +589,67 @@ class Stt:
             save=save,
         )
 
+    @cli.command("enrich")
+    @click.option(
+        "--input",
+        "input_",
+        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        default=InputMode.STDIN.value,
+        help="Text source.",
+    )
+    @click.option(
+        "--output",
+        type=click.Choice([m.value for m in OutputMode], case_sensitive=False),
+        default=OutputMode.STDOUT.value,
+        help="Output sink.",
+    )
+    @enrich_options()
+    def cmd_enrich(
+        input_,
+        output,
+        **enrich_opts,
+    ):
+        """Enrich already-transcribed text, without capturing audio.
+
+        No recorder, no session socket, no waybar phase — just the
+        cleanup prompt, so a transcript from any other source can reuse
+        it (`hermes-stt-*` pipes through here)."""
+        input_mode = InputMode(input_)
+        match input_mode:
+            case InputMode.CLIPBOARD:
+                input_adapter: InputAdapter = InputAdapterClipboard()
+            case InputMode.STDIN:
+                input_adapter = InputAdapterStdin()
+            case _:
+                raise click.UsageError(f"unknown input mode: {input_mode!r}")
+
+        output_mode = OutputMode(output)
+        match output_mode:
+            case OutputMode.CLIPBOARD:
+                output_adapter: OutputAdapter = OutputAdapterClipboard()
+            case OutputMode.TYPE:
+                output_adapter = OutputAdapterType()
+            case OutputMode.STDOUT:
+                output_adapter = OutputAdapterStdout()
+            case _:
+                raise click.UsageError(f"unsupported output mode: {output_mode!r}")
+
+        spec = spec_from_options(enrich_opts, "speech/1.0")
+        enricher = build_enricher(spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
+
+        text = input_adapter.read()
+        if not text or not text.strip():
+            Stt.log.warning("%s was empty", input_mode.value)
+            return
+
+        Stt.log.info("%s text: %d chars", input_mode.value, len(text))
+        enriched = enricher.enrich(text)
+        if enriched and enriched.strip():
+            output_adapter.write(enriched.strip())
+        else:
+            Stt.log.warning("enrichment empty; emitting raw text")
+            output_adapter.write(text.strip())
+
     @cli.command("stop")
     def cmd_stop():
         """Stop the active session."""
@@ -1028,11 +1089,23 @@ class Tts:
         """Exit 0 if playback is live."""
         sys.exit(0 if Tts().is_speaking() else 1)
 
+def _headless_noop(*args, **kwargs) -> None:
+    """Stand-in for the desktop helpers when there is no desktop."""
+
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def cli(verbose: bool):
+@click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
+def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
     create_logger(verbose)
+    # Every call site looks these up in module globals at call time, so
+    # rebinding here silences desktop integration process-wide. Patching
+    # `lib.notify` instead would miss them — they are bound by the
+    # `from lib import ...` above, not resolved through the module.
+    if headless:
+        global notify, signal_waybar
+        notify = _headless_noop
+        signal_waybar = _headless_noop
 
 cli.add_command(Stt.cli, "stt")
 cli.add_command(Tts.cli, "tts")

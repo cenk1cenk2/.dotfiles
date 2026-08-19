@@ -31,6 +31,9 @@ from lib import (
     spec_from_options,
 )
 
+def _headless_noop(*args, **kwargs) -> None:
+    """Stand-in for the desktop helpers when there is no desktop."""
+
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
     ICON = (
@@ -178,9 +181,20 @@ class Copywriter:
 
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-    def cli(verbose: bool):
+    @click.option(
+        "--headless", is_flag=True, help="Skip notifications and waybar signals."
+    )
+    def cli(verbose: bool, headless: bool):
         """Refine clipboard text through AI."""
         create_logger(verbose)
+        # Every call site looks these up in module globals at call time, so
+        # rebinding here silences desktop integration process-wide. Patching
+        # `lib.notify` instead would miss them — they are bound by the
+        # `from lib import ...` above, not resolved through the module.
+        if headless:
+            global notify, signal_waybar
+            notify = _headless_noop
+            signal_waybar = _headless_noop
 
     @cli.command("run")
     @click.argument(
