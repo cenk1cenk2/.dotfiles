@@ -253,33 +253,6 @@ window#waybar .modules-right {
   background-color: @warning_color;
 }
 
-#custom-hyprpilot {
-  color: @bg_color_100;
-  border-radius: 8px;
-  padding: 0 8px;
-  font-weight: bold;
-}
-
-#custom-hyprpilot.idle {
-  background-color: @success_color;
-}
-
-#custom-hyprpilot.streaming {
-  background-color: @warning_color;
-}
-
-#custom-hyprpilot.pending {
-  background-color: @error_color;
-}
-
-/* Awaiting — overlay is blocked on user input (pending permission
- * row OR active ask_question banner). Matches `@hyprpilot_awaiting` in
- * hyprpilot.css (#d19a66, orange). Inline literal so waybar's style sheet
- * doesn't have to import the hyprpilot palette. */
-#custom-hyprpilot.awaiting {
-  background-color: #d19a66;
-}
-
 #mode,
 #submap {
   color: @accent_color;

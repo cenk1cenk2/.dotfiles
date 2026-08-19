@@ -115,20 +115,11 @@
     "exec-if": "~/.config/wayland/scripts/copywriter.py is-running",
     "signal": 11,
   },
-  "custom/hyprpilot": {
-    "exec": "hyprpilot ctl status --watch",
-    "return-type": "json",
-    "on-click": "hyprpilot ctl toggle",
-    "escape": true,
-    "restart-interval": 5,
-    "signal": 12,
-  },
   "group/extras": {
     "orientation": "horizontal",
     "modules": [
       "custom/pacman",
       "custom/playerctl",
-      "sway/language",
       "hyprland/language",
     ],
   },
@@ -202,7 +193,6 @@
     "custom/stt",
     "custom/tts",
     "custom/copywriter",
-    "custom/hyprpilot",
     "hyprland/submap",
     "hyprland/window",
   ],
