@@ -24,10 +24,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
-
 
 class AudioFormat(StrEnum):
     PCM = "pcm"
@@ -35,12 +34,10 @@ class AudioFormat(StrEnum):
     WAV = "wav"
     FLAC = "flac"
 
-
 class PlayerMode(StrEnum):
     FFPLAY = "ffplay"
     PW_CAT = "pw-cat"
     PAPLAY = "paplay"
-
 
 DEFAULT_TTS_MODEL = "kilic.dev/tts"
 # American male — the least robotic of the Kokoro voices.
@@ -56,7 +53,6 @@ CHUNK_BYTES = 1 << 15
 
 log = logging.getLogger(__name__)
 
-
 @dataclass
 class TtsSpec:
     """Every knob the synthesis backend accepts, in one shape.
@@ -64,7 +60,7 @@ class TtsSpec:
     The API key travels as the *name* of an env var, never the secret —
     the adapter resolves it at call time."""
 
-    model: Optional[str] = None
+    model: str | None = None
     voice: str = DEFAULT_TTS_VOICE
     speed: float = 1.0
     response_format: AudioFormat = AudioFormat.PCM
@@ -75,12 +71,10 @@ class TtsSpec:
     max_chars: int = DEFAULT_TTS_MAX_CHARS
     user_agent: str = "tts/1.0"
 
-
 class ByteStream(Protocol):
     """Readable byte source — the slice of a file object the pump uses."""
 
     def read(self, size: int = -1) -> bytes: ...
-
 
 class SynthAdapterHttp:
     """OpenAI-compatible `/audio/speech` endpoint (speaches, Kokoro)."""
@@ -133,7 +127,6 @@ class SynthAdapterHttp:
         with resp:
             yield resp
 
-
 class TeeReader:
     """Readable wrapper mirroring everything read into `sink`.
 
@@ -150,7 +143,6 @@ class TeeReader:
             self._sink.write(chunk)
         return chunk
 
-
 class PlayerAdapter(Protocol):
     """Local audio sink fed from a byte stream."""
 
@@ -162,7 +154,6 @@ class PlayerAdapter(Protocol):
         The exit code comes back rather than being logged and dropped so
         the caller can tell the user that playback failed."""
         ...
-
 
 def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
     """Pump `stream` into `cmd`'s stdin, returning (bytes written, exit code).
@@ -200,7 +191,6 @@ def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
 
     return written, proc.returncode
 
-
 class PlayerAdapterFfplay:
     """ffmpeg's player — the only sink that can demux a container."""
 
@@ -220,11 +210,12 @@ class PlayerAdapterFfplay:
         ]
         # Raw PCM carries no rate or channel count, so it has to be declared;
         # every other format is self-describing and probing it is enough.
+        # `-ac` is gone as of ffmpeg 9 — the pcm demuxer only knows
+        # `ch_layout` since the AVChannelLayout migration.
         if self.response_format is AudioFormat.PCM:
-            cmd += ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1"]
+            cmd += ["-f", "s16le", "-ar", str(sample_rate), "-ch_layout", "mono"]
         cmd += ["-i", "pipe:0"]
         return _stream_to_player(cmd, stream)
-
 
 class PlayerAdapterPwCat:
     """PipeWire's own sink. Raw s16le only."""
@@ -246,9 +237,11 @@ class PlayerAdapterPwCat:
         ]
         return _stream_to_player(cmd, stream)
 
-
 class PlayerAdapterPaplay:
-    """PulseAudio compatibility sink. Raw s16le only."""
+    """PulseAudio compatibility sink. Raw s16le only.
+
+    No file argument: `paplay` is libpulse's `pacat`, which reads stdin
+    only when none is given and opens a literal `-` as a filename."""
 
     mode = PlayerMode.PAPLAY
 
@@ -259,10 +252,8 @@ class PlayerAdapterPaplay:
             "--format=s16le",
             f"--rate={sample_rate}",
             "--channels=1",
-            "-",
         ]
         return _stream_to_player(cmd, stream)
-
 
 _CLIPBOARD_MIMES = {
     AudioFormat.PCM: "audio/wav",
@@ -270,7 +261,6 @@ _CLIPBOARD_MIMES = {
     AudioFormat.MP3: "audio/mpeg",
     AudioFormat.FLAC: "audio/flac",
 }
-
 
 def copy_audio(data: bytes, spec: TtsSpec) -> None:
     """Put the synthesized audio on the clipboard.
