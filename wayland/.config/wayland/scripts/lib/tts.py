@@ -76,7 +76,7 @@ class ByteStream(Protocol):
 
     def read(self, size: int = -1) -> bytes: ...
 
-class SynthAdapterHttp:
+class TtsAdapterHttp:
     """OpenAI-compatible `/audio/speech` endpoint (speaches, Kokoro)."""
 
     DEFAULT_MODEL = DEFAULT_TTS_MODEL

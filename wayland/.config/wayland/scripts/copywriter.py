@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import sys
+from pathlib import Path
 
 import click
 import psutil
@@ -14,25 +15,20 @@ import psutil
 from lib import (
     EnrichAdapter,
     InputAdapter,
-    InputAdapterClipboard,
-    InputAdapterStdin,
     InputMode,
     OutputAdapter,
-    OutputAdapterClipboard,
-    OutputAdapterStdout,
-    OutputAdapterType,
     OutputMode,
     build_enricher,
+    build_input,
+    build_output,
     create_logger,
     enrich_options,
     load_prompt,
     notify,
+    set_headless,
     signal_waybar,
     spec_from_options,
 )
-
-def _headless_noop(*args, **kwargs) -> None:
-    """Stand-in for the desktop helpers when there is no desktop."""
 
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
@@ -101,7 +97,9 @@ class Copywriter:
             self._notify("Copywriter is already running")
             return
 
-        if self._output.mode is OutputMode.STDOUT:
+        # A pipe and a file both have a caller waiting on the payload;
+        # forking would return before either holds anything.
+        if self._output.mode in (OutputMode.STDOUT, OutputMode.FILE):
             self._execute()
             signal_waybar(self.WAYBAR_MODULE)
             return
@@ -187,14 +185,7 @@ class Copywriter:
     def cli(verbose: bool, headless: bool):
         """Refine clipboard text through AI."""
         create_logger(verbose)
-        # Every call site looks these up in module globals at call time, so
-        # rebinding here silences desktop integration process-wide. Patching
-        # `lib.notify` instead would miss them — they are bound by the
-        # `from lib import ...` above, not resolved through the module.
-        if headless:
-            global notify, signal_waybar
-            notify = _headless_noop
-            signal_waybar = _headless_noop
+        set_headless(headless)
 
     @cli.command("run")
     @click.argument(
@@ -209,37 +200,31 @@ class Copywriter:
         default=InputMode.CLIPBOARD.value,
         help="Text source.",
     )
+    @click.option(
+        "--input-file", type=click.Path(path_type=Path), help="Text file to read."
+    )
+    @click.option(
+        "--output-file", type=click.Path(path_type=Path), help="Text file to write."
+    )
     @enrich_options()
     def cmd_run(
         output,
+        output_file,
         input_,
+        input_file,
         **enrich_opts,
     ):
         """Refine once and emit to the chosen sink."""
-        input_mode = InputMode(input_)
-        match input_mode:
-            case InputMode.CLIPBOARD:
-                input_adapter: InputAdapter = InputAdapterClipboard()
-            case InputMode.STDIN:
-                input_adapter = InputAdapterStdin()
-            case _:
-                raise click.UsageError(f"unknown input mode: {input_mode!r}")
+        try:
+            input_adapter = build_input(InputMode(input_), path=input_file)
+            output_adapter = build_output(OutputMode(output), path=output_file)
+        except (TypeError, ValueError) as e:
+            raise click.UsageError(str(e)) from e
 
         spec = spec_from_options(enrich_opts, "copywriter/1.0")
         enricher = build_enricher(
             spec, Copywriter.SYSTEM_PROMPT, Copywriter.USER_PROMPT
         )
-
-        output_mode = OutputMode(output)
-        match output_mode:
-            case OutputMode.CLIPBOARD:
-                output_adapter: OutputAdapter = OutputAdapterClipboard()
-            case OutputMode.TYPE:
-                output_adapter = OutputAdapterType()
-            case OutputMode.STDOUT:
-                output_adapter = OutputAdapterStdout()
-            case _:
-                raise click.UsageError(f"unknown output mode: {output_mode!r}")
 
         Copywriter(input_adapter, enricher, output_adapter).run_once()
 
