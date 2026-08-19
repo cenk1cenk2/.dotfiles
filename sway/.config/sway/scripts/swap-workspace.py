@@ -46,11 +46,15 @@ class SwapWorkspace:
         if direction == "left":
             candidates = [n for n in nums if n < current_num]
 
-            return max(candidates) if candidates else (max(nums) if nums else current_num)
+            return (
+                max(candidates) if candidates else (max(nums) if nums else current_num)
+            )
         if direction == "right":
             candidates = [n for n in nums if n > current_num]
 
-            return min(candidates) if candidates else (min(nums) if nums else current_num)
+            return (
+                min(candidates) if candidates else (min(nums) if nums else current_num)
+            )
 
         raise ValueError(f"Invalid swap direction: {direction}")
 
@@ -77,12 +81,14 @@ class SwapWorkspace:
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Sway")
     parser.add_argument(
-        "-t", "--to",
+        "-t",
+        "--to",
         type=int,
         help="Move current workspace to the given position.",
     )
     parser.add_argument(
-        "-s", "--swap",
+        "-s",
+        "--swap",
         choices=["left", "right"],
         help="Swap with the left/right workspace on the current monitor.",
     )

@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Optional
 
 from rich.console import Console
 from rich.logging import RichHandler
 
-_console: Optional[Console] = None
+_console: Console | None = None
 
-
-def create_logger(verbose: bool, *, name: Optional[str] = None) -> logging.Logger:
+def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
     global _console
     root = logging.getLogger()

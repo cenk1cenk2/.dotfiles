@@ -6,8 +6,10 @@ import sys
 from lib import Hyprctl, get_icon_for_class, rofi_with_icons
 
 ROFI_EXTRA = [
-    "-theme-str", "window { width: 60%; }",
-    "-theme-str", "listview { lines: 15; }",
+    "-theme-str",
+    "window { width: 60%; }",
+    "-theme-str",
+    "listview { lines: 15; }",
 ]
 
 class StealWindow:
@@ -47,7 +49,8 @@ class StealWindow:
     def _windows_on_other_workspaces(self, current_ws: int) -> list[dict]:
         return sorted(
             (
-                w for w in self._hypr.clients()
+                w
+                for w in self._hypr.clients()
                 if w.get("workspace", {}).get("id") != current_ws
             ),
             key=lambda w: w.get("workspace", {}).get("id", 0),

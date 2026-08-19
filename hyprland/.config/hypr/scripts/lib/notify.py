@@ -1,12 +1,11 @@
 import subprocess
-from typing import Optional
 
 def notify(
     title: str,
     message: str,
-    icon: Optional[str] = None,
-    urgency: Optional[str] = None,
-    timeout: Optional[int] = None,
+    icon: str | None = None,
+    urgency: str | None = None,
+    timeout: int | None = None,
 ) -> None:
     """Send a notify-send notification. Failures are swallowed."""
     cmd = ["notify-send", title, message]

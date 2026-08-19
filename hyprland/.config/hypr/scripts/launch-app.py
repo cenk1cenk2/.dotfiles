@@ -6,10 +6,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+
 import click
 
 from lib import Hyprctl, create_logger
-
 
 class LaunchApp:
     log = logging.getLogger("launch-app")
@@ -25,12 +25,20 @@ class LaunchApp:
             "if app == nil then os.exit(2) end; "
             "io.write(app)"
         )
-        proc = self._hypr.run_lua(lua, {"HYPR_DEFINITIONS": str(self._definitions), "HYPR_APP": name})
+        proc = self._hypr.run_lua(
+            lua, {"HYPR_DEFINITIONS": str(self._definitions), "HYPR_APP": name}
+        )
         if proc.returncode == 2:
             raise click.ClickException(f"unknown app: {name}")
         if proc.returncode != 0:
-            detail = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else f"exit {proc.returncode}"
-            raise click.ClickException(f"failed to read Hyprland definitions.lua: {detail}")
+            detail = (
+                proc.stderr.strip().splitlines()[0]
+                if proc.stderr.strip()
+                else f"exit {proc.returncode}"
+            )
+            raise click.ClickException(
+                f"failed to read Hyprland definitions.lua: {detail}"
+            )
         command = proc.stdout.strip()
         if not command:
             raise click.ClickException(f"empty app command: {name}")
@@ -47,8 +55,14 @@ class LaunchApp:
         )
         proc = self._hypr.run_lua(lua, {"HYPR_DEFINITIONS": str(self._definitions)})
         if proc.returncode != 0:
-            detail = proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else f"exit {proc.returncode}"
-            raise click.ClickException(f"failed to read Hyprland definitions.lua: {detail}")
+            detail = (
+                proc.stderr.strip().splitlines()[0]
+                if proc.stderr.strip()
+                else f"exit {proc.returncode}"
+            )
+            raise click.ClickException(
+                f"failed to read Hyprland definitions.lua: {detail}"
+            )
 
         return proc.stdout.split()
 
@@ -63,15 +77,20 @@ class LaunchApp:
         if not self._hypr.dispatch(expression):
             raise click.ClickException(f"failed to launch app: {name}")
 
-
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("name", required=False)
-@click.option("--definitions", type=click.Path(path_type=Path), help="Path to definitions.lua.")
+@click.option(
+    "--definitions", type=click.Path(path_type=Path), help="Path to definitions.lua."
+)
 @click.option("--print", "print_only", is_flag=True, help="Print the resolved command.")
 @click.option("--list", "list_apps", is_flag=True, help="List app names.")
 @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
 def cmd_main(
-    name: str | None, definitions: Path | None, print_only: bool, list_apps: bool, verbose: bool
+    name: str | None,
+    definitions: Path | None,
+    print_only: bool,
+    list_apps: bool,
+    verbose: bool,
 ) -> None:
     create_logger(verbose, name="launch-app")
     script_dir = Path(__file__).resolve().parent
@@ -87,9 +106,7 @@ def cmd_main(
         raise click.UsageError("NAME is required unless --list is given.")
     app.launch(name, print_only=print_only)
 
-
 LaunchApp.cli = cmd_main
-
 
 if __name__ == "__main__":
     LaunchApp.cli()

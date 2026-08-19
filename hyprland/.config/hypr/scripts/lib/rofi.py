@@ -1,12 +1,11 @@
 import subprocess
-from typing import Optional
 
 def rofi(
     prompt: str,
     choices: list[str],
     *,
-    extra_args: Optional[list[str]] = None,
-) -> Optional[str]:
+    extra_args: list[str] | None = None,
+) -> str | None:
     if not choices:
         return None
 
@@ -34,8 +33,8 @@ def rofi_with_icons(
     prompt: str,
     entries: list[tuple[str, str]],
     *,
-    extra_args: Optional[list[str]] = None,
-) -> Optional[int]:
+    extra_args: list[str] | None = None,
+) -> int | None:
     """Show rofi with icons and return the index of the selected entry.
 
     The wire format is rofi's meta-pipe: `<label>\\0icon\\x1f<icon>\\n` per line.

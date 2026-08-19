@@ -17,11 +17,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Iterator, Optional, Protocol
+from typing import Any, ClassVar, Protocol
 
 import click
 from rich.console import Console
@@ -41,7 +42,6 @@ from rich.table import Table
 
 console: Console = Console(force_terminal=None)
 _log_console: Console = Console(file=sys.stderr, stderr=True, force_terminal=None)
-
 
 def create_logger(verbose: bool) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
@@ -65,7 +65,6 @@ def create_logger(verbose: bool) -> logging.Logger:
         for h in root.handlers:
             h.setLevel(level)
     return logging.getLogger("remsi")
-
 
 log = logging.getLogger("remsi")
 
@@ -377,14 +376,14 @@ class Analyzer:
         self,
         noise: str,
         duration: float,
-        stt_adapter: Optional[TranscriptionAdapter] = None,
+        stt_adapter: TranscriptionAdapter | None = None,
     ):
         self.noise = noise
         self.duration = duration
         self.stt_adapter = stt_adapter
 
     @staticmethod
-    def get_duration(input_file: Path) -> Optional[float]:
+    def get_duration(input_file: Path) -> float | None:
         cmd = [
             "ffprobe",
             "-v",
@@ -429,7 +428,7 @@ class Analyzer:
             raise RuntimeError(f"silence detection failed (exit {proc.returncode})")
 
         silences: list[Region] = []
-        silence_start: Optional[float] = None
+        silence_start: float | None = None
         for line in "".join(lines).splitlines():
             start_match = re.search(r"silence_start: (\d+\.?\d+)", line)
             end_match = re.search(r"silence_end: (\d+\.?\d+)", line)
@@ -451,7 +450,7 @@ class Analyzer:
         speech: list[Region] = []
         fillers: list[Region] = []
         stutters: list[Region] = []
-        prev_letters: Optional[str] = None
+        prev_letters: str | None = None
         for w in words:
             text = w.text.strip()
             letters = re.sub(r"[^a-z]", "", text.lower())
@@ -590,13 +589,13 @@ class Encoder:
         "av1": {"nvidia": "av1_nvenc", "amd": "av1_amf", "vaapi": "av1_vaapi"},
     }
 
-    def __init__(self, gpu: Optional[str], codec: Optional[str], force: bool = False):
+    def __init__(self, gpu: str | None, codec: str | None, force: bool = False):
         self.gpu = gpu
         self.codec = codec
         self.force = force
 
     @staticmethod
-    def detect_gpu() -> Optional[str]:
+    def detect_gpu() -> str | None:
         cmd = ["ffmpeg", "-hide_banner", "-encoders"]
         log.debug("spawn: %s", " ".join(cmd))
         encoders = subprocess.run(cmd, capture_output=True, text=True).stdout
@@ -630,16 +629,16 @@ class Encoder:
             streams = json.loads(result.stdout).get("streams", [])
             if streams:
                 return streams[0]
-        except (json.JSONDecodeError, IndexError):
+        except json.JSONDecodeError, IndexError:
             log.debug("ffprobe parse failed: %s", result.stderr.strip())
         return {}
 
     @staticmethod
-    def _parse_fps(r_frame_rate: Optional[str]) -> Optional[float]:
+    def _parse_fps(r_frame_rate: str | None) -> float | None:
         try:
             num, den = (r_frame_rate or "").split("/")
             return round(int(num) / int(den), 3)
-        except (ValueError, ZeroDivisionError, AttributeError):
+        except ValueError, ZeroDivisionError, AttributeError:
             return None
 
     @classmethod
@@ -664,10 +663,10 @@ class Encoder:
             input_file, "a", ["codec_name", "bit_rate", "sample_rate", "channels"]
         )
 
-        def _int(v: Any) -> Optional[int]:
+        def _int(v: Any) -> int | None:
             try:
                 return int(v) if v else None
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return None
 
         try:
@@ -701,7 +700,7 @@ class Encoder:
         if self.codec:
             return ["-c:v", self.codec]
 
-        family: Optional[str] = None
+        family: str | None = None
         if info.codec:
             match info.codec.lower():
                 case "h264" | "libx264":
@@ -784,7 +783,7 @@ class Encoder:
         input_file: Path,
         output_file: Path,
         segments: list[Segment],
-        media: Optional[MediaInfo] = None,
+        media: MediaInfo | None = None,
     ) -> subprocess.CompletedProcess:
         media = media or MediaInfo()
         if len(segments) == 1:
@@ -826,8 +825,8 @@ class FancyEncoder(Encoder):
 
     def __init__(
         self,
-        gpu: Optional[str],
-        codec: Optional[str],
+        gpu: str | None,
+        codec: str | None,
         fade_time: float,
         video_filter: str,
         audio_filter: str,
@@ -875,7 +874,7 @@ class FancyEncoder(Encoder):
         )
 
     def _build_filter_lines(
-        self, segments: list[Segment], video_info: Optional[VideoInfo] = None
+        self, segments: list[Segment], video_info: VideoInfo | None = None
     ) -> list[str]:
         n = len(segments)
         color_filters = ""
@@ -1005,8 +1004,8 @@ class CutEncoder(Encoder):
 
     def __init__(
         self,
-        gpu: Optional[str],
-        codec: Optional[str],
+        gpu: str | None,
+        codec: str | None,
         fade_time: float,
         force: bool = False,
     ):
@@ -1017,11 +1016,16 @@ class CutEncoder(Encoder):
     def _probe_keyframes(input_file: Path) -> list[float]:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-skip_frame", "nokey",
-            "-show_entries", "frame=pts_time",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-show_entries",
+            "frame=pts_time",
+            "-of",
+            "csv=p=0",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -1082,14 +1086,21 @@ class CutEncoder(Encoder):
         cmd = [
             "ffmpeg",
             "-hide_banner",
-            "-loglevel", "warning",
-            "-ss", str(start),
-            "-to", str(end),
-            "-i", str(input_file),
-            "-c", "copy",
+            "-loglevel",
+            "warning",
+            "-ss",
+            str(start),
+            "-to",
+            str(end),
+            "-i",
+            str(input_file),
+            "-c",
+            "copy",
             "-an",
-            "-avoid_negative_ts", "make_zero",
-            "-y", str(output_part),
+            "-avoid_negative_ts",
+            "make_zero",
+            "-y",
+            str(output_part),
         ]
         return self._run(cmd)
 
@@ -1109,9 +1120,7 @@ class CutEncoder(Encoder):
                 # same). Every internal boundary gets both so neither
                 # side of a cut has a raw edge.
                 if i > 0:
-                    chain.append(
-                        f"afade=t=in:d={self.fade_time}:curve=log"
-                    )
+                    chain.append(f"afade=t=in:d={self.fade_time}:curve=log")
                 if i < len(ranges) - 1:
                     chain.append(
                         f"afade=t=out:st={duration - self.fade_time}"
@@ -1127,7 +1136,7 @@ class CutEncoder(Encoder):
         input_file: Path,
         output_file: Path,
         segments: list[Segment],
-        media: Optional[MediaInfo] = None,
+        media: MediaInfo | None = None,
     ) -> subprocess.CompletedProcess:
         """Override parent's single-segment fast path too — raw
         `seg.start` / `seg.end` from the analyzer aren't keyframes,
@@ -1181,13 +1190,19 @@ class CutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_list),
-                "-c", "copy",
+                "-loglevel",
+                "warning",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
                 "-an",
-                "-y", str(video_only),
+                "-y",
+                str(video_only),
             ]
             result = self._run(cmd)
             if result.returncode != 0:
@@ -1203,13 +1218,17 @@ class CutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
-                "-i", str(input_file),
-                "-/filter_complex", str(script_path),
+                "-loglevel",
+                "warning",
+                "-i",
+                str(input_file),
+                "-/filter_complex",
+                str(script_path),
                 *audio_map,
                 *audio_args,
                 "-vn",
-                "-y", str(audio_only),
+                "-y",
+                str(audio_only),
             ]
             result = self._run(cmd)
             if result.returncode != 0:
@@ -1221,13 +1240,19 @@ class CutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
+                "-loglevel",
+                "warning",
                 "-stats",
-                "-i", str(video_only),
-                "-i", str(audio_only),
-                "-c", "copy",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
+                "-i",
+                str(video_only),
+                "-i",
+                str(audio_only),
+                "-c",
+                "copy",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
             ]
             if self.force:
                 cmd.append("-y")
@@ -1242,7 +1267,6 @@ class CutEncoder(Encoder):
         media: MediaInfo,
     ) -> subprocess.CompletedProcess:
         return self.encode(input_file, output_file, segments, media)
-
 
 class SmartCutEncoder(Encoder):
     """Frame-accurate smart-cut via an MPEG-TS sandwich.
@@ -1324,8 +1348,8 @@ class SmartCutEncoder(Encoder):
 
     def __init__(
         self,
-        gpu: Optional[str],
-        codec: Optional[str],
+        gpu: str | None,
+        codec: str | None,
         fade_time: float,
         force: bool = False,
     ):
@@ -1336,11 +1360,16 @@ class SmartCutEncoder(Encoder):
     def _probe_keyframes(input_file: Path) -> list[float]:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-skip_frame", "nokey",
-            "-show_entries", "frame=pts_time",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-show_entries",
+            "frame=pts_time",
+            "-of",
+            "csv=p=0",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -1366,12 +1395,15 @@ class SmartCutEncoder(Encoder):
         load-bearing ones; codec_name picks the encoder matrix row."""
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
             "-show_entries",
             "stream=codec_name,profile,level,pix_fmt,"
             "color_space,color_transfer,color_primaries,color_range",
-            "-of", "json",
+            "-of",
+            "json",
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
@@ -1380,7 +1412,7 @@ class SmartCutEncoder(Encoder):
         try:
             streams = json.loads(result.stdout).get("streams", [])
             return streams[0] if streams else {}
-        except (json.JSONDecodeError, IndexError):
+        except json.JSONDecodeError, IndexError:
             return {}
 
     def _pick_seam_encoder(self, codec_name: str) -> str:
@@ -1544,35 +1576,50 @@ class SmartCutEncoder(Encoder):
         base = [
             "ffmpeg",
             "-hide_banner",
-            "-loglevel", "warning",
+            "-loglevel",
+            "warning",
         ]
         if action == "copy":
             cmd = [
                 *base,
-                "-ss", str(start),
-                "-to", str(end),
-                "-i", str(input_file),
-                "-c", "copy",
+                "-ss",
+                str(start),
+                "-to",
+                str(end),
+                "-i",
+                str(input_file),
+                "-c",
+                "copy",
             ]
             if annexb_bsf:
                 cmd.extend(["-bsf:v", annexb_bsf])
-            cmd.extend([
-                "-an",
-                "-avoid_negative_ts", "make_zero",
-                "-f", "mpegts",
-                "-y", str(output_path),
-            ])
+            cmd.extend(
+                [
+                    "-an",
+                    "-avoid_negative_ts",
+                    "make_zero",
+                    "-f",
+                    "mpegts",
+                    "-y",
+                    str(output_path),
+                ]
+            )
         else:
             cmd = [
                 *base,
                 *reencode_pre,
-                "-ss", str(start),
-                "-i", str(input_file),
-                "-t", str(end - start),
+                "-ss",
+                str(start),
+                "-i",
+                str(input_file),
+                "-t",
+                str(end - start),
                 *reencode_post,
                 "-an",
-                "-f", "mpegts",
-                "-y", str(output_path),
+                "-f",
+                "mpegts",
+                "-y",
+                str(output_path),
             ]
         return self._run(cmd)
 
@@ -1605,7 +1652,7 @@ class SmartCutEncoder(Encoder):
         input_file: Path,
         output_file: Path,
         segments: list[Segment],
-        media: Optional[MediaInfo] = None,
+        media: MediaInfo | None = None,
     ) -> subprocess.CompletedProcess:
         media = media or MediaInfo()
         keyframes = self._probe_keyframes(input_file)
@@ -1694,14 +1741,21 @@ class SmartCutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", str(concat_list),
-                "-c", "copy",
+                "-loglevel",
+                "warning",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
                 "-an",
-                "-f", "mpegts",
-                "-y", str(video_only),
+                "-f",
+                "mpegts",
+                "-y",
+                str(video_only),
             ]
             result = self._run(cmd)
             if result.returncode != 0:
@@ -1717,13 +1771,18 @@ class SmartCutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
-                "-i", str(input_file),
-                "-/filter_complex", str(script_path),
-                "-map", "[aout]",
+                "-loglevel",
+                "warning",
+                "-i",
+                str(input_file),
+                "-/filter_complex",
+                str(script_path),
+                "-map",
+                "[aout]",
                 *audio_args,
                 "-vn",
-                "-y", str(audio_only),
+                "-y",
+                str(audio_only),
             ]
             result = self._run(cmd)
             if result.returncode != 0:
@@ -1736,13 +1795,19 @@ class SmartCutEncoder(Encoder):
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
-                "-loglevel", "warning",
+                "-loglevel",
+                "warning",
                 "-stats",
-                "-i", str(video_only),
-                "-i", str(audio_only),
-                "-c", "copy",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
+                "-i",
+                str(video_only),
+                "-i",
+                str(audio_only),
+                "-c",
+                "copy",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
             ]
             if self.force:
                 cmd.append("-y")
@@ -1836,8 +1901,7 @@ class Remsi:
         removed = total - kept
         pct = (removed / total * 100) if total > 0 else 0
         console.print(
-            f"removing [yellow]{removed:.1f}s[/] of {total:.1f}s "
-            f"([bold]{pct:.1f}%[/])"
+            f"removing [yellow]{removed:.1f}s[/] of {total:.1f}s ([bold]{pct:.1f}%[/])"
         )
 
         console.rule("[bold yellow]Timeline[/]")
@@ -1911,9 +1975,7 @@ class Remsi:
             detected.append(f"[yellow]{n_stutter}[/] stutter(s)")
         if detected:
             console.print("detected " + " and ".join(detected))
-        console.print(
-            f"trimmed [yellow]{removed:.1f}s[/] ([bold]{pct:.1f}%[/])"
-        )
+        console.print(f"trimmed [yellow]{removed:.1f}s[/] ([bold]{pct:.1f}%[/])")
         t_end = time.monotonic()
         console.print(
             f"elapsed: [yellow]{t_end - t_start:.1f}s[/] "
@@ -1922,7 +1984,7 @@ class Remsi:
             f"encode {t_end - t_analysis:.1f}s[/])"
         )
 
-    def run(self, inputs: list[Path], output: Optional[Path]) -> None:
+    def run(self, inputs: list[Path], output: Path | None) -> None:
         for input_file in inputs:
             if not input_file.exists():
                 log.error("%s not found", input_file)
@@ -2063,7 +2125,7 @@ class Remsi:
             raise click.UsageError("-o/--output requires a single input file")
 
         # Transcription adapter — only built when STT is enabled.
-        stt_adapter: Optional[TranscriptionAdapter] = None
+        stt_adapter: TranscriptionAdapter | None = None
         if with_whisper:
             match TranscriptionProvider(stt_provider):
                 case TranscriptionProvider.WHISPER_CPP:
@@ -2083,7 +2145,7 @@ class Remsi:
                     raise click.UsageError(f"unknown stt provider: {stt_provider!r}")
 
         # GPU resolution — explicit name, auto-detect, or disable.
-        resolved_gpu: Optional[str]
+        resolved_gpu: str | None
         match gpu:
             case "auto":
                 resolved_gpu = Encoder.detect_gpu()

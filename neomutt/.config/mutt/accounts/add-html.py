@@ -5,17 +5,17 @@ import subprocess
 import sys
 import tempfile
 from email import policy
-from email.parser import Parser
 from email.message import EmailMessage
+from email.parser import Parser
 
 def create_alternatives_structure(content: str) -> EmailMessage:
     related = EmailMessage()
-    related.set_type('multipart/related')
-    related.add_related(to_html(content), subtype='html', charset='utf-8')
+    related.set_type("multipart/related")
+    related.add_related(to_html(content), subtype="html", charset="utf-8")
 
     alternatives = EmailMessage()
     alternatives.make_alternative()
-    alternatives.add_alternative(content, subtype='plain')
+    alternatives.add_alternative(content, subtype="plain")
     alternatives.attach(related)
 
     return alternatives
@@ -29,9 +29,11 @@ def find_plain_text_part(msg: EmailMessage) -> tuple:
         return None, None, -1
 
     for i, part in enumerate(msg.get_payload()):
-        if (part.get_content_type() == "text/plain" and
-            part.get_content_disposition() not in [ "attachment" ] and
-            not part.is_multipart()):
+        if (
+            part.get_content_type() == "text/plain"
+            and part.get_content_disposition() not in ["attachment"]
+            and not part.is_multipart()
+        ):
             content = part.get_content()
             if content and content.strip():
                 return content, part, i
@@ -61,10 +63,14 @@ def with_html(msg: EmailMessage) -> EmailMessage:
 
     if not msg.is_multipart():
         mixed = EmailMessage()
-        mixed.set_type('multipart/mixed')
+        mixed.set_type("multipart/mixed")
 
         for key, value in msg.items():
-            if key.lower() not in ['content-type', 'content-transfer-encoding', 'mime-version']:
+            if key.lower() not in [
+                "content-type",
+                "content-transfer-encoding",
+                "mime-version",
+            ]:
                 mixed[key] = value
 
         mixed.attach(alternatives)
@@ -80,10 +86,14 @@ def with_html(msg: EmailMessage) -> EmailMessage:
 
     else:
         mixed = EmailMessage()
-        mixed.set_type('multipart/mixed')
+        mixed.set_type("multipart/mixed")
 
         for key, value in msg.items():
-            if key.lower() not in ['content-type', 'content-transfer-encoding', 'mime-version']:
+            if key.lower() not in [
+                "content-type",
+                "content-transfer-encoding",
+                "mime-version",
+            ]:
                 mixed[key] = value
 
         mixed.attach(alternatives)
@@ -97,19 +107,33 @@ def with_html(msg: EmailMessage) -> EmailMessage:
     return msg
 
 def to_html(text: str) -> str:
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as file:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as file:
         file.write(text)
         temp_file = file.name
 
     try:
         result = subprocess.run(
-            [os.path.expanduser("md-printer"), "-O", "-t", "mail", "-f", "md", "-F", "html", "--log-level", "silent", temp_file],
+            [
+                os.path.expanduser("md-printer"),
+                "-O",
+                "-t",
+                "mail",
+                "-f",
+                "md",
+                "-F",
+                "html",
+                "--log-level",
+                "silent",
+                temp_file,
+            ],
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if result.returncode != 0:
-            raise Exception(f"Can not process file: {result.returncode} -> {result.stderr}")
+            raise Exception(
+                f"Can not process file: {result.returncode} -> {result.stderr}"
+            )
 
         return result.stdout
 

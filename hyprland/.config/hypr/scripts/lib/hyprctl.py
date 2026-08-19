@@ -4,7 +4,7 @@ import logging
 import os
 import socket
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class Hyprctl:
     def __init__(self) -> None:
         self._socket_path = self._resolve_socket()
 
-    def _resolve_socket(self) -> Optional[str]:
+    def _resolve_socket(self) -> str | None:
         runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
         if signature:
@@ -28,11 +28,13 @@ class Hyprctl:
             return path if os.path.exists(path) else None
         # Bare-env callers (SSH, systemd): discover the first running
         # instance, mirroring `hyprctl -i 0`.
-        candidates = sorted(glob.glob(os.path.join(runtime, "hypr", "*", ".socket.sock")))
+        candidates = sorted(
+            glob.glob(os.path.join(runtime, "hypr", "*", ".socket.sock"))
+        )
 
         return candidates[0] if candidates else None
 
-    def _request(self, message: str) -> Optional[str]:
+    def _request(self, message: str) -> str | None:
         if not self._socket_path:
             log.debug("hyprland ipc: no socket found")
             return None
@@ -81,7 +83,9 @@ class Hyprctl:
 
         return response == "ok"
 
-    def run_lua(self, script: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    def run_lua(
+        self, script: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
         """Run a Lua snippet with a plain interpreter, outside the
         compositor — for reading data out of the Lua config files
         (`eval` can't return values). The target file must be
@@ -90,7 +94,9 @@ class Hyprctl:
         merged = os.environ.copy()
         merged.update(env or {})
         log.debug("spawn: %s", " ".join(cmd))
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=merged)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, env=merged
+        )
         if proc.stderr:
             log.debug("lua stderr: %s", proc.stderr.strip())
 
@@ -105,24 +111,24 @@ class Hyprctl:
     def workspaces(self) -> list[dict[str, Any]]:
         return self.query("workspaces") or []
 
-    def active_window(self) -> Optional[dict[str, Any]]:
+    def active_window(self) -> dict[str, Any] | None:
         result = self.query("activewindow")
         if not result or not result.get("address"):
             return None
 
         return result
 
-    def active_workspace(self) -> Optional[dict[str, Any]]:
+    def active_workspace(self) -> dict[str, Any] | None:
         return self.query("activeworkspace")
 
-    def focused_monitor(self) -> Optional[dict[str, Any]]:
+    def focused_monitor(self) -> dict[str, Any] | None:
         for m in self.monitors():
             if m.get("focused"):
                 return m
 
         return None
 
-    def focused_workspace_id(self) -> Optional[int]:
+    def focused_workspace_id(self) -> int | None:
         monitor = self.focused_monitor()
         if not monitor:
             return None

@@ -7,7 +7,6 @@ import logging
 import os
 import signal
 import sys
-from typing import Optional
 
 import click
 import psutil
@@ -48,9 +47,9 @@ class Copywriter:
 
     def __init__(
         self,
-        input: Optional[InputAdapter] = None,
-        enricher: Optional[EnrichAdapter] = None,
-        output: Optional[OutputAdapter] = None,
+        input: InputAdapter | None = None,
+        enricher: EnrichAdapter | None = None,
+        output: OutputAdapter | None = None,
     ):
         self._input = input
         self._enricher = enricher

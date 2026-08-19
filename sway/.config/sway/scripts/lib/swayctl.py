@@ -41,7 +41,4 @@ class Swayctl:
         return min(set(range(1, max(used, default=0) + 2)) - used)
 
     def workspaces_on_output(self, output_name: str) -> list[Any]:
-        return [
-            ws for ws in self.workspaces()
-            if ws.ipc_data["output"] == output_name
-        ]
+        return [ws for ws in self.workspaces() if ws.ipc_data["output"] == output_name]

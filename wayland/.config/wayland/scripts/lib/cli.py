@@ -14,15 +14,14 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
-from typing import IO, Optional
+from typing import IO
 
 from rich.console import Console
 from rich.logging import RichHandler
 
-_console: Optional[Console] = None
+_console: Console | None = None
 
-
-def create_logger(verbose: bool, *, name: Optional[str] = None) -> logging.Logger:
+def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
     global _console
     root = logging.getLogger()
@@ -50,24 +49,22 @@ def create_logger(verbose: bool, *, name: Optional[str] = None) -> logging.Logge
 
     return logging.getLogger(name) if name else root
 
-
 @dataclass
 class RunResult:
     returncode: int
     stdout: str
     stderr: str
 
-
 def run(
     cmd: list[str],
     *,
     log: logging.Logger,
-    env: Optional[dict] = None,
-    cwd: Optional[str] = None,
-    input: Optional[str] = None,
-    timeout: Optional[float] = None,
+    env: dict | None = None,
+    cwd: str | None = None,
+    input: str | None = None,
+    timeout: float | None = None,
     check: bool = False,
-    tag: Optional[str] = None,
+    tag: str | None = None,
 ) -> RunResult:
     """Run `cmd`, streaming stdout+stderr through `log.debug` as lines
     arrive, and return captured output.
@@ -125,7 +122,7 @@ def run(
     except subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError, PermissionError:
             proc.kill()
         # Reap, or the killed child lingers as a zombie until this process
         # exits — which for a forked copywriter worker can be a long time.

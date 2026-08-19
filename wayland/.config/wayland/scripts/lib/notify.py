@@ -3,16 +3,14 @@
 import logging
 import subprocess
 import sys
-from typing import Optional
 
 log = logging.getLogger(__name__)
-
 
 def notify(
     title: str,
     message: str,
     icon: str,
-    timeout: Optional[int] = None,
+    timeout: int | None = None,
 ) -> None:
     """Send a desktop notification via notify-send. Failures are swallowed."""
     cmd = ["notify-send", title, message, "-i", icon]

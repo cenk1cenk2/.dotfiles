@@ -9,8 +9,9 @@ import sys
 import time
 
 import click
-import psutil
 import obsws_python as obs
+import psutil
+
 from lib import create_logger, notify, signal_waybar
 
 # obsws-python + websocket-client log full tracebacks via `logger.exception()`

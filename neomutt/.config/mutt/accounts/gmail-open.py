@@ -3,9 +3,9 @@
 Extract Message-ID from email and open in Gmail web interface
 """
 
-import sys
 import re
 import subprocess
+import sys
 import urllib.parse
 from email import message_from_file
 from email.header import decode_header

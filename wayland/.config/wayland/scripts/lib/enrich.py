@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from .cli import run
 
@@ -51,16 +51,16 @@ class EnrichSpec:
 
     # Whatever names the thing that answers: a model id for http, a hyprpilot
     # profile id for hyprpilot. Each adapter falls back to its own default.
-    model: Optional[str] = None
+    model: str | None = None
 
     base_url: str = DEFAULT_BASE_URL
     api_key_env: str = DEFAULT_API_KEY_ENV
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
+    temperature: float | None = None
+    top_p: float | None = None
     thinking: str = "none"
-    num_ctx: Optional[int] = None
-    tool_ids: Optional[list[str]] = None
-    files: Optional[list[dict[str, Any]]] = None
+    num_ctx: int | None = None
+    tool_ids: list[str] | None = None
+    files: list[dict[str, Any]] | None = None
     user_agent: str = "enrich/1.0"
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,7 +95,7 @@ class EnrichAdapter(Protocol):
 
     provider: EnrichProvider
 
-    def enrich(self, text: str) -> Optional[str]:
+    def enrich(self, text: str) -> str | None:
         """Return the cleaned text, or None on failure."""
         ...
 
@@ -105,15 +105,13 @@ class EnrichAdapterHttp:
     provider = EnrichProvider.HTTP
     DEFAULT_MODEL = "kilic.dev/cheap"
 
-    def __init__(
-        self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
-    ):
+    def __init__(self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.spec = spec
         self.model = spec.model or self.DEFAULT_MODEL
 
-    def enrich(self, text: str) -> Optional[str]:
+    def enrich(self, text: str) -> str | None:
         spec = self.spec
         body: dict[str, Any] = {
             "model": self.model,
@@ -191,15 +189,13 @@ class EnrichAdapterHyprpilot:
     provider = EnrichProvider.HYPRPILOT
     DEFAULT_MODEL = DEFAULT_PROFILE
 
-    def __init__(
-        self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec
-    ):
+    def __init__(self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec):
         self.system_prompt = system_prompt
         self.user_prompt_template = user_prompt_template
         self.spec = spec
         self.profile = spec.model or self.DEFAULT_MODEL
 
-    def enrich(self, text: str) -> Optional[str]:
+    def enrich(self, text: str) -> str | None:
         prompt = (
             f"{self.system_prompt}\n\n{self.user_prompt_template.format(text=text)}"
         )
@@ -211,9 +207,7 @@ class EnrichAdapterHyprpilot:
             argv = ["hyprpilot", self.profile, "--file", prompt_path]
             log.info("hyprpilot enrichment: profile=%s", self.profile)
             try:
-                result = run(
-                    argv, log=log, tag="hyprpilot", timeout=self.spec.timeout
-                )
+                result = run(argv, log=log, tag="hyprpilot", timeout=self.spec.timeout)
             except subprocess.TimeoutExpired:
                 log.error(
                     "hyprpilot enrichment timed out after %.0fs", self.spec.timeout

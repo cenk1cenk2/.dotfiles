@@ -13,5 +13,6 @@ Typical usage:
 from .cli import create_logger as create_logger
 from .hyprctl import Hyprctl as Hyprctl
 from .notify import notify as notify
-from .rofi import rofi as rofi, rofi_with_icons as rofi_with_icons
+from .rofi import rofi as rofi
+from .rofi import rofi_with_icons as rofi_with_icons
 from .window_icons import get_icon_for_class as get_icon_for_class

@@ -1,10 +1,9 @@
 import re
-from pathlib import Path
-from typing import Dict
 from functools import lru_cache
+from pathlib import Path
 
 # Cache for desktop file lookups
-_desktop_file_cache: Dict[str, str] = {}
+_desktop_file_cache: dict[str, str] = {}
 _desktop_files_scanned = False
 
 def _scan_desktop_files() -> None:

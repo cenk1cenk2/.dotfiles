@@ -30,12 +30,14 @@ class NewWorkspace:
 def main():
     parser = ArgumentParser()
     parser.add_argument(
-        "-s", "--switch",
+        "-s",
+        "--switch",
         action="store_true",
         help="switch to the first empty workspace",
     )
     parser.add_argument(
-        "-m", "--move",
+        "-m",
+        "--move",
         action="store_true",
         help="move the currently focused container to the first empty workspace",
     )
