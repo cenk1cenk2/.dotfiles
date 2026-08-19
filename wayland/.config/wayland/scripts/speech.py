@@ -9,19 +9,22 @@ import logging
 import os
 import signal
 import socket
-import subprocess
 import sys
 import threading
 import urllib.error
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any
 
 import click
 
 from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
+    DEFAULT_STT_LANGUAGE,
+    DEFAULT_STT_TIMEOUT,
+    PLAIN_FORMATS,
     DEFAULT_TTS_MAX_CHARS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
@@ -33,68 +36,38 @@ from lib import (
     EnrichSpec,
     InputAdapter,
     InputAdapterClipboard,
-    InputAdapterStdin,
     InputMode,
     OutputAdapter,
     OutputAdapterClipboard,
-    OutputAdapterStdout,
-    OutputAdapterType,
     OutputMode,
     PlayerAdapter,
     PlayerAdapterFfplay,
     PlayerAdapterPaplay,
     PlayerAdapterPwCat,
     PlayerMode,
-    SynthAdapterHttp,
+    ResponseFormat,
+    SttAdapter,
+    SttAdapterHttp,
+    SttAdapterHyprwhspr,
+    SttProvider,
+    SttRecorder,
+    SttSpec,
     TeeReader,
+    TtsAdapterHttp,
     TtsSpec,
     build_enricher,
+    build_input,
+    build_output,
     copy_audio,
     create_logger,
     enrich_options,
+    is_headless,
     load_prompt,
     notify,
+    set_headless,
     signal_waybar,
     spec_from_options,
 )
-
-class SttAdapter(Protocol):
-    """Speech-to-text backend contract."""
-
-    def is_recording(self) -> bool: ...
-
-    def stop(self) -> None: ...
-
-    def cancel(self) -> None: ...
-
-    def capture(self) -> subprocess.Popen[bytes]: ...
-
-class HyprwhsprAdapter:
-    def is_recording(self) -> bool:
-        result = subprocess.run(
-            ["hyprwhspr", "record", "status"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return "Recording in progress" in (result.stdout + result.stderr)
-
-    def stop(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "stop"], capture_output=True, check=False
-        )
-
-    def cancel(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "cancel"], capture_output=True, check=False
-        )
-
-    def capture(self) -> subprocess.Popen[bytes]:
-        return subprocess.Popen(
-            ["hyprwhspr", "record", "capture"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
 
 class Command(StrEnum):
     STATUS = "status"
@@ -197,6 +170,17 @@ def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
         return raw or None
     finally:
         sock.close()
+
+def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
+    """Parse repeated `name=value` arguments, keeping order and duplicates."""
+    parsed = []
+    for value in values:
+        name, sep, rest = value.partition("=")
+        if not sep or not name:
+            raise click.UsageError(f"{flag} takes name=value, got {value!r}")
+        parsed.append((name, rest))
+
+    return tuple(parsed)
 
 class SocketSession:
     """UNIX-socket-backed live session: bind, serve, dispatch, unlink.
@@ -307,7 +291,7 @@ class SttSession(SocketSession):
         self,
         output: OutputAdapter,
         enricher: EnrichAdapter | None,
-        adapter: SttAdapter,
+        adapter: SttRecorder,
     ):
         super().__init__()
         self.state = SessionState(
@@ -372,15 +356,9 @@ class SttSession(SocketSession):
         self.set_enricher(new_enricher)
 
     def _apply_output_override(self, mode: OutputMode) -> None:
-        match mode:
-            case OutputMode.CLIPBOARD:
-                self.set_output(OutputAdapterClipboard())
-            case OutputMode.TYPE:
-                self.set_output(OutputAdapterType())
-            case OutputMode.STDOUT:
-                self.set_output(OutputAdapterStdout())
-            case _:
-                raise ValueError(f"unsupported output mode: {mode!r}")
+        # A file sink carries a path the socket payload does not, so
+        # build_output refuses it and the client is told why.
+        self.set_output(build_output(mode))
 
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
@@ -418,10 +396,22 @@ class Stt:
             cls.log.warning("bad response: %s (raw=%r)", e, raw)
             return None
 
+    @property
+    def _recorder(self) -> SttRecorder | None:
+        """The adapter as a recorder, or None when it drives no microphone.
+
+        A capture that reads a file or a pipe has nothing to toggle: no
+        second press to wait for, no socket worth binding, no phase to
+        render on the bar."""
+        if isinstance(self._adapter, SttRecorder):
+            return self._adapter
+        return None
+
     def is_recording(self) -> bool:
         if self._send(Command.STATUS) is not None:
             return True
-        return self._adapter.is_recording()
+        recorder = self._recorder
+        return recorder.is_recording() if recorder else False
 
     def run_once(
         self,
@@ -430,42 +420,69 @@ class Stt:
         output_mode: OutputMode,
         save: bool,
     ) -> None:
-        enrich_payload = enrich_spec.to_dict() if enrich_spec else None
-        if (
-            self._send(Command.STOP, enrich=enrich_payload, output=output_mode.value)
-            is not None
-        ):
-            self.log.info("press-2: signaled running session to stop")
-            return
+        recorder = self._recorder
+        if recorder is not None:
+            enrich_payload = enrich_spec.to_dict() if enrich_spec else None
+            response = self._send(
+                Command.STOP, enrich=enrich_payload, output=output_mode.value
+            )
+            if response is not None:
+                self.log.info("press-2: signaled running session to stop")
+                # The running session keeps its own output sink when an
+                # override is refused, so the transcript lands somewhere
+                # other than this invocation asked for.
+                if not response.ok:
+                    self.log.error("session refused the override: %s", response.error)
+                    self._notify(f"Override refused: {response.error}")
+                return
 
-        assert self._output is not None, "toggle requires an output adapter"
+        assert self._output is not None, "a capture requires an output adapter"
         self.log.info(
-            "starting session output=%s enrich=%s",
+            "capturing via %s output=%s enrich=%s",
+            self._adapter.provider.value,
             self._output.mode.value,
             self._enricher.provider.value if self._enricher else None,
         )
 
-        server = SttSession(self._output, self._enricher, self._adapter)
-        server.start()
+        server = (
+            SttSession(self._output, self._enricher, recorder) if recorder else None
+        )
+        if server:
+            server.start()
         try:
-            capture = self._adapter.capture()
-            stdout, _ = capture.communicate()
+            try:
+                text = (self._adapter.capture() or "").strip()
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                TimeoutError,
+                json.JSONDecodeError,
+                KeyError,
+            ) as e:
+                self.log.error("transcription failed: %s", e)
+                self._notify("Transcription failed")
+                sys.exit(1)
 
-            text = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
+            # Exit non-zero rather than write an empty sink: a caller that
+            # reads the output file cannot tell "silence" from "the model
+            # never answered", and the clipboard would be cleared.
             if not text:
                 self.log.warning("empty transcription")
                 self._notify("No transcription captured")
-                return
+                sys.exit(1)
 
             self.log.info("captured %d chars", len(text))
 
-            enricher = server.enricher
-            output = server.output
+            # The socket overrides land on the session, so read both back
+            # from it rather than from the values this process started with.
+            enricher = server.enricher if server else self._enricher
+            output = server.output if server else self._output
             if enricher is not None:
-                server.set_phase(Phase.WORKING)
-                if save:
+                if server:
+                    server.set_phase(Phase.WORKING)
+                if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
-                    subprocess.run(["wl-copy"], input=text, text=True)
+                    OutputAdapterClipboard().write(text)
                 self._notify("Enriching transcription...", timeout=3000)
                 enriched = enricher.enrich(text)
                 if enriched and enriched.strip():
@@ -474,21 +491,25 @@ class Stt:
                     self.log.warning("enrichment empty; using raw")
                     self._notify("Enrichment failed, using raw transcription")
 
-            server.set_phase(Phase.OUTPUT)
+            if server:
+                server.set_phase(Phase.OUTPUT)
             output.write(text)
             if enricher is not None:
                 self._notify("Done")
         finally:
-            server.stop()
+            if server:
+                server.stop()
 
     def stop(self):
-        if self._send(Command.STOP) is None:
-            self._adapter.stop()
+        recorder = self._recorder
+        if self._send(Command.STOP) is None and recorder:
+            recorder.stop()
             SttSession._signal_waybar()
 
     def kill(self):
-        if self._send(Command.KILL) is None:
-            self._adapter.cancel()
+        recorder = self._recorder
+        if self._send(Command.KILL) is None and recorder:
+            recorder.cancel()
             SttSession._signal_waybar()
 
     def status_json(self) -> str:
@@ -496,7 +517,8 @@ class Stt:
         state = resp.state if resp and resp.ok else None
 
         if state is None:
-            if self._adapter.is_recording():
+            recorder = self._recorder
+            if recorder and recorder.is_recording():
                 return json.dumps(
                     {
                         "class": Phase.RECORDING.value,
@@ -512,11 +534,13 @@ class Stt:
             OutputMode.CLIPBOARD: "󰅇",
             OutputMode.TYPE: "󰌌",
             OutputMode.STDOUT: "󰼭",
+            OutputMode.FILE: "󰈔",
         }
         labels = {
             OutputMode.CLIPBOARD: "clipboard",
             OutputMode.TYPE: "typing",
             OutputMode.STDOUT: "stdout",
+            OutputMode.FILE: "file",
         }
         icon = icons[state.output]
         label = labels[state.output]
@@ -549,10 +573,67 @@ class Stt:
 
     @cli.command("toggle")
     @click.option(
+        "--source",
+        type=click.Choice([p.value for p in SttProvider], case_sensitive=False),
+        default=SttProvider.HYPRWHSPR.value,
+        help="Transcription backend.",
+    )
+    @click.option(
+        "--input",
+        "input_",
+        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        default=InputMode.FILE.value,
+        help="Audio source for the http backend.",
+    )
+    @click.option(
+        "--input-file", type=click.Path(path_type=Path), help="Audio file to read."
+    )
+    @click.option(
         "--output",
         type=click.Choice([m.value for m in OutputMode], case_sensitive=False),
         default=OutputMode.CLIPBOARD.value,
         help="Output sink.",
+    )
+    @click.option(
+        "--output-file", type=click.Path(path_type=Path), help="Text file to write."
+    )
+    @click.option("--model", default=None, help="Transcription model id.")
+    @click.option(
+        "--response-format",
+        type=click.Choice([f.value for f in ResponseFormat], case_sensitive=False),
+        default=ResponseFormat.TEXT.value,
+        help="Transcript shape from the backend.",
+    )
+    @click.option(
+        "--language",
+        default=DEFAULT_STT_LANGUAGE,
+        help="Spoken language hint; empty to auto-detect.",
+    )
+    @click.option(
+        "--field",
+        "fields",
+        multiple=True,
+        metavar="NAME=VALUE",
+        help="Extra form field for the backend; repeatable.",
+    )
+    @click.option(
+        "--header",
+        "headers",
+        multiple=True,
+        metavar="NAME=VALUE",
+        help="Extra request header for the backend; repeatable.",
+    )
+    @click.option("--base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL.")
+    @click.option(
+        "--api-key-env",
+        default=DEFAULT_API_KEY_ENV,
+        help="Env var holding the HTTP backend key.",
+    )
+    @click.option(
+        "--timeout",
+        type=float,
+        default=DEFAULT_STT_TIMEOUT,
+        help="Backend deadline in seconds.",
     )
     @click.option("--enrich", is_flag=True, help="Enrich transcription through AI.")
     @enrich_options("enrich")
@@ -560,22 +641,63 @@ class Stt:
         "--save/--no-save", default=True, help="Copy raw transcript to clipboard first."
     )
     def cmd_toggle(
+        source,
+        input_,
+        input_file,
         output,
+        output_file,
+        model,
+        response_format,
+        language,
+        fields,
+        headers,
+        base_url,
+        api_key_env,
+        timeout,
         enrich,
         save,
         **enrich_opts,
     ):
         """Start a session, or toggle an existing one."""
         output_mode = OutputMode(output)
-        match output_mode:
-            case OutputMode.CLIPBOARD:
-                output_adapter: OutputAdapter = OutputAdapterClipboard()
-            case OutputMode.TYPE:
-                output_adapter = OutputAdapterType()
-            case OutputMode.STDOUT:
-                output_adapter = OutputAdapterStdout()
+        try:
+            output_adapter = build_output(output_mode, path=output_file)
+        except (TypeError, ValueError) as e:
+            raise click.UsageError(str(e)) from e
+
+        stt_format = ResponseFormat(response_format)
+        provider = SttProvider(source)
+        adapter: SttAdapter
+        match provider:
+            case SttProvider.HYPRWHSPR:
+                adapter = SttAdapterHyprwhspr()
+            case SttProvider.HTTP:
+                if not os.environ.get(api_key_env, "").strip():
+                    raise click.UsageError(f"{api_key_env} is empty")
+                try:
+                    audio_source = build_input(InputMode(input_), path=input_file)
+                except (TypeError, ValueError) as e:
+                    raise click.UsageError(str(e)) from e
+                adapter = SttAdapterHttp(
+                    SttSpec(
+                        model=model,
+                        base_url=base_url,
+                        api_key_env=api_key_env,
+                        response_format=stt_format,
+                        language=language,
+                        fields=_pairs(fields, "--field"),
+                        headers=_pairs(headers, "--header"),
+                        timeout=timeout,
+                        user_agent="speech/1.0",
+                    ),
+                    audio_source,
+                )
             case _:
-                raise click.UsageError(f"unsupported output mode: {output_mode!r}")
+                raise click.UsageError(f"unsupported source: {provider!r}")
+
+        # srt and vtt carry timings the cleanup prompt would rewrite away.
+        if enrich and stt_format not in PLAIN_FORMATS:
+            raise click.UsageError(f"--enrich needs a plain format, not {stt_format}")
 
         enrich_spec: EnrichSpec | None = None
         enricher: EnrichAdapter | None = None
@@ -583,31 +705,88 @@ class Stt:
             enrich_spec = spec_from_options(enrich_opts, "speech/1.0", "enrich")
             enricher = build_enricher(enrich_spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
 
-        Stt(HyprwhsprAdapter(), enricher, output_adapter).run_once(
+        Stt(adapter, enricher, output_adapter).run_once(
             enrich_spec=enrich_spec,
             output_mode=output_mode,
             save=save,
         )
 
+    @cli.command("enrich")
+    @click.option(
+        "--input",
+        "input_",
+        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        default=InputMode.STDIN.value,
+        help="Text source.",
+    )
+    @click.option(
+        "--input-file", type=click.Path(path_type=Path), help="Text file to read."
+    )
+    @click.option(
+        "--output",
+        type=click.Choice([m.value for m in OutputMode], case_sensitive=False),
+        default=OutputMode.STDOUT.value,
+        help="Output sink.",
+    )
+    @click.option(
+        "--output-file", type=click.Path(path_type=Path), help="Text file to write."
+    )
+    @enrich_options()
+    def cmd_enrich(
+        input_,
+        input_file,
+        output,
+        output_file,
+        **enrich_opts,
+    ):
+        """Enrich already-transcribed text, without capturing audio.
+
+        No recorder, no session socket, no waybar phase — just the
+        cleanup prompt, so a transcript from any other source can reuse
+        it."""
+        input_mode = InputMode(input_)
+        output_mode = OutputMode(output)
+        try:
+            input_adapter = build_input(input_mode, path=input_file)
+            output_adapter = build_output(output_mode, path=output_file)
+        except (TypeError, ValueError) as e:
+            raise click.UsageError(str(e)) from e
+
+        spec = spec_from_options(enrich_opts, "speech/1.0")
+        enricher = build_enricher(spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
+
+        text = input_adapter.read()
+        if not text or not text.strip():
+            Stt.log.warning("%s was empty", input_mode.value)
+            return
+
+        Stt.log.info("%s text: %d chars", input_mode.value, len(text))
+        enriched = enricher.enrich(text)
+        if enriched and enriched.strip():
+            output_adapter.write(enriched.strip())
+        else:
+            Stt.log.warning("enrichment empty; emitting raw text")
+            output_adapter.write(text.strip())
+
     @cli.command("stop")
     def cmd_stop():
         """Stop the active session."""
-        Stt(HyprwhsprAdapter()).stop()
+        Stt(SttAdapterHyprwhspr()).stop()
 
     @cli.command("kill")
     def cmd_kill():
         """Kill the session's process group."""
-        Stt(HyprwhsprAdapter()).kill()
+        Stt(SttAdapterHyprwhspr()).kill()
 
     @cli.command("status")
     def cmd_status():
         """Print waybar-shaped status JSON."""
-        sys.stdout.write(Stt(HyprwhsprAdapter()).status_json() + "\n")
+        sys.stdout.write(Stt(SttAdapterHyprwhspr()).status_json() + "\n")
 
     @cli.command("is-recording")
     def cmd_is_recording():
         """Exit 0 if a recording is live."""
-        sys.exit(0 if Stt(HyprwhsprAdapter()).is_recording() else 1)
+        sys.exit(0 if Stt(SttAdapterHyprwhspr()).is_recording() else 1)
 
 class TtsPhase(StrEnum):
     WORKING = "working"
@@ -799,7 +978,7 @@ class Tts:
             # Backend first: URLError and TimeoutError are OSError subclasses
             # too, and the player clause below would otherwise swallow them.
             try:
-                with SynthAdapterHttp(spec).synth(text) as stream:
+                with TtsAdapterHttp(spec).synth(text) as stream:
                     session.set_phase(TtsPhase.SPEAKING)
                     source = TeeReader(stream, buffer) if buffer else stream
                     written, code = self._player.play(source, spec.sample_rate)
@@ -889,6 +1068,9 @@ class Tts:
         default=InputMode.CLIPBOARD.value,
         help="Text source.",
     )
+    @click.option(
+        "--input-file", type=click.Path(path_type=Path), help="Text file to read."
+    )
     @click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id.")
     @click.option("--model", default=None, help="TTS model id.")
     @click.option("--speed", type=float, default=1.25, help="Speaking rate multiplier.")
@@ -940,6 +1122,7 @@ class Tts:
     @enrich_options("enrich")
     def cmd_speak(
         input_,
+        input_file,
         voice,
         model,
         speed,
@@ -955,14 +1138,10 @@ class Tts:
         **enrich_opts,
     ):
         """Synthesize the input text and play it."""
-        input_mode = InputMode(input_)
-        match input_mode:
-            case InputMode.CLIPBOARD:
-                input_adapter: InputAdapter = InputAdapterClipboard()
-            case InputMode.STDIN:
-                input_adapter = InputAdapterStdin()
-            case _:
-                raise click.UsageError(f"unknown input mode: {input_mode!r}")
+        try:
+            input_adapter = build_input(InputMode(input_), path=input_file)
+        except (TypeError, ValueError) as e:
+            raise click.UsageError(str(e)) from e
 
         fmt = AudioFormat(response_format)
         player_mode = PlayerMode(player)
@@ -1030,9 +1209,11 @@ class Tts:
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def cli(verbose: bool):
+@click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
+def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
     create_logger(verbose)
+    set_headless(headless)
 
 cli.add_command(Stt.cli, "stt")
 cli.add_command(Tts.cli, "tts")

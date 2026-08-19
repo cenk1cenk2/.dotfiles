@@ -11,7 +11,6 @@ from __future__ import annotations
 import bisect
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -291,52 +290,72 @@ class TranscriptionAdapterWhisperCpp:
 
 class TranscriptionAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint returning
-    `verbose_json` with word-level timestamps."""
+    `verbose_json` with word-level timestamps.
+
+    Reached through the wayland `speech.py`, which owns the upload and
+    the credential for every caller on this machine. Spawning it costs a
+    subprocess and keeps one implementation of the request — the same
+    trade `whisper-cli` and `ffmpeg` already make here."""
 
     name = "http"
 
     def __init__(
         self,
+        script: Path,
         base_url: str,
         model: str,
-        api_key: str,
-        user_agent: str = "remsi/1.0",
+        api_key_env: str = "AI_KILIC_DEV_API_KEY",
     ):
+        self.script = script
         self.base_url = base_url
         self.model = model
-        self.api_key = api_key
-        self.user_agent = user_agent
+        self.api_key_env = api_key_env
 
     def transcribe(self, input_file: Path) -> list[TimedWord]:
-        import requests
-
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
             _extract_wav(input_file, tmp.name)
-            url = f"{self.base_url}/audio/transcriptions"
-            log.info("POST %s model=%s", url, self.model)
-            try:
-                with open(tmp.name, "rb") as f:
-                    response = requests.post(
-                        url,
-                        headers={
-                            "Authorization": f"Bearer {self.api_key}",
-                            "User-Agent": self.user_agent,
-                        },
-                        files={"file": ("audio.wav", f, "audio/wav")},
-                        data={
-                            "model": self.model,
-                            "response_format": "verbose_json",
-                            "timestamp_granularities[]": ["segment", "word"],
-                        },
-                    )
-            except requests.RequestException as e:
-                raise RuntimeError(f"HTTP STT request failed: {e}") from e
+            cmd = [
+                str(self.script),
+                "--headless",
+                "stt",
+                "toggle",
+                "--source",
+                "http",
+                "--input",
+                "file",
+                "--input-file",
+                tmp.name,
+                "--output",
+                "stdout",
+                "--response-format",
+                "verbose_json",
+                # Repeated because that is how the OpenAI shape spells a
+                # list; without the word entry there are no word timings.
+                "--field",
+                "timestamp_granularities[]=segment",
+                "--field",
+                "timestamp_granularities[]=word",
+                "--model",
+                self.model,
+                "--base-url",
+                self.base_url,
+                "--api-key-env",
+                self.api_key_env,
+            ]
+            log.info("spawn: %s", " ".join(cmd))
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
-        if not response.ok:
+        if result.returncode != 0:
             raise RuntimeError(
-                f"HTTP STT failed: {response.status_code} {response.text}"
+                f"speech.py failed (exit {result.returncode}): {result.stderr.strip()}"
             )
-        data = response.json()
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"speech.py returned no JSON: {result.stdout[:200]}"
+            ) from e
         log.debug("HTTP STT response keys: %s", list(data.keys()))
 
         words = data.get("words", [])
@@ -2084,6 +2103,11 @@ class Remsi:
         help="HTTP STT model name.",
     )
     @click.option(
+        "--speech-script",
+        default="~/.config/wayland/scripts/speech.py",
+        help="speech.py driving the HTTP STT provider.",
+    )
+    @click.option(
         "--encoder",
         type=click.Choice([k.value for k in EncoderKind]),
         default=EncoderKind.CUT.value,
@@ -2114,6 +2138,7 @@ class Remsi:
         whisper_cpp_model,
         http_base_url,
         http_model,
+        speech_script,
         encoder,
         analyze,
         force,
@@ -2136,10 +2161,13 @@ class Remsi:
                         raise click.UsageError(f"model not found at {model_path}")
                     stt_adapter = TranscriptionAdapterWhisperCpp(model_path=model_path)
                 case TranscriptionProvider.HTTP:
+                    script = Path(speech_script).expanduser()
+                    if not script.exists():
+                        raise click.UsageError(f"speech.py not found at {script}")
                     stt_adapter = TranscriptionAdapterHttp(
+                        script=script,
                         base_url=http_base_url,
                         model=http_model,
-                        api_key=os.environ.get("AI_KILIC_DEV_API_KEY", ""),
                     )
                 case _:
                     raise click.UsageError(f"unknown stt provider: {stt_provider!r}")
