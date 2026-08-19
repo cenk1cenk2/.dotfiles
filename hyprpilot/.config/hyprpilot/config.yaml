@@ -43,10 +43,7 @@ patches:
               - spacelift-*
     mcps:
       - file: ~/.config/nvim/utils/agents/mcp/servers.json
-        ignore:
-          - "*-laravel"
-          - aws-docs
-          - terraform
+      - file: ~/.config/nvim/utils/agents/mcp/personal.json
 
   - $match:
       profile: "work/*"
@@ -65,10 +62,7 @@ patches:
               - gitlab-*
     mcps:
       - file: ~/.config/nvim/utils/agents/mcp/servers.json
-        ignore:
-          - "*-kilic"
-          - gitlab
-          - playwright
+      - file: ~/.config/nvim/utils/agents/mcp/work.json
 
   - $match:
       profile: "work/claude/*"
