@@ -73,9 +73,14 @@
   "syntaxHighlightingDisabled": false,
   "effortLevel": "high",
   "promptSuggestionEnabled": false,
+  "awaySummaryEnabled": false,
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
   "autoMemoryEnabled": true,
   "skipWorkflowUsageWarning": true,
   "theme": "custom:onedarker",
@@ -86,5 +91,5 @@
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "awaySummaryEnabled": false
+  "voiceEnabled": true
 }
