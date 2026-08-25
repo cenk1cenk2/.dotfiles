@@ -15,9 +15,9 @@
 # hardcoded `$HOME` — the path travels with the script.
 #
 # `uv run` resolves the dependency set below, ensures `.venv/` matches,
-# and executes the requested script inside that env. No `.venv/`
-# commits go into git — the Taskfile bootstrap provisions it with
-# `uv sync`.
+# and executes the requested script inside that env. No `.venv/` commits
+# go into git: the first invocation of any script creates it, because
+# `uv run` locks and syncs on its own. There is no bootstrap task.
 #
 # PEP 723 inline metadata was ruled out: `uv run --script` deliberately
 # ignores the project's dependency set (see

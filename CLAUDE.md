@@ -220,9 +220,39 @@ these need re-checking.
   defaults. `help="Text source."` — not a paragraph. click already
   prints the default, the choices, the type.
 
+### Shared library: `dotlib`
+
+- The scaffolding every scripts project needs lives once, in the `dotlib`
+  package at `wayland/.config/wayland/lib/` (deployed
+  `~/.config/wayland/lib`): `cli` (create_logger, RunResult, run),
+  `desktop` (the headless flag), `notify`. Domain code stays in its own
+  project — `hyprctl`, `rofi`, `window_icons` in hyprland; `enrich`,
+  `stt`, `tts`, `waybar` and friends in wayland.
+
+- Each consumer declares it as a uv path dependency with
+  `editable = true`, so an edit to `dotlib` is live in every consumer on
+  the next run with **no `uv sync`**. A brand-new module still needs a
+  re-stow, because the deploy is per-file symlinks (`--no-folding`).
+
+- **The path is relative to the DEPLOYED location, not the repo.** uv
+  resolves a path dependency against the directory holding the pyproject
+  it reads, and stow deploys that file as a symlink, so a repo-relative
+  path resolves to nothing. Hence three different strings for one target:
+  `../lib`, `../../wayland/lib`, `../../.config/wayland/lib`. A script run
+  from the repo checkout fails loudly rather than silently wrong.
+
+- `dotlib/__init__.py` is deliberately **empty** — import submodules
+  directly (`from dotlib.cli import create_logger`). An eager `__init__`
+  would drag `rich` into consumers that only want a stdlib-only module.
+
+- `jumpy` is the exception to all of this: stdlib-only with its own
+  inlined copy of the Hyprland IPC. Home Assistant drives it over ssh,
+  where neither `uv` nor `~/.local/bin` is on PATH, so it must not depend
+  on a venv. Its shebang and that duplication are load-bearing.
+
 ### Logging: rich, stderr for traces
 
-- `lib.cli.create_logger(verbose)` is the only way scripts set up
+- `dotlib.cli.create_logger(verbose)` is the only way scripts set up
   logging. Installs a `RichHandler` on the root logger bound to
   `sys.stderr`. `--verbose` / `-v` flips level to DEBUG; default
   INFO. Call once in the click group callback.
@@ -298,7 +328,7 @@ for per-item results (`log.info("  filler: [red]%s[/]", …)`).
 - Level policy: INFO for one-off user-facing spawns (enrichment
   CLIs, agent processes). DEBUG for waybar-polling / status spawns.
 
-- **Every spawn that can block gets a `timeout`.** `lib.cli.run`
+- **Every spawn that can block gets a `timeout`.** `dotlib.cli.run`
   starts the child in its own session and a timeout kills the whole
   process group, then `wait()`s it. Both matter: the AI CLIs fork
   children of their own (claude runs node, opencode spawns a local
