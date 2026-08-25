@@ -83,16 +83,51 @@ these need re-checking.
   need a re-install (`task` or `sudo install`). `rootfs/etc/udev/rules.d/*`
   is stow-symlinked and live on save.
 
-### Known blocker (610.43.03 and 610.57.04, unresolved)
+### Known blocker (610.43.03 and 610.57.04, parked)
 
 - With every userspace pin fixed, the GPU sleeps only until the desktop
-  session's first wake of the device, then never again: RM never re-indicates
-  idle, so the driver's runtime-PM usage count sticks at 1 (visible as
-  `cnt-1` in `rpm:*` trace events after toggling `power/control` on→auto).
-  The decision lives in RM core / GSP firmware (`nv-kernel.o` prebuilt, GCx
-  prerequisite evaluated GSP-side) — not debuggable from the OS layer.
-  `nvidia-drm.fbdev=0` does not help. Suspected driver bug on GB206M;
-  re-test on driver updates before re-opening the userspace investigation.
+  session's first wake of the device, then never again: the driver's
+  runtime-PM usage count sticks at 1 (`cnt-1` in `rpm:*` trace events after
+  toggling `power/control` on→auto). Upstream, unfixed, not GB206-specific:
+  [open-gpu-kernel-modules#905](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/905)
+  (sleeps once per boot; system suspend reportedly resets it),
+  [#1121](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1121)
+  (`usage_count=1` with zero openers),
+  [#1071](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1071)
+  (mechanism: `RmRemoveIdleHoldoff` reschedules forever, so
+  `nv_indicate_idle` never drops the ref; candidate patch
+  [PR #1074](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1074)).
+  A near-twin (5070 Ti GB205, Panther Lake, Arch, 610.57.04) sleeps
+  repeatedly in
+  [#1300](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1300)
+  with `DynamicPowerManagement=3`, no `EnableS0ixPowerManagement`, and
+  persistenced off — its only residual is NVPCF ACPI wakes, patched by
+  [PR #1181](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181).
+  This laptop carries the `NPCF` device in `SSDT25`.
+- Driver mechanics (verified in `/usr/src/nvidia-<version>/`): exactly three
+  sites touch `usage_count` in `kernel-open/nvidia/nv.c` — `nv_indicate_idle`
+  (-1), `nv_indicate_not_idle` (+1), `nv_idle_holdoff` (+1, taken on every
+  resume in `dynamic-power.c` `RmTransitionDynamicPower`). On a notebook
+  `RmConfigureUpstreamPortForRTD3` short-circuits on `b_mobile_config_enabled`,
+  so the GC6 path is used and the GCOFF checks (`VideoMemoryThreshold`,
+  `clients_gcoff_disallow_refcount`) are never evaluated; every idle gate
+  reduces to the GSP query `RmCheckForGcxSupportOnCurrentState`. No
+  nvkms/fbdev/HDA ref exists on that path (`fbdev=0` is inert;
+  [#759](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/759) was
+  fixed in 595.45.04).
+- RM core is **not** prebuilt: DKMS compiles `nv-kernel.o` from `src/nvidia/`
+  (no `nv-kernel.o_binary` in the tree), so cherry-picking PR #1181 / #1074
+  or adding `-DDEBUG` to `src/nvidia/Makefile` for the state-transition
+  trace is a local rebuild. `NVreg_RmMsg` is dead in release builds
+  (`NV_PRINTF_STRINGS_ALLOWED 0`); `NVreg_EnableGpuFirmwareLogs=1` is the
+  only lever that exposes the GSP-side verdict. `kernel-open` symbols are
+  ftrace-able (`nv_indicate_idle`, `nv_idle_holdoff`, `nv_pmops_runtime_*`);
+  only `nv-kernel.o` refuses kprobes, because linux-zen lacks
+  `CONFIG_KPROBE_EVENTS_ON_NOTRACE`.
+- Parked, not open: persistenced is mandatory for Proton and pins the GPU by
+  design, so even a fixed driver yields sleep only with persistenced stopped.
+  Do not reopen the userspace investigation; re-test only on a driver newer
+  than 610.57.04, or if the persistenced requirement goes away.
 
 ### Verifying without waking the GPU
 
@@ -104,6 +139,11 @@ these need re-checking.
 - Kernel-side truth: `sudo /sys/kernel/tracing` rpm events show whether the
   driver even attempts suspend; zero events with zero holders means the
   driver-internal refcount is desynced (reboot).
+- Naming the stuck ref: kprobes on `nvidia:nv_indicate_idle`,
+  `nv_indicate_not_idle`, `nv_idle_holdoff` plus the `rpm_usage` tracepoint
+  with `options/stacktrace`, filtered on the dGPU PCI address, across one
+  sleep/wake cycle in a zero-holder session. `power/runtime_usage` is absent
+  (`CONFIG_PM_ADVANCED_DEBUG` off), so ftrace is the only usage-count readout.
 
 ## Python scripts
 
