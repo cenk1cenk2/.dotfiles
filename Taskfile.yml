@@ -3,13 +3,71 @@
 
 version: "3"
 
-env: {}
-
 vars:
   to: "~"
   args: ""
   sudo: false
   verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
+  linux_user_packages: >-
+    autotiling-rs
+    brave
+    claude
+    clipse
+    codex
+    dbus
+    desktop
+    easyeffects
+    electron
+    enchant
+    fonts
+    gitconfig
+    gnupg
+    gtk
+    hyprland
+    hyprpilot
+    hyprwhspr
+    input-remapper
+    kanshi
+    khal
+    kitty
+    mako
+    mangohud
+    mimetypes
+    mpv
+    neomutt
+    obsbot
+    opencode
+    pacman
+    pimsync
+    pipewire
+    rofi
+    scripts
+    ssh-config
+    swappy
+    sway
+    swayidle
+    swayimg
+    swaylock
+    swaync
+    swayosd
+    swayr
+    sworkstyle
+    uwsm
+    waybar
+    wayland
+    wayland-pipewire-idle-inhibit
+    wayland-theme
+    wiremix
+    wireplumber
+    wl-gamma-relay-rs
+    wlogout
+    xauthority
+    xdg-desktop-portal
+    xdg-desktop-portal-termfilechooser
+    xsettingsd
+    ydotool
+    zathura
+  linux_system_packages: rootfs
 
 tasks:
   check:
@@ -19,9 +77,24 @@ tasks:
 
   plan:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
-    desc: Plan to target.
+    desc: Dry-run a stow target.
     cmds:
-      - stow --no-folding -n{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}
+      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -n{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}"
+
+  plan:linux:
+    desc: Dry-run the full deploy without touching anything.
+    platforms:
+      - linux
+    cmds:
+      - task: plan
+        vars:
+          to: "~"
+          packages: "{{ .linux_user_packages }}"
+      - task: plan
+        vars:
+          sudo: true
+          to: "/"
+          packages: "{{ .linux_system_packages }}"
 
   deploy:
     desc: Deploy to a target.
@@ -60,65 +133,7 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: >-
-            autotiling-rs
-            brave
-            claude
-            clipse
-            codex
-            dbus
-            desktop
-            easyeffects
-            electron
-            enchant
-            fonts
-            gitconfig
-            gnupg
-            gtk
-            hyprland
-            hyprpilot
-            hyprwhspr
-            input-remapper
-            kanshi
-            khal
-            kitty
-            mako
-            mangohud
-            mimetypes
-            mpv
-            neomutt
-            obsbot
-            opencode
-            pacman
-            pimsync
-            pipewire
-            rofi
-            scripts
-            ssh-config
-            swappy
-            sway
-            swayidle
-            swayimg
-            swaylock
-            swaync
-            swayosd
-            swayr
-            sworkstyle
-            uwsm
-            waybar
-            wayland
-            wayland-pipewire-idle-inhibit
-            wayland-theme
-            wiremix
-            wireplumber
-            wl-gamma-relay-rs
-            wlogout
-            xauthority
-            xdg-desktop-portal
-            xdg-desktop-portal-termfilechooser
-            xsettingsd
-            ydotool
-            zathura
+          packages: "{{ .linux_user_packages }}"
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
 
@@ -131,5 +146,5 @@ tasks:
         vars:
           sudo: true
           to: "/"
-          packages: rootfs
+          packages: "{{ .linux_system_packages }}"
       - ./install.py system
