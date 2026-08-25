@@ -12,10 +12,10 @@ vars:
   verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
 
 tasks:
-  install:
-    desc: Install necessary dependencies.
-    deps:
-      - wayland-scripts:bootstrap
+  check:
+    desc: Report the planned system installs and verify stow coverage.
+    cmds:
+      - ./install.py check
 
   plan:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
@@ -47,17 +47,6 @@ tasks:
     desc: Deploys to all targets
     deps:
       - task: deploy:linux
-
-  wayland-scripts:bootstrap:
-    desc: >-
-      Provision the uv venv at the stow destination so `uv run` from
-      the wayland scripts' shebangs finds a prepared env. `pyproject.toml`
-      and `uv.lock` are symlinked from this repo (via the `wayland` stow
-      package) so dependency changes still commit through git; only the
-      generated `.venv/` stays local to the target machine.
-    dir: "{{ .HOME }}/.config/wayland/scripts"
-    cmds:
-      - uv sync
 
   deploy:linux:
     desc: Deploy to target.
@@ -172,13 +161,4 @@ tasks:
           to: "/"
           packages: rootfs
           # args: --adopt
-      - sudo install -d -m 0755 /usr/local/share/wayland-sessions
-      - sudo install -m 0644 rootfs/usr/local/share/wayland-sessions/*.desktop /usr/local/share/wayland-sessions/
-      - sudo install -d -m 0755 /etc/modprobe.d
-      - sudo install -m 0644 rootfs/etc/modprobe.d/*.conf /etc/modprobe.d/
-      - sudo install -d -m 0755 /etc/geoclue/conf.d /etc/NetworkManager/dispatcher.d
-      - sudo install -m 0644 geoclue/etc/geoclue/conf.d/*.conf /etc/geoclue/conf.d/
-      - sudo install -m 0644 geoclue/etc/systemd/system/* /etc/systemd/system/
-      - sudo install -m 0755 geoclue/etc/NetworkManager/dispatcher.d/09-timezone /etc/NetworkManager/dispatcher.d/
-      - sudo install -m 0755 geoclue/usr/local/bin/geo-timezone /usr/local/bin/
-      - sudo systemctl daemon-reload
+      - ./install.py system

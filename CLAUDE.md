@@ -83,8 +83,9 @@ these need re-checking.
   resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
   because pressure-vessel does not import `nvidia_layers.json` into the
   container. Use `MANGOHUD=1 %command%` for the overlay.
-- `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by the Taskfile — edits
-  need a re-install (`task` or `sudo install`). `rootfs/etc/udev/rules.d/*`
+- `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by `install.py` — edits
+  need `task deploy:linux:system` (or `./install.py system`) to take effect.
+  Bare `task` only lists tasks and copies nothing. `rootfs/etc/udev/rules.d/*`
   is stow-symlinked and live on save.
 
 ### Known blocker (610.43.03 and 610.57.04, parked)
