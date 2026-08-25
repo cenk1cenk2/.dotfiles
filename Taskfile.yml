@@ -27,10 +27,6 @@ tasks:
     desc: Deploy to a target.
     label: "deploy: {{ .to }} -> {{ .CLI_ARGS }}"
     cmds:
-      # - task: plan
-      #   vars:
-      #     CLI_ARGS: '{{ .CLI_ARGS }}'
-      #     to: '{{ .to }}'
       - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}"
     status:
       - '{{ .status | default "false" }}'
@@ -123,30 +119,6 @@ tasks:
             xsettingsd
             ydotool
             zathura
-          # args: --adopt
-      # HACK: little trick to change the configuration for nvidia
-      # - task: deploy
-      #   vars:
-      #     to: "~"
-      #     packages: brave electron
-      #     # status: '! [[ "$LIBVA_DRIVER_NAME" != "nvidia" ]]'
-      #     status: test -d /usr/lib/nvidia
-      # - task: deploy
-      #   vars:
-      #     to: "~"
-      #     packages: brave-nvidia electron-nvidia
-      #     # status: '! [[ "$LIBVA_DRIVER_NAME" == "nvidia" ]]'
-      #     status: test ! -d /usr/lib/nvidia
-      # HACK: little trick to change the configuration for nvidia
-      # TODO: remove after deploying to all instances
-      - task: undeploy
-        vars:
-          to: "~"
-          packages: >-
-            chrome
-            dex
-          # args: --adopt
-          #
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
 
@@ -160,5 +132,4 @@ tasks:
           sudo: true
           to: "/"
           packages: rootfs
-          # args: --adopt
       - ./install.py system
