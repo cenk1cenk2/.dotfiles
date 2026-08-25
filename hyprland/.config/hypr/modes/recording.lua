@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T) tts play/stop | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T) tts enrich/raw | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -40,10 +40,10 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + c", exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech)))
 
   -- Read clipboard aloud
-  hl.bind("t", exec_then_reset(("%s tts toggle"):format(d.speech)))
+  hl.bind("t", exec_then_reset(("%s tts toggle --enrich"):format(d.speech)))
 
-  -- Stop speaking
-  hl.bind("SHIFT + t", exec_then_reset(("%s tts kill"):format(d.speech)))
+  -- Read clipboard aloud (raw, no enrichment)
+  hl.bind("SHIFT + t", exec_then_reset(("%s tts toggle"):format(d.speech)))
 
   -- Copywriter: refine clipboard through AI
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))

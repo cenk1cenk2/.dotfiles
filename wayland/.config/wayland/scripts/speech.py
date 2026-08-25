@@ -869,6 +869,85 @@ class TtsSession(SocketSession):
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
 
+def tts_speak_options():
+    """Stack the synthesis knobs `speak` and `toggle` share.
+
+    `toggle` forwards its kwargs straight into `speak`, so a knob added
+    here reaches both paths and neither can drift from the other."""
+    options = [
+        click.option(
+            "--input",
+            "input_",
+            type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+            default=InputMode.CLIPBOARD.value,
+            help="Text source.",
+        ),
+        click.option(
+            "--input-file", type=click.Path(path_type=Path), help="Text file to read."
+        ),
+        click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
+        click.option("--model", default=None, help="TTS model id."),
+        click.option(
+            "--speed", type=float, default=1.25, help="Speaking rate multiplier."
+        ),
+        click.option(
+            "--format",
+            "response_format",
+            type=click.Choice([f.value for f in AudioFormat], case_sensitive=False),
+            default=AudioFormat.PCM.value,
+            help="Audio encoding.",
+        ),
+        click.option(
+            "--sample-rate",
+            type=int,
+            default=DEFAULT_TTS_SAMPLE_RATE,
+            help="Output rate in Hz.",
+        ),
+        click.option(
+            "--player",
+            type=click.Choice([p.value for p in PlayerMode], case_sensitive=False),
+            default=DEFAULT_TTS_PLAYER.value,
+            help="Playback sink.",
+        ),
+        click.option(
+            "--base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL."
+        ),
+        click.option(
+            "--api-key-env",
+            default=DEFAULT_API_KEY_ENV,
+            help="Env var holding the HTTP backend key.",
+        ),
+        click.option(
+            "--timeout",
+            type=float,
+            default=DEFAULT_TTS_TIMEOUT,
+            help="Backend deadline in seconds.",
+        ),
+        click.option(
+            "--max-chars",
+            type=int,
+            default=DEFAULT_TTS_MAX_CHARS,
+            help="Truncate longer input.",
+        ),
+        click.option(
+            "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
+        ),
+        click.option(
+            "--enrich/--no-enrich",
+            default=False,
+            help="Rewrite the text to be readable aloud.",
+        ),
+    ]
+
+    def decorate(f):
+        f = enrich_options("enrich")(f)
+        for option in reversed(options):
+            f = option(f)
+
+        return f
+
+    return decorate
+
 class Tts:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
     # wl-paste also advertises the legacy X11 selection atoms, and some
@@ -1061,65 +1140,7 @@ class Tts:
         _TTS_PATHS = TtsPaths.from_suffix(session_suffix or "")
 
     @cli.command("speak")
-    @click.option(
-        "--input",
-        "input_",
-        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
-        default=InputMode.CLIPBOARD.value,
-        help="Text source.",
-    )
-    @click.option(
-        "--input-file", type=click.Path(path_type=Path), help="Text file to read."
-    )
-    @click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id.")
-    @click.option("--model", default=None, help="TTS model id.")
-    @click.option("--speed", type=float, default=1.25, help="Speaking rate multiplier.")
-    @click.option(
-        "--format",
-        "response_format",
-        type=click.Choice([f.value for f in AudioFormat], case_sensitive=False),
-        default=AudioFormat.PCM.value,
-        help="Audio encoding.",
-    )
-    @click.option(
-        "--sample-rate",
-        type=int,
-        default=DEFAULT_TTS_SAMPLE_RATE,
-        help="Output rate in Hz.",
-    )
-    @click.option(
-        "--player",
-        type=click.Choice([p.value for p in PlayerMode], case_sensitive=False),
-        default=DEFAULT_TTS_PLAYER.value,
-        help="Playback sink.",
-    )
-    @click.option("--base-url", default=DEFAULT_BASE_URL, help="HTTP backend base URL.")
-    @click.option(
-        "--api-key-env",
-        default=DEFAULT_API_KEY_ENV,
-        help="Env var holding the HTTP backend key.",
-    )
-    @click.option(
-        "--timeout",
-        type=float,
-        default=DEFAULT_TTS_TIMEOUT,
-        help="Backend deadline in seconds.",
-    )
-    @click.option(
-        "--max-chars",
-        type=int,
-        default=DEFAULT_TTS_MAX_CHARS,
-        help="Truncate longer input.",
-    )
-    @click.option(
-        "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
-    )
-    @click.option(
-        "--enrich/--no-enrich",
-        default=True,
-        help="Rewrite the text to be readable aloud.",
-    )
-    @enrich_options("enrich")
+    @tts_speak_options()
     def cmd_speak(
         input_,
         input_file,
@@ -1182,15 +1203,15 @@ class Tts:
         Tts(spec, input_adapter, player_adapter, copy, enricher).speak()
 
     @cli.command("toggle")
+    @tts_speak_options()
     @click.pass_context
-    def cmd_toggle(ctx: click.Context):
-        """Kill an active session, or speak the clipboard."""
+    def cmd_toggle(ctx: click.Context, **speak_opts):
+        """Kill an active session, or speak the input."""
         if Tts().is_speaking():
             Tts().kill()
             return
-        # Defaults come from `speak`'s own options, so the two paths can
-        # never drift.
-        ctx.invoke(Tts.cmd_speak)
+
+        ctx.invoke(Tts.cmd_speak, **speak_opts)
 
     @cli.command("kill")
     def cmd_kill():
