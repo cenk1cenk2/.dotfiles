@@ -18,18 +18,27 @@ from pathlib import Path
 from typing import Any
 
 import click
-
+from dotlib.cli import (
+    create_logger,
+)
+from dotlib.desktop import (
+    is_headless,
+    set_headless,
+)
+from dotlib.notify import (
+    notify,
+)
 from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
-    PLAIN_FORMATS,
     DEFAULT_TTS_MAX_CHARS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
     DEFAULT_TTS_VOICE,
+    PLAIN_FORMATS,
     AudioFormat,
     EnrichAdapter,
     EnrichProvider,
@@ -59,12 +68,8 @@ from lib import (
     build_input,
     build_output,
     copy_audio,
-    create_logger,
     enrich_options,
-    is_headless,
     load_prompt,
-    notify,
-    set_headless,
     signal_waybar,
     spec_from_options,
 )

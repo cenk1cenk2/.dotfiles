@@ -23,8 +23,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 import click
-
-from .cli import run
+from dotlib.cli import run
 
 
 class EnrichProvider(StrEnum):

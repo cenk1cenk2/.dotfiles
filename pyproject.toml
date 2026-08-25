@@ -1,5 +1,9 @@
 [tool.pyright]
 include = ["."]
+# dotlib is installed only into the deployed venvs, so a checkout has no other
+# way to resolve `from dotlib...`. Repo-relative, unlike the uv path deps in
+# each scripts project, which are relative to their DEPLOYED location.
+extraPaths = ["wayland/.config/wayland/lib/src"]
 exclude = ["**/node_modules", "**/__pycache__"]
 
 reportOptionalMemberAccess = false

@@ -11,8 +11,15 @@ import time
 import click
 import obsws_python as obs
 import psutil
-
-from lib import create_logger, notify, signal_waybar
+from dotlib.cli import (
+    create_logger,
+)
+from dotlib.notify import (
+    notify,
+)
+from lib import (
+    signal_waybar,
+)
 
 # obsws-python + websocket-client log full tracebacks via `logger.exception()`
 # on every refused connection. Waybar polls status on a tick, so without

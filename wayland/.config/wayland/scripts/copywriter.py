@@ -11,7 +11,15 @@ from pathlib import Path
 
 import click
 import psutil
-
+from dotlib.cli import (
+    create_logger,
+)
+from dotlib.desktop import (
+    set_headless,
+)
+from dotlib.notify import (
+    notify,
+)
 from lib import (
     EnrichAdapter,
     InputAdapter,
@@ -21,11 +29,8 @@ from lib import (
     build_enricher,
     build_input,
     build_output,
-    create_logger,
     enrich_options,
     load_prompt,
-    notify,
-    set_headless,
     signal_waybar,
     spec_from_options,
 )

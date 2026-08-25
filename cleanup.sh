@@ -4,7 +4,9 @@
 # That migration retired the macOS target and the sway stack, and moved
 # rootfs/ off stow onto install.py. Neither stow nor install.py deletes
 # anything, so every machine that deployed the old layout still carries the
-# leftovers listed below. Run this once per machine, then delete this file.
+# leftovers listed below. Run it on each machine after pulling; it has grown
+# past a single migration, so re-run it when this file changes rather than
+# deleting it after one pass.
 #
 # Everything here is idempotent: an entry that is already gone is skipped.
 #
@@ -41,6 +43,15 @@ USER_PATHS=(
     "$HOME/.config/systemd/user/dex.service"
     # mako, replaced by swaync
     "$HOME/.config/mako"
+    # lib modules that moved into the shared dotlib package. stow never removes
+    # a link whose source left the repo, so these dangle after the migration.
+    # notify.py already dangles, from commit 035fae7.
+    "$HOME/.config/hypr/scripts/lib/cli.py"
+    "$HOME/.config/hypr/scripts/lib/notify.py"
+    "$HOME/.config/wayland/scripts/lib/cli.py"
+    "$HOME/.config/wayland/scripts/lib/desktop.py"
+    "$HOME/.config/wayland/scripts/lib/notify.py"
+    "$HOME/.local/bin/lib"
     # the kitty platform split collapsed to a single globinclude
     "$HOME/.config/kitty/linux.conf"
     "$HOME/.config/kitty/macos.conf"
@@ -55,6 +66,9 @@ SYSTEM_PATHS=(
     /etc/systemd/system/sysctl-dotfiles.service
     /etc/tlp.conf.pacsave
     /usr/local/bin/__pycache__
+    # jumpy moved to ~/.local/bin. Remove ONLY after home-assistant!69 merges —
+    # until then this is what makes the old bare `jumpy` over ssh keep working.
+    /usr/local/bin/jumpy
 )
 
 drop() {

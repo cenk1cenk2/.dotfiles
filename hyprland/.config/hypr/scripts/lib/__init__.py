@@ -10,7 +10,6 @@ Typical usage:
     hypr.dispatch('hl.dsp.focus({ workspace = "3" })')
 """
 
-from .cli import create_logger as create_logger
 from .hyprctl import Hyprctl as Hyprctl
 from .rofi import rofi as rofi
 from .rofi import rofi_with_icons as rofi_with_icons

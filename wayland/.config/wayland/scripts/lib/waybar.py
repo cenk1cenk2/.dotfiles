@@ -4,7 +4,7 @@ import logging
 import subprocess
 import sys
 
-from .desktop import is_headless
+from dotlib.desktop import is_headless
 
 log = logging.getLogger(__name__)
 

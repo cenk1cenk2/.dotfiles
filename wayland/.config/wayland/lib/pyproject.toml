@@ -1,0 +1,15 @@
+[project]
+name = "dotlib"
+version = "1.0.0"
+description = "Scaffolding shared by every scripts project in the dotfiles."
+requires-python = ">=3.14"
+dependencies = [
+  "rich>=13.7",
+]
+
+# A path dependency has to be an installable package: uv builds it even in
+# editable mode, to produce the .pth and dist-info. uv_build is uv's own
+# backend, so this needs nothing beyond the uv that already runs every script.
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"

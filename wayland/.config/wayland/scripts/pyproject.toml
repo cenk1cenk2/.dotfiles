@@ -30,6 +30,7 @@ version = "0.1.0"
 description = "Speech capture, recorder and copywriter glue for the Wayland dotfiles."
 requires-python = ">=3.14"
 dependencies = [
+  "dotlib",
   # CLI parsing + styled logging (stderr only).
   "click>=8.1",
   "rich>=13.7",
@@ -40,7 +41,13 @@ dependencies = [
 ]
 
 [tool.ty.environment]
-extra-paths = ["."]
+extra-paths = [".", "../lib/src"]
 
 [tool.pyright]
-extraPaths = ["."]
+extraPaths = [".", "../lib/src"]
+
+[tool.uv.sources]
+# Relative to this file's DEPLOYED location, not the repo: uv resolves a path
+# dependency against the directory holding the pyproject it reads, and stow
+# deploys this file as a symlink. A repo-relative path resolves to nothing.
+dotlib = { path = "../lib", editable = true }

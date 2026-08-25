@@ -24,17 +24,30 @@ wheels = [
 ]
 
 [[package]]
+name = "dotlib"
+version = "1.0.0"
+source = { editable = "../../wayland/lib" }
+dependencies = [
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "rich", specifier = ">=13.7" }]
+
+[[package]]
 name = "hyprland-scripts"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "click" },
+    { name = "dotlib" },
     { name = "rich" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
+    { name = "dotlib", editable = "../../wayland/lib" },
     { name = "rich", specifier = ">=13.7" },
 ]
 
