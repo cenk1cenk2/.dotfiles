@@ -217,7 +217,6 @@ def _extract_wav(input_file: Path, output_path: str) -> None:
 
 
 class TranscriptionProvider(StrEnum):
-    WHISPER_CPP = "whisper-cpp"
     HTTP = "http"
 
 
@@ -229,56 +228,6 @@ class TranscriptionAdapter(Protocol):
     def transcribe(self, input_file: Path) -> list[TimedWord]: ...
 
 
-class TranscriptionAdapterWhisperCpp:
-    """Local whisper.cpp via the `whisper-cli` binary."""
-
-    name = "whisper-cpp"
-
-    def __init__(self, model_path: Path):
-        self.model_path = model_path
-
-    def transcribe(self, input_file: Path) -> list[TimedWord]:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            _extract_wav(input_file, tmp.name)
-            cmd = [
-                "whisper-cli",
-                "-m",
-                str(self.model_path),
-                "-pp",
-                "--max-len",
-                "1",
-                "--split-on-word",
-                "-oj",
-                "-of",
-                tmp.name,
-                tmp.name,
-            ]
-            log.info("spawn: %s", " ".join(cmd))
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=sys.stderr,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"whisper-cli failed (exit {result.returncode})")
-
-            json_path = f"{tmp.name}.json"
-            try:
-                with open(json_path) as f:
-                    data = json.load(f)
-            finally:
-                Path(json_path).unlink(missing_ok=True)
-
-        return [
-            TimedWord(
-                text=seg["text"],
-                start=seg["offsets"]["from"] / 1000,
-                end=seg["offsets"]["to"] / 1000,
-            )
-            for seg in data.get("transcription", [])
-        ]
-
-
 class TranscriptionAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint returning
     `verbose_json` with word-level timestamps.
@@ -286,7 +235,7 @@ class TranscriptionAdapterHttp:
     Reached through the wayland `speech.py`, which owns the upload and
     the credential for every caller on this machine. Spawning it costs a
     subprocess and keeps one implementation of the request — the same
-    trade `whisper-cli` and `ffmpeg` already make here."""
+    trade `ffmpeg` already makes here."""
 
     name = "http"
 
@@ -2084,16 +2033,6 @@ class Remsi:
         help="STT provider.",
     )
     @click.option(
-        "--whisper-cpp-model-dir",
-        default="~/.local/share/applications/waystt/models",
-        help="whisper.cpp GGML model directory.",
-    )
-    @click.option(
-        "--whisper-cpp-model",
-        default="ggml-large-v3.bin",
-        help="whisper.cpp GGML model filename.",
-    )
-    @click.option(
         "--http-base-url",
         default="https://ai.kilic.dev/v1",
         help="HTTP STT base URL.",
@@ -2135,8 +2074,6 @@ class Remsi:
         suffix,
         with_whisper,
         stt_provider,
-        whisper_cpp_model_dir,
-        whisper_cpp_model,
         http_base_url,
         http_model,
         speech_script,
@@ -2154,13 +2091,6 @@ class Remsi:
         stt_adapter: TranscriptionAdapter | None = None
         if with_whisper:
             match TranscriptionProvider(stt_provider):
-                case TranscriptionProvider.WHISPER_CPP:
-                    model_path = (
-                        Path(whisper_cpp_model_dir).expanduser() / whisper_cpp_model
-                    )
-                    if not model_path.exists():
-                        raise click.UsageError(f"model not found at {model_path}")
-                    stt_adapter = TranscriptionAdapterWhisperCpp(model_path=model_path)
                 case TranscriptionProvider.HTTP:
                     script = Path(speech_script).expanduser()
                     if not script.exists():
