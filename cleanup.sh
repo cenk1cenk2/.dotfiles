@@ -39,6 +39,8 @@ USER_PATHS=(
     # native-messaging manifests written by Bitwarden, Claude and Granted.
     "$HOME/.config/chrome-flags.conf"
     "$HOME/.config/systemd/user/dex.service"
+    # mako, replaced by swaync
+    "$HOME/.config/mako"
     # the kitty platform split collapsed to a single globinclude
     "$HOME/.config/kitty/linux.conf"
     "$HOME/.config/kitty/macos.conf"
