@@ -52,6 +52,9 @@ USER_PATHS=(
     "$HOME/.config/wayland/scripts/lib/desktop.py"
     "$HOME/.config/wayland/scripts/lib/notify.py"
     "$HOME/.local/bin/lib"
+    # hyprctl briefly lived in dotlib before moving back to the hyprland
+    # project, so a machine that deployed in between has this dangling.
+    "$HOME/.config/wayland/lib/src/dotlib/hyprctl.py"
     # the kitty platform split collapsed to a single globinclude
     "$HOME/.config/kitty/linux.conf"
     "$HOME/.config/kitty/macos.conf"
