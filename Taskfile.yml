@@ -47,7 +47,6 @@ tasks:
     desc: Deploys to all targets
     deps:
       - task: deploy:linux
-      - task: deploy:macos
 
   wayland-scripts:bootstrap:
     desc: >-
@@ -183,18 +182,3 @@ tasks:
       - sudo install -m 0755 geoclue/etc/NetworkManager/dispatcher.d/09-timezone /etc/NetworkManager/dispatcher.d/
       - sudo install -m 0755 geoclue/usr/local/bin/geo-timezone /usr/local/bin/
       - sudo systemctl daemon-reload
-
-  deploy:macos:
-    desc: Deploy to target.
-    platforms:
-      - darwin
-    cmds:
-      - task: deploy
-        vars:
-          to: "~"
-          packages: >-
-            brave
-            gitconfig
-            yabai
-            janky-borders
-            kitty

@@ -1,9 +1,13 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions, waybar module wiring, and NVIDIA dGPU runtime
-power. Everything below is an established rule — apply it to every new
-script (and every touch of an old one) without re-discussion.
+script conventions, waybar and kitty configuration, and NVIDIA dGPU
+runtime power. Everything below is an established rule — apply it to
+every new script (and every touch of an old one) without re-discussion.
+
+Linux (Arch, Wayland) is the only deployment target. `Taskfile.yml` has
+no darwin path, and a config directive that reads as macOS-specific is
+not automatically dead — see the kitty section.
 
 ## UWSM environment files
 
@@ -356,6 +360,43 @@ adapter; the rest of the code never knows which one.
   that form legal in 3.14, `requires-python` pins `>=3.14`, and ruff's
   formatter strips the parens once it infers that target. Adding them
   back starts an edit war with the next format run.
+
+## kitty
+
+`kitty/.config/kitty/kitty.conf` is a vendored upstream sample with our
+edits threaded through it, so most `#:` blocks document settings that are
+not set. Read the active line, never the comment above it.
+
+- **`cmd` is `super` on every platform, not just macOS.** kitty aliases
+  `⌘` / `COMMAND` / `CMD` to `SUPER` in `options/utils.py`, so a
+  `map cmd+...` line is a live binding here: `map cmd+shift+v
+  paste_from_buffer a1` is Super+Shift+V. A macOS-looking `map cmd+*` is
+  never safe to delete as dead weight — confirm with the probe below
+  first. Only the `macos_*`-prefixed settings are genuinely inert.
+
+- **`hide_window_decorations titlebar-only` is a Wayland value.** It hides
+  the titlebar while keeping the window shadow for resizing, and parses to
+  a distinct bitmask — `titlebar-only` is `0b10`, `yes` is `0b01`. The
+  `#: On macOS, titlebar-only...` comment beneath it is stale upstream
+  text from an older kitty.
+
+- **The platform hook is `globinclude ${KITTY_OS}.conf`, deliberately not
+  `include`.** `KITTY_OS` expands for both forms and resolves to `linux`.
+  With no file behind it, `include` logs `Could not find included config
+  file: ..., ignoring` on every start whereas `globinclude` is silent, so
+  the hook survives with no placeholder file to maintain.
+
+- **`kitty --debug-config` does not exist.** Read the effective config
+  with the Python entry point instead:
+
+  ```sh
+  kitty +runpy "from kitty.config import load_config
+  o = load_config('$HOME/.config/kitty/kitty.conf')
+  print(o.font_size, o.hide_window_decorations)"
+  ```
+
+  `load_config()` with no path silently returns defaults, so passing the
+  path is mandatory or the probe proves nothing.
 
 ## Waybar modules
 
