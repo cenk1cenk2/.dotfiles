@@ -55,6 +55,12 @@ USER_PATHS=(
     # hyprctl briefly lived in dotlib before moving back to the hyprland
     # project, so a machine that deployed in between has this dangling.
     "$HOME/.config/wayland/lib/src/dotlib/hyprctl.py"
+    # Older removals whose deployed links were never cleaned. ai.lua went in
+    # bd349de, speech.md in a208651; config.yaml.new was never tracked at all,
+    # so it is a stray a hyprpilot run left behind.
+    "$HOME/.config/hypr/modes/ai.lua"
+    "$HOME/.config/wayland/scripts/speech.md"
+    "$HOME/.config/hyprpilot/config.yaml.new"
     # the kitty platform split collapsed to a single globinclude
     "$HOME/.config/kitty/linux.conf"
     "$HOME/.config/kitty/macos.conf"
