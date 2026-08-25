@@ -7,9 +7,12 @@ Current workspace first, then others; the focused window is marked.
 from lib import Hyprctl, get_icon_for_class, rofi_with_icons
 
 ROFI_EXTRA = [
-    "-theme-str", "window { width: 60%; }",
-    "-theme-str", "listview { lines: 15; }",
+    "-theme-str",
+    "window { width: 60%; }",
+    "-theme-str",
+    "listview { lines: 15; }",
 ]
+
 
 class SwitchWindow:
     def __init__(self, args, hypr: Hyprctl):
@@ -40,7 +43,9 @@ class SwitchWindow:
             return
 
         window = windows[selected]
-        self._hypr.dispatch(f'hl.dsp.focus({{ window = "address:{window["address"]}" }})')
+        self._hypr.dispatch(
+            f'hl.dsp.focus({{ window = "address:{window["address"]}" }})'
+        )
         print(f"Switched to window: {window.get('title', 'Untitled')}")
 
     @staticmethod
@@ -64,8 +69,10 @@ class SwitchWindow:
 
         return f"{marker}[WS {workspace}] {title} - {class_name}"
 
+
 def main():
     SwitchWindow(args=None, hypr=Hyprctl()).run()
+
 
 if __name__ == "__main__":
     main()

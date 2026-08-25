@@ -12,6 +12,7 @@ ROFI_EXTRA = [
     "listview { lines: 15; }",
 ]
 
+
 class StealWindow:
     def __init__(self, args, hypr: Hyprctl):
         self.args = args
@@ -64,8 +65,10 @@ class StealWindow:
 
         return f"[{workspace}] {title} - {class_name}"
 
+
 def main():
     StealWindow(args=None, hypr=Hyprctl()).run()
+
 
 if __name__ == "__main__":
     main()

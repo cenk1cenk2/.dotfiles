@@ -1,5 +1,6 @@
 import subprocess
 
+
 def rofi(
     prompt: str,
     choices: list[str],
@@ -28,6 +29,7 @@ def rofi(
 
     selected = proc.stdout.strip()
     return selected or None
+
 
 def rofi_with_icons(
     prompt: str,

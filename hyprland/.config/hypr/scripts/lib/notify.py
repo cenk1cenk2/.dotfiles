@@ -1,5 +1,6 @@
 import subprocess
 
+
 def notify(
     title: str,
     message: str,

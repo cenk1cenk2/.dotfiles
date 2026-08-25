@@ -9,11 +9,13 @@ from typing import Protocol
 
 log = logging.getLogger(__name__)
 
+
 class OutputMode(StrEnum):
     CLIPBOARD = "clipboard"
     TYPE = "type"
     STDOUT = "stdout"
     FILE = "file"
+
 
 class OutputAdapter(Protocol):
     mode: OutputMode
@@ -21,6 +23,7 @@ class OutputAdapter(Protocol):
     def write(self, text: str) -> None:
         """Emit the text. Blocking; raises on failure."""
         ...
+
 
 class OutputAdapterClipboard:
     mode = OutputMode.CLIPBOARD
@@ -36,6 +39,7 @@ class OutputAdapterClipboard:
             stdout=sys.stderr,
             stderr=sys.stderr,
         )
+
 
 class OutputAdapterType:
     mode = OutputMode.TYPE
@@ -61,12 +65,14 @@ class OutputAdapterType:
             stderr=sys.stderr,
         )
 
+
 class OutputAdapterStdout:
     mode = OutputMode.STDOUT
 
     def write(self, text: str) -> None:
         sys.stdout.write(text)
         sys.stdout.flush()
+
 
 class OutputAdapterFile:
     mode = OutputMode.FILE
@@ -78,6 +84,7 @@ class OutputAdapterFile:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(text, encoding="utf-8")
         log.debug("wrote %d chars to %s", len(text), self.path)
+
 
 def build_output(mode: OutputMode, **kwargs) -> OutputAdapter:
     """Adapter for `mode`, handed whatever that adapter takes.

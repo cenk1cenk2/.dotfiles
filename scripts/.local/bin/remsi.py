@@ -42,6 +42,7 @@ from rich.table import Table
 console: Console = Console(force_terminal=None)
 _log_console: Console = Console(file=sys.stderr, stderr=True, force_terminal=None)
 
+
 def create_logger(verbose: bool) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
     root = logging.getLogger()
@@ -65,9 +66,11 @@ def create_logger(verbose: bool) -> logging.Logger:
             h.setLevel(level)
     return logging.getLogger("remsi")
 
+
 log = logging.getLogger("remsi")
 
 # ── Domain types ─────────────────────────────────────────────────────
+
 
 class RegionKind(StrEnum):
     SILENCE = "silence"
@@ -97,11 +100,13 @@ class RegionKind(StrEnum):
             self.SPEECH: "green",
         }[self]
 
+
 @dataclass
 class Region:
     start: float
     end: float
     kind: RegionKind
+
 
 @dataclass
 class Segment:
@@ -110,11 +115,13 @@ class Segment:
     left: Region | None = field(default=None, repr=False)
     right: Region | None = field(default=None, repr=False)
 
+
 @dataclass
 class TimedWord:
     text: str
     start: float
     end: float
+
 
 @dataclass
 class VideoInfo:
@@ -147,6 +154,7 @@ class VideoInfo:
             parts.append(f"{self.bitrate // 1000}k")
         return " ".join(parts) or "?"
 
+
 @dataclass
 class AudioInfo:
     codec: str | None = None
@@ -166,6 +174,7 @@ class AudioInfo:
             parts.append(f"{self.bitrate // 1000}k")
         return " ".join(parts) or "?"
 
+
 @dataclass
 class MediaInfo:
     video: VideoInfo = field(default_factory=VideoInfo)
@@ -184,11 +193,13 @@ class MediaInfo:
             return f"{self.size / 1024:.1f} KB"
         return f"{self.size} B"
 
+
 def format_timestamp(seconds: float) -> str:
     s = float(seconds)
     m, s = divmod(s, 60)
     h, m = divmod(m, 60)
     return f"{int(h):02d}:{int(m):02d}:{s:06.3f}"
+
 
 FILLER_PATTERN = re.compile(
     r"^("
@@ -202,6 +213,7 @@ FILLER_PATTERN = re.compile(
 )
 
 # ── Transcription adapters ───────────────────────────────────────────
+
 
 def _extract_wav(input_file: Path, output_path: str) -> None:
     cmd = [
@@ -228,9 +240,11 @@ def _extract_wav(input_file: Path, output_path: str) -> None:
         log.error("ffmpeg stderr:\n%s", result.stderr)
         raise RuntimeError("failed to extract audio for transcription")
 
+
 class TranscriptionProvider(StrEnum):
     WHISPER_CPP = "whisper-cpp"
     HTTP = "http"
+
 
 class TranscriptionAdapter(Protocol):
     """Turns an audio/video file into word-level timestamps."""
@@ -238,6 +252,7 @@ class TranscriptionAdapter(Protocol):
     name: str
 
     def transcribe(self, input_file: Path) -> list[TimedWord]: ...
+
 
 class TranscriptionAdapterWhisperCpp:
     """Local whisper.cpp via the `whisper-cli` binary."""
@@ -287,6 +302,7 @@ class TranscriptionAdapterWhisperCpp:
             )
             for seg in data.get("transcription", [])
         ]
+
 
 class TranscriptionAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint returning
@@ -388,7 +404,9 @@ class TranscriptionAdapterHttp:
         log.warning("HTTP STT returned no words or segments")
         return []
 
+
 # ── Analyzer ─────────────────────────────────────────────────────────
+
 
 class Analyzer:
     def __init__(
@@ -580,7 +598,9 @@ class Analyzer:
             segments.append(Segment(start=pos, end=total, left=left))
         return segments
 
+
 # ── Encoder adapters ─────────────────────────────────────────────────
+
 
 class EncoderKind(StrEnum):
     """Dispatch token for the `--encoder` flag.
@@ -600,6 +620,7 @@ class EncoderKind(StrEnum):
     CUT = "cut"
     SMART_CUT = "smart-cut"
     FANCY = "fancy"
+
 
 class Encoder:
     GPU_ENCODERS = {
@@ -839,6 +860,7 @@ class Encoder:
     ) -> subprocess.CompletedProcess:
         raise NotImplementedError
 
+
 class FancyEncoder(Encoder):
     """filter_complex xfade/acrossfade path. Single ffmpeg pass."""
 
@@ -997,6 +1019,7 @@ class FancyEncoder(Encoder):
             cmd.extend(self._audio_codec_args(media.audio))
             cmd.append(str(output_file))
             return self._run(cmd)
+
 
 class CutEncoder(Encoder):
     """Stream-copy video + fade audio. Simpler cousin of
@@ -1286,6 +1309,7 @@ class CutEncoder(Encoder):
         media: MediaInfo,
     ) -> subprocess.CompletedProcess:
         return self.encode(input_file, output_file, segments, media)
+
 
 class SmartCutEncoder(Encoder):
     """Frame-accurate smart-cut via an MPEG-TS sandwich.
@@ -1842,7 +1866,9 @@ class SmartCutEncoder(Encoder):
     ) -> subprocess.CompletedProcess:
         return self.encode(input_file, output_file, segments, media)
 
+
 # ── CLI orchestrator ─────────────────────────────────────────────────
+
 
 class Remsi:
     """Removes silent + filler regions from video files via ffmpeg."""
@@ -2223,6 +2249,7 @@ class Remsi:
             suffix=suffix,
             analyze_only=analyze,
         ).run(list(inputs), output)
+
 
 if __name__ == "__main__":
     try:

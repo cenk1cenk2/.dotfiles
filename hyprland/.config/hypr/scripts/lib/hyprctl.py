@@ -8,6 +8,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
 class Hyprctl:
     """Hyprland IPC over the request socket.
 

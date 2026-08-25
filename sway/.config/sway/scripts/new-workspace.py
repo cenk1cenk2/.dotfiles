@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 
 from lib import Swayctl
 
+
 class NewWorkspace:
     def __init__(self, args, sway: Swayctl):
         self.args = args
@@ -27,6 +28,7 @@ class NewWorkspace:
         elif self.args.move:
             self._sway.command(f"move container to workspace number {target}")
 
+
 def main():
     parser = ArgumentParser()
     parser.add_argument(
@@ -47,6 +49,7 @@ def main():
     )
 
     NewWorkspace(args, Swayctl()).run()
+
 
 if __name__ == "__main__":
     main()

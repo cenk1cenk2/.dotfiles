@@ -7,9 +7,11 @@ instead of spawning binaries that are not installed."""
 
 _headless = False
 
+
 def set_headless(headless: bool) -> None:
     global _headless
     _headless = headless
+
 
 def is_headless() -> bool:
     return _headless

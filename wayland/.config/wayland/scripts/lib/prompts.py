@@ -2,6 +2,7 @@
 
 import os
 
+
 def load_relative_file(filename: str, relative_to: str) -> str:
     """Read a file living next to `relative_to` (pass `__file__`).
 
@@ -11,6 +12,7 @@ def load_relative_file(filename: str, relative_to: str) -> str:
     path = os.path.join(os.path.dirname(os.path.abspath(relative_to)), filename)
     with open(path) as f:
         return f.read()
+
 
 def load_prompt(filename: str, relative_to: str) -> str:
     """Read a sibling prompt file, stripped of surrounding whitespace."""

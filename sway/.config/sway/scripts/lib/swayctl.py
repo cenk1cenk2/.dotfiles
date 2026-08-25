@@ -14,6 +14,7 @@ from typing import Any
 
 import i3ipc
 
+
 class Swayctl:
     def __init__(self, ipc: "i3ipc.Connection | None" = None):
         self._ipc = ipc or i3ipc.Connection()

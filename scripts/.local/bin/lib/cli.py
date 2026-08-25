@@ -10,6 +10,7 @@ from rich.logging import RichHandler
 
 _console: Console | None = None
 
+
 def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
     global _console

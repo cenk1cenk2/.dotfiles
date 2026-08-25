@@ -6,6 +6,7 @@ from pathlib import Path
 _desktop_file_cache: dict[str, str] = {}
 _desktop_files_scanned = False
 
+
 def _scan_desktop_files() -> None:
     """Scan all desktop files and build a cache of class -> icon mappings."""
     global _desktop_file_cache, _desktop_files_scanned
@@ -65,6 +66,7 @@ def _scan_desktop_files() -> None:
                 continue
 
     _desktop_files_scanned = True
+
 
 @lru_cache(maxsize=128)
 def get_icon_for_class(window_class: str) -> str:
@@ -128,6 +130,7 @@ def get_icon_for_class(window_class: str) -> str:
 
     # Last resort: return the class itself (GTK will try to find it)
     return window_class.lower()
+
 
 if __name__ == "__main__":
     # Test the icon lookup

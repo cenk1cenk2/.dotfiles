@@ -30,6 +30,7 @@ from lib import (
     spec_from_options,
 )
 
+
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
     ICON = (
@@ -242,6 +243,7 @@ class Copywriter:
     def cmd_is_running():
         """Exit 0 if a worker is live."""
         sys.exit(0 if Copywriter().is_running() else 1)
+
 
 if __name__ == "__main__":
     Copywriter.cli()

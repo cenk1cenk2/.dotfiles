@@ -26,9 +26,11 @@ import click
 
 from .cli import run
 
+
 class EnrichProvider(StrEnum):
     HTTP = "http"
     HYPRPILOT = "hyprpilot"
+
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 # Cheap, fast, and patched to carry no MCP servers and a read-only mode.
@@ -39,6 +41,7 @@ DEFAULT_TIMEOUT = 120.0
 THINKING_LEVELS = ("high", "medium", "low", "none")
 
 log = logging.getLogger(__name__)
+
 
 @dataclass
 class EnrichSpec:
@@ -93,6 +96,7 @@ class EnrichSpec:
 
         return cls(**kwargs)
 
+
 class EnrichAdapter(Protocol):
     """AI backend that rewrites a raw text through a system+user prompt."""
 
@@ -101,6 +105,7 @@ class EnrichAdapter(Protocol):
     def enrich(self, text: str) -> str | None:
         """Return the cleaned text, or None on failure."""
         ...
+
 
 class EnrichAdapterHttp:
     """OpenAI-compatible chat-completions endpoint."""
@@ -180,6 +185,7 @@ class EnrichAdapterHttp:
 
         return result
 
+
 class EnrichAdapterHyprpilot:
     """Any agent CLI, addressed by hyprpilot profile.
 
@@ -226,6 +232,7 @@ class EnrichAdapterHyprpilot:
             return None
         return result.stdout.strip()
 
+
 def build_enricher(
     spec: EnrichSpec, system_prompt: str, user_prompt_template: str
 ) -> EnrichAdapter:
@@ -238,6 +245,7 @@ def build_enricher(
         case _:
             raise ValueError(f"unknown enrich provider: {spec.provider!r}")
 
+
 def enrich_options(prefix: str = ""):
     """Stack the backend knobs every enriching command shares.
 
@@ -249,9 +257,7 @@ def enrich_options(prefix: str = ""):
     options = [
         click.option(
             f"{head}provider",
-            type=click.Choice(
-                [p.value for p in EnrichProvider], case_sensitive=False
-            ),
+            type=click.Choice([p.value for p in EnrichProvider], case_sensitive=False),
             default=DEFAULT_ENRICH_ADAPTER.value,
             help="Enrichment backend.",
         ),
@@ -289,6 +295,7 @@ def enrich_options(prefix: str = ""):
         return f
 
     return decorate
+
 
 def spec_from_options(
     options: dict[str, Any], user_agent: str, prefix: str = ""

@@ -21,6 +21,7 @@ from rich.logging import RichHandler
 
 _console: Console | None = None
 
+
 def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr."""
     global _console
@@ -49,11 +50,13 @@ def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
 
     return logging.getLogger(name) if name else root
 
+
 @dataclass
 class RunResult:
     returncode: int
     stdout: str
     stderr: str
+
 
 def run(
     cmd: list[str],

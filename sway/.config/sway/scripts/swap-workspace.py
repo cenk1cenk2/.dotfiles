@@ -10,6 +10,7 @@ from argparse import ArgumentParser
 
 from lib import Swayctl
 
+
 class SwapWorkspace:
     def __init__(self, args, sway: Swayctl):
         self.args = args
@@ -78,6 +79,7 @@ class SwapWorkspace:
         if target in numbers and target != current_num:
             self._sway.command(f"rename workspace number {temp} to {current_num}")
 
+
 def main():
     parser = ArgumentParser(description="Swap workspace positions in Sway")
     parser.add_argument(
@@ -96,6 +98,7 @@ def main():
     assert args.to or args.swap, "either -t/--to or -s/--swap is required"
 
     SwapWorkspace(args, Swayctl()).run()
+
 
 if __name__ == "__main__":
     main()

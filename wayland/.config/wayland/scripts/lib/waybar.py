@@ -8,6 +8,7 @@ from .desktop import is_headless
 
 log = logging.getLogger(__name__)
 
+
 def signal_waybar(module: str) -> None:
     """Poke waybar to re-render the named custom module. Output is
     routed to stderr so nothing leaks into pipeable stdout."""

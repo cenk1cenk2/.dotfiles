@@ -28,16 +28,19 @@ from typing import Any, Protocol
 
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
+
 class AudioFormat(StrEnum):
     PCM = "pcm"
     MP3 = "mp3"
     WAV = "wav"
     FLAC = "flac"
 
+
 class PlayerMode(StrEnum):
     FFPLAY = "ffplay"
     PW_CAT = "pw-cat"
     PAPLAY = "paplay"
+
 
 DEFAULT_TTS_MODEL = "kilic.dev/tts"
 # American male — the least robotic of the Kokoro voices.
@@ -52,6 +55,7 @@ DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
 CHUNK_BYTES = 1 << 15
 
 log = logging.getLogger(__name__)
+
 
 @dataclass
 class TtsSpec:
@@ -71,10 +75,12 @@ class TtsSpec:
     max_chars: int = DEFAULT_TTS_MAX_CHARS
     user_agent: str = "tts/1.0"
 
+
 class ByteStream(Protocol):
     """Readable byte source — the slice of a file object the pump uses."""
 
     def read(self, size: int = -1) -> bytes: ...
+
 
 class TtsAdapterHttp:
     """OpenAI-compatible `/audio/speech` endpoint (speaches, Kokoro)."""
@@ -127,6 +133,7 @@ class TtsAdapterHttp:
         with resp:
             yield resp
 
+
 class TeeReader:
     """Readable wrapper mirroring everything read into `sink`.
 
@@ -143,6 +150,7 @@ class TeeReader:
             self._sink.write(chunk)
         return chunk
 
+
 class PlayerAdapter(Protocol):
     """Local audio sink fed from a byte stream."""
 
@@ -154,6 +162,7 @@ class PlayerAdapter(Protocol):
         The exit code comes back rather than being logged and dropped so
         the caller can tell the user that playback failed."""
         ...
+
 
 def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
     """Pump `stream` into `cmd`'s stdin, returning (bytes written, exit code).
@@ -191,6 +200,7 @@ def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
 
     return written, proc.returncode
 
+
 class PlayerAdapterFfplay:
     """ffmpeg's player — the only sink that can demux a container."""
 
@@ -217,6 +227,7 @@ class PlayerAdapterFfplay:
         cmd += ["-i", "pipe:0"]
         return _stream_to_player(cmd, stream)
 
+
 class PlayerAdapterPwCat:
     """PipeWire's own sink. Raw s16le only."""
 
@@ -237,6 +248,7 @@ class PlayerAdapterPwCat:
         ]
         return _stream_to_player(cmd, stream)
 
+
 class PlayerAdapterPaplay:
     """PulseAudio compatibility sink. Raw s16le only.
 
@@ -255,12 +267,14 @@ class PlayerAdapterPaplay:
         ]
         return _stream_to_player(cmd, stream)
 
+
 _CLIPBOARD_MIMES = {
     AudioFormat.PCM: "audio/wav",
     AudioFormat.WAV: "audio/wav",
     AudioFormat.MP3: "audio/mpeg",
     AudioFormat.FLAC: "audio/flac",
 }
+
 
 def copy_audio(data: bytes, spec: TtsSpec) -> None:
     """Put the synthesized audio on the clipboard.

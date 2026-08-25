@@ -11,6 +11,7 @@ import click
 
 from lib import Hyprctl, create_logger
 
+
 class LaunchApp:
     log = logging.getLogger("launch-app")
 
@@ -77,6 +78,7 @@ class LaunchApp:
         if not self._hypr.dispatch(expression):
             raise click.ClickException(f"failed to launch app: {name}")
 
+
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("name", required=False)
 @click.option(
@@ -105,6 +107,7 @@ def cmd_main(
     if not name:
         raise click.UsageError("NAME is required unless --list is given.")
     app.launch(name, print_only=print_only)
+
 
 LaunchApp.cli = cmd_main
 

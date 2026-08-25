@@ -24,9 +24,11 @@ from typing import Protocol, runtime_checkable
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 from .input import InputAdapter
 
+
 class SttProvider(StrEnum):
     HYPRWHSPR = "hyprwhspr"
     HTTP = "http"
+
 
 class ResponseFormat(StrEnum):
     TEXT = "text"
@@ -34,6 +36,7 @@ class ResponseFormat(StrEnum):
     VERBOSE_JSON = "verbose_json"
     SRT = "srt"
     VTT = "vtt"
+
 
 DEFAULT_STT_MODEL = "kilic.dev/stt"
 DEFAULT_STT_TIMEOUT = 300.0
@@ -45,6 +48,7 @@ DEFAULT_STT_LANGUAGE = "en"
 PLAIN_FORMATS = (ResponseFormat.TEXT,)
 
 log = logging.getLogger(__name__)
+
 
 @dataclass
 class SttSpec:
@@ -67,6 +71,7 @@ class SttSpec:
     fields: tuple[tuple[str, str], ...] = ()
     headers: tuple[tuple[str, str], ...] = ()
 
+
 @runtime_checkable
 class SttAdapter(Protocol):
     """Speech-to-text backend contract."""
@@ -77,6 +82,7 @@ class SttAdapter(Protocol):
         """Return the transcription, or None on failure."""
         ...
 
+
 @runtime_checkable
 class SttRecorder(SttAdapter, Protocol):
     """Backend that drives a microphone, so a capture can be in flight."""
@@ -86,6 +92,7 @@ class SttRecorder(SttAdapter, Protocol):
     def stop(self) -> None: ...
 
     def cancel(self) -> None: ...
+
 
 class SttAdapterHyprwhspr:
     provider = SttProvider.HYPRWHSPR
@@ -120,6 +127,7 @@ class SttAdapterHyprwhspr:
         stdout, _ = capture.communicate()
 
         return stdout.decode("utf-8", errors="replace").strip() if stdout else None
+
 
 class SttAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint (speaches, Whisper)."""

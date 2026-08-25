@@ -20,6 +20,7 @@ from lib import create_logger, notify, signal_waybar
 logging.getLogger("obsws_python").setLevel(logging.CRITICAL)
 logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
+
 class Recorder:
     WAYBAR_MODULE = "recorder"
     ICON = "/usr/share/icons/Adwaita/scalable/devices/camera-web.svg"
@@ -241,6 +242,7 @@ class Recorder:
             rec.stop()
         else:
             rec._notify("No recording in progress.")
+
 
 if __name__ == "__main__":
     Recorder.cli()

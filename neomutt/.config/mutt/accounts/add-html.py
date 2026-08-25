@@ -8,6 +8,7 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import Parser
 
+
 def create_alternatives_structure(content: str) -> EmailMessage:
     related = EmailMessage()
     related.set_type("multipart/related")
@@ -19,6 +20,7 @@ def create_alternatives_structure(content: str) -> EmailMessage:
     alternatives.attach(related)
 
     return alternatives
+
 
 def find_plain_text_part(msg: EmailMessage) -> tuple:
     if not msg.is_multipart():
@@ -45,11 +47,13 @@ def find_plain_text_part(msg: EmailMessage) -> tuple:
 
     return None, None, -1
 
+
 def has_html_part(msg: EmailMessage):
     for part in msg.walk():
         if part.get_content_type() == "text/html":
             return True
     return False
+
 
 def with_html(msg: EmailMessage) -> EmailMessage:
     if has_html_part(msg):
@@ -106,6 +110,7 @@ def with_html(msg: EmailMessage) -> EmailMessage:
 
     return msg
 
+
 def to_html(text: str) -> str:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as file:
         file.write(text)
@@ -142,6 +147,7 @@ def to_html(text: str) -> str:
             os.unlink(temp_file)
         except OSError:
             pass
+
 
 if __name__ == "__main__":
     sys.stdout.write(with_html(Parser(policy=policy.SMTP).parse(sys.stdin)).as_string())

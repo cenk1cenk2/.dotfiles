@@ -10,6 +10,7 @@ import urllib.parse
 from email import message_from_file
 from email.header import decode_header
 
+
 def decode_header_value(header_value):
     """Decode email header value handling encoding"""
     if not header_value:
@@ -25,6 +26,7 @@ def decode_header_value(header_value):
             decoded_string += part
 
     return decoded_string.strip()
+
 
 def extract_message_info(email_content):
     """Extract Message-ID and Subject from email"""
@@ -42,6 +44,7 @@ def extract_message_info(email_content):
     except Exception as e:
         print(f"Error parsing email: {e}", file=sys.stderr)
         return "", ""
+
 
 def test_gmail_search(base_url, search_term, description):
     """Test a single Gmail search URL"""
@@ -73,6 +76,7 @@ def test_gmail_search(base_url, search_term, description):
     except Exception as e:
         print(f"Error opening {description}: {e}", file=sys.stderr)
         return False
+
 
 def open_in_gmail(message_id, subject, account=0):
     """Open email in Gmail web interface"""
@@ -122,6 +126,7 @@ def open_in_gmail(message_id, subject, account=0):
 
     return False
 
+
 def main():
     """Main function"""
     try:
@@ -146,6 +151,7 @@ def main():
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

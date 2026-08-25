@@ -9,10 +9,12 @@ from typing import Protocol
 
 log = logging.getLogger(__name__)
 
+
 class InputMode(StrEnum):
     CLIPBOARD = "clipboard"
     STDIN = "stdin"
     FILE = "file"
+
 
 class InputAdapter(Protocol):
     mode: InputMode
@@ -27,6 +29,7 @@ class InputAdapter(Protocol):
     def read_bytes(self) -> bytes | None:
         """Return the raw payload, or None on failure."""
         ...
+
 
 class InputAdapterClipboard:
     mode = InputMode.CLIPBOARD
@@ -76,6 +79,7 @@ class InputAdapterClipboard:
 
         return self.read_binary(mime)
 
+
 class InputAdapterStdin:
     mode = InputMode.STDIN
     name = "stdin"
@@ -93,6 +97,7 @@ class InputAdapterStdin:
         except Exception as e:
             log.error("stdin read failed: %s", e)
             return None
+
 
 class InputAdapterFile:
     mode = InputMode.FILE
@@ -114,6 +119,7 @@ class InputAdapterFile:
         except OSError as e:
             log.error("read failed: %s", e)
             return None
+
 
 def build_input(mode: InputMode, **kwargs) -> InputAdapter:
     """Adapter for `mode`, handed whatever that adapter takes.

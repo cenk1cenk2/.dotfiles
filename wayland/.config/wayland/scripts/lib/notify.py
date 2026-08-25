@@ -8,6 +8,7 @@ from .desktop import is_headless
 
 log = logging.getLogger(__name__)
 
+
 def notify(
     title: str,
     message: str,
