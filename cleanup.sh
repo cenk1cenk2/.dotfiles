@@ -91,17 +91,26 @@ for unit in geo-timezone.timer geo-timezone.service geoclue-agent.service; do
 done
 
 echo
-echo "== stale user unit"
-if [ "$(systemctl --user is-enabled waybar@sway.service 2>/dev/null)" = "enabled" ]; then
-    if [ "$apply" -eq 1 ]; then
-        systemctl --user disable waybar@sway.service >/dev/null 2>&1 || true
-        echo "  disabled: waybar@sway.service"
+echo "== user units that should no longer be enabled"
+# waybar@sway: its package is gone, but .wants lives outside the package so
+# the enablement survived. tailscale-systray and hyprwhspr moved into
+# hyprland's autostart list, so leaving them enabled means two mechanisms
+# start the same unit.
+#
+# NOTE: `systemctl --user disable` on a unit whose file is a stow symlink
+# ("linked" state) removes the unit file too, not just the .wants link. Only
+# the .wants link is wanted here, so remove that directly instead.
+for unit in waybar@sway.service tailscale-systray.service hyprwhspr.service; do
+    link=$(find "$HOME/.config/systemd/user" -path "*.wants/$unit" 2>/dev/null | head -1)
+    if [ -z "$link" ]; then
+        echo "  not enabled: $unit"
+    elif [ "$apply" -eq 1 ]; then
+        rm -- "$link"
+        echo "  removed enablement: $link"
     else
-        echo "  would disable: waybar@sway.service"
+        echo "  would remove enablement: $link"
     fi
-else
-    echo "  already disabled: waybar@sway.service"
-fi
+done
 
 echo
 if [ "$apply" -eq 1 ]; then
