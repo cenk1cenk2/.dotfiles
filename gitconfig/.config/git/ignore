@@ -6,6 +6,7 @@
 # that needs it tracked overrides this with `!vendor/` in its own .gitignore.
 
 **/.claude/settings.local.json
+**/.claude/worktrees/
 
 .venv/
 virtualenvs/
