@@ -121,4 +121,3 @@ tasks:
       - sudo systemctl daemon-reload
       - sudo udevadm control --reload
       - sudo sysctl --system
-      - sudo systemctl restart keyd.service
