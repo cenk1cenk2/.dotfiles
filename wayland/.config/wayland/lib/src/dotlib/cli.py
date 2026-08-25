@@ -22,8 +22,15 @@ from rich.logging import RichHandler
 _console: Console | None = None
 
 
-def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
-    """Install a rich handler on the root logger, bound to stderr."""
+def create_logger(
+    verbose: bool, *, name: str | None = None, markup: bool = False
+) -> logging.Logger:
+    """Install a rich handler on the root logger, bound to stderr.
+
+    `markup` opts into rich markup inside log messages, for per-item results
+    like `log.info("gpu: [green]%s[/]", name)`. Off by default so a message
+    containing square brackets is not silently eaten as a style tag.
+    """
     global _console
     root = logging.getLogger()
     level = logging.DEBUG if verbose else logging.INFO
@@ -39,7 +46,7 @@ def create_logger(verbose: bool, *, name: str | None = None) -> logging.Logger:
             show_path=False,
             show_time=True,
             rich_tracebacks=True,
-            markup=False,
+            markup=markup,
             log_time_format="[%H:%M:%S]",
         )
         handler.setLevel(level)

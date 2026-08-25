@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
 import click
+from dotlib.cli import create_logger
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.table import Table
 
 # ── Console + logging ────────────────────────────────────────────────
@@ -40,31 +40,6 @@ from rich.table import Table
 #     Timestamped + level-tagged, scannable under `-v`.
 
 console: Console = Console(force_terminal=None)
-_log_console: Console = Console(file=sys.stderr, stderr=True, force_terminal=None)
-
-
-def create_logger(verbose: bool) -> logging.Logger:
-    """Install a rich handler on the root logger, bound to stderr."""
-    root = logging.getLogger()
-    level = logging.DEBUG if verbose else logging.INFO
-    root.setLevel(level)
-    if not any(isinstance(h, RichHandler) for h in root.handlers):
-        for h in list(root.handlers):
-            root.removeHandler(h)
-        handler = RichHandler(
-            console=_log_console,
-            show_path=False,
-            show_time=True,
-            rich_tracebacks=True,
-            markup=True,
-            log_time_format="[%H:%M:%S]",
-        )
-        handler.setLevel(level)
-        root.addHandler(handler)
-    else:
-        for h in root.handlers:
-            h.setLevel(level)
-    return logging.getLogger("remsi")
 
 
 log = logging.getLogger("remsi")
@@ -2171,7 +2146,7 @@ class Remsi:
         verbose,
     ):
         """Remove silent + filler regions from video files via ffmpeg."""
-        create_logger(verbose)
+        create_logger(verbose, name="remsi", markup=True)
         if output is not None and len(inputs) > 1:
             raise click.UsageError("-o/--output requires a single input file")
 
