@@ -83,10 +83,31 @@ these need re-checking.
   resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
   because pressure-vessel does not import `nvidia_layers.json` into the
   container. Use `MANGOHUD=1 %command%` for the overlay.
-- `rootfs/etc/modprobe.d/*` is **copied** to `/etc` by `install.py` — edits
-  need `task deploy:linux:system` (or `./install.py system`) to take effect.
-  Bare `task` only lists tasks and copies nothing. `rootfs/etc/udev/rules.d/*`
-  is stow-symlinked and live on save.
+- **Nothing under `rootfs/` or `rootfs-geoclue/` is stowed.** Both are copied to
+  `/` by `install.py` as real root-owned files, so no edit there is live on
+  save — every one needs `task deploy:linux:system` to take effect. That task
+  also runs the reloads the copied files need (`systemctl daemon-reload`,
+  `udevadm control --reload`, `sysctl --system`, `systemctl restart keyd`).
+  `./install.py --dry-run` (or `task check`) reports what would change without
+  touching anything; bare `task` only lists tasks and copies nothing.
+- **Two path groups get extra care in `install.py`**, because a bad file there
+  costs privilege escalation or every means of authenticating:
+  - `rootfs/etc/sudoers.d/*` (`SUDOERS`) is validated with `visudo -c -f`
+    *before* anything is written, and a pathless `sudo visudo -c` runs after as
+    the gate — `-f` checks syntax only, it does **not** check owner or mode.
+    `sudoers.d/clamav` needs mode `0440`, which git cannot express, so it sits
+    in `MODE_OVERRIDES`.
+  - `rootfs/etc/pam.d/*` (`ATOMIC`) is placed by `install` to a temp name plus
+    `mv -T`, not by `install` directly. `install` is unlink-then-create, and
+    `/etc/pam.d/other` is `pam_deny` on all four stanzas, so a crash between the
+    two would deny every login until repaired by hand.
+- **All checks run before the first write.** Git mode assert, sudoers
+  validation, then the whole backup pass; only then does anything get
+  installed. A failure at any point leaves the system untouched, the same
+  plan-then-abort behaviour stow has.
+- Replaced files are backed up under `~/.local/state/dotfiles/install/<stamp>/`
+  with a `manifest.json` recording each path's previous kind, mode, owner or
+  symlink target.
 
 ### Known blocker (610.43.03 and 610.57.04, parked)
 

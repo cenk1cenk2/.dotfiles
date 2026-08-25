@@ -6,101 +6,25 @@ version: "3"
 vars:
   to: "~"
   args: ""
-  sudo: false
   verbosity: '{{ repeat (.LOG_LEVEL | default 1 | int) "v" }}'
-  linux_user_packages: >-
-    autotiling-rs
-    brave
-    claude
-    clipse
-    codex
-    dbus
-    desktop
-    easyeffects
-    electron
-    enchant
-    fonts
-    gitconfig
-    gnupg
-    gtk
-    hyprland
-    hyprpilot
-    hyprwhspr
-    input-remapper
-    kanshi
-    khal
-    kitty
-    mako
-    mangohud
-    mimetypes
-    mpv
-    neomutt
-    obsbot
-    opencode
-    pacman
-    pimsync
-    pipewire
-    rofi
-    scripts
-    ssh-config
-    swappy
-    sway
-    swayidle
-    swayimg
-    swaylock
-    swaync
-    swayosd
-    swayr
-    sworkstyle
-    uwsm
-    waybar
-    wayland
-    wayland-pipewire-idle-inhibit
-    wayland-theme
-    wiremix
-    wireplumber
-    wl-gamma-relay-rs
-    wlogout
-    xauthority
-    xdg-desktop-portal
-    xdg-desktop-portal-termfilechooser
-    xsettingsd
-    ydotool
-    zathura
-  linux_system_packages: rootfs
 
 tasks:
   check:
-    desc: Report the planned system installs and verify stow coverage.
+    desc: Diff every system-installed file against the repo, changing nothing.
     cmds:
-      - ./install.py check
+      - ./install.py --dry-run
 
   plan:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
-    desc: Dry-run a stow target.
+    desc: Dry-run named packages, e.g. `task plan -- kitty waybar`.
     cmds:
-      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -n{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}"
-
-  plan:linux:
-    desc: Dry-run the full deploy without touching anything.
-    platforms:
-      - linux
-    cmds:
-      - task: plan
-        vars:
-          to: "~"
-          packages: "{{ .linux_user_packages }}"
-      - task: plan
-        vars:
-          sudo: true
-          to: "/"
-          packages: "{{ .linux_system_packages }}"
+      - stow {{ .args }} --no-folding -n{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}
 
   deploy:
     desc: Deploy to a target.
     label: "deploy: {{ .to }} -> {{ .CLI_ARGS }}"
     cmds:
-      - "{{ if .sudo }}sudo {{ end }}stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}"
+      - stow {{ .args }} --no-folding -{{ .verbosity }}t {{ .to }} {{ .packages }} {{ .CLI_ARGS }}
     status:
       - '{{ .status | default "false" }}'
 
@@ -133,7 +57,65 @@ tasks:
       - task: deploy
         vars:
           to: "~"
-          packages: "{{ .linux_user_packages }}"
+          packages: >-
+            autotiling-rs
+            brave
+            claude
+            clipse
+            codex
+            dbus
+            desktop
+            easyeffects
+            electron
+            enchant
+            fonts
+            gitconfig
+            gnupg
+            gtk
+            hyprland
+            hyprpilot
+            hyprwhspr
+            input-remapper
+            kanshi
+            khal
+            kitty
+            mako
+            mangohud
+            mimetypes
+            mpv
+            neomutt
+            obsbot
+            opencode
+            pacman
+            pimsync
+            pipewire
+            rofi
+            scripts
+            ssh-config
+            swappy
+            sway
+            swayidle
+            swayimg
+            swaylock
+            swaync
+            swayosd
+            swayr
+            sworkstyle
+            uwsm
+            waybar
+            wayland
+            wayland-pipewire-idle-inhibit
+            wayland-theme
+            wiremix
+            wireplumber
+            wl-gamma-relay-rs
+            wlogout
+            xauthority
+            xdg-desktop-portal
+            xdg-desktop-portal-termfilechooser
+            xsettingsd
+            ydotool
+            zathura
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
 
@@ -142,9 +124,8 @@ tasks:
     platforms:
       - linux
     cmds:
-      - task: deploy
-        vars:
-          sudo: true
-          to: "/"
-          packages: "{{ .linux_system_packages }}"
-      - ./install.py system
+      - ./install.py
+      - sudo systemctl daemon-reload
+      - sudo udevadm control --reload
+      - sudo sysctl --system
+      - sudo systemctl restart keyd.service

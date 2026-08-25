@@ -1,4 +1,0 @@
-wayland-sessions
-.*-uwsm\.desktop
-modprobe.d
-.venv
