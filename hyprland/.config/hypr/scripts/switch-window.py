@@ -4,8 +4,7 @@
 Current workspace first, then others; the focused window is marked.
 """
 
-from dotlib.hyprctl import Hyprctl
-from lib import get_icon_for_class, rofi_with_icons
+from lib import Hyprctl, get_icon_for_class, rofi_with_icons
 
 ROFI_EXTRA = [
     "-theme-str",

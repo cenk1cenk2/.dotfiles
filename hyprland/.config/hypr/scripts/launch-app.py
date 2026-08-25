@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 
 from dotlib.cli import create_logger
-from dotlib.hyprctl import Hyprctl
+from lib import Hyprctl
 
 
 class LaunchApp:
