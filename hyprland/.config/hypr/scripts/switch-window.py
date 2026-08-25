@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
 """Switch to any window from any workspace via rofi.
 
 Current workspace first, then others; the focused window is marked.

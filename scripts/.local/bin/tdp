@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec uv run --script --project "$(dirname "$0")" "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" python "$0" "$@"'
 """Set CPU power profiles and show current limits."""
 
 from __future__ import annotations
