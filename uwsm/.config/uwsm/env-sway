@@ -1,7 +1,0 @@
-# vim: ft=bash
-
-export XDG_CURRENT_DESKTOP=sway
-export XDG_SESSION_DESKTOP=sway
-
-export WLR_RENDERER_ALLOW_SOFTWARE=1
-export WLR_XWAYLAND=/usr/local/bin/Xwayland

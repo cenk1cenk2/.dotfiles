@@ -8,7 +8,6 @@ local services = {
   "swayosd.service",
   "kanshi.service",
   "clipse.service",
-  "wl-gammarelay-rs.service",
   "playerctl-waybar.service",
   "poweralertd.service",
   "input-remapper-autoload.service",

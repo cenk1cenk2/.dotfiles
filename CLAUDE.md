@@ -431,11 +431,16 @@ not set. Read the active line, never the comment above it.
   anything, and the command's own error surfaces only in the waybar
   journal (`journalctl --user -u 'waybar*'`).
 
-- `hyprland.jsonc` and `sway.jsonc` are separate bars, so a module
-  each compositor shares has to be edited in both. Only that
-  compositor's own modules belong in its file — a `sway/*` module
-  listed in the Hyprland bar (or the reverse) is instantiated and
-  fails, since the backing IPC is absent.
+- `hyprland.jsonc` is the only bar. `config.jsonc` holds the shared
+  module definitions and `hyprland.jsonc` the compositor-specific ones;
+  a module whose backing IPC is absent is instantiated and fails, so
+  only `hyprland/*` modules belong in the latter.
+
+- The `@define-color` palette lives once, at
+  `wayland/.config/wayland/theme.css`, and `waybar`, `swaync` and
+  `wlogout` each carry a `theme.css` symlink to it that their `style.css`
+  imports. It used to sit inside the `sway` package with the other three
+  pointing at it, so deleting sway silently broke all three themes.
 
 - Custom module `signal` numbers come from `waybar-signal.sh`, which
   is the whole map: a module whose number is missing there is never

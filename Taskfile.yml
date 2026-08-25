@@ -58,7 +58,6 @@ tasks:
         vars:
           to: "~"
           packages: >-
-            autotiling-rs
             brave
             claude
             clipse
@@ -93,14 +92,9 @@ tasks:
             scripts
             ssh-config
             swappy
-            sway
-            swayidle
             swayimg
-            swaylock
             swaync
             swayosd
-            swayr
-            sworkstyle
             uwsm
             waybar
             wayland
@@ -108,7 +102,6 @@ tasks:
             wayland-theme
             wiremix
             wireplumber
-            wl-gamma-relay-rs
             wlogout
             xauthority
             xdg-desktop-portal
@@ -117,7 +110,7 @@ tasks:
             ydotool
             zathura
       - systemctl --user daemon-reload
-      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar@sway.service
+      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
 
   deploy:linux:system:
     desc: Deploy to target.
