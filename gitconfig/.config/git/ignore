@@ -1,0 +1,15 @@
+# Read by git as $XDG_CONFIG_HOME/git/ignore with no core.excludesFile needed,
+# and by fd and ripgrep through the same lookup -- one file, three tools.
+#
+# `vendor/` is here by choice. Go and some PHP projects do commit it, and this
+# file keeps it out of `git status` and `git add` in every repository. Any repo
+# that needs it tracked overrides this with `!vendor/` in its own .gitignore.
+
+**/.claude/settings.local.json
+
+.venv/
+virtualenvs/
+__pycache__/
+.cache/
+node_modules/
+vendor/
