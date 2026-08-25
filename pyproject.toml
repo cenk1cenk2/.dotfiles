@@ -8,4 +8,7 @@ reportOptionalMemberAccess = false
 requires-python = ">= 3.14"
 name = "dotfiles"
 version = "1.0.0"
-dependencies = ["i3ipc", "obsws-python"]
+# No dependencies: this project exists to anchor pyright over the repo, and
+# the only files it covers (install.py, neomutt/) are stdlib-only. Every
+# third-party import belongs to a scripts project that declares it itself.
+dependencies = []
