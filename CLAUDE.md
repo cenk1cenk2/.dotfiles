@@ -56,9 +56,14 @@ these need re-checking.
   refs, the refcount desyncs silently (asserts are compiled out of release
   builds), and the GPU stops attempting suspend until reboot. The signature
   of that state: zero rpm trace events with zero holders.
-- `NVreg_DynamicPowerManagement=0x03` stays pinned although it equals the
-  built-in default: the `nv_allow_runtime_suspend()` path is gated on the
-  regkey being exactly DEFAULT — an explicit `0x02` (FINE) skips it.
+- `NVreg_DynamicPowerManagement=0x02` (FINE) forces fine-grained RTD3 and
+  pairs with `80-nvidia-pm.rules` writing `power/control=auto`: the driver's
+  own `nv_allow_runtime_suspend()` call (`dynamic-power.c`, gated on the
+  regkey being exactly `0x03`/DEFAULT) is just `pm_runtime_allow`, which the
+  udev rule does instead. Change one, change both.
+- `nvidia-power.conf` may only carry parameters the open kernel module
+  actually declares (`kernel-open/nvidia/nv-reg.h`); an unknown one is
+  logged as `unknown parameter ... ignored` at module load and does nothing.
 - `env-hybrid` keeps `__EGL_VENDOR_LIBRARY_FILENAMES` and `MANGOHUD=0`
   commented out. Both do remove `/dev/nvidia0` holders (GLVND EGL vendor
   enumeration for the compositor, the MangoHud implicit Vulkan layer's NVML
