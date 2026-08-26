@@ -39,6 +39,7 @@ from rich.table import Table
 #     subprocess spawn, per-region debug, per-step start/end.
 #     Timestamped + level-tagged, scannable under `-v`.
 
+
 console: Console = Console(force_terminal=None)
 
 
@@ -181,7 +182,7 @@ FILLER_PATTERN = re.compile(
     r"u+[hm]+|"  # uh, uhh, um, umm, uhm
     r"[hm]+m*|"  # hm, hmm, mm, mmm, mhm
     r"e+r+m*|"  # er, erm, errr
-    r"a+h*|"  # ah, ahh, aaa, aaah
+    r"a+h+|"  # ah, ahh, aaah — NOT bare "a", which is an article
     r"o+h+|"  # oh, ohh
     r"e+h+|"  # eh, ehh
     r")$"
@@ -283,7 +284,7 @@ class TranscriptionAdapterHttp:
                 self.api_key_env,
             ]
             log.info("spawn: %s", " ".join(cmd))
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True)
 
         if result.returncode != 0:
             raise RuntimeError(
@@ -300,9 +301,14 @@ class TranscriptionAdapterHttp:
 
         words = data.get("words", [])
         if words:
-            return [
-                TimedWord(text=w["word"], start=w["start"], end=w["end"]) for w in words
-            ]
+            timed: list[TimedWord] = []
+            for w in words:
+                start, end = w.get("start"), w.get("end")
+                if start is None or end is None:
+                    log.warning("dropping word without timings: %r", w.get("word"))
+                    continue
+                timed.append(TimedWord(text=w.get("word", ""), start=start, end=end))
+            return timed
 
         segments = data.get("segments", [])
         if segments:
@@ -356,7 +362,7 @@ class Analyzer:
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         try:
             return float(result.stdout.strip())
         except ValueError:
@@ -391,8 +397,8 @@ class Analyzer:
         silences: list[Region] = []
         silence_start: float | None = None
         for line in "".join(lines).splitlines():
-            start_match = re.search(r"silence_start: (\d+\.?\d+)", line)
-            end_match = re.search(r"silence_end: (\d+\.?\d+)", line)
+            start_match = re.search(r"silence_start: (-?\d+(?:\.\d+)?)", line)
+            end_match = re.search(r"silence_end: (-?\d+(?:\.\d+)?)", line)
             if start_match:
                 silence_start = float(start_match.group(1))
             if end_match and silence_start is not None:
@@ -467,7 +473,19 @@ class Analyzer:
             return []
         words = self.stt_adapter.transcribe(input_file)
         speech, fillers, stutters = self._classify_words(words)
-        gaps = self._find_uncovered_gaps(silences + speech + fillers + stutters)
+        # Clamp gaps to what the transcript actually covers: a truncated STT
+        # response (a long file can exceed the endpoint's size limit) would
+        # otherwise make every untranscribed stretch of real speech a GAP and
+        # cut it wholesale.
+        covered = max((w.end for w in speech + fillers + stutters), default=0.0)
+        gaps = [
+            g
+            for g in self._find_uncovered_gaps(silences + speech + fillers + stutters)
+            # A gap is only a cut if it is at least as long as the silence
+            # threshold the user asked for; otherwise `-d` was silently
+            # overridden by a 0.1s inter-word pause.
+            if g.end <= covered and (g.end - g.start) >= self.duration
+        ]
         regions = fillers + gaps + stutters
         for i, r in enumerate(regions, 1):
             log.info(
@@ -562,13 +580,46 @@ class Encoder:
     def detect_gpu() -> str | None:
         cmd = ["ffmpeg", "-hide_banner", "-encoders"]
         log.debug("spawn: %s", " ".join(cmd))
-        encoders = subprocess.run(cmd, capture_output=True, text=True).stdout
-        if "hevc_nvenc" in encoders:
-            return "nvidia"
-        if "hevc_amf" in encoders:
-            return "amd"
-        if "hevc_vaapi" in encoders:
-            return "vaapi"
+        encoders = subprocess.run(
+            cmd, check=False, capture_output=True, text=True
+        ).stdout
+        # `-encoders` lists what this ffmpeg BUILD supports, not what the
+        # hardware can actually run, so a distro build with nvenc on an AMD
+        # box would claim nvidia. Probe each with a one-frame encode.
+        for encoder, gpu in (
+            ("hevc_nvenc", "nvidia"),
+            ("hevc_amf", "amd"),
+            ("hevc_vaapi", "vaapi"),
+        ):
+            if encoder not in encoders:
+                continue
+            probe = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "nullsrc=s=64x64:d=0.04",
+                "-c:v",
+                encoder,
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ]
+            log.debug("spawn: %s", " ".join(probe))
+            try:
+                if (
+                    subprocess.run(probe, check=False, capture_output=True).returncode
+                    == 0
+                ):
+                    return gpu
+            except subprocess.TimeoutExpired:
+                log.debug("%s probe timed out", encoder)
+            log.debug("%s is built in but not usable here", encoder)
         return None
 
     @staticmethod
@@ -588,7 +639,7 @@ class Encoder:
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         try:
             streams = json.loads(result.stdout).get("streams", [])
             if streams:
@@ -995,14 +1046,16 @@ class CutEncoder(Encoder):
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         keyframes: list[float] = []
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
+            # ffprobe emits csv, and the first frame carries a trailing
+            # comma from attached side data ("0.000000,") — parse the field.
             try:
-                keyframes.append(float(line))
+                keyframes.append(float(line.split(",")[0]))
             except ValueError:
                 continue
         keyframes.sort()
@@ -1141,12 +1194,32 @@ class CutEncoder(Encoder):
             # ── 1) stream-copy each range to a video-only part
             console.rule("[bold yellow]Copy video[/]")
             entries: list[str] = []
+            # A stream copy cannot stop mid-GOP, so `-to` overshoots on a
+            # B-frame source — typically by a frame or two. The audio below is
+            # sample-exact, so trimming it to the REQUESTED range would leave
+            # it short of the video by that much at every join, and the error
+            # accumulates across cuts. Measure what each piece actually
+            # contains and trim the audio to match.
+            audio_ranges: list[tuple[float, float]] = []
             for i, (a, b) in enumerate(ranges):
                 part_path = tmpdir / f"part{i:04d}{input_file.suffix}"
                 result = self._copy_video_part(input_file, part_path, a, b)
                 if result.returncode != 0:
                     return result
                 entries.append(f"file '{part_path}'\n")
+                measured = Analyzer.get_duration(part_path)
+                if measured is None:
+                    log.warning("could not probe part %d; using requested range", i)
+                    audio_ranges.append((a, b))
+                    continue
+                if abs((a + measured) - b) > 0.001:
+                    log.debug(
+                        "part %d copied %.3fs for a requested %.3fs",
+                        i,
+                        measured,
+                        b - a,
+                    )
+                audio_ranges.append((a, a + measured))
 
             # ── 2) concat the video parts (still pure stream-copy)
             console.rule("[bold yellow]Concat video[/]")
@@ -1176,11 +1249,12 @@ class CutEncoder(Encoder):
 
             # ── 3) build the faded audio in one filter_complex pass
             console.rule("[bold yellow]Fade audio[/]")
-            script_content, audio_map = self._build_audio_filter(ranges)
+            script_content, audio_map = self._build_audio_filter(audio_ranges)
             script_path = tmpdir / "audio.filter"
             script_path.write_text(script_content)
             log.debug("audio filter_complex:\n%s", script_content)
-            audio_only = tmpdir / "audio.m4a"
+            # .mka, not .m4a: mp4 has no tag for pcm_s16le (screen recordings)
+            audio_only = tmpdir / "audio.mka"
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
@@ -1340,15 +1414,17 @@ class SmartCutEncoder(Encoder):
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         log.debug("ffprobe stderr: %s", result.stderr.strip())
         keyframes: list[float] = []
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
+            # ffprobe emits csv, and the first frame carries a trailing
+            # comma from attached side data ("0.000000,") — parse the field.
             try:
-                keyframes.append(float(line))
+                keyframes.append(float(line.split(",")[0]))
             except ValueError:
                 continue
         keyframes.sort()
@@ -1374,7 +1450,7 @@ class SmartCutEncoder(Encoder):
             str(input_file),
         ]
         log.debug("spawn: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
         log.debug("ffprobe stderr: %s", result.stderr.strip())
         try:
             streams = json.loads(result.stdout).get("streams", [])
@@ -1734,7 +1810,8 @@ class SmartCutEncoder(Encoder):
             script_path = tmpdir / "audio.filter"
             script_path.write_text(script_content)
             log.debug("audio filter:\n%s", script_content)
-            audio_only = tmpdir / "audio.m4a"
+            # .mka, not .m4a: mp4 has no tag for pcm_s16le (screen recordings)
+            audio_only = tmpdir / "audio.mka"
             cmd = [
                 "ffmpeg",
                 "-hide_banner",
@@ -1866,6 +1943,13 @@ class Remsi:
             console.print("[dim]nothing to remove, skipping[/]")
             return
 
+        if not segments:
+            log.error(
+                "every region would be removed — nothing would be left of %s",
+                input_file.name,
+            )
+            return
+
         kept = sum(seg.end - seg.start for seg in segments)
         removed = total - kept
         pct = (removed / total * 100) if total > 0 else 0
@@ -1919,6 +2003,10 @@ class Remsi:
 
         console.rule(f"[bold green]{input_file.name} → {output_file.name}[/]")
         out_media = Encoder.probe(output_file)
+        # The produced duration, not the requested `kept`: keyframe snapping
+        # gives time back and a stream copy overshoots its `-to`, so the two
+        # differ. Reporting the request hid both.
+        out_duration = Analyzer.get_duration(output_file)
         summary = Table(show_header=True, header_style="bold", box=None)
         summary.add_column("")
         summary.add_column("before", style="dim")
@@ -1926,7 +2014,7 @@ class Remsi:
         summary.add_row(
             "duration",
             format_timestamp(total),
-            format_timestamp(kept),
+            format_timestamp(out_duration) if out_duration else "?",
         )
         summary.add_row("size", media.size_str, out_media.size_str)
         summary.add_row("video", str(media.video), str(out_media.video))
