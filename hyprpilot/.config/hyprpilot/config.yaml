@@ -186,6 +186,11 @@ profiles:
     model: kilic/ollama/cloud/glm-5.2:cloud
     mode: build
 
+  - id: personal/kilic/glm-5.3-flash:cloud
+    agent: opencode
+    model: kilic/ollama/cloud/glm-5.3-flash:cloud
+    mode: build
+
   - id: personal/kilic/kimi-k3:cloud
     agent: opencode
     model: kilic/ollama/cloud/kimi-k3:cloud
@@ -285,11 +290,15 @@ profiles:
     model: ollama/glm-5.2
     mode: build
 
-  # Needs the matching `kimi-k3` entry in opencode-laravel first.
-  # - id: work/ollama/kimi-k3
-  #   agent: opencode
-  #   model: ollama/kimi-k3
-  #   mode: build
+  - id: work/ollama/glm-5.3-flash
+    agent: opencode
+    model: ollama/glm-5.3-flash
+    mode: build
+
+  - id: work/ollama/kimi-k3
+    agent: opencode
+    model: ollama/kimi-k3
+    mode: build
 
   - id: work/ollama/gemma4:31b
     agent: opencode

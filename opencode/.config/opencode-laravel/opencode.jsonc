@@ -68,9 +68,12 @@
             "reasoningEffort": "max",
           },
         },
-        // "kimi-k3": {
-        //   "name": "Kimi K3 Code Cloud",
-        // },
+        "glm-5.3-flash": {
+          "name": "GLM 5.3 Flash Cloud",
+        },
+        "kimi-k3": {
+          "name": "Kimi K3 Code Cloud",
+        },
         "gemma4:31b": {
           "name": "Gemma4 Cloud",
         },
