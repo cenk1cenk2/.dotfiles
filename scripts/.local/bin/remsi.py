@@ -802,29 +802,11 @@ class Encoder:
         media: MediaInfo | None = None,
     ) -> subprocess.CompletedProcess:
         media = media or MediaInfo()
-        if len(segments) == 1:
-            seg = segments[0]
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "warning",
-                "-stats",
-                "-ss",
-                str(seg.start),
-                "-to",
-                str(seg.end),
-                "-i",
-                str(input_file),
-                "-c:v",
-                "copy",
-                "-c:a",
-                "copy",
-            ]
-            if self.force:
-                cmd.append("-y")
-            cmd.append(str(output_file))
-            return self._run(cmd)
+        # A single kept segment used to short-circuit to `-ss/-to -c copy`, but
+        # input seeking with a stream copy can only start on a keyframe, so the
+        # video snapped to the GOP while the audio cut where it was asked to —
+        # tens of ms of desync, on the one path that ignored the chosen encoder
+        # to get it. Every encoder handles one segment correctly on its own.
         return self._encode_segments(input_file, output_file, segments, media)
 
     def _encode_segments(
@@ -890,6 +872,37 @@ class FancyEncoder(Encoder):
             and (segments[i + 1].end - segments[i + 1].start) >= self.fade_time
         )
 
+    @staticmethod
+    def _frame_spans(
+        segments: list[Segment], video_info: VideoInfo | None
+    ) -> list[tuple[float, float, float, float]]:
+        """Per segment, the (video start, video end, audio start, audio end)
+        windows that select the same run of frames in both streams.
+
+        `trim` keeps frames whose PTS lands in the window, so a boundary sitting
+        mid-frame rounds the video one way and the audio another. Snapping both
+        to the frame grid makes the two durations identical by construction. The
+        video window is biased half a frame so the intended frames sit clear of
+        either edge whatever the float rounding does; the audio window uses the
+        exact grid times, spanning the same frames.
+
+        With no fps to snap to the original timestamps stand.
+        """
+        fps = video_info.fps if video_info else None
+        spans: list[tuple[float, float, float, float]] = []
+        for seg in segments:
+            if not fps:
+                spans.append((seg.start, seg.end, seg.start, seg.end))
+                continue
+            first, last = round(seg.start * fps), round(seg.end * fps)
+            # A segment shorter than a frame still has to carry one, or the
+            # video goes empty while the audio keeps its samples.
+            last = max(last, first + 1)
+            spans.append(
+                ((first - 0.5) / fps, (last - 0.5) / fps, first / fps, last / fps)
+            )
+        return spans
+
     def _build_filter_lines(
         self, segments: list[Segment], video_info: VideoInfo | None = None
     ) -> list[str]:
@@ -920,19 +933,23 @@ class FancyEncoder(Encoder):
             if parts:
                 color_filters = "," + ",".join(parts)
 
+        spans = self._frame_spans(segments, video_info)
         lines: list[str] = []
-        for i, seg in enumerate(segments):
+        for i, (v_start, v_end, a_start, a_end) in enumerate(spans):
             lines.append(
-                f"[0:v]trim={seg.start}:{seg.end},setpts=PTS-STARTPTS,settb=AVTB{color_filters}[v{i}]"
+                f"[0:v]trim={v_start}:{v_end},setpts=PTS-STARTPTS,settb=AVTB{color_filters}[v{i}]"
             )
-            lines.append(f"[0:a]atrim={seg.start}:{seg.end},asetpts=PTS-STARTPTS[a{i}]")
+            lines.append(f"[0:a]atrim={a_start}:{a_end},asetpts=PTS-STARTPTS[a{i}]")
 
         if self.fade_time > 0 and n > 1:
             accumulated = 0.0
             xfade_count = 0
             v_label = "[v0]"
             for i in range(n - 1):
-                accumulated += segments[i].end - segments[i].start
+                # The snapped span, not the raw one: xfade offsets are absolute
+                # positions on the concatenated timeline, so measuring them
+                # against unsnapped durations would walk the fades off the cuts.
+                accumulated += spans[i][3] - spans[i][2]
                 if self._should_crossfade(i, segments):
                     offset = accumulated - (xfade_count + 1) * self.fade_time
                     out = f"[xf{xfade_count}]"
@@ -1459,6 +1476,42 @@ class SmartCutEncoder(Encoder):
         except json.JSONDecodeError, IndexError:
             return {}
 
+    @staticmethod
+    def _piece_seconds(path: Path, fps: float | None) -> float | None:
+        """How long a rendered TS piece actually is, counted in frames.
+
+        Not its container duration: a transport-stream fragment carries its own
+        PTS base, so the duration ffprobe reports for one is an interval on that
+        fragment's own clock and says nothing about the length it contributes to
+        a concat. A frame count has no such basis to be wrong about."""
+        if not fps:
+            return None
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        log.debug("ffprobe stderr: %s", result.stderr.strip())
+        # A transport stream can carry several programs, and ffprobe prints a
+        # row per matched stream plus blank ones — take the first real count
+        # rather than parsing the whole blob as one number.
+        for line in result.stdout.splitlines():
+            try:
+                return int(line.strip()) / fps
+            except ValueError:
+                continue
+        return None
+
     def _pick_seam_encoder(self, codec_name: str) -> str:
         """Return the ffmpeg encoder name for a seam re-encode.
 
@@ -1561,7 +1614,7 @@ class SmartCutEncoder(Encoder):
         return pre, post
 
     def _segment_plan(
-        self, seg: Segment, keyframes: list[float]
+        self, seg: Segment, keyframes: list[float], fps: float | None = None
     ) -> list[tuple[float, float, str]]:
         """Split one segment into (start, end, action) pieces.
 
@@ -1586,7 +1639,13 @@ class SmartCutEncoder(Encoder):
         parts: list[tuple[float, float, str]] = []
         if kf_first > s:
             parts.append((s, kf_first, "reencode"))
-        parts.append((kf_first, kf_last, "copy"))
+        # A stream copy cannot stop mid-GOP, so `-to kf_last` overshoots and
+        # hands back the frame at kf_last -- which the lead-out then re-encodes
+        # as its own first frame. Ask the copy to stop half a frame early so
+        # that frame belongs to exactly one piece; without it the seam frame is
+        # duplicated, and the mux silently drops one copy afterwards.
+        copy_end = kf_last - 0.5 / fps if fps else kf_last
+        parts.append((kf_first, copy_end, "copy"))
         if e > kf_last:
             parts.append((kf_last, e, "reencode"))
         return parts
@@ -1667,15 +1726,29 @@ class SmartCutEncoder(Encoder):
             ]
         return self._run(cmd)
 
-    def _build_audio_filter(self, segments: list[Segment]) -> str:
-        """Audio filter_complex covering every kept segment: atrim
-        at frame-accurate `[seg.start, seg.end]` bounds, afade on
-        every internal boundary, concat the lot."""
+    def _build_audio_filter(
+        self,
+        segments: list[Segment],
+        measured: dict[int, float] | None = None,
+        total: float | None = None,
+    ) -> str:
+        """Audio filter_complex covering every kept segment: atrim at
+        `[seg.start, seg.start + rendered video length]`, afade on every
+        internal boundary, concat the lot.
+
+        `measured` carries how long each segment's video pieces actually came
+        out. Trimming the audio to the requested bounds instead would leave it
+        a frame adrift of the video wherever the two disagreed, and the concat
+        stacks that error segment by segment."""
         lines: list[str] = []
         for i, seg in enumerate(segments):
-            duration = seg.end - seg.start
+            duration = (
+                measured[i]
+                if measured is not None and i in measured
+                else seg.end - seg.start
+            )
             chain = [
-                f"atrim=start={seg.start}:end={seg.end}",
+                f"atrim=start={seg.start}:end={seg.start + duration}",
                 "asetpts=PTS-STARTPTS",
             ]
             if self.fade_time > 0 and duration > 2 * self.fade_time:
@@ -1688,7 +1761,16 @@ class SmartCutEncoder(Encoder):
                     )
             lines.append(f"[0:a]{','.join(chain)}[a{i}]")
         concat_inputs = "".join(f"[a{i}]" for i in range(len(segments)))
-        lines.append(f"{concat_inputs}concat=n={len(segments)}:v=0:a=1[aout]")
+        if total is None:
+            lines.append(f"{concat_inputs}concat=n={len(segments)}:v=0:a=1[aout]")
+        else:
+            # Per-segment measurement gets the internal cuts aligned, but the
+            # seam frame at a copy/re-encode boundary belongs to both pieces and
+            # so gets counted twice. Pin the total to the video that was
+            # actually built: pad first, so a short tail is filled rather than
+            # left as a gap, then cut to length.
+            lines.append(f"{concat_inputs}concat=n={len(segments)}:v=0:a=1[acat]")
+            lines.append(f"[acat]apad,atrim=start=0:end={total}[aout]")
         return ";\n".join(lines)
 
     def encode(
@@ -1727,11 +1809,17 @@ class SmartCutEncoder(Encoder):
         # segment to a single re-encode piece — no stream-copy
         # middles, no concat stitching. Still frame-accurate.
         pieces: list[tuple[float, float, str]] = []
+        # Which segment each piece came from, so the rendered pieces can be
+        # measured back into a per-segment video duration for the audio side.
+        piece_owner: list[int] = []
         if codec_name in self._TS_MATRIX:
-            for seg in segments:
-                pieces.extend(self._segment_plan(seg, keyframes))
+            for seg_index, seg in enumerate(segments):
+                planned = self._segment_plan(seg, keyframes, media.video.fps)
+                pieces.extend(planned)
+                piece_owner.extend([seg_index] * len(planned))
         else:
             pieces = [(seg.start, seg.end, "reencode") for seg in segments]
+            piece_owner = list(range(len(segments)))
 
         copy_dur = sum(e - s for s, e, a in pieces if a == "copy")
         reencode_dur = sum(e - s for s, e, a in pieces if a == "reencode")
@@ -1758,6 +1846,12 @@ class SmartCutEncoder(Encoder):
             # ── 1) render every sandwich piece to MPEG-TS
             console.rule("[bold yellow]Render video pieces[/]")
             entries: list[str] = []
+            # Nominal piece bounds are a request, not a result: a copy piece
+            # cannot stop mid-GOP and a re-encoded seam lands on whole frames,
+            # so each piece renders to whatever length it renders to. Measure
+            # them and let the audio follow the video, or the two drift apart
+            # by a frame per segment.
+            measured_by_segment: dict[int, float] = {}
             for i, (s, e, a) in enumerate(pieces):
                 part_path = tmpdir / f"part{i:04d}.ts"
                 result = self._render_piece_ts(
@@ -1773,6 +1867,18 @@ class SmartCutEncoder(Encoder):
                 if result.returncode != 0:
                     return result
                 entries.append(f"file '{part_path}'\n")
+                measured = self._piece_seconds(part_path, media.video.fps)
+                if measured is None:
+                    log.warning(
+                        "could not measure piece %d; audio for this segment "
+                        "falls back to its requested length",
+                        i + 1,
+                    )
+                    measured = e - s
+                owner = piece_owner[i]
+                measured_by_segment[owner] = (
+                    measured_by_segment.get(owner, 0.0) + measured
+                )
 
             # ── 2) concat-demux the TS fragments into one video-only
             #      TS stream. Transport streams tolerate per-fragment
@@ -1807,7 +1913,33 @@ class SmartCutEncoder(Encoder):
 
             # ── 3) render the faded audio in one filter_complex pass
             console.rule("[bold yellow]Fade audio[/]")
-            script_content = self._build_audio_filter(segments)
+            # Measure the video after it has been through a mux, not as a
+            # transport stream: a copy piece cannot stop mid-GOP, so it overlaps
+            # the seam the lead-out re-encodes, and the TS still carries both
+            # copies of those frames. The mux resolves the duplicate PTS -- so
+            # ask the muxed file how long it is rather than trying to predict it.
+            video_mp4 = tmpdir / "video.mp4"
+            result = self._run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "warning",
+                    "-i",
+                    str(video_only),
+                    "-c",
+                    "copy",
+                    "-an",
+                    "-y",
+                    str(video_mp4),
+                ]
+            )
+            if result.returncode != 0:
+                return result
+            video_seconds = self._piece_seconds(video_mp4, media.video.fps)
+            script_content = self._build_audio_filter(
+                segments, measured_by_segment, video_seconds
+            )
             script_path = tmpdir / "audio.filter"
             script_path.write_text(script_content)
             log.debug("audio filter:\n%s", script_content)
@@ -1844,7 +1976,7 @@ class SmartCutEncoder(Encoder):
                 "warning",
                 "-stats",
                 "-i",
-                str(video_only),
+                str(video_mp4),
                 "-i",
                 str(audio_only),
                 "-c",
