@@ -57,6 +57,25 @@
         "apiKey": "{env:AI_KILIC_DEV_API_KEY}",
       },
       "models": {
+        // Agentgateway virtual models: each fails over across zai, ollama-cloud,
+        // codex and ollama-neutrino, so a tier keeps answering when one backing
+        // model hits its quota. Defined in cluster/workloads/ollama under
+        // .deploy/neutrino/agentgateway/models/virtual/kilic.dev/.
+        "kilic.dev/cheap": {
+          "name": "kilic.dev Cheap",
+        },
+        "kilic.dev/default": {
+          "name": "kilic.dev Default",
+        },
+        "kilic.dev/smart": {
+          "name": "kilic.dev Smart",
+        },
+        "kilic.dev/max": {
+          "name": "kilic.dev Max",
+        },
+        "kilic.dev/vision": {
+          "name": "kilic.dev Vision",
+        },
         "ollama/cloud/deepseek-v4-pro:cloud": {
           "name": "DeepSeek V4 Pro",
         },
