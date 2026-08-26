@@ -245,10 +245,24 @@ these need re-checking.
   directly (`from dotlib.cli import create_logger`). An eager `__init__`
   would drag `rich` into consumers that only want a stdlib-only module.
 
-- `jumpy` is the exception to all of this: stdlib-only with its own
-  inlined copy of the Hyprland IPC. Home Assistant drives it over ssh,
-  where neither `uv` nor `~/.local/bin` is on PATH, so it must not depend
-  on a venv. Its shebang and that duplication are load-bearing.
+- `jumpy` keeps its own **inlined copy of the Hyprland IPC**. Hyprctl is
+  hyprland's domain and lives in that project; jumpy is a user command that
+  happens to speak the same protocol, so it carries the subset it needs
+  rather than coupling to a package it otherwise has nothing to do with.
+  Keep the two in step by hand if the IPC changes.
+
+  It is no longer stdlib-only — it uses click, rich and `dotlib` like every
+  other script here. Home Assistant drives it over ssh, where neither `uv`
+  nor `~/.local/bin` is on PATH, so its `shell_command` entries prepend the
+  mise shims and call it by full path (`cluster/workloads/home-assistant!69`).
+  That is what made the venv reachable and retired the stdlib-only rule.
+
+- **`jumpy`'s positional operands are fixed from outside this repo.**
+  `jumpy sound <class> <name>` and `jumpy display <profile>` are the
+  spellings Home Assistant sends across ~23 call sites, which is why `sound`
+  and `display` take `nargs=-1` and match on the operands instead of
+  declaring proper click subcommands. Do not "tidy" them into
+  `jumpy sound set ...`; that breaks automations in another repo.
 
 ### Logging: rich, stderr for traces
 

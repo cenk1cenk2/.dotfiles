@@ -7,11 +7,15 @@ on PATH. Its shell_command entries therefore prepend the mise shims and call
 this by full path; see cluster/workloads/home-assistant!69. `python "$0"` in
 the shebang rather than bare `"$0"` because this file has no `.py` extension,
 which `uv run` would otherwise treat as a command name and recurse on.
+
+The subcommands take their operands positionally (`jumpy sound <class> <name>`,
+`jumpy display <profile>`) rather than as click subcommands of their own. Those
+spellings are what Home Assistant's shell_command entries send, so the surface
+is fixed from outside this repo and is not ours to tidy.
 """
 
 from __future__ import annotations
 
-import argparse
 import glob
 import json
 import os
@@ -21,6 +25,16 @@ import subprocess
 import sys
 from enum import StrEnum
 from pathlib import Path
+
+import click
+from click.shell_completion import CompletionItem, get_completion_class
+from dotlib.cli import create_logger
+from dotlib.notify import notify
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+log = create_logger(False, name="jumpy")
 
 
 class Hyprctl:
@@ -75,94 +89,55 @@ class DisplayBackend(StrEnum):
     NATIVE = "native"
 
 
-# Emitted by `jumpy completion zsh` rather than kept in the zsh config, so the
-# command surface and its completion cannot drift apart. The dynamic candidate
-# lists come back through `jumpy completion --list`, which parses pw-dump in
-# Python — the human-facing `sound ls` table is quoted CSV and shell-parsing it
-# would break on any device name containing a comma.
-ZSH_COMPLETION = """\
-_jumpy_completion() {
-  local context state state_descr line
-  typeset -A opt_args
-  local -a commands
-  commands=(
-    'sound:Set default audio device via wireplumber'
-    'display:Apply or list Hyprland monitor profiles'
-    'completion:Print the shell completion script'
-  )
+def _complete_sound(
+    ctx: click.Context, param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    """Candidates for `jumpy sound`: media classes first, then that class's
+    devices. A failure here has to stay silent — an exception during completion
+    surfaces as a broken prompt rather than an error anyone can read."""
+    typed = tuple(ctx.params.get("args") or ())
+    try:
+        if not typed:
+            items = [CompletionItem("ls", help="List available devices and classes")]
+            items += [
+                CompletionItem(name, help="media class")
+                for name in Jumpy().sound_class_names()
+            ]
+        elif len(typed) == 1 and typed[0] != "ls":
+            items = [
+                CompletionItem(name, help="device")
+                for name in Jumpy().sound_device_names(typed[0])
+            ]
+        else:
+            return []
+    except OSError, subprocess.SubprocessError, json.JSONDecodeError:
+        return []
 
-  _arguments -C \\
-    '1:command:->command' \\
-    '*::args:->args'
+    return [item for item in items if item.value.startswith(incomplete)]
 
-  case "$state" in
-  command)
-    _describe 'jumpy command' commands
-    ;;
-  args)
-    case "$line[1]" in
-    sound) _jumpy_sound ;;
-    display) _jumpy_display ;;
-    completion) _arguments '1:shell:(zsh)' ;;
-    esac
-    ;;
-  esac
-}
 
-_jumpy_sound() {
-  local context state state_descr line
-  typeset -A opt_args
-  local -a values
-  local name
+def _complete_display(
+    ctx: click.Context, param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    """Candidates for `jumpy display`: the profiles the selected backend
+    defines, plus the two verbs. Reads `--backend` off the partial parse, so
+    completing after `--backend native` offers profiles.lua's names."""
+    if ctx.params.get("args"):
+        return []
+    backend = DisplayBackend(ctx.params.get("backend") or DisplayBackend.KANSHI)
+    items = [
+        CompletionItem("ls", help="List available profiles"),
+        CompletionItem("reload", help="Re-run auto-match"),
+    ]
+    try:
+        items += [
+            CompletionItem(name, help=f"{backend} profile")
+            for name in Jumpy().display_profiles(backend)
+        ]
+    except OSError:
+        return []
 
-  _arguments -C \\
-    '1:media class:->class' \\
-    '2:device:->device'
-
-  case "$state" in
-  class)
-    values=('ls:List available devices and their classes')
-    for name in ${(f)"$(jumpy completion --list sound-classes 2>/dev/null)"}; do
-      values+=("$name:media class")
-    done
-    _describe -t classes 'media class' values
-    ;;
-  device)
-    [[ "$line[1]" == ls ]] && return
-    values=()
-    for name in ${(f)"$(jumpy completion --list sound-devices --media-class "$line[1]" 2>/dev/null)"}; do
-      values+=("$name:device")
-    done
-    _describe -t devices 'device' values
-    ;;
-  esac
-}
-
-_jumpy_display() {
-  local context state state_descr line
-  typeset -A opt_args
-  local -a values
-  local name backend
-
-  _arguments -C \\
-    '--backend[Profile backend]:backend:(kanshi native)' \\
-    '1:profile:->profile'
-
-  case "$state" in
-  profile)
-    backend=${opt_args[--backend]:-kanshi}
-    values=(
-      'ls:List available profiles'
-      'reload:Re-run auto-match'
-    )
-    for name in ${(f)"$(jumpy display ls --backend $backend 2>/dev/null)"}; do
-      values+=("$name:$backend profile")
-    done
-    _describe -t profiles 'profile' values
-    ;;
-  esac
-}
-"""
+    return [item for item in items if item.value.startswith(incomplete)]
 
 
 class Jumpy:
@@ -172,14 +147,10 @@ class Jumpy:
     DISPLAY_MODULE = "outputs.profiles"
     PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"
 
-    def _notify(self, title: str, message: str, icon: str) -> None:
-        subprocess.run(
-            ["notify-send", title, message, "-i", icon],
-            check=False,
-        )
-
     def _pw_nodes(self) -> list[dict]:
+        log.debug("spawn: pw-dump")
         proc = subprocess.run(["pw-dump"], capture_output=True, text=True, check=True)
+        log.debug("pw-dump stderr: %s", proc.stderr.strip())
         return [
             n
             for n in json.loads(proc.stdout)
@@ -187,29 +158,31 @@ class Jumpy:
         ]
 
     def sound_ls(self) -> None:
-        print("Available sources are listed below.")
-        print()
-        print("media.class,alsa.card_name,media.name")
-        print("-------------------------------------")
+        table = Table(show_header=True, box=None)
+        table.add_column("media.class", style="bold")
+        table.add_column("alsa.card_name")
+        table.add_column("media.name")
         for node in self._pw_nodes():
             props = node.get("info", {}).get("props", {})
-            row = ",".join(
-                json.dumps(props.get(k, ""))
-                for k in ("media.class", "alsa.card_name", "media.name")
+            table.add_row(
+                *(
+                    str(props.get(key, ""))
+                    for key in ("media.class", "alsa.card_name", "media.name")
+                )
             )
-            print(row)
+        console.print(table)
 
-    def sound_classes(self) -> None:
-        """Distinct media.class values, one per line, for shell completion."""
+    def sound_class_names(self) -> list[str]:
+        """Distinct media.class values, in first-seen order."""
         seen: list[str] = []
         for node in self._pw_nodes():
             value = node.get("info", {}).get("props", {}).get("media.class")
             if value and value not in seen:
                 seen.append(value)
-        print("\n".join(seen))
+        return seen
 
-    def sound_devices(self, media_class: str) -> None:
-        """Names `sound_apply` accepts for a class, one per line, for completion."""
+    def sound_device_names(self, media_class: str) -> list[str]:
+        """Every name `sound_apply` will match for a class, in first-seen order."""
         seen: list[str] = []
         for node in self._pw_nodes():
             props = node.get("info", {}).get("props", {})
@@ -219,7 +192,7 @@ class Jumpy:
                 value = props.get(key)
                 if value and value not in seen:
                     seen.append(value)
-        print("\n".join(seen))
+        return seen
 
     def sound_apply(self, media_class: str, card_name: str) -> None:
         for node in self._pw_nodes():
@@ -227,14 +200,11 @@ class Jumpy:
             if props.get("media.class") != media_class:
                 continue
             if card_name in (props.get("alsa.card_name"), props.get("media.name")):
+                log.debug("spawn: wpctl set-default %s", node["id"])
                 subprocess.run(["wpctl", "set-default", str(node["id"])], check=True)
-                self._notify(f"wireplumber [{media_class}]", card_name, self.AUDIO_ICON)
+                notify(f"wireplumber [{media_class}]", card_name, self.AUDIO_ICON)
                 return
-        print(
-            f"jumpy sound: no node matches {media_class!r} + {card_name!r}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise click.ClickException(f"no node matches {media_class!r} + {card_name!r}")
 
     def _ensure_native(self) -> Hyprctl:
         # Guard the `require`-driven native paths (reload / switch): fail
@@ -248,51 +218,50 @@ class Jumpy:
         # HYPRLAND_INSTANCE_SIGNATURE.
         hypr = Hyprctl()
         if not hypr.eval(f'assert(package.loaded["{self.DISPLAY_MODULE}"])'):
-            print(
-                "jumpy display: --backend native needs a running Hyprland with profiles.lua "
-                "loaded (uncomment its require in ~/.config/hypr/outputs/init.lua).",
-                file=sys.stderr,
+            raise click.ClickException(
+                "--backend native needs a running Hyprland with profiles.lua "
+                "loaded (uncomment its require in ~/.config/hypr/outputs/init.lua)."
             )
-            sys.exit(1)
 
         return hypr
 
-    def display_ls(self, backend: DisplayBackend) -> None:
+    def display_profiles(self, backend: DisplayBackend) -> list[str]:
+        """Profile names the backend defines, in file order.
+
+        Reading either file is side-effect-free, so this never needs the native
+        load guard — the .lua file is the source of truth (0.56 still can't
+        return a Lua value through hyprctl)."""
         if backend is DisplayBackend.NATIVE:
-            # Reading the file is side-effect-free, so listing doesn't need
-            # the load guard — the .lua file is the source of truth (0.56
-            # still can't return a Lua value through hyprctl).
             text = self.PROFILES_LUA.read_text()
-            for match in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text):
-                print(match.group(1))
-            return
+            return [m.group(1) for m in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text)]
 
         text = self.KANSHI_CONFIG.read_text()
-        seen: set[str] = set()
+        seen: list[str] = []
         for match in re.finditer(r"^\s*profile\s+(\S+)\s*\{", text, re.MULTILINE):
-            name = match.group(1)
-            if name not in seen:
-                seen.add(name)
-                print(name)
+            if match.group(1) not in seen:
+                seen.append(match.group(1))
+        return seen
+
+    def display_ls(self, backend: DisplayBackend) -> None:
+        # One per line, deliberately plain: this is the machine-readable list.
+        for name in self.display_profiles(backend):
+            sys.stdout.write(f"{name}\n")
 
     def display_reload(self, backend: DisplayBackend) -> None:
         if backend is DisplayBackend.NATIVE:
             hypr = self._ensure_native()
             if not hypr.eval(f'require("{self.DISPLAY_MODULE}").auto_apply()'):
-                print("jumpy display: reload failed.", file=sys.stderr)
-                sys.exit(1)
+                raise click.ClickException("reload failed.")
             return
 
         try:
+            log.debug("spawn: kanshictl reload")
             subprocess.run(["kanshictl", "reload"], check=True, timeout=10)
         except subprocess.TimeoutExpired:
             # Hyprland 0.56 never ACKs a wlr-output-management apply that
             # changes nothing, so kanshi's reload hangs whenever the
             # config is already active. Already-applied is success.
-            print(
-                "jumpy display: kanshictl reload timed out — state already active.",
-                file=sys.stderr,
-            )
+            log.warning("kanshictl reload timed out — state already active.")
 
     def display_switch(self, profile: str, backend: DisplayBackend) -> None:
         if backend is DisplayBackend.NATIVE:
@@ -301,110 +270,87 @@ class Jumpy:
             if not hypr.eval(
                 f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
             ):
-                print(f"jumpy display: switch to {profile} failed.", file=sys.stderr)
-                sys.exit(1)
+                raise click.ClickException(f"switch to {profile} failed.")
             return
 
+        log.debug("spawn: wayland-user.sh kanshictl switch %s", profile)
         subprocess.run(
             ["/etc/udev/scripts/wayland-user.sh", "kanshictl", "switch", profile],
             check=True,
         )
-        self._notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
+        notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
 
-    def _build_parser(self) -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser(
-            prog="jumpy",
-            description="Switch audio sinks and display profiles.",
-        )
-        sub = parser.add_subparsers(dest="command", required=True)
+    # ── CLI ──────────────────────────────────────────────────────────
 
-        sound = sub.add_parser(
-            "sound",
-            help="Set default audio device via wireplumber.",
-            description=(
-                "Set default audio using wireplumber.\n"
-                "Usage: jumpy sound [media.class] [alsa.card_name|media.name]\n"
-                "Example: jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'\n\n"
-                "List available devices and their classes:\n"
-                "Usage: jumpy sound ls"
-            ),
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        sound.add_argument("args", nargs="*")
+    @click.group("jumpy", context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    def cli(verbose: bool) -> None:
+        """Switch audio sinks and display profiles."""
+        global log
+        log = create_logger(verbose, name="jumpy")
 
-        display = sub.add_parser(
-            "display",
-            help="Apply / list Hyprland monitor profiles.",
-            description=(
-                "List available profiles: jumpy display ls\n"
-                "Re-run auto-match: jumpy display reload\n"
-                "Apply a profile: jumpy display [profile]"
-            ),
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        display.add_argument(
-            "--backend",
-            choices=list(DisplayBackend),
-            type=DisplayBackend,
-            default=DisplayBackend.KANSHI,
-            help="Profile backend: kanshi (default) or native profiles.lua.",
-        )
-        display.add_argument("args", nargs="*")
+    @cli.command("sound")
+    @click.argument("args", nargs=-1, shell_complete=_complete_sound)
+    @click.pass_context
+    def cmd_sound(ctx: click.Context, args: tuple[str, ...]) -> None:
+        """Set the default audio device via wireplumber.
 
-        completion = sub.add_parser(
-            "completion",
-            help="Print the shell completion script.",
-        )
-        completion.add_argument("shell", nargs="?", default="zsh", choices=["zsh"])
-        # Candidate lists the emitted completion calls back for; hidden because
-        # they are machine-readable output, not a user-facing command.
-        completion.add_argument(
-            "--list",
-            choices=["sound-classes", "sound-devices"],
-            help=argparse.SUPPRESS,
-        )
-        completion.add_argument("--media-class", default="", help=argparse.SUPPRESS)
+        \b
+        jumpy sound ls                              list devices and classes
+        jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB' set the default
+        """
+        match list(args):
+            case [] | ["help"]:
+                click.echo(ctx.get_help())
+            case ["ls"]:
+                Jumpy().sound_ls()
+            case [media_class, card_name]:
+                Jumpy().sound_apply(media_class, card_name)
+            case _:
+                click.echo(ctx.get_help())
+                ctx.exit(2)
 
-        return parser
+    @cli.command("display")
+    @click.option(
+        "--backend",
+        type=click.Choice([b.value for b in DisplayBackend]),
+        default=DisplayBackend.KANSHI.value,
+        help="Profile backend: kanshi (default) or native profiles.lua.",
+    )
+    @click.argument("args", nargs=-1, shell_complete=_complete_display)
+    @click.pass_context
+    def cmd_display(ctx: click.Context, backend: str, args: tuple[str, ...]) -> None:
+        """Apply or list Hyprland monitor profiles.
 
-    def run(self, argv: list[str] | None = None) -> None:
-        parser = self._build_parser()
-        ns = parser.parse_args(argv)
+        \b
+        jumpy display ls        list available profiles
+        jumpy display reload    re-run auto-match
+        jumpy display <profile> apply a profile
+        """
+        chosen = DisplayBackend(backend)
+        match list(args):
+            case [] | ["help"]:
+                click.echo(ctx.get_help())
+            case ["ls"]:
+                Jumpy().display_ls(chosen)
+            case ["reload"]:
+                Jumpy().display_reload(chosen)
+            case [profile]:
+                Jumpy().display_switch(profile, chosen)
+            case _:
+                click.echo(ctx.get_help())
+                ctx.exit(2)
 
-        match ns.command:
-            case "sound":
-                match ns.args:
-                    case [] | ["help"]:
-                        parser.parse_args(["sound", "--help"])
-                    case ["ls"]:
-                        self.sound_ls()
-                    case [media_class, card_name]:
-                        self.sound_apply(media_class, card_name)
-                    case _:
-                        parser.parse_args(["sound", "--help"])
-                        sys.exit(2)
-            case "display":
-                match ns.args:
-                    case [] | ["help"]:
-                        parser.parse_args(["display", "--help"])
-                    case ["ls"]:
-                        self.display_ls(ns.backend)
-                    case ["reload"]:
-                        self.display_reload(ns.backend)
-                    case [profile]:
-                        self.display_switch(profile, ns.backend)
-                    case _:
-                        parser.parse_args(["display", "--help"])
-                        sys.exit(2)
-            case "completion":
-                match ns.list:
-                    case "sound-classes":
-                        self.sound_classes()
-                    case "sound-devices":
-                        self.sound_devices(ns.media_class)
-                    case _:
-                        sys.stdout.write(ZSH_COMPLETION)
+    @cli.command("completion")
+    @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")
+    @click.pass_context
+    def cmd_completion(ctx: click.Context, shell: str) -> None:
+        """Print the shell completion script."""
+        completion = get_completion_class(shell)
+        prog = ctx.find_root().info_name or "jumpy"
+        variable = f"_{prog.replace('-', '_').replace('.', '_').upper()}_COMPLETE"
+        click.echo(completion(ctx.find_root().command, {}, prog, variable).source())
 
 
 if __name__ == "__main__":
-    Jumpy().run()
+    Jumpy.cli()
