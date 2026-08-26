@@ -1872,44 +1872,6 @@ class SmartCutEncoder(Encoder):
 # ── CLI orchestrator ─────────────────────────────────────────────────
 
 
-class DefaultCommandGroup(click.Group):
-    """A group whose unrecognised first argument runs the default command.
-
-    `remsi.py clip.mp4` must keep working, but a bare command cannot carry
-    subcommands, and `completion` has to be one so the zsh config can use the
-    same `<tool> completion zsh` form it uses for every other script here.
-    """
-
-    default_command = "run"
-
-    def resolve_command(self, ctx, args):
-        try:
-            return super().resolve_command(ctx, args)
-        except click.UsageError:
-            command = self.get_command(ctx, self.default_command)
-            if command is None:
-                raise
-            return self.default_command, command, args
-
-    def format_help(self, ctx, formatter):
-        # Show the default command's own help; the group wrapper is an
-        # implementation detail and its bare help lists nothing useful.
-        command = self.get_command(ctx, self.default_command)
-        if command is not None:
-            command.format_help(ctx, formatter)
-        # ...but still list the siblings, or a subcommand reachable only by
-        # name is undiscoverable: the default command's help knows nothing
-        # about the group it hangs off.
-        rows = [
-            (name, self.get_command(ctx, name).get_short_help_str())
-            for name in self.list_commands(ctx)
-            if name != self.default_command
-        ]
-        if rows:
-            with formatter.section("Commands"):
-                formatter.write_dl(rows)
-
-
 class Remsi:
     """Removes silent + filler regions from video files via ffmpeg."""
 
@@ -2095,10 +2057,10 @@ class Remsi:
 
     @click.group(
         "remsi",
-        cls=DefaultCommandGroup,
         context_settings={"help_option_names": ["-h", "--help"]},
     )
-    def cli() -> None: ...
+    def cli() -> None:
+        """Remove silent + filler regions from video files via ffmpeg."""
 
     @cli.command("completion")
     @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")

@@ -28,6 +28,7 @@ class CpuVendor(StrEnum):
     INTEL = "GenuineIntel"
     AMD = "AuthenticAMD"
 
+
 class SmiMode(StrEnum):
     """Whether a view may call nvidia-smi, which powers a sleeping GPU up.
 
@@ -38,6 +39,7 @@ class SmiMode(StrEnum):
     AUTO = "auto"
     YES = "yes"
     NO = "no"
+
 
 @dataclass
 class GpuCard:
@@ -94,6 +96,7 @@ class GpuCard:
     def is_active(self) -> bool:
         return self.runtime_status == "active"
 
+
 @dataclass
 class GpuHolder:
     pid: int
@@ -107,13 +110,12 @@ class GpuHolder:
     # nv_start_device(). /dev/nvidiactl short-circuits to nvidia_ctl_open()
     # and DRM nodes take no ref at all (nv_drm_open assigns an id and
     # returns) — holders of those cannot block RTD3.
-    PINNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"^/dev/nvidia(\d+|-uvm)"
-    )
+    PINNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^/dev/nvidia(\d+|-uvm)")
 
     @property
     def pins(self) -> bool:
         return any(self.PINNING_PATTERN.match(str(node)) for node in self.nodes)
+
 
 @dataclass
 class PowerLimit:
@@ -127,12 +129,14 @@ class PowerLimit:
     def watts(self) -> str:
         return f"{self.microwatts / 1_000_000:.3g}"
 
+
 @dataclass
 class BatteryStatus:
     backend: str
     limit: str
     capacity: int | None
     rows: list[tuple[str, str]]
+
 
 class BatteryBackend(Protocol):
     """Charge-limit interface for one detected battery mechanism."""
@@ -143,6 +147,7 @@ class BatteryBackend(Protocol):
     def apply_on(self) -> str: ...
     def apply_off(self) -> str: ...
     def apply_limit(self, end: int, start: int | None) -> str: ...
+
 
 class ThresholdBattery:
     """Generic kernel charge_control_*_threshold ABI (ThinkPad, ASUS, …)."""
@@ -159,9 +164,7 @@ class ThresholdBattery:
     def create(cls, tdp: Tdp) -> ThresholdBattery | None:
         matches = sorted(
             path.parent
-            for path in cls.POWER_SUPPLY_PATH.glob(
-                "*/charge_control_end_threshold"
-            )
+            for path in cls.POWER_SUPPLY_PATH.glob("*/charge_control_end_threshold")
         )
         if not matches:
             return None
@@ -225,13 +228,12 @@ class ThresholdBattery:
 
         return "off (end 100%)"
 
+
 class IdeapadConservationBattery:
     """Lenovo IdeaPad/Yoga conservation_mode — binary, firmware-fixed ~60% cap."""
 
     name = "Lenovo conservation mode"
-    CONSERVATION_GLOB = (
-        "sys/bus/platform/drivers/ideapad_acpi/*/conservation_mode"
-    )
+    CONSERVATION_GLOB = "sys/bus/platform/drivers/ideapad_acpi/*/conservation_mode"
     POWER_SUPPLY_PATH = Path("/sys/class/power_supply")
 
     def __init__(self, tdp: Tdp, conservation: Path) -> None:
@@ -286,6 +288,7 @@ class IdeapadConservationBattery:
             "(cap is EC-enforced, not settable); use `tdp battery on` / `off`."
         )
 
+
 @dataclass
 class NvidiaSnapshot:
     """Passive sysfs view of one NVIDIA PCI function, plus its node holders.
@@ -329,6 +332,7 @@ class NvidiaSnapshot:
             return f"{m}m{s:02d}s"
 
         return f"{s}.{ms // 100}s"
+
 
 class Tdp:
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -480,8 +484,7 @@ class Tdp:
                 part for part in (proc.stderr.strip(), proc.stdout.strip()) if part
             )
             raise click.ClickException(
-                output
-                or f"{cmd[0]} failed with exit code {proc.returncode}."
+                output or f"{cmd[0]} failed with exit code {proc.returncode}."
             )
 
         return proc
@@ -519,7 +522,7 @@ class Tdp:
     def write_sysfs(self, path: Path, text: str) -> None:
         try:
             path.write_text(text)
-        except (PermissionError, OSError):
+        except PermissionError, OSError:
             self.run(["sudo", "tee", str(path)], input_text=text)
 
     def set_intel_profile(self, profile: str) -> None:
@@ -723,13 +726,15 @@ class Tdp:
                 stat = (proc_path / "stat").read_text()
                 fields = stat[stat.rindex(")") + 1 :].split()
                 state, ppid = fields[0], int(fields[1])
-            except (FileNotFoundError, PermissionError, OSError, ValueError, IndexError):
+            except FileNotFoundError, PermissionError, OSError, ValueError, IndexError:
                 state, ppid = "?", None
 
             command = self.read_optional(proc_path / "comm") or "?"
-            args = (self.read_optional(proc_path / "cmdline") or "").replace(
-                "\x00", " "
-            ).strip()
+            args = (
+                (self.read_optional(proc_path / "cmdline") or "")
+                .replace("\x00", " ")
+                .strip()
+            )
             holders.append(
                 GpuHolder(
                     pid=pid,
@@ -779,9 +784,7 @@ class Tdp:
             node_lines = []
             for node in holder.nodes:
                 label = (labels or {}).get(node, str(node))
-                style = (
-                    "red" if GpuHolder.PINNING_PATTERN.match(str(node)) else "dim"
-                )
+                style = "red" if GpuHolder.PINNING_PATTERN.match(str(node)) else "dim"
                 node_lines.append(f"[{style}]{label}[/]")
             row.append("\n".join(node_lines))
             if detailed:
@@ -995,15 +998,18 @@ class Tdp:
                 echo_output=True,
             )
         except click.ClickException as exc:
-            self.run([
-                "sudo",
-                "nvidia-smi",
-                "drain",
-                "-p",
-                gpu_pci_id,
-                "-m",
-                "0",
-            ], check=False)
+            self.run(
+                [
+                    "sudo",
+                    "nvidia-smi",
+                    "drain",
+                    "-p",
+                    gpu_pci_id,
+                    "-m",
+                    "0",
+                ],
+                check=False,
+            )
             raise click.ClickException(f"Failed to remove NVIDIA GPU: {exc}") from exc
 
         self.console.print(f"Removed NVIDIA GPU: [bold]{gpu_pci_id}[/]")
@@ -1125,8 +1131,7 @@ class Tdp:
             )
             if card.subsystem_vendor_id and card.subsystem_device_id:
                 ids += (
-                    f"\nsubsystem={card.subsystem_vendor_id}:"
-                    f"{card.subsystem_device_id}"
+                    f"\nsubsystem={card.subsystem_vendor_id}:{card.subsystem_device_id}"
                 )
 
             table.add_row(
@@ -1191,11 +1196,11 @@ class Tdp:
         holders = self.node_holders(nodes)
         labels = self.gpu_node_labels(cards, nodes)
         self.print_gpu_cards(cards)
-        self.print_holders(
-            holders, "GPU holders", labels=labels, detailed=True
-        )
+        self.print_holders(holders, "GPU holders", labels=labels, detailed=True)
 
-        if self.resolve_smi(smi, any(card.is_nvidia and card.is_active for card in cards)):
+        if self.resolve_smi(
+            smi, any(card.is_nvidia and card.is_active for card in cards)
+        ):
             self.print_gpu_smi()
 
     def intel_profile_choices(self) -> list[str]:
@@ -1227,7 +1232,7 @@ class Tdp:
             constraint = path.name.removesuffix("_power_limit_uw")
             try:
                 microwatts = int(path.read_text().strip())
-            except (FileNotFoundError, PermissionError, OSError, ValueError):
+            except FileNotFoundError, PermissionError, OSError, ValueError:
                 continue
 
             limits.append(
@@ -1487,9 +1492,7 @@ class Tdp:
             return "?"
 
         return (
-            self.fan_modes().get(raw)
-            or self.FAN_READ_ALIASES.get(raw)
-            or f"mode {raw}"
+            self.fan_modes().get(raw) or self.FAN_READ_ALIASES.get(raw) or f"mode {raw}"
         )
 
     def fan_rpms(self) -> list[tuple[str, int]]:
@@ -1529,8 +1532,7 @@ class Tdp:
         raw = self.read_optional(path)
         self.console.rule("[bold yellow]Fan[/]")
         self.console.print(
-            f"Mode: [bold]{self.fan_mode_label(raw)}[/]"
-            + (f" ({raw})" if raw else "")
+            f"Mode: [bold]{self.fan_mode_label(raw)}[/]" + (f" ({raw})" if raw else "")
         )
 
         table = Table(box=None)
@@ -1611,7 +1613,7 @@ class Tdp:
     def read_optional(path: Path) -> str | None:
         try:
             text = path.read_text().strip()
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError, PermissionError, OSError:
             return None
 
         return text or None
@@ -1620,7 +1622,7 @@ class Tdp:
     def resolve_optional(path: Path) -> Path | None:
         try:
             return path.resolve(strict=True)
-        except (FileNotFoundError, PermissionError, OSError):
+        except FileNotFoundError, PermissionError, OSError:
             return None
 
     @classmethod
@@ -1668,21 +1670,24 @@ class Tdp:
 
     @cli.command("show")
     def cmd_show() -> None:
+        """Show the current CPU power limits."""
         Tdp().show()
 
     @cli.command("list")
     def cmd_list() -> None:
+        """List the values `set` accepts on this CPU."""
         Tdp().list_values()
 
     @cli.command("set")
     @click.argument("value")
     @click.argument("extra", required=False)
     def cmd_set(value: str, extra: str | None) -> None:
+        """Set the CPU power limit or platform profile."""
         Tdp().set_value(value, extra)
 
     @cli.group("nvidia")
     def cmd_nvidia() -> None:
-        pass
+        """Inspect and control the NVIDIA dGPU."""
 
     @cmd_nvidia.command("show")
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
@@ -1697,44 +1702,52 @@ class Tdp:
         "--no-smi", "smi", flag_value=SmiMode.NO, help="Never query nvidia-smi."
     )
     def cmd_nvidia_status(pci_id: str | None, smi: SmiMode) -> None:
+        """Show dGPU power state, without waking it."""
         Tdp().show_nvidia(pci_id, smi=smi)
 
     @cmd_nvidia.command("limit")
     @click.argument("watts", type=float)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_limit(watts: float, pci_id: str | None) -> None:
+        """Set the dGPU power limit in watts."""
         Tdp().set_nvidia_power_limit(watts, pci_id)
 
     @cmd_nvidia.command("drain", hidden=True)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_drain(pci_id: str | None) -> None:
+        """Drain the dGPU so it can be removed."""
         Tdp().drain_nvidia(pci_id)
 
     @cmd_nvidia.command("undrain", hidden=True)
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_undrain(pci_id: str | None) -> None:
+        """Undrain a previously drained dGPU."""
         Tdp().undrain_nvidia(pci_id)
 
     @cmd_nvidia.command("remove")
     @click.option("--pci", "pci_id", help="GPU PCI ID.")
     def cmd_nvidia_remove(pci_id: str | None) -> None:
+        """Drain the dGPU and remove it from the PCI bus."""
         Tdp().remove_nvidia(pci_id)
 
     @cmd_nvidia.command("recover")
     def cmd_nvidia_recover() -> None:
+        """Undrain and rescan the PCI bus to bring the dGPU back."""
         Tdp().discover_nvidia()
 
     @cmd_nvidia.command("discover", hidden=True)
     def cmd_nvidia_discover() -> None:
+        """Undrain and rescan the PCI bus to bring the dGPU back."""
         Tdp().discover_nvidia()
 
     @cmd_nvidia.command("rescan", hidden=True)
     def cmd_nvidia_rescan() -> None:
+        """Undrain and rescan the PCI bus to bring the dGPU back."""
         Tdp().discover_nvidia()
 
     @cli.group("gpu")
     def cmd_gpu() -> None:
-        pass
+        """Inspect the active GPU."""
 
     @cmd_gpu.command("show")
     @click.option(
@@ -1748,73 +1761,86 @@ class Tdp:
         "--no-smi", "smi", flag_value=SmiMode.NO, help="Never query nvidia-smi."
     )
     def cmd_gpu_show(smi: SmiMode) -> None:
+        """Show GPU model, driver and power draw."""
         Tdp().show_gpu(smi)
 
     @cli.group("battery")
     def cmd_battery() -> None:
-        pass
+        """Inspect and control battery charging."""
 
     @cmd_battery.command("show")
     def cmd_battery_show() -> None:
+        """Show charge level, health and the active limit."""
         Tdp().show_battery()
 
     @cmd_battery.command("on")
     def cmd_battery_on() -> None:
+        """Enable charge limiting."""
         Tdp().battery_on()
 
     @cmd_battery.command("off")
     def cmd_battery_off() -> None:
+        """Disable charge limiting and charge to full."""
         Tdp().battery_off()
 
     @cmd_battery.command("limit")
     @click.argument("end", type=int)
     @click.argument("start", type=int, required=False)
     def cmd_battery_limit(end: int, start: int | None) -> None:
+        """Set the charge end threshold, and optionally the start."""
         Tdp().battery_limit(end, start)
 
     @cmd_battery.group("mode")
     def cmd_battery_mode() -> None:
-        pass
+        """Inspect and set the battery charge type."""
 
     @cmd_battery_mode.command("show")
     def cmd_battery_mode_show() -> None:
+        """Show the supported charge types and the active one."""
         Tdp().show_charge_types()
 
     @cmd_battery_mode.command("set")
     @click.argument("value")
     def cmd_battery_mode_set(value: str) -> None:
+        """Set the battery charge type."""
         Tdp().set_charge_type(value)
 
     @cli.group("fan")
     def cmd_fan() -> None:
-        pass
+        """Inspect and control the fan."""
 
     @cmd_fan.command("show")
     def cmd_fan_show() -> None:
+        """Show the current fan mode and speed."""
         Tdp().show_fan()
 
     @cmd_fan.command("set")
     @click.argument("mode")
     def cmd_fan_set(mode: str) -> None:
+        """Set the fan mode."""
         Tdp().set_fan_mode(mode)
 
     @cli.group("screen")
     def cmd_screen() -> None:
-        pass
+        """Inspect and control display power."""
 
     @cmd_screen.command("show")
     def cmd_screen_show() -> None:
+        """Show DPMS state per monitor."""
         Tdp().show_screen()
 
     @cmd_screen.command("off")
     @click.argument("monitor", required=False)
     def cmd_screen_off(monitor: str | None) -> None:
+        """Turn a monitor off via DPMS."""
         Tdp().set_dpms(False, monitor)
 
     @cmd_screen.command("on")
     @click.argument("monitor", required=False)
     def cmd_screen_on(monitor: str | None) -> None:
+        """Turn a monitor on via DPMS."""
         Tdp().set_dpms(True, monitor)
+
 
 if __name__ == "__main__":
     Tdp.cli()
