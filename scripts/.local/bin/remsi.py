@@ -1897,6 +1897,17 @@ class DefaultCommandGroup(click.Group):
         command = self.get_command(ctx, self.default_command)
         if command is not None:
             command.format_help(ctx, formatter)
+        # ...but still list the siblings, or a subcommand reachable only by
+        # name is undiscoverable: the default command's help knows nothing
+        # about the group it hangs off.
+        rows = [
+            (name, self.get_command(ctx, name).get_short_help_str())
+            for name in self.list_commands(ctx)
+            if name != self.default_command
+        ]
+        if rows:
+            with formatter.section("Commands"):
+                formatter.write_dl(rows)
 
 
 class Remsi:
