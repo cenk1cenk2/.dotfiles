@@ -1,6 +1,6 @@
 {
   "name": "Onedarker",
-  "base": "dark",
+  "base": "dark-ansi",
   "overrides": {
     "text": "#efefef",
     "inverseText": "#1e2127",
