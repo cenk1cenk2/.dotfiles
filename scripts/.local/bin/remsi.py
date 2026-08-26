@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
 import click
+from click.shell_completion import get_completion_class
 from dotlib.cli import create_logger
 from rich.console import Console
 from rich.table import Table
@@ -1871,6 +1872,33 @@ class SmartCutEncoder(Encoder):
 # ── CLI orchestrator ─────────────────────────────────────────────────
 
 
+class DefaultCommandGroup(click.Group):
+    """A group whose unrecognised first argument runs the default command.
+
+    `remsi.py clip.mp4` must keep working, but a bare command cannot carry
+    subcommands, and `completion` has to be one so the zsh config can use the
+    same `<tool> completion zsh` form it uses for every other script here.
+    """
+
+    default_command = "run"
+
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            command = self.get_command(ctx, self.default_command)
+            if command is None:
+                raise
+            return self.default_command, command, args
+
+    def format_help(self, ctx, formatter):
+        # Show the default command's own help; the group wrapper is an
+        # implementation detail and its bare help lists nothing useful.
+        command = self.get_command(ctx, self.default_command)
+        if command is not None:
+            command.format_help(ctx, formatter)
+
+
 class Remsi:
     """Removes silent + filler regions from video files via ffmpeg."""
 
@@ -2054,10 +2082,24 @@ class Remsi:
 
     # ── CLI ──────────────────────────────────────────────────────────
 
-    @click.command(
+    @click.group(
         "remsi",
+        cls=DefaultCommandGroup,
         context_settings={"help_option_names": ["-h", "--help"]},
     )
+    def cli() -> None: ...
+
+    @cli.command("completion")
+    @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")
+    @click.pass_context
+    def cmd_completion(ctx: click.Context, shell: str) -> None:
+        """Print the shell completion script."""
+        completion = get_completion_class(shell)
+        prog = ctx.find_root().info_name or "remsi.py"
+        variable = f"_{prog.replace('-', '_').replace('.', '_').upper()}_COMPLETE"
+        click.echo(completion(ctx.find_root().command, {}, prog, variable).source())
+
+    @cli.command("run")
     @click.argument(
         "inputs",
         nargs=-1,
@@ -2148,7 +2190,7 @@ class Remsi:
     )
     @click.option("-f", "--force", is_flag=True, help="Overwrite existing output.")
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-    def cli(
+    def cmd_run(
         inputs,
         output,
         noise,

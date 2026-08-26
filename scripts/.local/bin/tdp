@@ -17,11 +17,12 @@ from pathlib import Path
 from typing import ClassVar, Protocol
 
 import click
+from click.shell_completion import get_completion_class
+from dotlib.cli import create_logger
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from dotlib.cli import create_logger
 
 class CpuVendor(StrEnum):
     INTEL = "GenuineIntel"
@@ -1284,7 +1285,7 @@ class Tdp:
             self.console.print(Text(proc.stdout.rstrip()))
 
     def battery_backend(self) -> BatteryBackend:
-        backends: list[type[ThresholdBattery] | type[IdeapadConservationBattery]] = [
+        backends: list[type[ThresholdBattery | IdeapadConservationBattery]] = [
             ThresholdBattery,
             IdeapadConservationBattery,
         ]
@@ -1649,6 +1650,21 @@ class Tdp:
                             "AMD TDP preset does not take a second value."
                         )
                     self.set_amd_preset(value)
+
+    @cli.command("completion")
+    @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")
+    @click.pass_context
+    def cmd_completion(ctx: click.Context, shell: str) -> None:
+        """Print the shell completion script.
+
+        Click can also emit this through `_TDP_COMPLETE=zsh_source tdp`, but
+        every other tool here exposes a `completion` subcommand, so the zsh
+        config can use one form for all of them.
+        """
+        completion = get_completion_class(shell)
+        prog = ctx.find_root().info_name or "tdp"
+        variable = f"_{prog.replace('-', '_').replace('.', '_').upper()}_COMPLETE"
+        click.echo(completion(ctx.find_root().command, {}, prog, variable).source())
 
     @cli.command("show")
     def cmd_show() -> None:
