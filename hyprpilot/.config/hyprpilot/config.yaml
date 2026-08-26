@@ -115,6 +115,18 @@ patches:
     system_prompt:
       - "$patch": replace
 
+  # The cheap tier drives one-shot text rewrites (worktrunk commit messages),
+  # so it gets the same treatment: no MCP, no shared prompt. The other kilic.dev
+  # tiers stay full agents.
+  - $match:
+      profile: "personal/kilic/cheap"
+    mcp:
+      enabled: false
+    mcps:
+      - "$patch": replace
+    system_prompt:
+      - "$patch": replace
+
 # Native vendor CLIs the launcher exec()s directly. claude-code comes from
 # the built-in defaults.
 agents:
@@ -186,6 +198,36 @@ profiles:
     system_prompt: []
     mcp:
       enabled: false
+
+  # kilic.dev/* are agentgateway virtual models, each failing over across zai,
+  # ollama-cloud, codex and ollama-neutrino. Pinning a tier survives a single
+  # backing model's quota, which pinning a concrete model above does not.
+  # Named under `personal/kilic/` so the patch there supplies the API key and
+  # the opencode config dir.
+  - id: personal/kilic/cheap
+    agent: opencode
+    model: kilic/kilic.dev/cheap
+    mode: plan
+
+  - id: personal/kilic/default
+    agent: opencode
+    model: kilic/kilic.dev/default
+    mode: build
+
+  - id: personal/kilic/smart
+    agent: opencode
+    model: kilic/kilic.dev/smart
+    mode: build
+
+  - id: personal/kilic/max
+    agent: opencode
+    model: kilic/kilic.dev/max
+    mode: build
+
+  - id: personal/kilic/vision
+    agent: opencode
+    model: kilic/kilic.dev/vision
+    mode: plan
 
   - id: personal/codex/gpt-5.6-sol
     agent: codex
