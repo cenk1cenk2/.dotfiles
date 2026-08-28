@@ -181,9 +181,9 @@ profiles:
     model: kilic/ollama/cloud/deepseek-v4-pro:cloud
     mode: build
 
-  - id: personal/kilic/glm-5.2:cloud
+  - id: personal/kilic/glm-5.3:cloud
     agent: opencode
-    model: kilic/ollama/cloud/glm-5.2:cloud
+    model: kilic/ollama/cloud/glm-5.3:cloud
     mode: build
 
   - id: personal/kilic/glm-5.3-flash:cloud
@@ -285,9 +285,9 @@ profiles:
     model: ollama/deepseek-v4-pro
     mode: build
 
-  - id: work/ollama/glm-5.2
+  - id: work/ollama/glm-5.3
     agent: opencode
-    model: ollama/glm-5.2
+    model: ollama/glm-5.3
     mode: build
 
   - id: work/ollama/glm-5.3-flash
