@@ -74,25 +74,21 @@ from lib import (
     spec_from_options,
 )
 
-
 class Command(StrEnum):
     STATUS = "status"
     STOP = "stop"
     KILL = "kill"
-
 
 class Phase(StrEnum):
     RECORDING = "recording"
     WORKING = "working"
     OUTPUT = "output"
 
-
 @dataclass
 class SessionState:
     phase: Phase
     output: OutputMode
     enrich: EnrichProvider | None = None
-
 
 @dataclass
 class Response:
@@ -114,7 +110,6 @@ class Response:
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
-
 @dataclass(frozen=True)
 class SttPaths:
     socket_path: str
@@ -127,12 +122,10 @@ class SttPaths:
         stem = f"wayland-stt-{suffix}" if suffix else "wayland-stt"
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
-
 # Populated by the `stt` click callback once `--session` is known.
 _STT_PATHS: SttPaths = SttPaths.from_suffix("")
 
 log = logging.getLogger("speech.rpc")
-
 
 def _recv_request(conn: socket.socket) -> str:
     """Read one newline-framed request.
@@ -147,7 +140,6 @@ def _recv_request(conn: socket.socket) -> str:
         buf += data
 
     return buf.decode("utf-8", errors="replace").strip()
-
 
 def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
     """Send one newline-framed command to `socket_path`; return the raw reply.
@@ -184,7 +176,6 @@ def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
     finally:
         sock.close()
 
-
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
     parsed = []
@@ -195,7 +186,6 @@ def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
         parsed.append((name, rest))
 
     return tuple(parsed)
-
 
 class SocketSession:
     """UNIX-socket-backed live session: bind, serve, dispatch, unlink.
@@ -294,7 +284,6 @@ class SocketSession:
             pass
         self._signal_waybar()
 
-
 class SttSession(SocketSession):
     """Live recording session."""
 
@@ -375,7 +364,6 @@ class SttSession(SocketSession):
         # A file sink carries a path the socket payload does not, so
         # build_output refuses it and the client is told why.
         self.set_output(build_output(mode))
-
 
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
@@ -805,18 +793,15 @@ class Stt:
         """Exit 0 if a recording is live."""
         sys.exit(0 if Stt(SttAdapterHyprwhspr()).is_recording() else 1)
 
-
 class TtsPhase(StrEnum):
     WORKING = "working"
     SPEAKING = "speaking"
-
 
 @dataclass
 class TtsState:
     phase: TtsPhase
     voice: str
     chars: int
-
 
 @dataclass
 class TtsResponse:
@@ -837,7 +822,6 @@ class TtsResponse:
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
-
 @dataclass(frozen=True)
 class TtsPaths:
     socket_path: str
@@ -850,10 +834,8 @@ class TtsPaths:
         stem = f"wayland-tts-{suffix}" if suffix else "wayland-tts"
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
-
 # Populated by the `tts` click callback once `--session` is known.
 _TTS_PATHS: TtsPaths = TtsPaths.from_suffix("")
-
 
 class TtsSession(SocketSession):
     """Live playback session."""
@@ -892,7 +874,6 @@ class TtsSession(SocketSession):
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
 
-
 def tts_speak_options():
     """Stack the synthesis knobs `speak` and `toggle` share.
 
@@ -912,7 +893,7 @@ def tts_speak_options():
         click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
         click.option("--model", default=None, help="TTS model id."),
         click.option(
-            "--speed", type=float, default=1.25, help="Speaking rate multiplier."
+            "--speed", type=float, default=1.3, help="Speaking rate multiplier."
         ),
         click.option(
             "--format",
@@ -971,7 +952,6 @@ def tts_speak_options():
         return f
 
     return decorate
-
 
 class Tts:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
@@ -1253,7 +1233,6 @@ class Tts:
         """Exit 0 if playback is live."""
         sys.exit(0 if Tts().is_speaking() else 1)
 
-
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
@@ -1261,7 +1240,6 @@ def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
     create_logger(verbose)
     set_headless(headless)
-
 
 cli.add_command(Stt.cli, "stt")
 cli.add_command(Tts.cli, "tts")
