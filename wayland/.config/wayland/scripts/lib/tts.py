@@ -46,7 +46,6 @@ DEFAULT_TTS_MODEL = "kilic.dev/tts"
 # American male — the least robotic of the Kokoro voices.
 DEFAULT_TTS_VOICE = "am_michael"
 DEFAULT_TTS_SAMPLE_RATE = 24000
-DEFAULT_TTS_MAX_CHARS = 5000
 DEFAULT_TTS_TIMEOUT = 120.0
 DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
 
@@ -72,7 +71,6 @@ class TtsSpec:
     base_url: str = DEFAULT_BASE_URL
     api_key_env: str = DEFAULT_API_KEY_ENV
     timeout: float = DEFAULT_TTS_TIMEOUT
-    max_chars: int = DEFAULT_TTS_MAX_CHARS
     user_agent: str = "tts/1.0"
 
 
@@ -172,9 +170,9 @@ def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
     killed mid-utterance, or `-autoexit` beating the tail of the body.
 
     The `wait()` is deliberately untimed: it blocks for exactly as long as
-    the audio lasts, which `--max-chars` already bounds. The session's
-    socket thread keeps answering while it runs, so `tts kill` stays the
-    escape hatch for a player that never returns."""
+    the audio lasts. The session's socket thread keeps answering while it
+    runs, so `tts kill` stays the escape hatch for a player that never
+    returns."""
     log.debug("spawn: %s", " ".join(cmd))
     proc = subprocess.Popen(
         cmd,

@@ -33,7 +33,6 @@ from lib import (
     DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
-    DEFAULT_TTS_MAX_CHARS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
@@ -893,7 +892,7 @@ def tts_speak_options():
         click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
         click.option("--model", default=None, help="TTS model id."),
         click.option(
-            "--speed", type=float, default=1.3, help="Speaking rate multiplier."
+            "--speed", type=float, default=1.25, help="Speaking rate multiplier."
         ),
         click.option(
             "--format",
@@ -927,12 +926,6 @@ def tts_speak_options():
             type=float,
             default=DEFAULT_TTS_TIMEOUT,
             help="Backend deadline in seconds.",
-        ),
-        click.option(
-            "--max-chars",
-            type=int,
-            default=DEFAULT_TTS_MAX_CHARS,
-            help="Truncate longer input.",
         ),
         click.option(
             "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
@@ -1014,14 +1007,7 @@ class Tts:
             self._notify(f"{self._input.mode.value.capitalize()} is empty")
             return None
 
-        text = text.strip()
-        if len(text) > self._spec.max_chars:
-            self.log.warning(
-                "truncating %d chars to %d", len(text), self._spec.max_chars
-            )
-            self._notify(f"Truncated to {self._spec.max_chars} characters")
-            text = text[: self._spec.max_chars]
-        return text
+        return text.strip()
 
     def speak(self) -> None:
         assert self._input is not None, "speak requires an input adapter"
@@ -1158,7 +1144,6 @@ class Tts:
         base_url,
         api_key_env,
         timeout,
-        max_chars,
         copy,
         enrich,
         **enrich_opts,
@@ -1193,7 +1178,6 @@ class Tts:
             base_url=base_url,
             api_key_env=api_key_env,
             timeout=timeout,
-            max_chars=max_chars,
             user_agent="speech/1.0",
         )
 
