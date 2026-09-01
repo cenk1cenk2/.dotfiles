@@ -44,7 +44,6 @@ greetd-tuigreet
 grim
 grub
 gst-plugin-pipewire
-gtk-theme-material-black
 gvfs
 gvfs-mtp
 gvfs-nfs

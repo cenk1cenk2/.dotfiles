@@ -7,7 +7,7 @@ echo "Loading packages from: $LOAD"
 
 cat "$LOAD"
 
-yay -S --needed --noconfirm '*' "${@}" - <"$LOAD"
+yay -S --needed --noconfirm "${@}" - <"$LOAD"
 
 case "$LOAD" in
 "gaming.txt")
