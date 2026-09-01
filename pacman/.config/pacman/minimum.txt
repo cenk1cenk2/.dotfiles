@@ -1,6 +1,4 @@
 # libva-vdpau-driver
-# tlp
-# tlpui
 aspell
 aspell-en
 base
@@ -51,6 +49,7 @@ gvfs-smb
 gweather-locations
 gzip
 handlr-regex
+hunspell
 hunspell-en_us
 imagemagick
 inxi
@@ -114,7 +113,6 @@ swayimg
 swaync
 swayosd
 tailscale
-tailscale
 tmux
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
@@ -145,7 +143,6 @@ xdg-desktop-portal
 xdg-desktop-portal-termfilechooser-hunkyburrito-git
 xdg-desktop-portal-wlr
 xdg-user-dirs
-xdg-utils-handlr
 xfsprogs
 xorg-server
 xorg-xauth
