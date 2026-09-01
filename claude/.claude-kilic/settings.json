@@ -50,7 +50,6 @@
     "ask": []
   },
   "model": "opus[1m]",
-  "outputStyle": "Concise",
   "hooks": {
     "Notification": [
       {
@@ -69,6 +68,7 @@
     "claude-md-management@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
+  "outputStyle": "Concise",
   "viewMode": "default",
   "spinnerTipsEnabled": false,
   "syntaxHighlightingDisabled": false,

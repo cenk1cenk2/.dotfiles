@@ -50,7 +50,6 @@
     "ask": []
   },
   "model": "opus[1m]",
-  "outputStyle": "Concise",
   "hooks": {
     "Notification": [
       {
@@ -69,6 +68,7 @@
     "claude-md-management@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
+  "outputStyle": "Concise",
   "viewMode": "default",
   "spinnerTipsEnabled": false,
   "syntaxHighlightingDisabled": false,
@@ -83,6 +83,7 @@
     "mode": "hold"
   },
   "autoMemoryEnabled": true,
+  "skipWorkflowUsageWarning": true,
   "theme": "custom:onedarker",
   "editorMode": "normal",
   "verbose": false,
@@ -91,6 +92,5 @@
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "skipWorkflowUsageWarning": true,
   "voiceEnabled": true
 }
