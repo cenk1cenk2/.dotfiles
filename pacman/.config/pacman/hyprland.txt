@@ -1,3 +1,4 @@
+# hyprqt6engine
 hypr-zoom
 hyprcursor
 hypridle
@@ -7,7 +8,6 @@ hyprlock
 hyprpaper
 hyprpolkitagent
 hyprpwcenter
-hyprqt6engine
 hyprshutdown
 hyprwhspr
 libnewt

@@ -24,6 +24,7 @@ dconf-editor
 debtap
 dhcping
 dmenu
+dmidecode
 downgrade
 efibootmgr
 enchant
@@ -65,6 +66,7 @@ linux-firmware
 linux-headers
 linux-zen
 linux-zen-headers
+lshw
 lxappearance
 mailcap
 man-db
@@ -113,7 +115,9 @@ swayimg
 swaync
 swayosd
 tailscale
+tcpdump
 tmux
+ttf-ms-win11-auto
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
 ttf-roboto-mono-nerd
