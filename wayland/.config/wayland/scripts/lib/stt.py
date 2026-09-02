@@ -119,14 +119,27 @@ class SttAdapterHyprwhspr:
     def capture(self) -> str | None:
         # Blocks until the recording stops, which is what makes `stop`
         # reachable only from the second press or the session socket.
+        cmd = ["hyprwhspr", "record", "capture"]
+        log.debug("spawn: %s", " ".join(cmd))
         capture = subprocess.Popen(
-            ["hyprwhspr", "record", "capture"],
+            cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-        stdout, _ = capture.communicate()
+        stdout, stderr = capture.communicate()
+        message = stderr.decode("utf-8", errors="replace").strip()
 
-        return stdout.decode("utf-8", errors="replace").strip() if stdout else None
+        # A daemon that is down exits non-zero with nothing on stdout, which
+        # is what silence looks like too: the returncode is the only thing
+        # that tells the two apart.
+        if capture.returncode != 0:
+            raise subprocess.CalledProcessError(
+                capture.returncode, cmd, output=stdout, stderr=message
+            )
+
+        log.debug("hyprwhspr stderr: %s", message)
+
+        return stdout.decode("utf-8", errors="replace").strip()
 
 
 class SttAdapterHttp:

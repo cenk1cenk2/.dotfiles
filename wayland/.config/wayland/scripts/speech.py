@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -455,7 +456,12 @@ class Stt:
             server.start()
         try:
             try:
-                text = (self._adapter.capture() or "").strip()
+                captured = self._adapter.capture()
+            except subprocess.CalledProcessError as e:
+                reason = e.stderr or f"exit {e.returncode}"
+                self.log.error("recorder failed: %s", reason)
+                self._notify(f"Recorder failed:\n{reason}")
+                sys.exit(1)
             except (
                 urllib.error.URLError,
                 urllib.error.HTTPError,
@@ -467,9 +473,15 @@ class Stt:
                 self._notify("Transcription failed")
                 sys.exit(1)
 
+            if captured is None:
+                self.log.error("capture produced nothing to transcribe")
+                self._notify("Capture failed")
+                sys.exit(1)
+
             # Exit non-zero rather than write an empty sink: a caller that
             # reads the output file cannot tell "silence" from "the model
             # never answered", and the clipboard would be cleared.
+            text = captured.strip()
             if not text:
                 self.log.warning("empty transcription")
                 self._notify("No transcription captured")
