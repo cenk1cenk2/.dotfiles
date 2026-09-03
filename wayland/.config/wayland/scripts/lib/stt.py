@@ -130,24 +130,38 @@ class SttStreaming(SttRecorder, Protocol):
 class SttAdapterHyprwhspr:
     provider = SttProvider.HYPRWHSPR
 
+    # These run from the waybar poll every few seconds. With the daemon down
+    # the client opens its control FIFO and waits on `select` before giving
+    # up, so an unbounded call would hang the bar rather than answer it.
+    PROBE_TIMEOUT = 1.0
+
+    def _probe(self, *args: str) -> subprocess.CompletedProcess | None:
+        cmd = ["hyprwhspr", "record", *args]
+        log.debug("spawn: %s", " ".join(cmd))
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.PROBE_TIMEOUT,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            log.debug("hyprwhspr %s unavailable: %s", " ".join(args), e)
+            return None
+
     def is_recording(self) -> bool:
-        result = subprocess.run(
-            ["hyprwhspr", "record", "status"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        result = self._probe("status")
+        if result is None:
+            return False
+
         return "Recording in progress" in (result.stdout + result.stderr)
 
     def stop(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "stop"], capture_output=True, check=False
-        )
+        self._probe("stop")
 
     def cancel(self) -> None:
-        subprocess.run(
-            ["hyprwhspr", "record", "cancel"], capture_output=True, check=False
-        )
+        self._probe("cancel")
 
     def capture(self) -> str | None:
         # Blocks until the recording stops, which is what makes `stop`
