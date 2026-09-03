@@ -562,12 +562,26 @@ class Stt:
         def tick_level() -> None:
             osd.elapsed(level=_level(self._adapter) or 0.0)
 
+        # Turns go to the sink as they close, not just to the card, when the
+        # sink can take them and nothing downstream will rewrite them. An
+        # enrichment would, so it rules this out. Read off this invocation
+        # rather than the session: a socket override lands after the capture,
+        # and by then the early turns are already out.
+        live_sink = self._output
+        live = (
+            stream
+            and self._enricher is None
+            and isinstance(live_sink, OutputStreaming)
+            and isinstance(self._adapter, SttStreaming)
+        )
         tick_level()
         if isinstance(self._adapter, SttStreaming):
 
             def on_turn(text: str) -> None:
                 transcript.append(text)
                 osd.elapsed(osd.tail(" ".join(transcript)), apart=True)
+                if live and live_sink is not None:
+                    live_sink.write(text if len(transcript) == 1 else f" {text}")
 
             self._adapter.subscribe(on_turn)
         # swayosd hides a card when its own timer runs out, so holding one open
@@ -671,7 +685,21 @@ class Stt:
 
             if server:
                 server.set_phase(Phase.OUTPUT)
-            output.write(text)
+            # Whatever the take ended up being, minus what already went out a
+            # turn at a time. Only a clean prefix is trusted: anything else
+            # means the socket's turns and the finished text disagree, and
+            # writing the difference would duplicate or reorder a dictation
+            # that is already in the user's window.
+            emitted = " ".join(transcript)
+            if not live or output is not live_sink:
+                # A mid-take override asked for a different sink, so that one
+                # has had nothing yet and takes the whole take.
+                output.write(text)
+            elif text.startswith(emitted):
+                if rest := text[len(emitted) :]:
+                    output.write(rest)
+            else:
+                self.log.warning("typed turns do not prefix the take; not writing again")
             osd.dismiss(f"{len(text)} chars", icon=OsdIcon.DONE)
             # After the write, not before: the chime means "the text has
             # landed", and a caller typing into a focused window wants the
@@ -1026,6 +1054,12 @@ class Stt:
             return
 
         Stt.log.info("%s text: %d chars", input_mode.value, len(text))
+        if isinstance(enricher, EnrichStreaming) and isinstance(
+            output_adapter, OutputStreaming
+        ):
+            output_adapter.write_stream(enricher.enrich_stream(text))
+            return
+
         enriched = enricher.enrich(text)
         if enriched and enriched.strip():
             output_adapter.write(enriched.strip())
