@@ -295,6 +295,8 @@ class SttAdapterRealtime:
     CHUNK_MS = 100
     # The server defaults to 0.9 and 550ms, which splits a sentence at any
     # pause for thought. Lower threshold, longer silence: fewer, whole turns.
+    # A breath between sentences does not close a turn at any of these
+    # settings; roughly two seconds of silence does.
     VAD_THRESHOLD = 0.5
     VAD_SILENCE_MS = 1200
     # Silence pushed after the microphone closes so the server's own detector
