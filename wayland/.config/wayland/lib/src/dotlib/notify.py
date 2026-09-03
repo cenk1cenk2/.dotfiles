@@ -209,10 +209,11 @@ class Notification:
             self._started = time.monotonic()
         seconds = int(time.monotonic() - self._started)
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
-        # `apart` drops the message below the clock with a blank line between,
-        # for a body that is a clipped extract rather than a status: the gap is
-        # what says the text is a fragment of something longer.
-        gap = "\n\n" if apart and message else "  "
+        # The message goes under the clock, never beside it: the card sits
+        # against a screen edge, where it has rows to spare and no width. A
+        # blank line marks a clipped extract, which is a fragment of something
+        # longer rather than a status about the whole.
+        gap = "\n\n" if apart and message else "\n"
         text = f"{stamp}{gap}{message}".rstrip()
         options = [
             ("CUSTOM-PROGRESS-TEXT", self._titled(text)),
