@@ -559,7 +559,11 @@ class Stt:
             # One line: swayosd renders a progress card's text as a single
             # row, so the turns are joined and the end kept rather than
             # stacked, which shows only the clock.
-            osd.elapsed(osd.tail(" ".join(transcript)), level=_level(self._adapter))
+            osd.elapsed(
+                osd.tail(" ".join(transcript)),
+                level=_level(self._adapter),
+                apart=True,
+            )
 
         # One shape for both writers, so a turn landing between ticks is not
         # a bare line that the next tick wipes.

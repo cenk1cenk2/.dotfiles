@@ -65,8 +65,9 @@ class Notification:
     # refreshes, or it blinks out in between.
     TICK_HOLD_MS = 2000
     DISMISS_MS = 200
-    # How much of a growing text `tail` keeps. One line at the card's width.
-    CARD_CHARS = 52
+    # How much of a growing text `tail` keeps. The card wraps rather than
+    # clipping, so this is a couple of lines of context, not one row.
+    CARD_CHARS = 128
     # A wedged call must never delay the work it is describing.
     TIMEOUT = 2.0
 
@@ -169,7 +170,9 @@ class Notification:
         seen = ""
         for chunk in chunks:
             seen += chunk
-            self.send(self.tail(seen), icon=icon)
+            # Set apart from the title for the same reason `elapsed` does it:
+            # the line is a clipped extract, not a status.
+            self.send(f"\n{self.tail(seen)}", icon=icon)
             yield chunk
 
     def restart(self) -> None:
@@ -183,6 +186,7 @@ class Notification:
         *,
         icon: OsdIcon | None = None,
         level: float | None = None,
+        apart: bool = False,
     ) -> None:
         """Say it again with the time since this notification first went up.
 
@@ -196,7 +200,10 @@ class Notification:
             self._started = time.monotonic()
         seconds = int(time.monotonic() - self._started)
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
-        text = f"{stamp}  {message}".rstrip()
+        # `apart` drops the message below the clock with a blank line between,
+        # for a body that is a clipped extract rather than a status: the gap is
+        # what says the text is a fragment of something longer.
+        text = f"{stamp}{'\n\n' if apart else '  '}{message}".rstrip()
         if level is None:
             self.send(text, timeout or self.TICK_HOLD_MS, icon=icon)
             return
