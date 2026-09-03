@@ -162,6 +162,10 @@ class Notification:
             self.send(self.tail(seen), icon=icon)
             yield chunk
 
+    def restart(self) -> None:
+        """Re-anchor the clock, so the next `elapsed` counts from now."""
+        self._started = 0.0
+
     def elapsed(
         self,
         message: str = "",

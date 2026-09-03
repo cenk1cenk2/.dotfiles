@@ -1116,6 +1116,11 @@ class TtsSession(SocketSession):
         # utterance queueing and draining between ticks.
         self._signal_waybar()
 
+    @property
+    def phase(self) -> TtsPhase:
+        with self._lock:
+            return self.state.phase
+
     def card(self) -> str:
         with self._lock:
             chars = self.state.chars
@@ -1397,6 +1402,9 @@ class Tts:
         try:
             with TtsAdapterHttp(spec).synth(text) as stream:
                 session.set_phase(TtsPhase.SPEAKING)
+                # The clock measures speech, so it starts here rather than at
+                # the top of a run that spends its first seconds rewriting.
+                self.NOTIFICATION.restart()
                 # Quiet the room at playback, not at synthesis: the backend
                 # can take seconds, and pausing before there is anything to
                 # hear just makes the wait silent.
@@ -1489,6 +1497,9 @@ class Tts:
 
         def tick() -> None:
             while not ticking.wait(1.0):
+                if session.phase is not TtsPhase.SPEAKING:
+                    osd.send(session.card(), osd.TICK_HOLD_MS, icon=OsdIcon.THINKING)
+                    continue
                 meter = self._meter
                 osd.elapsed(
                     session.card(), level=_meter(meter.peak) if meter else None
