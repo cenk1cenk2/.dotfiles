@@ -628,6 +628,11 @@ class Stt:
                 sys.exit(1)
 
             self.log.info("captured %d chars", len(text))
+            if failure := getattr(self._adapter, "socket_error", None):
+                # The take is fine, but it was not the realtime one, and the
+                # card is the only place that difference is visible.
+                self.log.warning("realtime fell back to batch: %s", failure)
+                self._notify(f"Realtime unavailable: {failure}", timeout=6000)
 
             # The socket overrides land on the session, so read both back
             # from it rather than from the values this process started with.

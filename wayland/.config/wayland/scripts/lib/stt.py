@@ -323,6 +323,9 @@ class SttAdapterRealtime:
         self.mic = mic or MicCapture()
         self.model = spec.model or DEFAULT_STT_MODEL
         self._stopped = threading.Event()
+        # Set when the socket refused, so a caller can say so rather than
+        # silently serving a batch transcript.
+        self.socket_error: str | None = None
         self._segments: list[tuple[int, str]] = []
         self._on_segment: Callable[[str], None] | None = None
         self._lock = threading.Lock()
@@ -461,7 +464,12 @@ class SttAdapterRealtime:
                 )
             )
         except (OSError, websocket.WebSocketException) as e:
+            # Loud, because the take still succeeds: it falls back to one
+            # transcript at the end, which looks exactly like realtime that
+            # produced no turns. Nothing on stderr survives a compositor
+            # keybind, so the failure has to reach the caller.
             log.warning("realtime unavailable (%s); recording for batch", e)
+            self.socket_error = str(e) or e.__class__.__name__
             ws = None
 
         if ws is None:

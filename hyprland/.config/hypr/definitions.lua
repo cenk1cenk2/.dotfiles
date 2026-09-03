@@ -119,8 +119,11 @@ M.player = {
 -- Recording
 M.recorder = "~/.config/wayland/scripts/recorder.py"
 
--- Speech-to-text
-M.speech = [[zsh -c '~/.config/wayland/scripts/speech.py "$@"' zsh]]
-M.copywriter = [[zsh -c '~/.config/wayland/scripts/copywriter.py "$@"' zsh]]
+-- Speech-to-text. stderr goes to a log because a compositor keybind has
+-- nowhere to put it, and a run that falls back to a batch transcript says so
+-- only there.
+local speech_log = [[2>>"${XDG_STATE_HOME:-$HOME/.local/state}/speech.log"]]
+M.speech = ([[zsh -c '~/.config/wayland/scripts/speech.py "$@" %s' zsh]]):format(speech_log)
+M.copywriter = ([[zsh -c '~/.config/wayland/scripts/copywriter.py "$@" %s' zsh]]):format(speech_log)
 
 return M
