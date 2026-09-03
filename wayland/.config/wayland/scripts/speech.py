@@ -34,9 +34,6 @@ from dotlib.notify import (
     Chime,
     ChimeDirection,
     Notification,
-)
-from dotlib.osd import (
-    Osd,
     OsdIcon,
 )
 
@@ -433,7 +430,7 @@ class SttSession(SocketSession):
 
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
-    NOTIFICATION = Notification("Speech-to-Text", ICON)
+    NOTIFICATION = Notification("Speech-to-Text", ICON, OsdIcon.MIC)
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
     USER_PROMPT = (
         "Clean up the following speech transcription:\n"
@@ -538,12 +535,12 @@ class Stt:
         # it is heard at full volume rather than ducking itself.
         Chime(ChimeDirection.UP).play()
 
-        osd = Osd("Recording", OsdIcon.MIC)
-        osd.show("listening")
+        osd = self.NOTIFICATION
+        osd.send("listening")
         # Finalised turns only — the endpoint publishes no partial deltas, so
         # what reaches the card is never taken back.
         if isinstance(self._adapter, SttStreaming):
-            self._adapter.subscribe(lambda text: osd.show(text[-48:]))
+            self._adapter.subscribe(lambda text: osd.send(text[-48:]))
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
@@ -616,7 +613,7 @@ class Stt:
                 and isinstance(enricher, EnrichStreaming)
                 and isinstance(output, OutputAdapterType)
             ):
-                osd.show("enriching", icon=OsdIcon.THINKING)
+                osd.send("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     OutputAdapterClipboard().write(text)
                 if server:
@@ -627,7 +624,7 @@ class Stt:
                 return
 
             if enricher is not None:
-                osd.show("enriching", icon=OsdIcon.THINKING)
+                osd.send("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
@@ -1067,7 +1064,7 @@ class TtsSession(SocketSession):
         voice: str,
         chars: int,
         suppressor: PlaybackSuppressor,
-        osd: Osd | None = None,
+        osd: Notification | None = None,
     ):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
@@ -1102,7 +1099,7 @@ class TtsSession(SocketSession):
         if self.osd is not None:
             with self._lock:
                 chars = self.state.chars
-            self.osd.show(f"{chars} chars{self.waiting()}")
+            self.osd.send(f"{chars} chars{self.waiting()}")
 
     def waiting(self) -> str:
         """`, 2 waiting` when something is queued, empty when nothing is."""
@@ -1267,7 +1264,7 @@ def tts_speak_options():
 
 class Tts:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
-    NOTIFICATION = Notification("Text-to-Speech", ICON)
+    NOTIFICATION = Notification("Text-to-Speech", ICON, OsdIcon.SPEAKER)
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
@@ -1457,7 +1454,7 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
-        osd = Osd("Speaking", OsdIcon.SPEAKER)
+        osd = self.NOTIFICATION
         session = TtsSession(spec.voice, len(text), self._suppressor, osd)
         session.start()
         try:
@@ -1465,7 +1462,7 @@ class Tts:
             # it is handed, so the rewrite has to land before the audio does.
             text = self._enrich(text, session)
             while True:
-                osd.show(f"{len(text)} chars{session.waiting()}")
+                osd.send(f"{len(text)} chars{session.waiting()}")
                 if not self._play(text, session):
                     break
                 queued = session.pop()

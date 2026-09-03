@@ -12,6 +12,7 @@ import math
 import struct
 import subprocess
 import sys
+import time
 from enum import StrEnum
 
 from .desktop import is_headless
@@ -19,27 +20,139 @@ from .desktop import is_headless
 log = logging.getLogger(__name__)
 
 
+class NotifyChannel(StrEnum):
+    """Where a message goes.
+
+    The card is the default because it replaces itself in place, so a job that
+    reports several times leaves one row rather than a stack of popups. The
+    desktop notification is for something worth surviving the glance away."""
+
+    OSD = "osd"
+    DESKTOP = "desktop"
+
+
+class OsdIcon(StrEnum):
+    """Freedesktop icon names, so the card says what kind of work this is."""
+
+    MIC = "audio-input-microphone"
+    SPEAKER = "audio-speakers"
+    THINKING = "system-run"
+    DONE = "object-select"
+    ERROR = "dialog-error"
+
+
 class Notification:
-    """A desktop notification with a fixed title and icon.
+    """Telling the user how a piece of work is going.
 
-    Title and icon belong to the script rather than the message, so they are
-    bound once and every call after that carries only what changed."""
+    Title and icons belong to the script rather than the message, so they are
+    bound once and every call after that carries only what changed. The same
+    message text serves either channel; only the icon differs, because
+    notify-send wants a path and swayosd wants a freedesktop name.
 
-    def __init__(self, title: str, icon: str):
+    Both channels go quiet when headless — there is nobody to tell."""
+
+    BUS = "org.erikreider.swayosd-server"
+    PATH = "/org/erikreider/swayosd"
+    INTERFACE = "org.erikreider.swayosd"
+
+    # swayosd hides a card when its timer expires and offers no explicit hide,
+    # so a card is held open by re-firing inside this window and let go by
+    # firing once with a short one.
+    HOLD_MS = 2000
+    DISMISS_MS = 200
+    # A wedged call must never delay the work it is describing.
+    TIMEOUT = 2.0
+
+    def __init__(
+        self,
+        title: str,
+        icon: str = "",
+        osd_icon: OsdIcon | None = None,
+        channel: NotifyChannel = NotifyChannel.OSD,
+    ):
         self.title = title
         self.icon = icon
+        self.osd_icon = osd_icon
+        self.channel = channel
+        self._started = 0.0
 
-    def send(self, message: str, timeout: int | None = None) -> None:
-        """Post the notification. Failures are swallowed."""
-        if is_headless():
-            log.debug("headless: dropping notification %r", message)
-            return
+    # ── the two channels ──────────────────────────────────────────
 
+    def _desktop(self, message: str, timeout: int | None) -> None:
         cmd = ["notify-send", self.title, message, "-i", self.icon]
         if timeout:
             cmd.extend(["-t", str(timeout)])
         log.debug("spawn: %s", " ".join(cmd))
         subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)
+
+    def _card(self, message: str, duration_ms: int, icon: OsdIcon | None) -> None:
+        """One `HandleAction` on swayosd's bus.
+
+        The bus rather than `swayosd-client`, which is a thin wrapper over this
+        single call: a card that ticks a clock would otherwise cost a process a
+        second. The interface is undocumented and was read off `dbus-monitor`
+        while the client ran."""
+        options = [("DURATION", str(duration_ms))]
+        chosen = icon or self.osd_icon
+        if chosen:
+            options.insert(0, ("CUSTOM-ICON", chosen.value))
+        flat: list[str] = []
+        for key, option in options:
+            flat += [key, option]
+
+        text = f"{self.title}  {message}" if self.title else message
+        cmd = [
+            "busctl", "--user", "call", self.BUS, self.PATH, self.INTERFACE,
+            "HandleAction", "ssa(ss)", "CUSTOM-MESSAGE", text,
+            str(len(options)), *flat,
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=self.TIMEOUT, check=False)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            # A card is never the point of the work it describes.
+            log.warning("osd call failed: %s", e)
+
+    # ── what callers use ──────────────────────────────────────────
+
+    def send(
+        self,
+        message: str,
+        timeout: int | None = None,
+        *,
+        icon: OsdIcon | None = None,
+        channel: NotifyChannel | None = None,
+    ) -> None:
+        """Say something, on this notification's channel or an override."""
+        if is_headless():
+            log.debug("headless: dropping %r", message)
+            return
+
+        if (channel or self.channel) is NotifyChannel.DESKTOP:
+            self._desktop(message, timeout)
+            return
+
+        if not self._started:
+            self._started = time.monotonic()
+        self._card(message, timeout or self.HOLD_MS, icon)
+
+    def elapsed(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
+        """Say it again with the time since this notification first went up.
+
+        The clock is ours: swayosd renders the string it is handed and has no
+        notion of one running."""
+        seconds = int(time.monotonic() - self._started) if self._started else 0
+        stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
+        self.send(f"{stamp}  {message}".rstrip(), icon=icon)
+
+    def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
+        """Let it go, after a beat if there is a parting word."""
+        self._started = 0.0
+        if message and not is_headless():
+            if self.channel is NotifyChannel.DESKTOP:
+                self._desktop(message, None)
+            else:
+                self._card(message, self.DISMISS_MS, icon)
 
 
 class ChimeDirection(StrEnum):
