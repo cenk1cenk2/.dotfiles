@@ -24,11 +24,3 @@ window#osd segmentedprogress {
   min-height: 12px;
   min-width: 128px;
 }
-
-/* A message card is image + label with no bar, so its label is the second
- * child; the volume popup's is the third, behind its progressbar. That index
- * is the only thing telling the two apart in CSS, and it is what keeps this
- * width off the volume popup. */
-window#osd #container label:nth-child(2) {
-  min-width: 420px;
-}

@@ -557,24 +557,17 @@ class Stt:
         # what reaches the card is never taken back.
         transcript: list[str] = []
 
-        def draw() -> None:
-            # One card kind for the whole take. swayosd rebuilds the surface
-            # when the action changes, so a card that started as a meter and
-            # became a transcript tore itself down on the first turn and the
-            # text was never up long enough to read. A message card holds
-            # both the clock and the words; a progress card's text column is
-            # too narrow for a sentence, so the meter is what it cannot keep.
-            said = osd.tail(" ".join(transcript))
-            osd.elapsed(said, apart=bool(said))
+        # The meter and the turns arrive on different threads, so each
+        # updates only its own half and the card keeps the rest.
+        def tick_level() -> None:
+            osd.elapsed(level=_level(self._adapter) or 0.0)
 
-        # One shape for both writers, so a turn landing between ticks is not
-        # a bare line that the next tick wipes.
-        draw()
+        tick_level()
         if isinstance(self._adapter, SttStreaming):
 
             def on_turn(text: str) -> None:
                 transcript.append(text)
-                draw()
+                osd.elapsed(osd.tail(" ".join(transcript)), apart=True)
 
             self._adapter.subscribe(on_turn)
         # swayosd hides a card when its own timer runs out, so holding one open
@@ -584,7 +577,7 @@ class Stt:
 
         def tick() -> None:
             while not ticking.wait(1.0):
-                draw()
+                tick_level()
 
         threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the
@@ -1412,12 +1405,15 @@ class Tts:
 
         if isinstance(self._enricher, EnrichStreaming):
             # Synthesis needs the whole rewrite before it can speak a word, so
-            # the card is the only place the wait shows as progress.
-            rewritten = "".join(
-                self.NOTIFICATION.echo(
-                    self._enricher.enrich_stream(text), icon=OsdIcon.THINKING
-                )
-            )
+            # the card is the only place the wait shows as progress. Drawn
+            # through `elapsed` like the playback that follows it, so the run
+            # holds one card from rewrite to last word.
+            card = self.NOTIFICATION
+            parts: list[str] = []
+            for chunk in self._enricher.enrich_stream(text):
+                parts.append(chunk)
+                card.elapsed(card.tail("".join(parts)), icon=OsdIcon.THINKING, apart=True)
+            rewritten = "".join(parts)
         else:
             self._notify("Rewriting for speech...", timeout=3000)
             rewritten = self._enricher.enrich(text)

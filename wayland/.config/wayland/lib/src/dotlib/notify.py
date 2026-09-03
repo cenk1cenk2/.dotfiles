@@ -86,6 +86,12 @@ class Notification:
         self.osd_icon = osd_icon
         self.channel = channel
         self._started = 0.0
+        # What the card last showed. The meter ticks from one thread while
+        # text arrives on another, and neither knows what the other sent, so
+        # the card remembers both rather than making every caller pass both.
+        self._body = ""
+        self._level = 0.0
+        self._apart = False
 
     # ── the two channels ──────────────────────────────────────────
 
@@ -183,20 +189,34 @@ class Notification:
 
     def elapsed(
         self,
-        message: str = "",
+        message: str | None = None,
         timeout: int | None = None,
         *,
         icon: OsdIcon | None = None,
         level: float | None = None,
         apart: bool = False,
     ) -> None:
-        """Say it again with the time since this notification first went up.
+        """Redraw the card with the time since it first went up.
 
         The clock is ours: swayosd renders the string it is handed and has no
-        notion of one running. A `level` draws its progress bar underneath,
-        which is a real bar rather than block characters pretending to be one."""
+        notion of one running.
+
+        `message` and `level` are each remembered, so a caller that updates
+        one leaves the other standing. Passing nothing redraws what is already
+        there, which is what a clock tick is.
+
+        Always one `CUSTOM-PROGRESS`: swayosd rebuilds the surface when the
+        action changes, so a card that switched kind mid-job tore itself down
+        and took its text with it.
+"""
         if is_headless():
             return
+
+        if message is not None:
+            self._body = message
+            self._apart = apart
+        if level is not None:
+            self._level = level
 
         if not self._started:
             self._started = time.monotonic()
@@ -205,14 +225,8 @@ class Notification:
         # `apart` drops the message below the clock with a blank line between,
         # for a body that is a clipped extract rather than a status: the gap is
         # what says the text is a fragment of something longer.
-        text = f"{stamp}{'\n\n' if apart else '  '}{message}".rstrip()
-        if level is None:
-            self.send(text, timeout or self.TICK_HOLD_MS, icon=icon)
-            return
-
-        # One action carrying both, not a message followed by a bar: swayosd
-        # holds a single content per window, so two calls overwrite each other
-        # and the row flickers between them.
+        gap = "\n\n" if self._apart and self._body else "  "
+        text = f"{stamp}{gap}{self._body}".rstrip()
         options = [
             ("CUSTOM-PROGRESS-TEXT", self._titled(text)),
             ("DURATION", str(timeout or self.TICK_HOLD_MS)),
@@ -220,7 +234,7 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call("CUSTOM-PROGRESS", f"{min(max(level, 0.0), 1.0):.2f}", options)
+        self._call("CUSTOM-PROGRESS", f"{min(max(self._level, 0.0), 1.0):.2f}", options)
 
     def _titled(self, message: str) -> str:
         """Title above, detail below. GTK renders the break in its label."""
