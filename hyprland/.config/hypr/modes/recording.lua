@@ -28,7 +28,12 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + q", exec_then_reset(("%s stop"):format(d.recorder)))
 
   -- Speech-to-text direct typing with AI enrichment
-  hl.bind("s", exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)))
+  hl.bind(
+    "s",
+    exec_then_reset(
+      ("%s stt toggle --source mic --output type --enrich"):format(d.speech)
+    )
+  )
 
   -- Speech-to-text direct typing (raw, no enrichment), through our own capture
   hl.bind(
@@ -37,7 +42,12 @@ hl.define_submap(submap, function()
   )
 
   -- Speech-to-text to clipboard with AI enrichment
-  hl.bind("c", exec_then_reset(("%s stt toggle --output clipboard --enrich"):format(d.speech)))
+  hl.bind(
+    "c",
+    exec_then_reset(
+      ("%s stt toggle --source mic --output clipboard --enrich"):format(d.speech)
+    )
+  )
 
   -- Speech-to-text to clipboard (raw, no enrichment), through our own capture
   hl.bind(
