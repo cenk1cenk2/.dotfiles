@@ -170,7 +170,8 @@ class Notification:
         self._call("CUSTOM-PROGRESS", f"{min(max(level, 0.0), 1.0):.2f}", options)
 
     def _titled(self, message: str) -> str:
-        return f"{self.title}  {message}" if self.title else message
+        """Title above, detail below. GTK renders the break in its label."""
+        return f"{self.title}\n{message}" if self.title else message
 
     def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
         """Let it go, after a beat if there is a parting word."""
