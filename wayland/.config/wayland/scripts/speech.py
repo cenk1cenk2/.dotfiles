@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import urllib.error
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -183,6 +183,12 @@ def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
         return raw or None
     finally:
         sock.close()
+
+SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+def subscript(value: int) -> str:
+    """Render a number as subscript digits, for hanging a count off an icon."""
+    return str(value).translate(SUBSCRIPT_DIGITS)
 
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
@@ -536,9 +542,13 @@ class Stt:
             # from it rather than from the values this process started with.
             enricher = server.enricher if server else self._enricher
             output = server.output if server else self._output
+            # Regardless of enrichment: by here the microphone is shut and the
+            # transcription is back, and leaving the bar on "recording" through
+            # a REST round-trip contradicts the chime that already said the mic
+            # closed.
+            if server:
+                server.set_phase(Phase.WORKING)
             if enricher is not None:
-                if server:
-                    server.set_phase(Phase.WORKING)
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
@@ -893,6 +903,8 @@ class TtsState:
     phase: TtsPhase
     voice: str
     chars: int
+    # Previews of what is waiting behind the current utterance, oldest first.
+    queued: list[str] = field(default_factory=list)
 
 @dataclass
 class TtsResponse:
@@ -910,6 +922,7 @@ class TtsResponse:
                 phase=TtsPhase(sd["phase"]),
                 voice=sd["voice"],
                 chars=int(sd["chars"]),
+                queued=list(sd.get("queued") or []),
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
@@ -942,6 +955,17 @@ class TtsSession(SocketSession):
         self.suppressor = suppressor
         self._queue: list[str] = []
 
+    PREVIEW_CHARS = 42
+
+    @classmethod
+    def _preview(cls, text: str) -> str:
+        """One line of an utterance, short enough for a tooltip row."""
+        flat = " ".join(text.split())
+        if len(flat) <= cls.PREVIEW_CHARS:
+            return flat
+
+        return flat[: cls.PREVIEW_CHARS - 1].rstrip() + "…"
+
     def enqueue(self, text: str) -> None:
         """Add an utterance to the backlog.
 
@@ -950,11 +974,18 @@ class TtsSession(SocketSession):
         away the one thing the caller cannot get back."""
         with self._lock:
             self._queue.append(text)
+        # The bar polls on a 3s interval, which is long enough to miss a short
+        # utterance queueing and draining between ticks.
+        self._signal_waybar()
 
     def pop(self) -> str | None:
         """Next queued utterance, or None once the backlog is drained."""
         with self._lock:
-            return self._queue.pop(0) if self._queue else None
+            text = self._queue.pop(0) if self._queue else None
+        if text is not None:
+            self._signal_waybar()
+
+        return text
 
     @staticmethod
     def _socket_path() -> str:
@@ -975,7 +1006,11 @@ class TtsSession(SocketSession):
         self.log.info("socket cmd: %s", cmd.value)
         if cmd is Command.STATUS:
             with self._lock:
-                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+                state = TtsState(**asdict(self.state))
+                # Derived here rather than mirrored into the state on every
+                # enqueue, so there is one queue and nothing to drift from it.
+                state.queued = [self._preview(text) for text in self._queue]
+                return TtsResponse(ok=True, state=state)
         if cmd is Command.ENQUEUE:
             # Text only: a queued utterance is spoken by the running session,
             # through the player it already spawned, so a per-item sample rate
@@ -1331,6 +1366,14 @@ class Tts:
             ),
         }
         text, tooltip = mapping[state.phase]
+        if state.queued:
+            # Subscript rather than a plain digit: the backlog is a footnote to
+            # what is playing, and it has to sit against the icon without
+            # widening the module every time something queues.
+            text += subscript(len(state.queued))
+            waiting = "\n".join(f"  {i}. {q}" for i, q in enumerate(state.queued, 1))
+            tooltip += f"\n\n{len(state.queued)} waiting:\n{waiting}"
+
         return json.dumps(
             {"class": state.phase.value, "text": text, "tooltip": tooltip}
         )
