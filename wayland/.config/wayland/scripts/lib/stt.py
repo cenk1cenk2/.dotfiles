@@ -16,6 +16,7 @@ import json
 import logging
 import mimetypes
 import os
+import queue
 import threading
 import time
 import urllib.error
@@ -301,10 +302,10 @@ class SttAdapterRealtime:
     own silence detection and answers with one finalised segment per turn;
     there are no partial deltas, so nothing handed back is ever revised.
 
-    Every take is also kept whole in memory. Anything the socket fails to
-    account for is posted the ordinary way at the end, so a refused
-    handshake, a mid-take drop or a turn that never closed costs a slower
-    finish rather than the recording."""
+    Every take is also kept whole in memory, which is what serves a take too
+    short for the server to close a turn on at all. Anything else the socket
+    cannot do is a failure and raises: a transcript that arrived by another
+    route is indistinguishable from a realtime one, and hides the fault."""
 
     provider = SttProvider.REALTIME
 
@@ -322,7 +323,7 @@ class SttAdapterRealtime:
     # ends the last turn. Added to the configured silence rather than fixed —
     # a shorter tail than the detector waits for would never close it.
     TAIL_MARGIN_MS = 400
-    # How long to wait for the final segment before giving up and posting.
+    # How long to wait for the last turn to arrive and be handed over.
     STOP_DEADLINE = 8.0
     # Quiet spell after the last segment that counts as the take being over.
     SETTLE_SECONDS = 1.5
@@ -335,10 +336,18 @@ class SttAdapterRealtime:
         self.mic = mic or MicCapture()
         self.model = spec.model or DEFAULT_STT_MODEL
         self._stopped = threading.Event()
-        # Set when the socket refused, so a caller can say so rather than
-        # silently serving a batch transcript.
+        # Why the socket stopped being usable, if it did. A drop mid-take is
+        # as much a failure as one at the handshake, and it used to end the
+        # recording while the take still looked like a success.
         self.socket_error: str | None = None
-        self._segments: list[tuple[int, str]] = []
+        self._closing = False
+        self._segments: list[str] = []
+        # Turns reach the subscriber from here rather than from `_receive`.
+        # A subscriber may type its turn, which for ydotool is seconds, and
+        # a receive thread inside that is a receive thread not reading the
+        # socket: the turns behind it are lost when the socket closes.
+        self._delivery: queue.Queue[str] = queue.Queue()
+        self._delivered = 0
         self._on_segment: Callable[[str], None] | None = None
         self._lock = threading.Lock()
 
@@ -383,7 +392,9 @@ class SttAdapterRealtime:
             try:
                 raw = ws.recv()
             except (OSError, websocket.WebSocketException) as e:
-                log.debug("realtime socket closed: %s", e)
+                if not self._closing:
+                    log.error("realtime socket dropped: %s", e)
+                    self.socket_error = str(e) or e.__class__.__name__
                 return
             if not raw:
                 return
@@ -402,14 +413,26 @@ class SttAdapterRealtime:
                     # the tail arrives faster than its own window, so an
                     # immediate repeat is the socket stuttering rather than
                     # the speaker saying it twice.
-                    if self._segments and self._segments[-1][1] == text:
+                    if self._segments and self._segments[-1] == text:
                         continue
-                    self._segments.append((len(self._segments), text))
+                    self._segments.append(text)
                 log.info("segment: %s", text)
-                if self._on_segment:
-                    self._on_segment(text)
+                self._delivery.put(text)
             elif kind == "error":
                 log.warning("realtime error: %s", (event.get("error") or {}))
+
+    def _deliver(self) -> None:
+        """Hand turns to the subscriber, one at a time, off the socket thread."""
+        while True:
+            text = self._delivery.get()
+            if not text:
+                return
+            if self._on_segment:
+                try:
+                    self._on_segment(text)
+                except OSError as e:
+                    log.warning("subscriber refused a turn: %s", e)
+            self._delivered += 1
 
     def _pump(self, ws) -> None:
         """Send the take as it is recorded, then silence to close the turn."""
@@ -418,13 +441,15 @@ class SttAdapterRealtime:
         while not self._stopped.is_set():
             pcm = self.mic.pcm()
             while len(pcm) - sent >= chunk:
-                self._send_audio(ws, pcm[sent : sent + chunk])
+                if not self._send_audio(ws, pcm[sent : sent + chunk]):
+                    return
                 sent += chunk
             time.sleep(self.CHUNK_MS / 1000)
 
         pcm = self.mic.pcm()
         while sent < len(pcm):
-            self._send_audio(ws, pcm[sent : sent + chunk])
+            if not self._send_audio(ws, pcm[sent : sent + chunk]):
+                return
             sent += chunk
         # The detector only runs on arriving audio, so silence has to be sent
         # for it to notice the talking stopped. No manual commit: committing
@@ -434,18 +459,28 @@ class SttAdapterRealtime:
         # and re-emits the turn it already closed, once per frame.
         tail_ms = self.spec.vad_silence_ms + self.TAIL_MARGIN_MS
         for _ in range(int(tail_ms / self.CHUNK_MS)):
-            self._send_audio(ws, b"\0" * chunk)
+            if not self._send_audio(ws, b"\0" * chunk):
+                return
             time.sleep(self.CHUNK_MS / 1000)
 
-    def _send_audio(self, ws, pcm: bytes) -> None:
-        ws.send(
-            json.dumps(
-                {
-                    "type": "input_audio_buffer.append",
-                    "audio": base64.b64encode(pcm).decode(),
-                }
+    def _send_audio(self, ws, pcm: bytes) -> bool:
+        """Push one frame; False once the socket has stopped taking them."""
+        try:
+            ws.send(
+                json.dumps(
+                    {
+                        "type": "input_audio_buffer.append",
+                        "audio": base64.b64encode(pcm).decode(),
+                    }
+                )
             )
-        )
+        except (OSError, websocket.WebSocketException) as e:
+            if not self._closing:
+                log.error("realtime send failed: %s", e)
+                self.socket_error = str(e) or e.__class__.__name__
+            return False
+
+        return True
 
     # ── capture ───────────────────────────────────────────────────
 
@@ -476,41 +511,52 @@ class SttAdapterRealtime:
                 )
             )
         except (OSError, websocket.WebSocketException) as e:
-            # Loud, because the take still succeeds: it falls back to one
-            # transcript at the end, which looks exactly like realtime that
-            # produced no turns. Nothing on stderr survives a compositor
-            # keybind, so the failure has to reach the caller.
             self.socket_error = str(e) or e.__class__.__name__
             self.mic.cancel()
             raise RealtimeUnavailable(f"socket refused: {self.socket_error}") from e
 
         threading.Thread(target=self._receive, args=(ws,), daemon=True).start()
+        deliver = threading.Thread(target=self._deliver, daemon=True)
+        deliver.start()
         pump = threading.Thread(target=self._pump, args=(ws,), daemon=True)
         pump.start()
         self._stopped.wait()
         pump.join(timeout=self.STOP_DEADLINE)
 
-        # Waits for a quiet spell after the last segment rather than for a
-        # byte count: `audio_end_ms` does not measure the session, so how much
-        # of the take the socket accounted for cannot be derived from it.
+        # Waits for a quiet spell after the last turn reached the subscriber,
+        # not after it arrived: a subscriber that types its turn is still
+        # working long after the socket handed it over, and closing under it
+        # loses whatever the socket had not been read for yet.
         deadline = time.monotonic() + self.STOP_DEADLINE
         counted, since = -1, time.monotonic()
         while time.monotonic() < deadline:
-            with self._lock:
-                arrived = len(self._segments)
-            if arrived != counted:
-                counted, since = arrived, time.monotonic()
-            elif arrived and time.monotonic() - since > self.SETTLE_SECONDS:
+            done = self._delivered
+            if done != counted:
+                counted, since = done, time.monotonic()
+            elif (
+                done
+                and self._delivery.empty()
+                and time.monotonic() - since > self.SETTLE_SECONDS
+            ):
                 break
             time.sleep(0.2)
 
+        self._closing = True
         try:
             ws.close()
         except OSError as e:
             log.debug("closing the realtime socket failed: %s", e)
 
+        # Everything handed over before the caller is told the take is done,
+        # so a dismiss or a chime cannot land ahead of the last keystroke.
+        self._delivery.put("")
+        deliver.join(timeout=self.STOP_DEADLINE)
+
+        if self.socket_error:
+            raise RealtimeUnavailable(f"socket dropped: {self.socket_error}")
+
         with self._lock:
-            segments = [text for _, text in self._segments]
+            segments = list(self._segments)
 
         if not segments:
             # A take shorter than the server's own floor cannot close a turn,
@@ -522,16 +568,7 @@ class SttAdapterRealtime:
                     f"no turns in {seconds:.1f}s of audio"
                 )
             log.info("%.1fs is under the turn floor; posting it whole", seconds)
-            return self._batch(0)
+            return SttAdapterHttp(self.spec, self.mic).capture()
 
         return " ".join(segments).strip()
 
-    def _batch(self, offset: int) -> str | None:
-        """Post the take from `offset` the ordinary way."""
-        pcm = self.mic.pcm()[offset:]
-        if not pcm:
-            return None
-        source = MicCapture(rate=self.mic.rate)
-        source._pcm = bytearray(pcm)
-
-        return SttAdapterHttp(self.spec, source).capture()

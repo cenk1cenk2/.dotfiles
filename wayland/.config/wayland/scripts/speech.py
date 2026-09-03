@@ -590,7 +590,7 @@ class Stt:
             def on_turn(text: str) -> None:
                 transcript.append(text)
                 redraw()
-                if live and live_sink is not None:
+                if live:
                     live_sink.write(text if len(transcript) == 1 else f" {text}")
 
             self._adapter.subscribe(on_turn)
@@ -613,10 +613,7 @@ class Stt:
             try:
                 captured = self._adapter.capture()
             except RealtimeUnavailable as e:
-                # Loud, because the alternative is a batch transcript that
-                # looks exactly like a realtime one and hides the fault.
                 self.log.error("realtime failed: %s", e)
-                osd.dismiss(f"Realtime failed: {e}", icon=OsdIcon.ERROR)
                 self._notify(f"Realtime failed: {e}", timeout=8000)
                 sys.exit(1)
             except (
