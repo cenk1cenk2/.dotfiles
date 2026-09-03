@@ -38,6 +38,7 @@ from lib import (
     DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
+    DEFAULT_TTS_LOUDNESS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
@@ -929,6 +930,17 @@ def tts_speak_options():
             help="Output rate in Hz.",
         ),
         click.option(
+            "--normalize/--no-normalize",
+            default=True,
+            help="Even out playback loudness. Needs the ffplay sink.",
+        ),
+        click.option(
+            "--loudness",
+            type=float,
+            default=DEFAULT_TTS_LOUDNESS,
+            help="Target loudness in LUFS.",
+        ),
+        click.option(
             "--player",
             type=click.Choice([p.value for p in PlayerMode], case_sensitive=False),
             default=DEFAULT_TTS_PLAYER.value,
@@ -1192,6 +1204,8 @@ class Tts:
         speed,
         response_format,
         sample_rate,
+        normalize,
+        loudness,
         player,
         base_url,
         api_key_env,
@@ -1213,10 +1227,16 @@ class Tts:
         player_mode = PlayerMode(player)
         if fmt is not AudioFormat.PCM and player_mode is not PlayerMode.FFPLAY:
             raise click.UsageError(f"{player_mode.value} plays raw pcm only")
+        # `loudnorm` is an ffmpeg filter; the raw sinks have no filter chain to
+        # put it in, so asking for both is a contradiction rather than a knob
+        # that quietly does nothing.
+        if normalize and player_mode is not PlayerMode.FFPLAY:
+            raise click.UsageError(f"{player_mode.value} cannot normalize")
 
+        target = loudness if normalize else None
         match player_mode:
             case PlayerMode.FFPLAY:
-                player_adapter: PlayerAdapter = PlayerAdapterFfplay(fmt)
+                player_adapter: PlayerAdapter = PlayerAdapterFfplay(fmt, target)
             case PlayerMode.PW_CAT:
                 player_adapter = PlayerAdapterPwCat()
             case PlayerMode.PAPLAY:
@@ -1230,6 +1250,7 @@ class Tts:
             speed=speed,
             response_format=fmt,
             sample_rate=sample_rate,
+            loudness=target,
             base_url=base_url,
             api_key_env=api_key_env,
             timeout=timeout,

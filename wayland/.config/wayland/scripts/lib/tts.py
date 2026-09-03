@@ -48,6 +48,12 @@ DEFAULT_TTS_VOICE = "am_michael"
 DEFAULT_TTS_SAMPLE_RATE = 24000
 DEFAULT_TTS_TIMEOUT = 120.0
 DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
+# Kokoro hands back about -23 LUFS, some 7 LU under a normal speech target and
+# audibly thin against anything else on the desktop. Normalising rather than
+# gaining, because the material peaks at -3.3 dBTP: +7 dB of plain volume
+# reaches the same loudness but lands at +0.2 dBTP and clips, and `alimiter`
+# does not save it because it bounds sample peak rather than true peak.
+DEFAULT_TTS_LOUDNESS = -14.0
 
 # Big enough that the pump is not syscall-bound, small enough that the
 # first chunk lands at the sink well inside a human's patience.
@@ -68,6 +74,7 @@ class TtsSpec:
     speed: float = 1.0
     response_format: AudioFormat = AudioFormat.PCM
     sample_rate: int = DEFAULT_TTS_SAMPLE_RATE
+    loudness: float | None = DEFAULT_TTS_LOUDNESS
     base_url: str = DEFAULT_BASE_URL
     api_key_env: str = DEFAULT_API_KEY_ENV
     timeout: float = DEFAULT_TTS_TIMEOUT
@@ -200,12 +207,21 @@ def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
 
 
 class PlayerAdapterFfplay:
-    """ffmpeg's player — the only sink that can demux a container."""
+    """ffmpeg's player — the only sink that can demux a container.
+
+    Also the only one that can normalise: `loudnorm` is an ffmpeg filter, and
+    the raw sinks below take a linear volume at best. It costs about 85ms
+    before the first sample, against multi-second synthesis."""
 
     mode = PlayerMode.FFPLAY
 
-    def __init__(self, response_format: AudioFormat = AudioFormat.PCM):
+    def __init__(
+        self,
+        response_format: AudioFormat = AudioFormat.PCM,
+        loudness: float | None = DEFAULT_TTS_LOUDNESS,
+    ):
         self.response_format = response_format
+        self.loudness = loudness
 
     def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
         cmd = [
@@ -222,6 +238,8 @@ class PlayerAdapterFfplay:
         # `ch_layout` since the AVChannelLayout migration.
         if self.response_format is AudioFormat.PCM:
             cmd += ["-f", "s16le", "-ar", str(sample_rate), "-ch_layout", "mono"]
+        if self.loudness is not None:
+            cmd += ["-af", f"loudnorm=I={self.loudness}:TP=-1.5:LRA=11"]
         cmd += ["-i", "pipe:0"]
         return _stream_to_player(cmd, stream)
 
