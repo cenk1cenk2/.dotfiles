@@ -121,6 +121,9 @@ from .stt import (
     SttAdapterMic as SttAdapterMic,
 )
 from .stt import (
+    SttAdapterRealtime as SttAdapterRealtime,
+)
+from .stt import (
     SttProvider as SttProvider,
 )
 from .stt import (

@@ -74,9 +74,11 @@ from lib import (
     SttAdapterHttp,
     SttAdapterHyprwhspr,
     SttAdapterMic,
+    SttAdapterRealtime,
     SttProvider,
     SttRecorder,
     SttSpec,
+    SttStreaming,
     TeeReader,
     TtsAdapterHttp,
     TtsSpec,
@@ -538,6 +540,10 @@ class Stt:
 
         osd = Osd("Recording", OsdIcon.MIC)
         osd.show("listening")
+        # Finalised turns only — the endpoint publishes no partial deltas, so
+        # what reaches the card is never taken back.
+        if isinstance(self._adapter, SttStreaming):
+            self._adapter.subscribe(lambda text: osd.show(text[-48:]))
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
@@ -868,10 +874,15 @@ class Stt:
                     ),
                     audio_source,
                 )
-            case SttProvider.MIC:
+            case SttProvider.MIC | SttProvider.REALTIME:
                 if not os.environ.get(api_key_env, "").strip():
                     raise click.UsageError(f"{api_key_env} is empty")
-                adapter = SttAdapterMic(
+                build = (
+                    SttAdapterRealtime
+                    if provider is SttProvider.REALTIME
+                    else SttAdapterMic
+                )
+                adapter = build(
                     SttSpec(
                         model=model,
                         base_url=base_url,

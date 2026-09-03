@@ -10,18 +10,24 @@ nothing is transcoded on the way out."""
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import mimetypes
 import os
 import subprocess
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
+
+import websocket
 
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 from .input import InputAdapter, MicCapture
@@ -31,6 +37,7 @@ class SttProvider(StrEnum):
     HYPRWHSPR = "hyprwhspr"
     HTTP = "http"
     MIC = "mic"
+    REALTIME = "realtime"
 
 
 class ResponseFormat(StrEnum):
@@ -305,3 +312,233 @@ class SttAdapterMic:
             return None
 
         return SttAdapterHttp(self.spec, self.mic).capture()
+
+
+class SttAdapterRealtime:
+    """Transcription over the realtime socket, with the batch path beneath it.
+
+    The same capture as `SttAdapterMic` — 24 kHz mono s16 is the wire format,
+    which is why the recorder runs at that rate — pushed at the socket in
+    100ms frames while it is being recorded. The server closes a turn on its
+    own silence detection and answers with one finalised segment per turn;
+    there are no partial deltas, so nothing handed back is ever revised.
+
+    Every take is also kept whole in memory. Anything the socket fails to
+    account for is posted the ordinary way at the end, so a refused
+    handshake, a mid-take drop or a turn that never closed costs a slower
+    finish rather than the recording."""
+
+    provider = SttProvider.REALTIME
+
+    # 100ms frames: small enough that the server's VAD sees speech begin
+    # promptly, large enough not to spend the take in syscalls.
+    CHUNK_MS = 100
+    # The server defaults to 0.9 and 550ms, which splits a sentence at any
+    # pause for thought. Lower threshold, longer silence: fewer, whole turns.
+    VAD_THRESHOLD = 0.5
+    VAD_SILENCE_MS = 1200
+    # Silence pushed after the microphone closes so the server's own detector
+    # ends the last turn. Derived from the silence above rather than fixed —
+    # a shorter tail than the detector waits for would never close it.
+    TAIL_MARGIN_MS = 400
+    # How long to wait for the final segment before giving up and posting.
+    STOP_DEADLINE = 8.0
+    # Below this, an unaccounted tail is not worth a second request.
+    MIN_TAIL_SECONDS = 1.0
+
+    def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
+        self.spec = spec
+        self.mic = mic or MicCapture()
+        self.model = spec.model or DEFAULT_STT_MODEL
+        self._stopped = threading.Event()
+        self._segments: list[tuple[int, str]] = []
+        self._on_segment: Callable[[str], None] | None = None
+        # Bytes of the take the server has accounted for, from its own
+        # `audio_end_ms` rather than from how much we had sent when the event
+        # arrived — that would over-run by the network and model latency and
+        # the fallback would then skip the start of the next utterance.
+        self._committed = 0
+        self._lock = threading.Lock()
+
+    # ── recorder contract ─────────────────────────────────────────
+
+    def is_recording(self) -> bool:
+        return self.mic.is_recording()
+
+    def stop(self) -> None:
+        self.mic.stop()
+        self._stopped.set()
+
+    def cancel(self) -> None:
+        self.mic.cancel()
+        self._stopped.set()
+
+    def frame(self) -> tuple[float, list[float]] | None:
+        return self.mic.frame()
+
+    def subscribe(self, on_segment: Callable[[str], None]) -> None:
+        self._on_segment = on_segment
+
+    # ── the socket ────────────────────────────────────────────────
+
+    def _url(self) -> str:
+        base = self.spec.base_url.replace("https://", "wss://", 1).replace(
+            "http://", "ws://", 1
+        )
+        query = urllib.parse.urlencode(
+            {
+                # `model` is required — without it the handshake is refused.
+                "model": self.model,
+                "intent": "transcription",
+                "language": self.spec.language,
+            }
+        )
+
+        return f"{base}/realtime?{query}"
+
+    def _receive(self, ws) -> None:
+        while True:
+            try:
+                raw = ws.recv()
+            except (OSError, websocket.WebSocketException) as e:
+                log.debug("realtime socket closed: %s", e)
+                return
+            if not raw:
+                return
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            kind = event.get("type", "")
+            if kind.endswith("input_audio_transcription.completed"):
+                text = (event.get("transcript") or "").strip()
+                if not text:
+                    continue
+                with self._lock:
+                    self._segments.append((len(self._segments), text))
+                log.info("segment: %s", text)
+                if self._on_segment:
+                    self._on_segment(text)
+            elif kind == "input_audio_buffer.speech_stopped":
+                end_ms = event.get("audio_end_ms")
+                if isinstance(end_ms, int):
+                    with self._lock:
+                        self._committed = int(
+                            end_ms * self.mic.rate * self.mic.SAMPLE_BYTES / 1000
+                        )
+            elif kind == "error":
+                log.warning("realtime error: %s", (event.get("error") or {}))
+
+    def _pump(self, ws) -> None:
+        """Send the take as it is recorded, then silence to close the turn."""
+        sent = 0
+        chunk = int(self.mic.rate * self.mic.SAMPLE_BYTES * self.CHUNK_MS / 1000)
+        while not self._stopped.is_set():
+            pcm = self.mic.pcm()
+            while len(pcm) - sent >= chunk:
+                self._send_audio(ws, pcm[sent : sent + chunk])
+                sent += chunk
+            time.sleep(self.CHUNK_MS / 1000)
+
+        pcm = self.mic.pcm()
+        while sent < len(pcm):
+            self._send_audio(ws, pcm[sent : sent + chunk])
+            sent += chunk
+        # The detector only runs on arriving audio, so silence has to be sent
+        # for it to notice the talking stopped. No manual commit: committing
+        # mid-speech trips a server assertion and drops the socket.
+        for _ in range(int((self.VAD_SILENCE_MS + self.TAIL_MARGIN_MS) / self.CHUNK_MS)):
+            self._send_audio(ws, b"\0" * chunk)
+
+    def _send_audio(self, ws, pcm: bytes) -> None:
+        ws.send(
+            json.dumps(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm).decode(),
+                }
+            )
+        )
+
+    # ── capture ───────────────────────────────────────────────────
+
+    def capture(self) -> str | None:
+        self.mic.start()
+        ws = None
+        try:
+            ws = websocket.create_connection(
+                self._url(),
+                header=[
+                    f"Authorization: Bearer {os.environ.get(self.spec.api_key_env, '')}"
+                ],
+                timeout=30,
+                suppress_origin=True,
+            )
+            ws.send(
+                json.dumps(
+                    {
+                        "type": "session.update",
+                        "session": {
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "threshold": self.VAD_THRESHOLD,
+                                "silence_duration_ms": self.VAD_SILENCE_MS,
+                            }
+                        },
+                    }
+                )
+            )
+        except (OSError, websocket.WebSocketException) as e:
+            log.warning("realtime unavailable (%s); recording for batch", e)
+            ws = None
+
+        if ws is None:
+            self._stopped.wait()
+            return self._batch(0)
+
+        threading.Thread(target=self._receive, args=(ws,), daemon=True).start()
+        pump = threading.Thread(target=self._pump, args=(ws,), daemon=True)
+        pump.start()
+        self._stopped.wait()
+        pump.join(timeout=self.STOP_DEADLINE)
+
+        deadline = time.monotonic() + self.STOP_DEADLINE
+        while time.monotonic() < deadline:
+            with self._lock:
+                covered = self._committed
+            if covered and covered >= len(self.mic.pcm()) - self.mic.rate:
+                break
+            time.sleep(0.2)
+
+        try:
+            ws.close()
+        except OSError as e:
+            log.debug("closing the realtime socket failed: %s", e)
+
+        with self._lock:
+            segments = [text for _, text in self._segments]
+            covered = self._committed
+
+        tail = len(self.mic.pcm()) - covered
+        if tail > self.MIN_TAIL_SECONDS * self.mic.rate * self.mic.SAMPLE_BYTES:
+            log.info("%.1fs unaccounted for; posting the tail", tail / self.mic.rate / self.mic.SAMPLE_BYTES)
+            rest = self._batch(covered)
+            if rest:
+                segments.append(rest)
+
+        if not segments:
+            log.warning("realtime returned nothing; posting the whole take")
+            return self._batch(0)
+
+        return " ".join(segments).strip()
+
+    def _batch(self, offset: int) -> str | None:
+        """Post the take from `offset` the ordinary way."""
+        pcm = self.mic.pcm()[offset:]
+        if not pcm:
+            return None
+        source = MicCapture(rate=self.mic.rate)
+        source._pcm = bytearray(pcm)
+
+        return SttAdapterHttp(self.spec, source).capture()

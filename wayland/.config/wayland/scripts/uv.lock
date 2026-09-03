@@ -134,6 +134,7 @@ dependencies = [
     { name = "obsws-python" },
     { name = "psutil" },
     { name = "rich" },
+    { name = "websocket-client" },
 ]
 
 [package.metadata]
@@ -143,6 +144,7 @@ requires-dist = [
     { name = "obsws-python", specifier = ">=1.8" },
     { name = "psutil", specifier = ">=7.0" },
     { name = "rich", specifier = ">=13.7" },
+    { name = "websocket-client", specifier = ">=1.8" },
 ]
 
 [[package]]

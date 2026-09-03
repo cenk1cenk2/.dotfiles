@@ -38,6 +38,9 @@ dependencies = [
   "psutil>=7.0",
   # obs-websocket bindings for recorder.py.
   "obsws-python>=1.8",
+  # The realtime transcription socket. The stdlib has no WebSocket client,
+  # and the endpoint speaks nothing else.
+  "websocket-client>=1.8",
 ]
 
 [tool.ty.environment]
