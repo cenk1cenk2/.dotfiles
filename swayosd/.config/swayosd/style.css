@@ -14,6 +14,9 @@
 
 window#osd #container {
   margin: 24px;
+  /* A floor, not a width: the surface still grows for a long line of
+   * transcribed text, but a short one no longer shrinks to a stub. */
+  min-width: 256px;
 }
 
 window#osd progressbar,
