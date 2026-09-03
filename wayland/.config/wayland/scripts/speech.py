@@ -742,7 +742,7 @@ class Stt:
     @click.option(
         "--source",
         type=click.Choice([p.value for p in SttProvider], case_sensitive=False),
-        default=SttProvider.MIC.value,
+        default=SttProvider.REALTIME.value,
         help="Transcription backend.",
     )
     @click.option(
