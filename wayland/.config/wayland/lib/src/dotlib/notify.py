@@ -183,7 +183,6 @@ class Notification:
         *,
         icon: OsdIcon | None = None,
         level: float | None = None,
-        block: bool = False,
     ) -> None:
         """Say it again with the time since this notification first went up.
 
@@ -197,10 +196,7 @@ class Notification:
             self._started = time.monotonic()
         seconds = int(time.monotonic() - self._started)
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
-        # `block` puts the message under the clock instead of beside it, for a
-        # body that grows: laying it out by whether it happens to span lines
-        # yet would shift as soon as it did.
-        text = f"{stamp}{'\n' if block else '  '}{message}".rstrip()
+        text = f"{stamp}  {message}".rstrip()
         if level is None:
             self.send(text, timeout or self.TICK_HOLD_MS, icon=icon)
             return

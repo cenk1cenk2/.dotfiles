@@ -556,13 +556,10 @@ class Stt:
         transcript: list[str] = []
 
         def draw() -> None:
-            # Every turn, untruncated: the card grows down and a dictation is
-            # worth reading back in full while it is still open. The newest
-            # turn is set off by a blank line and the rest packed, so the eye
-            # lands on what was just said.
-            *earlier, latest = transcript or [""]
-            body = "\n".join(earlier) + "\n\n" + latest if earlier else latest
-            osd.elapsed(body, level=_level(self._adapter), block=True)
+            # One line: swayosd renders a progress card's text as a single
+            # row, so the turns are joined and the end kept rather than
+            # stacked, which shows only the clock.
+            osd.elapsed(osd.tail(" ".join(transcript)), level=_level(self._adapter))
 
         # One shape for both writers, so a turn landing between ticks is not
         # a bare line that the next tick wipes.
@@ -659,7 +656,15 @@ class Stt:
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
                 self._notify("Enriching transcription...", timeout=3000)
-                enriched = enricher.enrich(text)
+                if isinstance(enricher, EnrichStreaming):
+                    # The card can stream even where the sink cannot: a
+                    # clipboard holds one value, but watching the rewrite
+                    # arrive is what says the wait is going somewhere.
+                    enriched = "".join(
+                        osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING)
+                    )
+                else:
+                    enriched = enricher.enrich(text)
                 if enriched and enriched.strip():
                     text = enriched.strip()
                 else:
