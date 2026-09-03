@@ -303,8 +303,8 @@ class SttAdapterRealtime:
     TAIL_MARGIN_MS = 400
     # How long to wait for the final segment before giving up and posting.
     STOP_DEADLINE = 8.0
-    # Below this, an unaccounted tail is not worth a second request.
-    MIN_TAIL_SECONDS = 1.0
+    # Quiet spell after the last segment that counts as the take being over.
+    SETTLE_SECONDS = 1.5
 
     def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
         self.spec = spec
@@ -313,11 +313,6 @@ class SttAdapterRealtime:
         self._stopped = threading.Event()
         self._segments: list[tuple[int, str]] = []
         self._on_segment: Callable[[str], None] | None = None
-        # Bytes of the take the server has accounted for, from its own
-        # `audio_end_ms` rather than from how much we had sent when the event
-        # arrived — that would over-run by the network and model latency and
-        # the fallback would then skip the start of the next utterance.
-        self._committed = 0
         self._lock = threading.Lock()
 
     # ── recorder contract ─────────────────────────────────────────
@@ -380,13 +375,6 @@ class SttAdapterRealtime:
                 log.info("segment: %s", text)
                 if self._on_segment:
                     self._on_segment(text)
-            elif kind == "input_audio_buffer.speech_stopped":
-                end_ms = event.get("audio_end_ms")
-                if isinstance(end_ms, int):
-                    with self._lock:
-                        self._committed = int(
-                            end_ms * self.mic.rate * self.mic.SAMPLE_BYTES / 1000
-                        )
             elif kind == "error":
                 log.warning("realtime error: %s", (event.get("error") or {}))
 
@@ -408,8 +396,12 @@ class SttAdapterRealtime:
         # The detector only runs on arriving audio, so silence has to be sent
         # for it to notice the talking stopped. No manual commit: committing
         # mid-speech trips a server assertion and drops the socket.
+        # Paced like the capture it follows. Sent as fast as the socket takes
+        # it, the detector reads the whole tail inside one of its own windows
+        # and re-emits the turn it already closed, once per frame.
         for _ in range(int((self.VAD_SILENCE_MS + self.TAIL_MARGIN_MS) / self.CHUNK_MS)):
             self._send_audio(ws, b"\0" * chunk)
+            time.sleep(self.CHUNK_MS / 1000)
 
     def _send_audio(self, ws, pcm: bytes) -> None:
         ws.send(
@@ -463,11 +455,17 @@ class SttAdapterRealtime:
         self._stopped.wait()
         pump.join(timeout=self.STOP_DEADLINE)
 
+        # Waits for a quiet spell after the last segment rather than for a
+        # byte count: `audio_end_ms` does not measure the session, so how much
+        # of the take the socket accounted for cannot be derived from it.
         deadline = time.monotonic() + self.STOP_DEADLINE
+        counted, since = -1, time.monotonic()
         while time.monotonic() < deadline:
             with self._lock:
-                covered = self._committed
-            if covered and covered >= len(self.mic.pcm()) - self.mic.rate:
+                arrived = len(self._segments)
+            if arrived != counted:
+                counted, since = arrived, time.monotonic()
+            elif arrived and time.monotonic() - since > self.SETTLE_SECONDS:
                 break
             time.sleep(0.2)
 
@@ -478,14 +476,6 @@ class SttAdapterRealtime:
 
         with self._lock:
             segments = [text for _, text in self._segments]
-            covered = self._committed
-
-        tail = len(self.mic.pcm()) - covered
-        if tail > self.MIN_TAIL_SECONDS * self.mic.rate * self.mic.SAMPLE_BYTES:
-            log.info("%.1fs unaccounted for; posting the tail", tail / self.mic.rate / self.mic.SAMPLE_BYTES)
-            rest = self._batch(covered)
-            if rest:
-                segments.append(rest)
 
         if not segments:
             log.warning("realtime returned nothing; posting the whole take")
