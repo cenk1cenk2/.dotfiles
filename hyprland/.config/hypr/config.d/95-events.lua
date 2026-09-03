@@ -12,7 +12,9 @@ end)
 -- restore both hang off on-resume, which waits for input.
 --
 -- switch:off is the OPENING edge. locked = true because hyprlock is up.
+-- dpms takes a table: the string form discards the arg and toggles, so
+-- `dpms("on")` blanks an already-lit panel.
 hl.bind("switch:off:Lid Switch", function()
-  hl.dispatch(hl.dsp.dpms("on"))
+  hl.dispatch(hl.dsp.dpms({ action = "on" }))
   hl.exec_cmd("brightnessctl -r")
 end, { locked = true })
