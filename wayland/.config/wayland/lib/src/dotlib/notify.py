@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from enum import StrEnum
 
 from .desktop import is_headless
@@ -37,6 +38,7 @@ class OsdIcon(StrEnum):
     MIC = "audio-input-microphone"
     SPEAKER = "audio-speakers"
     THINKING = "system-run"
+    WRITING = "document-edit-symbolic"
     DONE = "object-select"
     ERROR = "dialog-error"
 
@@ -60,6 +62,8 @@ class Notification:
     # firing once with a short one.
     HOLD_MS = 2000
     DISMISS_MS = 200
+    # How much of a growing text `tail` keeps. One line at the card's width.
+    CARD_CHARS = 52
     # A wedged call must never delay the work it is describing.
     TIMEOUT = 2.0
 
@@ -135,6 +139,25 @@ class Notification:
         if not self._started:
             self._started = time.monotonic()
         self._card(message, timeout or self.HOLD_MS, icon)
+
+    def tail(self, message: str) -> str:
+        """The end of a growing text, flattened to fit one line on the card."""
+        flat = " ".join(message.split())
+
+        return flat[-self.CARD_CHARS :] if len(flat) > self.CARD_CHARS else flat
+
+    def echo(
+        self, chunks: Iterator[str], *, icon: OsdIcon | None = None
+    ) -> Iterator[str]:
+        """Pass chunks through untouched, showing the tail of them as they go.
+
+        Wraps the stream rather than the sink, so a caller that only wants to
+        watch and a caller that writes somewhere both get the same view."""
+        seen = ""
+        for chunk in chunks:
+            seen += chunk
+            self.send(self.tail(seen), icon=icon)
+            yield chunk
 
     def elapsed(
         self,

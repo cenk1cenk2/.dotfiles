@@ -6,7 +6,7 @@ import sys
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +24,17 @@ class OutputAdapter(Protocol):
     def write(self, text: str) -> None:
         """Emit the text. Blocking; raises on failure."""
         ...
+
+
+@runtime_checkable
+class OutputStreaming(Protocol):
+    """Sink that can take the text as it arrives rather than in one piece.
+
+    Only a sink whose target is append-only qualifies: the clipboard and a file
+    each hold one value, so a partial rewrite in them is not an early result but
+    a wrong one. Callers ask by `isinstance` and fall back to `write`."""
+
+    def write_stream(self, chunks: Iterable[str]) -> None: ...
 
 
 class OutputAdapterClipboard:
@@ -99,6 +110,18 @@ class OutputAdapterStdout:
     def write(self, text: str) -> None:
         sys.stdout.write(text)
         sys.stdout.flush()
+
+    def write_stream(self, chunks: Iterable[str]) -> None:
+        """Write each chunk as it arrives, flushing so a reader sees it now.
+
+        The pipe closes only after the last chunk, so a consumer reading to EOF
+        sees no difference and one reading by line starts before the end."""
+        written = 0
+        for chunk in chunks:
+            sys.stdout.write(chunk)
+            sys.stdout.flush()
+            written += len(chunk)
+        log.info("wrote %d chars as they arrived", written)
 
 
 class OutputAdapterFile:

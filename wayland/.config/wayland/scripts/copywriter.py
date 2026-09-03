@@ -26,6 +26,7 @@ from dotlib.notify import (
 
 from lib import (
     EnrichAdapter,
+    EnrichStreaming,
     InputAdapter,
     InputMode,
     OutputAdapter,
@@ -45,7 +46,7 @@ class Copywriter:
     ICON = (
         "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
     )
-    NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.THINKING)
+    NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.WRITING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
@@ -144,7 +145,16 @@ class Copywriter:
 
         self.log.info("%s text: %d chars", self._input.mode.value, len(text))
         self.NOTIFICATION.send(f"{len(text)} chars")
-        result = self._enricher.enrich(text)
+        if isinstance(self._enricher, EnrichStreaming):
+            # Joined, because the sink holds one value: the streaming is for
+            # the card, which is where a rewrite going wrong becomes visible.
+            result = "".join(
+                self.NOTIFICATION.echo(
+                    self._enricher.enrich_stream(text), icon=OsdIcon.WRITING
+                )
+            )
+        else:
+            result = self._enricher.enrich(text)
         if not result or not result.strip():
             self.log.warning(
                 "enrichment empty; leaving %s unchanged", self._output.mode.value

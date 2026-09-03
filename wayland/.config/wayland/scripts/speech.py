@@ -14,7 +14,6 @@ import subprocess
 import sys
 import threading
 import urllib.error
-from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -57,11 +56,12 @@ from lib import (
     InputAdapter,
     InputAdapterClipboard,
     InputMode,
+    LevelReader,
     LevelSource,
     OutputAdapter,
     OutputAdapterClipboard,
-    OutputAdapterType,
     OutputMode,
+    OutputStreaming,
     PlayerAdapter,
     PlayerAdapterFfplay,
     PlayerAdapterPaplay,
@@ -201,6 +201,20 @@ def subscript(value: int) -> str:
     """Render a number as subscript digits, for hanging a count off an icon."""
     return str(value).translate(SUBSCRIPT_DIGITS)
 
+def _meter(peak: float) -> float:
+    """A 0-to-1 bar position for a peak sample level.
+
+    Decibels, because hearing is logarithmic and a linear peak leaves normal
+    speech sitting in the bottom tenth of the bar. -60dB is the bottom of the
+    scale: quieter than that is a silent room, not a quiet talker.
+
+    Never quite empty. A bar at zero is indistinguishable from no bar, and the
+    point of the meter is to show that something is live at all."""
+    decibels = 20 * math.log10(peak) if peak > 0 else -120.0
+    scaled = (decibels + 60.0) / 60.0
+
+    return min(1.0, max(0.04, scaled))
+
 def _level(adapter: SttAdapter) -> float | None:
     """How loud the microphone is right now, 0 to 1, or None if unknowable.
 
@@ -215,34 +229,8 @@ def _level(adapter: SttAdapter) -> float | None:
         return None
 
     peak, _ = frame
-    # Decibels, because hearing is logarithmic and a linear peak leaves normal
-    # speech sitting in the bottom tenth of the bar. -60dB is the bottom of the
-    # scale: quieter than that is a silent room, not a quiet talker.
-    decibels = 20 * math.log10(peak) if peak > 0 else -120.0
-    scaled = (decibels + 60.0) / 60.0
 
-    # Never quite empty. A bar at zero is indistinguishable from no bar, and
-    # the point of the meter is to show the microphone is live at all.
-    return min(1.0, max(0.04, scaled))
-
-CARD_CHARS = 52
-
-def _tail(text: str) -> str:
-    """The end of a growing text, flattened to fit one line on the card."""
-    flat = " ".join(text.split())
-
-    return flat[-CARD_CHARS:] if len(flat) > CARD_CHARS else flat
-
-def _echo(chunks: Iterator[str], card: Notification) -> Iterator[str]:
-    """Pass chunks through untouched, showing the tail of them on the card.
-
-    Wrapped around the stream rather than folded into the sink: the sink's job
-    is keystrokes, and only one caller wants to watch them go by."""
-    seen = ""
-    for chunk in chunks:
-        seen += chunk
-        card.send(_tail(seen), icon=OsdIcon.THINKING)
-        yield chunk
+    return _meter(peak)
 
 def _input_choices(*modes: InputMode) -> click.Choice:
     """Choice over exactly the input modes a command can build.
@@ -577,7 +565,7 @@ class Stt:
 
         def tick() -> None:
             while not ticking.wait(1.0):
-                osd.elapsed("listening", level=_level(self._adapter))
+                osd.elapsed(level=_level(self._adapter))
 
         threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the
@@ -631,18 +619,17 @@ class Stt:
             if server:
                 server.set_phase(Phase.WORKING)
             ticking.set()
-            # Typing is the slow part — roughly fifty characters a second —
-            # so when both halves can stream, the keystrokes start with the
-            # first token instead of after the last one. Only for `type`:
-            # every other sink wants one finished string, and stdout must
-            # stay whole because callers parse it.
+            # When both halves can stream, the sink starts with the first token
+            # instead of after the last one. Typing is the slow part — roughly
+            # fifty characters a second — so there it overlaps generation with
+            # the keystrokes; on stdout it lets whatever is downstream start.
             if (
                 stream
                 and enricher is not None
                 and isinstance(enricher, EnrichStreaming)
-                and isinstance(output, OutputAdapterType)
+                and isinstance(output, OutputStreaming)
             ):
-                osd.send(_tail(text), icon=OsdIcon.THINKING)
+                osd.send(osd.tail(text), icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     OutputAdapterClipboard().write(text)
                 if server:
@@ -650,8 +637,8 @@ class Stt:
                 # Show the rewrite arriving rather than a spinner word: the
                 # card is the only place the text is visible before it lands
                 # in whatever window has focus.
-                output.write_stream(_echo(enricher.enrich_stream(text), osd))
-                osd.dismiss("typed", icon=OsdIcon.DONE)
+                output.write_stream(osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING))
+                osd.dismiss(f"{output.mode.value} done", icon=OsdIcon.DONE)
                 Chime(ChimeDirection.DOWN).play()
                 return
 
@@ -834,7 +821,7 @@ class Stt:
     @click.option(
         "--stream/--no-stream",
         default=True,
-        help="Type the enrichment as it is generated. Needs --enrich and --output type.",
+        help="Emit the enrichment as it is generated. Needs --enrich and a type or stdout output.",
     )
     @click.option(
         "--duck/--no-duck",
@@ -1106,12 +1093,10 @@ class TtsSession(SocketSession):
         voice: str,
         chars: int,
         suppressor: PlaybackSuppressor,
-        osd: Notification | None = None,
     ):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
         self.suppressor = suppressor
-        self.osd = osd
         self._queue: list[str] = []
 
     PREVIEW_CHARS = 42
@@ -1136,12 +1121,12 @@ class TtsSession(SocketSession):
         # The bar polls on a 3s interval, which is long enough to miss a short
         # utterance queueing and draining between ticks.
         self._signal_waybar()
-        # The card is redrawn per utterance, so without this an arrival during
-        # a long one would not show until the next began.
-        if self.osd is not None:
-            with self._lock:
-                chars = self.state.chars
-            self.osd.send(f"{chars} chars{self.waiting()}")
+
+    def card(self) -> str:
+        with self._lock:
+            chars = self.state.chars
+
+        return f"{chars} chars{self.waiting()}"
 
     def waiting(self) -> str:
         """`, 2 waiting` when something is queued, empty when nothing is."""
@@ -1336,6 +1321,7 @@ class Tts:
         self._player = player
         self._copy = copy
         self._enricher = enricher
+        self._meter: LevelReader | None = None
         self._suppressor = PlaybackSuppressor(
             duck=duck,
             factor=duck_factor,
@@ -1409,6 +1395,7 @@ class Tts:
         notifications."""
         spec = self._spec
         buffer = io.BytesIO() if self._copy else None
+        self._meter = None
         # A dead backend and a dead player are different faults with
         # different fixes, so the notification has to tell them apart.
         # Backend first: URLError and TimeoutError are OSError subclasses
@@ -1428,6 +1415,9 @@ class Tts:
                     source = PrefixReader(
                         Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
+                    # Outermost, so the chime registers on the meter and the
+                    # bar moves from the first sound rather than the first word.
+                    source = self._meter = LevelReader(source)
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
                 finally:
@@ -1497,15 +1487,26 @@ class Tts:
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
         osd = self.NOTIFICATION
-        session = TtsSession(spec.voice, len(text), self._suppressor, osd)
+        session = TtsSession(spec.voice, len(text), self._suppressor)
         session.start()
+        # The card ticks from its own thread because the run blocks inside
+        # synthesis and playback for as long as an utterance lasts.
+        ticking = threading.Event()
+
+        def tick() -> None:
+            while not ticking.wait(1.0):
+                meter = self._meter
+                osd.elapsed(
+                    session.card(), level=_meter(meter.peak) if meter else None
+                )
+
+        threading.Thread(target=tick, daemon=True).start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
             # it is handed, so the rewrite has to land before the audio does.
-            text = self._enrich(text, session)
+            spoken = self._enrich(text, session)
             while True:
-                osd.send(f"{len(text)} chars{session.waiting()}")
-                if not self._play(text, session):
+                if not self._play(spoken, session):
                     break
                 queued = session.pop()
                 if queued is None:
@@ -1514,8 +1515,9 @@ class Tts:
                 session.set_phase(TtsPhase.WORKING)
                 session.set_chars(len(queued))
                 self.log.info("dequeued %d chars", len(queued))
-                text = queued
+                spoken = queued
         finally:
+            ticking.set()
             osd.dismiss()
             self._suppressor.restore()
             session.stop()

@@ -168,6 +168,28 @@ class PrefixReader:
         return self._source.read(size)
 
 
+class LevelReader:
+    """Readable wrapper holding the peak level of the samples passing through.
+
+    Per chunk, so the reading is what is audible now rather than for the whole
+    utterance. Raw s16le only: a container's bytes are not samples, so a format
+    that carries one leaves the level at zero."""
+
+    def __init__(self, source: ByteStream):
+        self._source = source
+        self.peak = 0.0
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._source.read(size)
+        if chunk and len(chunk) % 2 == 0:
+            # Some sixteen thousand samples a chunk, on the path feeding the
+            # player, so the scan stays inside the memoryview.
+            samples = memoryview(chunk).cast("h")
+            self.peak = max(max(samples), -min(samples)) / 32768
+
+        return chunk
+
+
 class TeeReader:
     """Readable wrapper mirroring everything read into `sink`.
 
