@@ -12,6 +12,7 @@ import math
 import struct
 import subprocess
 import sys
+import textwrap
 import time
 from collections.abc import Iterator
 from enum import StrEnum
@@ -65,9 +66,11 @@ class Notification:
     # refreshes, or it blinks out in between.
     TICK_HOLD_MS = 2000
     DISMISS_MS = 200
-    # How much of a growing text `tail` keeps. The card wraps rather than
-    # clipping, so this is a couple of lines of context, not one row.
+    # How much of a growing text `tail` keeps, and how wide it lays it out.
+    # Growing down rather than sideways: the card sits against a screen edge,
+    # so a long row runs out of room where more rows do not.
     CARD_CHARS = 128
+    WRAP_CHARS = 64
     # A wedged call must never delay the work it is describing.
     TIMEOUT = 2.0
 
@@ -152,13 +155,12 @@ class Notification:
         the other end, so it cannot do this job — only its word boundary is
         worth copying, so the line never opens mid-word."""
         flat = " ".join(message.split())
-        if len(flat) <= self.CARD_CHARS:
-            return flat
+        if len(flat) > self.CARD_CHARS:
+            clipped = flat[-self.CARD_CHARS :]
+            _, _, rest = clipped.partition(" ")
+            flat = f"…{rest}" if rest else clipped
 
-        clipped = flat[-self.CARD_CHARS :]
-        _, _, rest = clipped.partition(" ")
-
-        return f"…{rest}" if rest else clipped
+        return textwrap.fill(flat, self.WRAP_CHARS)
 
     def echo(
         self, chunks: Iterator[str], *, icon: OsdIcon | None = None
