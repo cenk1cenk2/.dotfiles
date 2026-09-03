@@ -103,6 +103,12 @@ from .stt import (
     DEFAULT_STT_TIMEOUT as DEFAULT_STT_TIMEOUT,
 )
 from .stt import (
+    DEFAULT_VAD_SILENCE_MS as DEFAULT_VAD_SILENCE_MS,
+)
+from .stt import (
+    DEFAULT_VAD_THRESHOLD as DEFAULT_VAD_THRESHOLD,
+)
+from .stt import (
     PLAIN_FORMATS as PLAIN_FORMATS,
 )
 from .stt import (

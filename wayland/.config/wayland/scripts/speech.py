@@ -42,6 +42,8 @@ from lib import (
     DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
+    DEFAULT_VAD_SILENCE_MS,
+    DEFAULT_VAD_THRESHOLD,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
@@ -661,7 +663,6 @@ class Stt:
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
-                self._notify("Enriching transcription...", timeout=3000)
                 if isinstance(enricher, EnrichStreaming):
                     # The card can stream even where the sink cannot: a
                     # clipboard holds one value, but watching the rewrite
@@ -685,8 +686,6 @@ class Stt:
             # landed", and a caller typing into a focused window wants the
             # keystrokes to arrive before the sound that announces them.
             Chime(ChimeDirection.DOWN).play()
-            if enricher is not None:
-                self._notify("Done")
         finally:
             ticking.set()
             self._suppressor.restore()
@@ -770,6 +769,18 @@ class Stt:
         type=click.Choice([p.value for p in SttProvider], case_sensitive=False),
         default=SttProvider.REALTIME.value,
         help="Transcription backend.",
+    )
+    @click.option(
+        "--vad-threshold",
+        type=float,
+        default=DEFAULT_VAD_THRESHOLD,
+        help="Speech probability a realtime turn needs, not a level.",
+    )
+    @click.option(
+        "--vad-silence-ms",
+        type=int,
+        default=DEFAULT_VAD_SILENCE_MS,
+        help="Silence that closes a realtime turn.",
     )
     @click.option(
         "--input",
@@ -863,6 +874,8 @@ class Stt:
     )
     def cmd_toggle(
         source,
+        vad_threshold,
+        vad_silence_ms,
         input_,
         input_file,
         output,
@@ -939,6 +952,8 @@ class Stt:
                         headers=_pairs(headers, "--header"),
                         timeout=timeout,
                         user_agent="speech/1.0",
+                        vad_threshold=vad_threshold,
+                        vad_silence_ms=vad_silence_ms,
                     )
                 )
             case _:

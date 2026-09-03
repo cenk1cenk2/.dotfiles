@@ -52,6 +52,10 @@ DEFAULT_STT_TIMEOUT = 300.0
 # One ISO-639-1 code: the endpoint answers 500 to a list or an unknown
 # code. Empty leaves the field off, which is the model's auto-detect.
 DEFAULT_STT_LANGUAGE = "en"
+# The server defaults to 0.9 and 550ms, which splits a sentence at any pause
+# for thought. Lower threshold, longer silence: fewer, whole turns.
+DEFAULT_VAD_THRESHOLD = 0.5
+DEFAULT_VAD_SILENCE_MS = 1200
 # The one format that is prose, so the only one enrichment can rewrite:
 # a cleanup pass over the others would eat the timings and the structure.
 PLAIN_FORMATS = (ResponseFormat.TEXT,)
@@ -80,6 +84,11 @@ class SttSpec:
     prompt: str = ""
     timeout: float = DEFAULT_STT_TIMEOUT
     user_agent: str = "stt/1.0"
+    # Server-side turn detection, for the realtime backend. The threshold is
+    # a speech probability rather than a level, so a quiet but clear voice
+    # scores lower than a loud one and needs a lower bar, not more gain.
+    vad_threshold: float = DEFAULT_VAD_THRESHOLD
+    vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS
 
     # Whatever else this backend takes, as ordered name/value pairs rather
     # than a mapping: a repeated name is how the OpenAI shape spells a list
@@ -293,14 +302,10 @@ class SttAdapterRealtime:
     # 100ms frames: small enough that the server's VAD sees speech begin
     # promptly, large enough not to spend the take in syscalls.
     CHUNK_MS = 100
-    # The server defaults to 0.9 and 550ms, which splits a sentence at any
-    # pause for thought. Lower threshold, longer silence: fewer, whole turns.
-    # A breath between sentences does not close a turn at any of these
+    # A breath between sentences does not close a turn at the default
     # settings; roughly two seconds of silence does.
-    VAD_THRESHOLD = 0.5
-    VAD_SILENCE_MS = 1200
     # Silence pushed after the microphone closes so the server's own detector
-    # ends the last turn. Derived from the silence above rather than fixed —
+    # ends the last turn. Added to the configured silence rather than fixed —
     # a shorter tail than the detector waits for would never close it.
     TAIL_MARGIN_MS = 400
     # How long to wait for the final segment before giving up and posting.
@@ -373,6 +378,12 @@ class SttAdapterRealtime:
                 if not text:
                     continue
                 with self._lock:
+                    # The detector re-emits a turn it has already closed if
+                    # the tail arrives faster than its own window, so an
+                    # immediate repeat is the socket stuttering rather than
+                    # the speaker saying it twice.
+                    if self._segments and self._segments[-1][1] == text:
+                        continue
                     self._segments.append((len(self._segments), text))
                 log.info("segment: %s", text)
                 if self._on_segment:
@@ -401,7 +412,8 @@ class SttAdapterRealtime:
         # Paced like the capture it follows. Sent as fast as the socket takes
         # it, the detector reads the whole tail inside one of its own windows
         # and re-emits the turn it already closed, once per frame.
-        for _ in range(int((self.VAD_SILENCE_MS + self.TAIL_MARGIN_MS) / self.CHUNK_MS)):
+        tail_ms = self.spec.vad_silence_ms + self.TAIL_MARGIN_MS
+        for _ in range(int(tail_ms / self.CHUNK_MS)):
             self._send_audio(ws, b"\0" * chunk)
             time.sleep(self.CHUNK_MS / 1000)
 
@@ -436,8 +448,8 @@ class SttAdapterRealtime:
                         "session": {
                             "turn_detection": {
                                 "type": "server_vad",
-                                "threshold": self.VAD_THRESHOLD,
-                                "silence_duration_ms": self.VAD_SILENCE_MS,
+                                "threshold": self.spec.vad_threshold,
+                                "silence_duration_ms": self.spec.vad_silence_ms,
                             }
                         },
                     }

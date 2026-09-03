@@ -70,7 +70,7 @@ class Notification:
     # Growing down rather than sideways: the card sits against a screen edge,
     # so a long row runs out of room where more rows do not.
     CARD_CHARS = 128
-    WRAP_CHARS = 64
+    WRAP_CHARS = 40
     # A wedged call must never delay the work it is describing.
     TIMEOUT = 2.0
 
