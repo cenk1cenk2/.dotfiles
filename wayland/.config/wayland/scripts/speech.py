@@ -21,7 +21,7 @@ from typing import Any
 import click
 from dotlib.audio import (
     DEFAULT_DUCK_FACTOR,
-    Ducker,
+    PlaybackSuppressor,
 )
 from dotlib.cli import (
     create_logger,
@@ -860,10 +860,10 @@ class TtsSession(SocketSession):
 
     log = logging.getLogger("speech.tts.session")
 
-    def __init__(self, voice: str, chars: int, ducker: Ducker):
+    def __init__(self, voice: str, chars: int, suppressor: PlaybackSuppressor):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
-        self.ducker = ducker
+        self.suppressor = suppressor
 
     @staticmethod
     def _socket_path() -> str:
@@ -886,9 +886,10 @@ class TtsSession(SocketSession):
             with self._lock:
                 return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
         if cmd is Command.KILL:
-            # SIGKILL runs no `finally`, so the ducked streams have to be put
-            # back before it lands or they stay quiet until their app restarts.
-            self.ducker.restore()
+            # SIGKILL runs no `finally`, so the ducked streams and the paused
+            # players have to be put back before it lands, or they stay quiet
+            # until their app restarts.
+            self.suppressor.restore()
             os.killpg(0, signal.SIGKILL)
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
@@ -959,6 +960,11 @@ def tts_speak_options():
             help="Multiplier applied to other applications' volume.",
         ),
         click.option(
+            "--pause-players/--no-pause-players",
+            default=True,
+            help="Pause MPRIS players while speaking.",
+        ),
+        click.option(
             "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
         ),
         click.option(
@@ -998,15 +1004,17 @@ class Tts:
         enricher: EnrichAdapter | None = None,
         duck: bool = False,
         duck_factor: float = DEFAULT_DUCK_FACTOR,
+        pause_players: bool = False,
     ):
         self._spec = spec or TtsSpec()
         self._input = input
         self._player = player
         self._copy = copy
         self._enricher = enricher
-        self._duck = duck
-        self._ducker = Ducker(
-            duck_factor,
+        self._suppressor = PlaybackSuppressor(
+            duck=duck,
+            factor=duck_factor,
+            pause=pause_players,
             name="speech",
             exclude=(player.mode.value,) if player else (),
         )
@@ -1065,7 +1073,7 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
-        session = TtsSession(spec.voice, len(text), self._ducker)
+        session = TtsSession(spec.voice, len(text), self._suppressor)
         session.start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
@@ -1089,11 +1097,10 @@ class Tts:
             try:
                 with TtsAdapterHttp(spec).synth(text) as stream:
                     session.set_phase(TtsPhase.SPEAKING)
-                    # Duck at playback, not at synthesis: the backend can take
-                    # seconds, and quieting the room before there is anything
-                    # to hear just makes the wait silent.
-                    if self._duck:
-                        self._ducker.duck()
+                    # Quiet the room at playback, not at synthesis: the backend
+                    # can take seconds, and pausing before there is anything to
+                    # hear just makes the wait silent.
+                    self._suppressor.suppress()
                     source = TeeReader(stream, buffer) if buffer else stream
                     written, code = self._player.play(source, spec.sample_rate)
             except (
@@ -1127,7 +1134,7 @@ class Tts:
                 copy_audio(buffer.getvalue(), spec)
                 self._notify("Audio copied to clipboard", timeout=3000)
         finally:
-            self._ducker.restore()
+            self._suppressor.restore()
             session.stop()
 
     def kill(self) -> None:
@@ -1191,6 +1198,7 @@ class Tts:
         timeout,
         duck,
         duck_factor,
+        pause_players,
         copy,
         enrich,
         **enrich_opts,
@@ -1237,7 +1245,14 @@ class Tts:
             )
 
         Tts(
-            spec, input_adapter, player_adapter, copy, enricher, duck, duck_factor
+            spec,
+            input_adapter,
+            player_adapter,
+            copy,
+            enricher,
+            duck,
+            duck_factor,
+            pause_players,
         ).speak()
 
     @cli.command("toggle")
