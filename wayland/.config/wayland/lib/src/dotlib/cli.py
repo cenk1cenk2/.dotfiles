@@ -88,6 +88,10 @@ def create_logger(
             )
             root.setLevel(logging.DEBUG)
             root.addHandler(trace)
+            # What was actually run. A trace of a keybind launch is worth
+            # little without it: the flags are the first thing in question
+            # when a run behaves like a different command.
+            root.debug("argv: %s", " ".join(sys.argv))
         except OSError as e:
             # A log that cannot be opened is not worth failing a capture over.
             root.warning("no trace log: %s", e)

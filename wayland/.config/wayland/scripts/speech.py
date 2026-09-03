@@ -1778,7 +1778,12 @@ class Tts:
 @click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
 def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
-    create_logger(verbose, log_file="speech.log")
+    # Not for the pollers. Waybar runs `status`, `is-recording` and
+    # `is-speaking` several times a second, and a trace of those would rotate
+    # the take worth reading out of the file within minutes.
+    polling = {"status", "is-recording", "is-speaking"}
+    trace = None if polling & set(sys.argv) else "speech.log"
+    create_logger(verbose, log_file=trace)
     set_headless(headless)
 
 cli.add_command(Stt.cli, "stt")
