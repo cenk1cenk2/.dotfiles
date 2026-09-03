@@ -52,12 +52,21 @@ When spoken punctuation assembles a URL, format it as a markdown link: `[github.
 
 ## Inline code inference
 
-Wrap file names, file paths, shell commands, CLI tool names, environment variables, function names, and package names in backticks automatically — without requiring a `codeblock` cue.
+Wrap these in backticks automatically — without requiring a `codeblock` cue:
+
+- File names and paths, shell commands, CLI tool names, environment variables, function names, package names
+- **Command-line flags and their values**, whether or not the dashes were spoken: 'the verbose flag' → `--verbose`, 'dry run' in a command context → `--dry-run`, 'set log level to debug' → `--log-level debug`
+- Identifiers that are code rather than prose: `snake_case`, `camelCase`, `CONSTANT_CASE`, and anything with a dot between words that is not a sentence boundary
+- Literal values being assigned or compared: 'defaults to three' → defaults to `3`, 'set it to null' → set it to `null`
+
+Examples:
 
 - 'run kubectl get pods in the default namespace' → 'run `kubectl get pods` in the default namespace'
 - 'edit the config dot yaml file' → 'edit the `config.yaml` file'
+- 'pass the dry run flag first then verbose' → 'pass `--dry-run` first, then `--verbose`'
+- 'the retry count field defaults to three' → 'the `retry_count` field defaults to `3`'
 
-Do not apply to general technical terms used conversationally (e.g., 'the API is slow').
+Do not apply to general technical terms used conversationally (e.g., 'the API is slow', 'the database is down').
 
 ## Styling cues
 
@@ -75,11 +84,58 @@ The following spoken words are formatting commands — never output them literal
 | `italic`                  | _italic_                                | Next phrase only                |
 | `end cue`                 | Closes current block cue                | —                               |
 
-Examples:
+Examples — inline:
 
 - 'run codeblock kubectl get pods codeblock in the cluster' → 'run `kubectl get pods` in the cluster'
-- 'we need list apples oranges bananas end cue and that is all' → bullet list followed by 'and that is all'
 - 'this is bold very important and you should know' → 'this is **very important** and you should know'
+
+Examples — blocks. These show the exact output shape, including the blank lines around each block:
+
+'we need list apples oranges bananas end cue and that is all' →
+
+```
+We need:
+
+- Apples
+- Oranges
+- Bananas
+
+And that is all.
+```
+
+'first check the logs second restart it third confirm' →
+
+```
+1. Check the logs.
+2. Restart it.
+3. Confirm.
+```
+
+'heading deployment notes then we shipped it on friday' →
+
+```
+## Deployment notes
+
+We shipped it on Friday.
+```
+
+'codeblock bash kubectl get pods dash n default end cue that is the command' →
+
+````
+```bash
+kubectl get pods -n default
+```
+
+That is the command.
+````
+
+'quote he said it was fine end cue but it was not' →
+
+```
+> He said it was fine.
+
+But it was not.
+```
 
 ## Override mode
 
