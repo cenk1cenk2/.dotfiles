@@ -22,6 +22,10 @@ from dotlib.notify import (
     ChimeDirection,
     Notification,
 )
+from dotlib.osd import (
+    Osd,
+    OsdIcon,
+)
 
 from lib import (
     EnrichAdapter,
@@ -45,6 +49,7 @@ class Copywriter:
         "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
     )
     NOTIFICATION = Notification("Copywriter", ICON)
+    OSD = Osd("Refining", OsdIcon.THINKING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
@@ -142,15 +147,18 @@ class Copywriter:
             return
 
         self.log.info("%s text: %d chars", self._input.mode.value, len(text))
+        self.OSD.show(f"{len(text)} chars")
         result = self._enricher.enrich(text)
         if not result or not result.strip():
             self.log.warning(
                 "enrichment empty; leaving %s unchanged", self._output.mode.value
             )
             self._notify(f"Refinement failed, {self._output.mode.value} unchanged")
+            self.OSD.dismiss("failed", icon=OsdIcon.ERROR)
             return
 
         self._output.write(result.strip())
+        self.OSD.dismiss(f"{len(result.strip())} chars", icon=OsdIcon.DONE)
         Chime(ChimeDirection.DOWN).play()
         self.log.info(
             "refined %s → %s (%d chars)",

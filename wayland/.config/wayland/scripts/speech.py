@@ -1020,10 +1020,17 @@ class TtsSession(SocketSession):
 
     log = logging.getLogger("speech.tts.session")
 
-    def __init__(self, voice: str, chars: int, suppressor: PlaybackSuppressor):
+    def __init__(
+        self,
+        voice: str,
+        chars: int,
+        suppressor: PlaybackSuppressor,
+        osd: Osd | None = None,
+    ):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
         self.suppressor = suppressor
+        self.osd = osd
         self._queue: list[str] = []
 
     PREVIEW_CHARS = 42
@@ -1048,6 +1055,19 @@ class TtsSession(SocketSession):
         # The bar polls on a 3s interval, which is long enough to miss a short
         # utterance queueing and draining between ticks.
         self._signal_waybar()
+        # The card is redrawn per utterance, so without this an arrival during
+        # a long one would not show until the next began.
+        if self.osd is not None:
+            with self._lock:
+                chars = self.state.chars
+            self.osd.show(f"{chars} chars{self.waiting()}")
+
+    def waiting(self) -> str:
+        """`, 2 waiting` when something is queued, empty when nothing is."""
+        with self._lock:
+            count = len(self._queue)
+
+        return f", {count} waiting" if count else ""
 
     def pop(self) -> str | None:
         """Next queued utterance, or None once the backlog is drained."""
@@ -1395,21 +1415,27 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
-        session = TtsSession(spec.voice, len(text), self._suppressor)
+        osd = Osd("Speaking", OsdIcon.SPEAKER)
+        session = TtsSession(spec.voice, len(text), self._suppressor, osd)
         session.start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
             # it is handed, so the rewrite has to land before the audio does.
             text = self._enrich(text, session)
-            while self._play(text, session):
+            while True:
+                osd.show(f"{len(text)} chars{session.waiting()}")
+                if not self._play(text, session):
+                    break
                 queued = session.pop()
                 if queued is None:
+                    osd.dismiss()
                     break
                 session.set_phase(TtsPhase.WORKING)
                 session.set_chars(len(queued))
                 self.log.info("dequeued %d chars", len(queued))
                 text = queued
         finally:
+            osd.dismiss()
             self._suppressor.restore()
             session.stop()
 
