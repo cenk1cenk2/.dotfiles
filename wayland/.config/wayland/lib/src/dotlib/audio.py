@@ -33,14 +33,6 @@ from .desktop import is_headless
 
 DEFAULT_DUCK_FACTOR = 0.3
 
-# Every playerctl call sits on the path to speaking, so a wedged player must
-# never stall an utterance.
-PLAYERCTL_TIMEOUT = 2.0
-
-# Volumes come back as floats; PulseAudio rounds through integer units, so an
-# exact comparison would reject a stream nobody touched.
-VOLUME_EPSILON = 0.01
-
 log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
@@ -173,8 +165,11 @@ class Ducker:
                         if entry is None or entry.identity != self._identity(stream):
                             continue
                         current = list(stream.volume.values)
+                        # Volumes come back as floats and PulseAudio rounds
+                        # through integer units, so an exact comparison would
+                        # reject a stream nobody touched.
                         if len(current) != len(entry.applied) or any(
-                            abs(now - was) > VOLUME_EPSILON
+                            abs(now - was) > 0.01
                             for now, was in zip(current, entry.applied)
                         ):
                             log.debug("stream %d moved since duck; leaving it", stream.index)
@@ -196,7 +191,9 @@ class MediaPauser:
     keeps this module free of a D-Bus binding that every dotlib consumer would
     otherwise have to carry."""
 
-    def __init__(self, *, timeout: float = PLAYERCTL_TIMEOUT):
+    # Every playerctl call sits on the path to speaking, so a wedged player
+    # must never stall an utterance.
+    def __init__(self, *, timeout: float = 2.0):
         self._timeout = timeout
         self._paused: list[str] = []
         self._lock = threading.Lock()

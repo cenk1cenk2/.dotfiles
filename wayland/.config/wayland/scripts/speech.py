@@ -35,6 +35,10 @@ from dotlib.notify import (
     ChimeDirection,
     Notification,
 )
+from dotlib.osd import (
+    Osd,
+    OsdIcon,
+)
 
 from lib import (
     DEFAULT_API_KEY_ENV,
@@ -53,6 +57,7 @@ from lib import (
     InputAdapter,
     InputAdapterClipboard,
     InputMode,
+    LevelSource,
     OutputAdapter,
     OutputAdapterClipboard,
     OutputMode,
@@ -192,6 +197,24 @@ SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 def subscript(value: int) -> str:
     """Render a number as subscript digits, for hanging a count off an icon."""
     return str(value).translate(SUBSCRIPT_DIGITS)
+
+def _bars(adapter: SttAdapter) -> str:
+    """A level meter for the card, or nothing when the adapter has no levels.
+
+    An adapter driving someone else's daemon never sees the samples, so the
+    card falls back to the timer alone rather than drawing a dead row."""
+    if not isinstance(adapter, LevelSource):
+        return ""
+    frame = adapter.frame()
+    if frame is None:
+        return ""
+
+    blocks = " ▁▂▃▄▅▆▇█"
+    _, bars = frame
+    # A handful of columns, not the 32 the adapter reports: this is one line
+    # of text on a shared surface, not a waveform.
+    step = max(1, len(bars) // 12)
+    return "".join(blocks[min(len(blocks) - 1, int(b * len(blocks)))] for b in bars[::step])
 
 def _input_choices(*modes: InputMode) -> click.Choice:
     """Choice over exactly the input modes a command can build.
@@ -509,6 +532,19 @@ class Stt:
         # the only cue that the microphone is live. Before the suppression, so
         # it is heard at full volume rather than ducking itself.
         Chime(ChimeDirection.UP).play()
+
+        osd = Osd("Recording", OsdIcon.MIC)
+        osd.show("listening")
+        # swayosd hides a card when its own timer runs out, so holding one open
+        # for an open-ended recording means re-firing. A daemon thread rather
+        # than the capture loop, which is blocked inside the adapter.
+        ticking = threading.Event()
+
+        def tick() -> None:
+            while not ticking.wait(1.0):
+                osd.elapsed(_bars(self._adapter))
+
+        threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the
         # speakers are doing bleeds into the microphone and lands in the
         # transcript. Lifted again by the STOP handler as soon as the
@@ -559,7 +595,9 @@ class Stt:
             # closed.
             if server:
                 server.set_phase(Phase.WORKING)
+            ticking.set()
             if enricher is not None:
+                osd.show("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
@@ -574,6 +612,7 @@ class Stt:
             if server:
                 server.set_phase(Phase.OUTPUT)
             output.write(text)
+            osd.dismiss(f"{len(text)} chars", icon=OsdIcon.DONE)
             # After the write, not before: the chime means "the text has
             # landed", and a caller typing into a focused window wants the
             # keystrokes to arrive before the sound that announces them.
@@ -581,6 +620,7 @@ class Stt:
             if enricher is not None:
                 self._notify("Done")
         finally:
+            ticking.set()
             self._suppressor.restore()
             if server:
                 server.stop()

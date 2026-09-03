@@ -158,23 +158,6 @@ def build_input(mode: InputMode, **kwargs) -> InputAdapter:
         raise ValueError(f"{mode.value} input takes no {', '.join(kwargs)}") from e
 
 
-# The realtime socket's wire format; the batch path is resampled server-side
-# anyway, so one capture rate serves both.
-CAPTURE_RATE = 24000
-SAMPLE_BYTES = 2
-
-# Opus at this bitrate is roughly a tenth of the WAV it replaces and the
-# endpoint decodes it natively. `voip` is the application profile tuned for
-# speech rather than music.
-OPUS_BITRATE = "24k"
-OPUS_APPLICATION = "voip"
-ENCODE_TIMEOUT = 30.0
-
-# Bars the overlay draws, and how much recent audio each frame summarises.
-BARS = 32
-FRAME_SECONDS = 1 / 30
-
-
 class MicCapture:
     """A live `pw-record` capture, readable as an upload once stopped.
 
@@ -183,6 +166,19 @@ class MicCapture:
 
     mode = InputMode.MIC
     name = "capture.opus"
+
+    # The realtime socket's wire format; the batch path is resampled
+    # server-side anyway, so one capture rate serves both.
+    CAPTURE_RATE = 24000
+    SAMPLE_BYTES = 2
+    # Bars the overlay draws, and how often it refreshes.
+    BARS = 32
+    FRAME_SECONDS = 1 / 30
+    # Bandwidth against quality. Opus here is roughly a tenth of the WAV it
+    # replaces, and the endpoint decodes it natively; `voip` is the profile
+    # tuned for speech rather than music.
+    OPUS_BITRATE = "24k"
+    OPUS_APPLICATION = "voip"
 
     def __init__(self, rate: int = CAPTURE_RATE, target: str | None = None):
         self.rate = rate
@@ -265,27 +261,27 @@ class MicCapture:
     @property
     def seconds(self) -> float:
         with self._lock:
-            return len(self._pcm) / SAMPLE_BYTES / self.rate
+            return len(self._pcm) / self.SAMPLE_BYTES / self.rate
 
     def frame(self) -> tuple[float, list[float]] | None:
         """Peak and `BARS` bucket levels over the most recent audio.
 
         None before anything has been captured, so a caller can poll this
         from the first tick without guarding on the recorder's state."""
-        want = int(self.rate * FRAME_SECONDS) * SAMPLE_BYTES
+        want = int(self.rate * self.FRAME_SECONDS) * self.SAMPLE_BYTES
         with self._lock:
             if not self._pcm:
                 return None
             window = bytes(self._pcm[-want:])
 
-        count = len(window) // SAMPLE_BYTES
-        if count < BARS:
+        count = len(window) // self.SAMPLE_BYTES
+        if count < self.BARS:
             return None
 
-        samples = struct.unpack(f"<{count}h", window[: count * SAMPLE_BYTES])
-        size = count // BARS
+        samples = struct.unpack(f"<{count}h", window[: count * self.SAMPLE_BYTES])
+        size = count // self.BARS
         bars = []
-        for i in range(BARS):
+        for i in range(self.BARS):
             bucket = samples[i * size : (i + 1) * size]
             mean = sum(s * s for s in bucket) / len(bucket)
             bars.append(min(1.0, math.sqrt(mean) / 32768.0))
@@ -323,9 +319,9 @@ class MicCapture:
             "-c:a",
             "libopus",
             "-b:a",
-            OPUS_BITRATE,
+            self.OPUS_BITRATE,
             "-application",
-            OPUS_APPLICATION,
+            self.OPUS_APPLICATION,
             "-f",
             "ogg",
             "pipe:1",
@@ -336,7 +332,7 @@ class MicCapture:
                 cmd,
                 input=raw,
                 capture_output=True,
-                timeout=ENCODE_TIMEOUT,
+                timeout=30,
                 check=False,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
