@@ -551,14 +551,29 @@ class Stt:
         Chime(ChimeDirection.UP).play()
 
         osd = self.NOTIFICATION
-        # The opening frame, so the card is up before the first tick lands.
-        osd.elapsed(level=_level(self._adapter))
         # Finalised turns only — the endpoint publishes no partial deltas, so
         # what reaches the card is never taken back.
+        transcript: list[str] = []
+
+        def draw() -> None:
+            # Every turn, untruncated: the card grows down and a dictation is
+            # worth reading back in full while it is still open. The newest
+            # turn is set off by a blank line and the rest packed, so the eye
+            # lands on what was just said.
+            *earlier, latest = transcript or [""]
+            body = "\n".join(earlier) + "\n\n" + latest if earlier else latest
+            osd.elapsed(body, level=_level(self._adapter), block=True)
+
+        # One shape for both writers, so a turn landing between ticks is not
+        # a bare line that the next tick wipes.
+        draw()
         if isinstance(self._adapter, SttStreaming):
-            self._adapter.subscribe(
-                lambda text: osd.send(osd.tail(text), osd.TICK_HOLD_MS)
-            )
+
+            def on_turn(text: str) -> None:
+                transcript.append(text)
+                draw()
+
+            self._adapter.subscribe(on_turn)
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
@@ -566,7 +581,7 @@ class Stt:
 
         def tick() -> None:
             while not ticking.wait(1.0):
-                osd.elapsed(level=_level(self._adapter))
+                draw()
 
         threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the
