@@ -1778,7 +1778,7 @@ class Tts:
 @click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
 def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
-    create_logger(verbose)
+    create_logger(verbose, log_file="speech.log")
     set_headless(headless)
 
 cli.add_command(Stt.cli, "stt")

@@ -8,6 +8,7 @@ command output (waybar JSON, stdout sinks)."""
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import signal
 import subprocess
@@ -22,14 +23,30 @@ from rich.logging import RichHandler
 _console: Console | None = None
 
 
+# Where a run leaves its trace. A compositor keybind has nowhere to put
+# stderr, so a script launched from one is undiagnosable without this.
+LOG_DIR = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+LOG_BYTES = 1 << 20
+LOG_BACKUPS = 2
+
+
 def create_logger(
-    verbose: bool, *, name: str | None = None, markup: bool = False
+    verbose: bool,
+    *,
+    name: str | None = None,
+    markup: bool = False,
+    log_file: str | None = None,
 ) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr.
 
     `markup` opts into rich markup inside log messages, for per-item results
     like `log.info("gpu: [green]%s[/]", name)`. Off by default so a message
     containing square brackets is not silently eaten as a style tag.
+
+    `log_file` names a rotating log under the state directory, which is the
+    only trace a run launched from a keybind leaves behind. It records at
+    DEBUG whatever the console level is: the run worth reading is the one
+    that already went wrong, and it will not be repeated with `--verbose`.
     """
     global _console
     root = logging.getLogger()
@@ -54,6 +71,26 @@ def create_logger(
     else:
         for h in root.handlers:
             h.setLevel(level)
+
+    if log_file and not any(
+        isinstance(h, logging.handlers.RotatingFileHandler) for h in root.handlers
+    ):
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            trace = logging.handlers.RotatingFileHandler(
+                os.path.join(LOG_DIR, log_file),
+                maxBytes=LOG_BYTES,
+                backupCount=LOG_BACKUPS,
+            )
+            trace.setLevel(logging.DEBUG)
+            trace.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+            )
+            root.setLevel(logging.DEBUG)
+            root.addHandler(trace)
+        except OSError as e:
+            # A log that cannot be opened is not worth failing a capture over.
+            root.warning("no trace log: %s", e)
 
     return logging.getLogger(name) if name else root
 
