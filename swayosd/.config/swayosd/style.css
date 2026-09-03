@@ -1,0 +1,61 @@
+/* =============================================================================
+ *
+ * swayosd styling
+ *
+ * Overrides /etc/xdg/swayosd/style.css, which is sized for a volume popup: a
+ * short label and a 6px bar. This surface also carries the speech cards, which
+ * hold a timer, a level meter and a line of transcribed text, so everything is
+ * scaled up and given room to breathe.
+ *
+ * Only the properties that change are listed — the shipped sheet still
+ * supplies the pill shape, the disabled states and the segment spacing.
+ *
+ * ========================================================================== */
+
+@import url("theme.css");
+
+window#osd {
+  /* Softened rather than the shipped pill: at this width a 999px radius reads
+   * as a lozenge, and the text inside it sits oddly. */
+  border-radius: 24px;
+  border: 1px solid @bg_color_300;
+  background: @bg_color_alpha_900;
+}
+
+window#osd #container {
+  /* The shipped 16px is what makes it feel cramped once there is a line of
+   * text rather than a single word. */
+  margin: 26px 32px;
+  min-width: 420px;
+}
+
+window#osd image,
+window#osd label {
+  color: @bright_text_color;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+window#osd image {
+  /* -gtk-icon-size is the GTK4 property; icon-size is ignored here. */
+  -gtk-icon-size: 28px;
+  margin-right: 12px;
+}
+
+window#osd progressbar,
+window#osd segmentedprogress {
+  /* Three times the shipped height. A level meter that moves every second
+   * needs to be readable at a glance from across the desk. */
+  min-height: 18px;
+  border-radius: 9px;
+}
+
+window#osd trough,
+window#osd segment {
+  background: @bg_color_300;
+}
+
+window#osd progress,
+window#osd segment.active {
+  background: @bg_color_900;
+}
