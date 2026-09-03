@@ -34,7 +34,8 @@ class CappedFileHandler(logging.FileHandler):
     Keeps the first run rather than the most recent one, which is the
     opposite of what a rotating log does. A fault is read from the time it
     first happened; by the time anyone looks, the runs since have pushed it
-    out. Delete the file to arm it again."""
+    out. Delete the file between runs to arm it again: a run already under
+    way keeps writing to the unlinked file it opened."""
 
     def __init__(self, path: str, cap: int = LOG_CAP):
         super().__init__(path, delay=True)
@@ -60,6 +61,7 @@ def create_logger(
     name: str | None = None,
     markup: bool = False,
     log_file: str | None = None,
+    quiet: set[str] | frozenset[str] = frozenset(),
 ) -> logging.Logger:
     """Install a rich handler on the root logger, bound to stderr.
 
@@ -70,6 +72,10 @@ def create_logger(
     `log_file` names a log under the state directory, which is the only trace
     a run launched from a keybind leaves behind. It follows the console
     level, so `--verbose` is what fills it in.
+
+    `quiet` names subcommands that open no log at all, for the ones a status
+    bar polls: left in, they fill the cap before a run worth reading reaches
+    it.
     """
     global _console
     root = logging.getLogger()
@@ -94,6 +100,9 @@ def create_logger(
     else:
         for h in root.handlers:
             h.setLevel(level)
+
+    if quiet & set(sys.argv):
+        log_file = None
 
     if log_file and not any(
         isinstance(h, CappedFileHandler) for h in root.handlers

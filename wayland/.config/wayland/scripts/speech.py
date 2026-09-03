@@ -374,6 +374,10 @@ class SttSession(SocketSession):
         self.enricher = enricher
         self.suppressor = suppressor
         self._adapter = adapter
+        # Set once turns start reaching the sink. What is typed cannot be
+        # taken back, so an override that would rewrite the take arrives too
+        # late to be honoured and is refused rather than dropped.
+        self.emitting = False
 
     @staticmethod
     def _socket_path() -> str:
@@ -398,8 +402,8 @@ class SttSession(SocketSession):
         except json.JSONDecodeError, ValueError:
             return Response(ok=False, error=f"bad request: {raw!r}")
 
-        # A status poll is the bar asking, several times a second; only a
-        # command that changes something is worth a line.
+        # A status poll is the bar asking on its interval; only a command
+        # that changes something is worth a line.
         self.log.log(
             logging.DEBUG if cmd is Command.STATUS else logging.INFO,
             "socket cmd: %s",
@@ -422,6 +426,11 @@ class SttSession(SocketSession):
             # transcription and any enrichment come back.
             Chime(ChimeDirection.FLAT).play()
             if "enrich" in obj:
+                if self.emitting and obj["enrich"]:
+                    return Response(
+                        ok=False,
+                        error="turns already typed; a rewrite cannot replace them",
+                    )
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
                 self._apply_output_override(OutputMode(obj["output"]))
@@ -537,7 +546,7 @@ class Stt:
                 # other than this invocation asked for.
                 if not response.ok:
                     self.log.error("session refused the override: %s", response.error)
-                    self._notify(f"Override refused: {response.error}")
+                    self._notify(f"Override refused: {response.error}", timeout=6000)
                 return
 
         assert self._output is not None, "a capture requires an output adapter"
@@ -591,6 +600,8 @@ class Stt:
                 transcript.append(text)
                 redraw()
                 if live:
+                    if server:
+                        server.emitting = True
                     live_sink.write(text if len(transcript) == 1 else f" {text}")
 
             self._adapter.subscribe(on_turn)
@@ -603,7 +614,8 @@ class Stt:
             while not ticking.wait(1.0):
                 redraw()
 
-        threading.Thread(target=tick, daemon=True).start()
+        ticker = threading.Thread(target=tick, daemon=True)
+        ticker.start()
         # Quieting playback matters more here than for speech: whatever the
         # speakers are doing bleeds into the microphone and lands in the
         # transcript. Lifted again by the STOP handler as soon as the
@@ -624,12 +636,12 @@ class Stt:
                 KeyError,
             ) as e:
                 self.log.error("transcription failed: %s", e)
-                self._notify("Transcription failed")
+                self._notify("Transcription failed", timeout=6000)
                 sys.exit(1)
 
             if captured is None:
                 self.log.error("capture produced nothing to transcribe")
-                self._notify("Capture failed")
+                self._notify("Capture failed", timeout=6000)
                 sys.exit(1)
 
             # Exit non-zero rather than write an empty sink: a caller that
@@ -638,7 +650,7 @@ class Stt:
             text = captured.strip()
             if not text:
                 self.log.warning("empty transcription")
-                self._notify("No transcription captured")
+                self._notify("No transcription captured", timeout=6000)
                 sys.exit(1)
 
             self.log.info("captured %d chars", len(text))
@@ -654,6 +666,7 @@ class Stt:
             if server:
                 server.set_phase(Phase.WORKING)
             ticking.set()
+            ticker.join(timeout=Notification.TIMEOUT)
             # When both halves can stream, the sink starts with the first token
             # instead of after the last one. Typing is the slow part — roughly
             # fifty characters a second — so there it overlaps generation with
@@ -695,7 +708,7 @@ class Stt:
                     text = enriched.strip()
                 else:
                     self.log.warning("enrichment empty; using raw")
-                    self._notify("Enrichment failed, using raw transcription")
+                    self._notify("Enrichment failed, using raw transcription", timeout=6000)
 
             if server:
                 server.set_phase(Phase.OUTPUT)
@@ -713,7 +726,10 @@ class Stt:
                 if rest := text[len(emitted) :]:
                     output.write(rest)
             else:
-                self.log.warning("typed turns do not prefix the take; not writing again")
+                self.log.error(
+                    "typed turns do not prefix the take; %d chars dropped", len(text)
+                )
+                self._notify("Take and typed turns disagree", timeout=8000)
             osd.dismiss(f"{len(text)} chars", icon=OsdIcon.DONE)
             # After the write, not before: the chime means "the text has
             # landed", and a caller typing into a focused window wants the
@@ -721,6 +737,7 @@ class Stt:
             Chime(ChimeDirection.DOWN).play()
         finally:
             ticking.set()
+            ticker.join(timeout=Notification.TIMEOUT)
             self._suppressor.restore()
             if server:
                 server.stop()
@@ -887,7 +904,11 @@ class Stt:
     @click.option(
         "--stream/--no-stream",
         default=True,
-        help="Emit the enrichment as it is generated. Needs --enrich and a type or stdout output.",
+        help=(
+            "Emit as it is produced rather than at the end: the rewrite with "
+            "--enrich, the realtime turns without it. Needs a type or stdout "
+            "output."
+        ),
     )
     @click.option(
         "--duck/--no-duck",
@@ -1239,8 +1260,8 @@ class TtsSession(SocketSession):
         except json.JSONDecodeError, ValueError:
             return TtsResponse(ok=False, error=f"bad request: {raw!r}")
 
-        # A status poll is the bar asking, several times a second; only a
-        # command that changes something is worth a line.
+        # A status poll is the bar asking on its interval; only a command
+        # that changes something is worth a line.
         self.log.log(
             logging.DEBUG if cmd is Command.STATUS else logging.INFO,
             "socket cmd: %s",
@@ -1459,9 +1480,7 @@ class Tts:
 
         if isinstance(self._enricher, EnrichStreaming):
             # Synthesis needs the whole rewrite before it can speak a word, so
-            # the card is the only place the wait shows as progress. Drawn
-            # through `elapsed` like the playback that follows it, so the run
-            # holds one card from rewrite to last word.
+            # the card is the only place the wait shows as progress.
             card = self.NOTIFICATION
             parts: list[str] = []
             for chunk in self._enricher.enrich_stream(text):
@@ -1603,7 +1622,8 @@ class Tts:
                     session.card(), level=_meter(meter.peak) if meter else None
                 )
 
-        threading.Thread(target=tick, daemon=True).start()
+        ticker = threading.Thread(target=tick, daemon=True)
+        ticker.start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
             # it is handed, so the rewrite has to land before the audio does.
@@ -1621,6 +1641,7 @@ class Tts:
                 spoken = queued
         finally:
             ticking.set()
+            ticker.join(timeout=Notification.TIMEOUT)
             osd.dismiss()
             self._suppressor.restore()
             session.stop()
@@ -1793,12 +1814,7 @@ class Tts:
 @click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
 def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
-    # Not for the pollers. Waybar runs `status`, `is-recording` and
-    # `is-speaking` several times a second, and a trace of those would rotate
-    # the take worth reading out of the file within minutes.
-    polling = {"status", "is-recording", "is-speaking"}
-    trace = None if polling & set(sys.argv) else "speech.log"
-    create_logger(verbose, log_file=trace)
+    create_logger(verbose, log_file="speech.log", quiet={"status", "is-recording", "is-speaking"})
     set_headless(headless)
 
 cli.add_command(Stt.cli, "stt")

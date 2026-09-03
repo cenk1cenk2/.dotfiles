@@ -209,11 +209,7 @@ class Copywriter:
     )
     def cli(verbose: bool, headless: bool):
         """Refine clipboard text through AI."""
-        # Waybar polls these on a tick; a trace of them would fill the
-        # cap before anything worth reading reached it.
-        polling = {"status", "is-running"}
-        trace = None if polling & set(sys.argv) else "copywriter.log"
-        create_logger(verbose, log_file=trace)
+        create_logger(verbose, log_file="copywriter.log", quiet={"status", "is-running"})
         set_headless(headless)
 
     @cli.command("run")
