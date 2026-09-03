@@ -5,6 +5,8 @@ description = "Scaffolding shared by every scripts project in the dotfiles."
 requires-python = ">=3.14"
 dependencies = [
   "rich>=13.7",
+  # libpulse bindings for the sink-input ducking in `audio`.
+  "pulsectl>=24.12",
 ]
 
 # A path dependency has to be an installable package: uv builds it even in

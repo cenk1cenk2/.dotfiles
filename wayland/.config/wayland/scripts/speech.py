@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any
 
 import click
+from dotlib.audio import (
+    DEFAULT_DUCK_FACTOR,
+    Ducker,
+)
 from dotlib.cli import (
     create_logger,
 )
@@ -856,9 +860,10 @@ class TtsSession(SocketSession):
 
     log = logging.getLogger("speech.tts.session")
 
-    def __init__(self, voice: str, chars: int):
+    def __init__(self, voice: str, chars: int, ducker: Ducker):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
+        self.ducker = ducker
 
     @staticmethod
     def _socket_path() -> str:
@@ -881,6 +886,9 @@ class TtsSession(SocketSession):
             with self._lock:
                 return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
         if cmd is Command.KILL:
+            # SIGKILL runs no `finally`, so the ducked streams have to be put
+            # back before it lands or they stay quiet until their app restarts.
+            self.ducker.restore()
             os.killpg(0, signal.SIGKILL)
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
@@ -940,6 +948,17 @@ def tts_speak_options():
             help="Backend deadline in seconds.",
         ),
         click.option(
+            "--duck/--no-duck",
+            default=True,
+            help="Lower other applications while speaking.",
+        ),
+        click.option(
+            "--duck-factor",
+            type=float,
+            default=DEFAULT_DUCK_FACTOR,
+            help="Multiplier applied to other applications' volume.",
+        ),
+        click.option(
             "--copy/--no-copy", default=False, help="Copy the audio to the clipboard."
         ),
         click.option(
@@ -977,12 +996,20 @@ class Tts:
         player: PlayerAdapter | None = None,
         copy: bool = False,
         enricher: EnrichAdapter | None = None,
+        duck: bool = False,
+        duck_factor: float = DEFAULT_DUCK_FACTOR,
     ):
         self._spec = spec or TtsSpec()
         self._input = input
         self._player = player
         self._copy = copy
         self._enricher = enricher
+        self._duck = duck
+        self._ducker = Ducker(
+            duck_factor,
+            name="speech",
+            exclude=(player.mode.value,) if player else (),
+        )
 
     # ── core ──────────────────────────────────────────────────────
 
@@ -1038,7 +1065,7 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
-        session = TtsSession(spec.voice, len(text))
+        session = TtsSession(spec.voice, len(text), self._ducker)
         session.start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
@@ -1062,6 +1089,11 @@ class Tts:
             try:
                 with TtsAdapterHttp(spec).synth(text) as stream:
                     session.set_phase(TtsPhase.SPEAKING)
+                    # Duck at playback, not at synthesis: the backend can take
+                    # seconds, and quieting the room before there is anything
+                    # to hear just makes the wait silent.
+                    if self._duck:
+                        self._ducker.duck()
                     source = TeeReader(stream, buffer) if buffer else stream
                     written, code = self._player.play(source, spec.sample_rate)
             except (
@@ -1095,6 +1127,7 @@ class Tts:
                 copy_audio(buffer.getvalue(), spec)
                 self._notify("Audio copied to clipboard", timeout=3000)
         finally:
+            self._ducker.restore()
             session.stop()
 
     def kill(self) -> None:
@@ -1156,6 +1189,8 @@ class Tts:
         base_url,
         api_key_env,
         timeout,
+        duck,
+        duck_factor,
         copy,
         enrich,
         **enrich_opts,
@@ -1201,7 +1236,9 @@ class Tts:
                 Tts.USER_PROMPT,
             )
 
-        Tts(spec, input_adapter, player_adapter, copy, enricher).speak()
+        Tts(
+            spec, input_adapter, player_adapter, copy, enricher, duck, duck_factor
+        ).speak()
 
     @cli.command("toggle")
     @tts_speak_options()
