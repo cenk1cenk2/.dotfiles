@@ -59,6 +59,9 @@ from .input import (
     InputMode as InputMode,
 )
 from .input import (
+    MicCapture as MicCapture,
+)
+from .input import (
     build_input as build_input,
 )
 from .output import (
@@ -97,6 +100,9 @@ from .stt import (
     PLAIN_FORMATS as PLAIN_FORMATS,
 )
 from .stt import (
+    LevelSource as LevelSource,
+)
+from .stt import (
     ResponseFormat as ResponseFormat,
 )
 from .stt import (
@@ -109,6 +115,9 @@ from .stt import (
     SttAdapterHyprwhspr as SttAdapterHyprwhspr,
 )
 from .stt import (
+    SttAdapterMic as SttAdapterMic,
+)
+from .stt import (
     SttProvider as SttProvider,
 )
 from .stt import (
@@ -116,6 +125,9 @@ from .stt import (
 )
 from .stt import (
     SttSpec as SttSpec,
+)
+from .stt import (
+    SttStreaming as SttStreaming,
 )
 from .tts import (
     DEFAULT_TTS_PLAYER as DEFAULT_TTS_PLAYER,

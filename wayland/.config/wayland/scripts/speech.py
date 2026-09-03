@@ -35,6 +35,7 @@ from dotlib.notify import (
     ChimeDirection,
     Notification,
 )
+
 from lib import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
@@ -65,6 +66,7 @@ from lib import (
     SttAdapter,
     SttAdapterHttp,
     SttAdapterHyprwhspr,
+    SttAdapterMic,
     SttProvider,
     SttRecorder,
     SttSpec,
@@ -80,6 +82,7 @@ from lib import (
     signal_waybar,
     spec_from_options,
 )
+
 
 class Command(StrEnum):
     STATUS = "status"
@@ -189,6 +192,14 @@ SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 def subscript(value: int) -> str:
     """Render a number as subscript digits, for hanging a count off an icon."""
     return str(value).translate(SUBSCRIPT_DIGITS)
+
+def _input_choices(*modes: InputMode) -> click.Choice:
+    """Choice over exactly the input modes a command can build.
+
+    Spelled out per command rather than taken from the enum: `InputMode` also
+    carries modes no flag can select — a live capture belongs to the adapter
+    that drives it, and `build_input` would refuse it."""
+    return click.Choice([m.value for m in modes], case_sensitive=False)
 
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
@@ -655,7 +666,9 @@ class Stt:
     @click.option(
         "--input",
         "input_",
-        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        type=_input_choices(
+            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
+        ),
         default=InputMode.FILE.value,
         help="Audio source for the http backend.",
     )
@@ -785,6 +798,22 @@ class Stt:
                     ),
                     audio_source,
                 )
+            case SttProvider.MIC:
+                if not os.environ.get(api_key_env, "").strip():
+                    raise click.UsageError(f"{api_key_env} is empty")
+                adapter = SttAdapterMic(
+                    SttSpec(
+                        model=model,
+                        base_url=base_url,
+                        api_key_env=api_key_env,
+                        response_format=stt_format,
+                        language=language,
+                        fields=_pairs(fields, "--field"),
+                        headers=_pairs(headers, "--header"),
+                        timeout=timeout,
+                        user_agent="speech/1.0",
+                    )
+                )
             case _:
                 raise click.UsageError(f"unsupported source: {provider!r}")
 
@@ -815,7 +844,9 @@ class Stt:
     @click.option(
         "--input",
         "input_",
-        type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+        type=_input_choices(
+            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
+        ),
         default=InputMode.STDIN.value,
         help="Text source.",
     )
@@ -1039,7 +1070,9 @@ def tts_speak_options():
         click.option(
             "--input",
             "input_",
-            type=click.Choice([m.value for m in InputMode], case_sensitive=False),
+            type=_input_choices(
+            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
+        ),
             default=InputMode.CLIPBOARD.value,
             help="Text source.",
         ),

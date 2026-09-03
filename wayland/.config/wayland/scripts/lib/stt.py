@@ -14,20 +14,23 @@ import logging
 import mimetypes
 import os
 import subprocess
+import threading
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
-from .input import InputAdapter
+from .input import InputAdapter, MicCapture
 
 
 class SttProvider(StrEnum):
     HYPRWHSPR = "hyprwhspr"
     HTTP = "http"
+    MIC = "mic"
 
 
 class ResponseFormat(StrEnum):
@@ -92,6 +95,29 @@ class SttRecorder(SttAdapter, Protocol):
     def stop(self) -> None: ...
 
     def cancel(self) -> None: ...
+
+
+@runtime_checkable
+class LevelSource(Protocol):
+    """Recorder that owns its capture loop, so it can report signal levels.
+
+    Narrow and separate from `SttRecorder` because a backend driving someone
+    else's daemon has no access to the samples: the overlay asks with
+    `isinstance` and draws a flat row when the answer is no."""
+
+    def frame(self) -> tuple[float, list[float]] | None:
+        """Current (peak, bars), or None before anything has been captured."""
+        ...
+
+
+@runtime_checkable
+class SttStreaming(SttRecorder, Protocol):
+    """Recorder that yields finalised segments while the capture runs.
+
+    Segments only — the endpoint publishes no partial deltas, so nothing
+    handed to `on_segment` is ever revised or retracted."""
+
+    def subscribe(self, on_segment: Callable[[str], None]) -> None: ...
 
 
 class SttAdapterHyprwhspr:
@@ -238,3 +264,44 @@ class SttAdapterHttp:
         )
 
         return body, f"multipart/form-data; boundary={boundary}"
+
+
+class SttAdapterMic:
+    """Our own microphone capture, posted to the same endpoint as `http`.
+
+    Composition rather than a second HTTP client: `SttAdapterHttp` already
+    takes any `InputAdapter` and `MicCapture` is one, so this adapter only
+    owns the recording lifecycle and hands the bytes over."""
+
+    provider = SttProvider.MIC
+
+    def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
+        self.spec = spec
+        self.mic = mic or MicCapture()
+        # `capture` blocks on this the way the packaged recorder blocks on its
+        # daemon, so the session's STOP handler ends a take by the same route
+        # for either adapter.
+        self._stopped = threading.Event()
+
+    def is_recording(self) -> bool:
+        return self.mic.is_recording()
+
+    def stop(self) -> None:
+        self.mic.stop()
+        self._stopped.set()
+
+    def cancel(self) -> None:
+        self.mic.cancel()
+        self._stopped.set()
+
+    def frame(self) -> tuple[float, list[float]] | None:
+        return self.mic.frame()
+
+    def capture(self) -> str | None:
+        self.mic.start()
+        self._stopped.wait()
+        if not self.mic.pcm():
+            log.error("capture held no audio")
+            return None
+
+        return SttAdapterHttp(self.spec, self.mic).capture()
