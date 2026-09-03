@@ -432,6 +432,8 @@ class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
     NOTIFICATION = Notification("Speech-to-Text", ICON, OsdIcon.MIC)
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
+    # Biases the recogniser toward the vocabulary this machine dictates in.
+    WHISPER_PROMPT = load_prompt("stt-whisper.md", relative_to=__file__)
     USER_PROMPT = (
         "Clean up the following speech transcription:\n"
         "<transcription>\n{text}\n</transcription>"
@@ -727,7 +729,7 @@ class Stt:
     @click.option(
         "--source",
         type=click.Choice([p.value for p in SttProvider], case_sensitive=False),
-        default=SttProvider.HYPRWHSPR.value,
+        default=SttProvider.MIC.value,
         help="Transcription backend.",
     )
     @click.option(
@@ -752,6 +754,11 @@ class Stt:
         "--output-file", type=click.Path(path_type=Path), help="Text file to write."
     )
     @click.option("--model", default=None, help="Transcription model id.")
+    @click.option(
+        "--whisper-prompt",
+        default=None,
+        help="Vocabulary hint for the recogniser. Empty string disables it.",
+    )
     @click.option(
         "--response-format",
         type=click.Choice([f.value for f in ResponseFormat], case_sensitive=False),
@@ -822,6 +829,7 @@ class Stt:
         output,
         output_file,
         model,
+        whisper_prompt,
         response_format,
         language,
         fields,
@@ -844,6 +852,8 @@ class Stt:
         except (TypeError, ValueError) as e:
             raise click.UsageError(str(e)) from e
 
+        if whisper_prompt is None:
+            whisper_prompt = Stt.WHISPER_PROMPT
         stt_format = ResponseFormat(response_format)
         provider = SttProvider(source)
         adapter: SttAdapter
@@ -864,6 +874,7 @@ class Stt:
                         api_key_env=api_key_env,
                         response_format=stt_format,
                         language=language,
+                        prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
                         headers=_pairs(headers, "--header"),
                         timeout=timeout,
@@ -886,6 +897,7 @@ class Stt:
                         api_key_env=api_key_env,
                         response_format=stt_format,
                         language=language,
+                        prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
                         headers=_pairs(headers, "--header"),
                         timeout=timeout,

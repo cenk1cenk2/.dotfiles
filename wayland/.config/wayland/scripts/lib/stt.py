@@ -72,6 +72,13 @@ class SttSpec:
     api_key_env: str = DEFAULT_API_KEY_ENV
     response_format: ResponseFormat = ResponseFormat.TEXT
     language: str = DEFAULT_STT_LANGUAGE
+    # Conditions the recogniser on style rather than vocabulary. Not an
+    # instruction — the model treats it as preceding text, so it is a short
+    # sample of well-punctuated technical prose: sentence case, real
+    # punctuation, acronyms in capitals, digits for numbers. Deliberately
+    # names no products; a list of them biases toward those and helps nothing
+    # else, and the ones tried still came back wrong.
+    prompt: str = ""
     timeout: float = DEFAULT_STT_TIMEOUT
     user_agent: str = "stt/1.0"
 
@@ -266,6 +273,8 @@ class SttAdapterHttp:
         ]
         if spec.language:
             fields.append(("language", spec.language))
+        if spec.prompt:
+            fields.append(("prompt", spec.prompt))
         fields.extend(spec.fields)
         body = b"".join(
             [
