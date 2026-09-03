@@ -556,13 +556,15 @@ class Stt:
         transcript: list[str] = []
 
         def draw() -> None:
-            # One line: swayosd renders a progress card's text as a single
-            # row, so the turns are joined and the end kept rather than
-            # stacked, which shows only the clock.
+            # A progress card lays its text out in a narrow column beside the
+            # bar, wide enough for a clock and no more, so the meter is what
+            # there is to show until words arrive. From the first turn on the
+            # transcript takes the card instead, where it has the room.
+            said = osd.tail(" ".join(transcript))
             osd.elapsed(
-                osd.tail(" ".join(transcript)),
-                level=_level(self._adapter),
-                apart=True,
+                said,
+                level=None if said else _level(self._adapter),
+                apart=bool(said),
             )
 
         # One shape for both writers, so a turn landing between ticks is not
