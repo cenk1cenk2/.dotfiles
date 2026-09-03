@@ -6,3 +6,13 @@
 hl.on("monitor.focused", function(monitor)
   hl.config({ input = { tablet = { output = monitor.name } } })
 end)
+
+-- Lid open turns the panels back on. A lid-open is a switch event, not
+-- input, so nothing else does it: hypridle's dpms-on and brightness
+-- restore both hang off on-resume, which waits for input.
+--
+-- switch:off is the OPENING edge. locked = true because hyprlock is up.
+hl.bind("switch:off:Lid Switch", function()
+  hl.dispatch(hl.dsp.dpms("on"))
+  hl.exec_cmd("brightnessctl -r")
+end, { locked = true })
