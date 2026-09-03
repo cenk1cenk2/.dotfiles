@@ -21,7 +21,10 @@ from typing import Any
 import click
 from dotlib.audio import (
     DEFAULT_DUCK_FACTOR,
+    ChimeDirection,
     PlaybackSuppressor,
+    chime_pcm,
+    play_chime,
 )
 from dotlib.cli import (
     create_logger,
@@ -38,7 +41,6 @@ from lib import (
     DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
-    DEFAULT_TTS_LOUDNESS,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
@@ -59,6 +61,7 @@ from lib import (
     PlayerAdapterPaplay,
     PlayerAdapterPwCat,
     PlayerMode,
+    PrefixReader,
     ResponseFormat,
     SttAdapter,
     SttAdapterHttp,
@@ -83,6 +86,7 @@ class Command(StrEnum):
     STATUS = "status"
     STOP = "stop"
     KILL = "kill"
+    ENQUEUE = "enqueue"
 
 class Phase(StrEnum):
     RECORDING = "recording"
@@ -302,6 +306,7 @@ class SttSession(SocketSession):
         output: OutputAdapter,
         enricher: EnrichAdapter | None,
         adapter: SttRecorder,
+        suppressor: PlaybackSuppressor,
     ):
         super().__init__()
         self.state = SessionState(
@@ -311,6 +316,7 @@ class SttSession(SocketSession):
         )
         self.output = output
         self.enricher = enricher
+        self.suppressor = suppressor
         self._adapter = adapter
 
     @staticmethod
@@ -344,6 +350,15 @@ class SttSession(SocketSession):
             # Stop first: an override that raises must not leave the recorder
             # running with no second toggle able to reach it.
             self._adapter.stop()
+            # The microphone is shut, so nothing more can bleed into it.
+            # Transcription and enrichment still have seconds to run, and
+            # holding everyone else quiet through an LLM call is not something
+            # the recording needed - `run_once` keeps a restore of its own for
+            # the paths that never reach a STOP.
+            self.suppressor.restore()
+            # The job is not done though: nothing is written until the
+            # transcription and any enrichment come back.
+            play_chime(ChimeDirection.FLAT)
             if "enrich" in obj:
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
@@ -351,6 +366,9 @@ class SttSession(SocketSession):
             return Response(ok=True)
         if cmd is Command.KILL:
             self._adapter.cancel()
+            # SIGKILL runs no `finally`, so the ducked streams and the paused
+            # players have to be put back before it lands.
+            self.suppressor.restore()
             os.killpg(0, signal.SIGKILL)
 
         return Response(ok=False, error=f"unhandled command: {cmd.value}")
@@ -385,10 +403,19 @@ class Stt:
         adapter: SttAdapter,
         enricher: EnrichAdapter | None = None,
         output: OutputAdapter | None = None,
+        duck: bool = False,
+        duck_factor: float = DEFAULT_DUCK_FACTOR,
+        pause_players: bool = False,
     ):
         self._adapter = adapter
         self._enricher = enricher
         self._output = output
+        self._suppressor = PlaybackSuppressor(
+            duck=duck,
+            factor=duck_factor,
+            pause=pause_players,
+            name="speech",
+        )
 
     # ── core ──────────────────────────────────────────────────────
 
@@ -455,10 +482,21 @@ class Stt:
         )
 
         server = (
-            SttSession(self._output, self._enricher, recorder) if recorder else None
+            SttSession(self._output, self._enricher, recorder, self._suppressor)
+            if recorder
+            else None
         )
         if server:
             server.start()
+        # hyprwhspr's own start ping is off (audio_feedback: false), so this is
+        # the only cue that the microphone is live. Before the suppression, so
+        # it is heard at full volume rather than ducking itself.
+        play_chime(ChimeDirection.UP)
+        # Quieting playback matters more here than for speech: whatever the
+        # speakers are doing bleeds into the microphone and lands in the
+        # transcript. Lifted again by the STOP handler as soon as the
+        # microphone shuts.
+        self._suppressor.suppress()
         try:
             try:
                 captured = self._adapter.capture()
@@ -515,9 +553,14 @@ class Stt:
             if server:
                 server.set_phase(Phase.OUTPUT)
             output.write(text)
+            # After the write, not before: the chime means "the text has
+            # landed", and a caller typing into a focused window wants the
+            # keystrokes to arrive before the sound that announces them.
+            play_chime(ChimeDirection.DOWN)
             if enricher is not None:
                 self._notify("Done")
         finally:
+            self._suppressor.restore()
             if server:
                 server.stop()
 
@@ -661,6 +704,22 @@ class Stt:
     @click.option(
         "--save/--no-save", default=True, help="Copy raw transcript to clipboard first."
     )
+    @click.option(
+        "--duck/--no-duck",
+        default=True,
+        help="Lower other applications while recording.",
+    )
+    @click.option(
+        "--duck-factor",
+        type=float,
+        default=DEFAULT_DUCK_FACTOR,
+        help="Multiplier applied to other applications' volume.",
+    )
+    @click.option(
+        "--pause-players/--no-pause-players",
+        default=True,
+        help="Pause MPRIS players while recording.",
+    )
     def cmd_toggle(
         source,
         input_,
@@ -677,6 +736,9 @@ class Stt:
         timeout,
         enrich,
         save,
+        duck,
+        duck_factor,
+        pause_players,
         **enrich_opts,
     ):
         """Start a session, or toggle an existing one."""
@@ -726,7 +788,14 @@ class Stt:
             enrich_spec = spec_from_options(enrich_opts, "speech/1.0", "enrich")
             enricher = build_enricher(enrich_spec, Stt.SYSTEM_PROMPT, Stt.USER_PROMPT)
 
-        Stt(adapter, enricher, output_adapter).run_once(
+        Stt(
+            adapter,
+            enricher,
+            output_adapter,
+            duck,
+            duck_factor,
+            pause_players,
+        ).run_once(
             enrich_spec=enrich_spec,
             output_mode=output_mode,
             save=save,
@@ -813,6 +882,12 @@ class TtsPhase(StrEnum):
     WORKING = "working"
     SPEAKING = "speaking"
 
+class TtsStyle(StrEnum):
+    READ = "read"
+    SUMMARY = "summary"
+
+TTS_PROMPTS = {TtsStyle.READ: "tts.md", TtsStyle.SUMMARY: "tts-summary.md"}
+
 @dataclass
 class TtsState:
     phase: TtsPhase
@@ -865,6 +940,21 @@ class TtsSession(SocketSession):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
         self.suppressor = suppressor
+        self._queue: list[str] = []
+
+    def enqueue(self, text: str) -> None:
+        """Add an utterance to the backlog.
+
+        Unbounded on purpose: a backlog nobody wants is one `tts toggle` away
+        from being gone, so dropping an utterance to enforce a cap would throw
+        away the one thing the caller cannot get back."""
+        with self._lock:
+            self._queue.append(text)
+
+    def pop(self) -> str | None:
+        """Next queued utterance, or None once the backlog is drained."""
+        with self._lock:
+            return self._queue.pop(0) if self._queue else None
 
     @staticmethod
     def _socket_path() -> str:
@@ -884,6 +974,16 @@ class TtsSession(SocketSession):
 
         self.log.info("socket cmd: %s", cmd.value)
         if cmd is Command.STATUS:
+            with self._lock:
+                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+        if cmd is Command.ENQUEUE:
+            # Text only: a queued utterance is spoken by the running session,
+            # through the player it already spawned, so a per-item sample rate
+            # or format would mean tearing that player down and rebuilding it.
+            text = str(obj.get("text") or "").strip()
+            if not text:
+                return TtsResponse(ok=False, error="enqueue needs text")
+            self.enqueue(text)
             with self._lock:
                 return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
         if cmd is Command.KILL:
@@ -932,13 +1032,7 @@ def tts_speak_options():
         click.option(
             "--normalize/--no-normalize",
             default=True,
-            help="Even out playback loudness. Needs the ffplay sink.",
-        ),
-        click.option(
-            "--loudness",
-            type=float,
-            default=DEFAULT_TTS_LOUDNESS,
-            help="Target loudness in LUFS.",
+            help="Lift playback loudness. Needs the ffplay sink.",
         ),
         click.option(
             "--player",
@@ -984,6 +1078,12 @@ def tts_speak_options():
             default=False,
             help="Rewrite the text to be readable aloud.",
         ),
+        click.option(
+            "--style",
+            type=click.Choice([s.value for s in TtsStyle], case_sensitive=False),
+            default=TtsStyle.READ.value,
+            help="Read the text in full, or summarize it. Needs --enrich.",
+        ),
     ]
 
     def decorate(f):
@@ -1000,10 +1100,13 @@ class Tts:
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
-    SYSTEM_PROMPT = load_prompt("tts.md", relative_to=__file__)
     USER_PROMPT = (
         "Rewrite the following text to be read aloud:\n<text>\n{text}\n</text>"
     )
+
+    @staticmethod
+    def system_prompt(style: TtsStyle) -> str:
+        return load_prompt(TTS_PROMPTS[style], relative_to=__file__)
 
     log = logging.getLogger("speech.tts")
 
@@ -1068,20 +1171,118 @@ class Tts:
 
         return text.strip()
 
+    def _enrich(self, text: str, session: TtsSession | None = None) -> str:
+        """Rewrite for speech, falling back to the original on any failure."""
+        if self._enricher is None:
+            return text
+
+        self._notify("Rewriting for speech...", timeout=3000)
+        rewritten = self._enricher.enrich(text)
+        if not (rewritten and rewritten.strip()):
+            self.log.warning("rewrite empty; speaking raw")
+            self._notify("Rewrite failed, speaking raw text")
+            return text
+
+        text = rewritten.strip()
+        if session is not None:
+            session.set_chars(len(text))
+        self.log.info("rewritten to %d chars", len(text))
+
+        return text
+
+    def _play(self, text: str, session: TtsSession) -> bool:
+        """Synthesize and play one utterance; False once something failed.
+
+        A failure ends the whole run rather than moving to the next queued
+        item: a dead backend or a dead player will not have recovered by the
+        time the next one is dequeued, and a queue of failures is a queue of
+        notifications."""
+        spec = self._spec
+        buffer = io.BytesIO() if self._copy else None
+        # A dead backend and a dead player are different faults with
+        # different fixes, so the notification has to tell them apart.
+        # Backend first: URLError and TimeoutError are OSError subclasses
+        # too, and the player clause below would otherwise swallow them.
+        try:
+            with TtsAdapterHttp(spec).synth(text) as stream:
+                session.set_phase(TtsPhase.SPEAKING)
+                # Quiet the room at playback, not at synthesis: the backend
+                # can take seconds, and pausing before there is anything to
+                # hear just makes the wait silent.
+                self._suppressor.suppress()
+                source = TeeReader(stream, buffer) if buffer else stream
+                # Outside the tee, so the chime is heard but never copied. Raw
+                # samples can only be prepended to raw samples, so a container
+                # format goes without one.
+                if spec.response_format is AudioFormat.PCM:
+                    source = PrefixReader(
+                        chime_pcm(ChimeDirection.UP, spec.sample_rate), source
+                    )
+                try:
+                    written, code = self._player.play(source, spec.sample_rate)
+                finally:
+                    # Per utterance, not per run: a queue drain synthesises the
+                    # next item before playing it, and holding the room quiet
+                    # across that gap quiets it for nothing.
+                    self._suppressor.restore()
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            http.client.IncompleteRead,
+            TimeoutError,
+        ) as e:
+            self.log.error("synthesis failed: %s", e)
+            self._notify("Synthesis failed")
+            return False
+        except (FileNotFoundError, BrokenPipeError, OSError) as e:
+            self.log.error("playback failed: %s", e)
+            self._notify("Playback failed")
+            return False
+
+        if code != 0:
+            self.log.error("%s exit=%d", self._player.mode.value, code)
+            self._notify("Playback failed")
+            return False
+
+        if not written:
+            self.log.warning("backend returned no audio")
+            self._notify("No audio returned")
+            return False
+
+        self.log.info("played %d bytes through %s", written, self._player.mode.value)
+        if buffer is not None:
+            copy_audio(buffer.getvalue(), spec)
+            self._notify("Audio copied to clipboard", timeout=3000)
+
+        return True
+
     def speak(self) -> None:
         assert self._input is not None, "speak requires an input adapter"
         assert self._player is not None, "speak requires a player adapter"
         spec = self._spec
 
-        # Refuse rather than rebind: a second bind would drop the running
-        # session's socket and leave its player unreachable to `kill`.
-        if self.is_speaking():
-            self.log.info("a session is already speaking; bailing")
-            self._notify("Already speaking")
-            return
-
         text = self._read_text()
         if text is None:
+            return
+
+        # Hand off rather than rebind: a second bind would drop the running
+        # session's socket and leave its player unreachable to `kill`. The
+        # rewrite happens here, on this side of the socket, because only this
+        # invocation knows which enricher and style its flags asked for.
+        if self.is_speaking():
+            text = self._enrich(text)
+            resp = self._send(Command.ENQUEUE, text=text)
+            if resp is not None and resp.ok:
+                self.log.info("queued %d chars behind the live session", len(text))
+                # Deliberately over the speech that is already playing: the
+                # point is to say another one has arrived without waiting for
+                # the current utterance to end.
+                play_chime(ChimeDirection.FLAT)
+                self._notify("Queued behind the current utterance", timeout=3000)
+            else:
+                error = resp.error if resp else "no session answered"
+                self.log.warning("enqueue refused: %s", error)
+                self._notify(f"Not queued: {error}")
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
@@ -1090,61 +1291,15 @@ class Tts:
         try:
             # Enrich before synthesis, not after: the backend reads whatever
             # it is handed, so the rewrite has to land before the audio does.
-            if self._enricher is not None:
-                self._notify("Rewriting for speech...", timeout=3000)
-                rewritten = self._enricher.enrich(text)
-                if rewritten and rewritten.strip():
-                    text = rewritten.strip()
-                    session.set_chars(len(text))
-                    self.log.info("rewritten to %d chars", len(text))
-                else:
-                    self.log.warning("rewrite empty; speaking raw")
-                    self._notify("Rewrite failed, speaking raw text")
-
-            buffer = io.BytesIO() if self._copy else None
-            # A dead backend and a dead player are different faults with
-            # different fixes, so the notification has to tell them apart.
-            # Backend first: URLError and TimeoutError are OSError subclasses
-            # too, and the player clause below would otherwise swallow them.
-            try:
-                with TtsAdapterHttp(spec).synth(text) as stream:
-                    session.set_phase(TtsPhase.SPEAKING)
-                    # Quiet the room at playback, not at synthesis: the backend
-                    # can take seconds, and pausing before there is anything to
-                    # hear just makes the wait silent.
-                    self._suppressor.suppress()
-                    source = TeeReader(stream, buffer) if buffer else stream
-                    written, code = self._player.play(source, spec.sample_rate)
-            except (
-                urllib.error.URLError,
-                urllib.error.HTTPError,
-                http.client.IncompleteRead,
-                TimeoutError,
-            ) as e:
-                self.log.error("synthesis failed: %s", e)
-                self._notify("Synthesis failed")
-                return
-            except (FileNotFoundError, BrokenPipeError, OSError) as e:
-                self.log.error("playback failed: %s", e)
-                self._notify("Playback failed")
-                return
-
-            if code != 0:
-                self.log.error("%s exit=%d", self._player.mode.value, code)
-                self._notify("Playback failed")
-                return
-
-            if not written:
-                self.log.warning("backend returned no audio")
-                self._notify("No audio returned")
-                return
-
-            self.log.info(
-                "played %d bytes through %s", written, self._player.mode.value
-            )
-            if buffer is not None:
-                copy_audio(buffer.getvalue(), spec)
-                self._notify("Audio copied to clipboard", timeout=3000)
+            text = self._enrich(text, session)
+            while self._play(text, session):
+                queued = session.pop()
+                if queued is None:
+                    break
+                session.set_phase(TtsPhase.WORKING)
+                session.set_chars(len(queued))
+                self.log.info("dequeued %d chars", len(queued))
+                text = queued
         finally:
             self._suppressor.restore()
             session.stop()
@@ -1205,7 +1360,6 @@ class Tts:
         response_format,
         sample_rate,
         normalize,
-        loudness,
         player,
         base_url,
         api_key_env,
@@ -1215,6 +1369,7 @@ class Tts:
         pause_players,
         copy,
         enrich,
+        style,
         **enrich_opts,
     ):
         """Synthesize the input text and play it."""
@@ -1227,16 +1382,15 @@ class Tts:
         player_mode = PlayerMode(player)
         if fmt is not AudioFormat.PCM and player_mode is not PlayerMode.FFPLAY:
             raise click.UsageError(f"{player_mode.value} plays raw pcm only")
-        # `loudnorm` is an ffmpeg filter; the raw sinks have no filter chain to
-        # put it in, so asking for both is a contradiction rather than a knob
-        # that quietly does nothing.
+        # The level filter is an ffmpeg filter; the raw sinks have no filter
+        # chain to put it in, so asking for both is a contradiction rather than
+        # a knob that quietly does nothing.
         if normalize and player_mode is not PlayerMode.FFPLAY:
             raise click.UsageError(f"{player_mode.value} cannot normalize")
 
-        target = loudness if normalize else None
         match player_mode:
             case PlayerMode.FFPLAY:
-                player_adapter: PlayerAdapter = PlayerAdapterFfplay(fmt, target)
+                player_adapter: PlayerAdapter = PlayerAdapterFfplay(fmt, normalize)
             case PlayerMode.PW_CAT:
                 player_adapter = PlayerAdapterPwCat()
             case PlayerMode.PAPLAY:
@@ -1250,18 +1404,21 @@ class Tts:
             speed=speed,
             response_format=fmt,
             sample_rate=sample_rate,
-            loudness=target,
             base_url=base_url,
             api_key_env=api_key_env,
             timeout=timeout,
             user_agent="speech/1.0",
         )
 
+        tts_style = TtsStyle(style)
+        if tts_style is not TtsStyle.READ and not enrich:
+            raise click.UsageError(f"--style {tts_style.value} needs --enrich")
+
         enricher: EnrichAdapter | None = None
         if enrich:
             enricher = build_enricher(
                 spec_from_options(enrich_opts, "speech/1.0", "enrich"),
-                Tts.SYSTEM_PROMPT,
+                Tts.system_prompt(tts_style),
                 Tts.USER_PROMPT,
             )
 

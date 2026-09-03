@@ -8,8 +8,8 @@
   "rest_api_provider": "openai",
   "rest_api_key": "${AI_KILIC_DEV_API_KEY}",
   "rest_body": { "model": "kilic.dev/stt" },
-  "audio_feedback": true,
+  "audio_feedback": false,
   "mute_detection": false,
-  "audio_ducking": true,
+  "audio_ducking": false,
   "mic_osd_enabled": true
 }

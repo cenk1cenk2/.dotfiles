@@ -11,6 +11,10 @@ from pathlib import Path
 
 import click
 import psutil
+from dotlib.audio import (
+    ChimeDirection,
+    play_chime,
+)
 from dotlib.cli import (
     create_logger,
 )
@@ -20,6 +24,7 @@ from dotlib.desktop import (
 from dotlib.notify import (
     notify,
 )
+
 from lib import (
     EnrichAdapter,
     InputAdapter,
@@ -147,6 +152,7 @@ class Copywriter:
             return
 
         self._output.write(result.strip())
+        play_chime(ChimeDirection.DOWN)
         self.log.info(
             "refined %s → %s (%d chars)",
             self._input.mode.value,

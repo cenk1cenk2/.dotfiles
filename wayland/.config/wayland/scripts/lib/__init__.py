@@ -118,9 +118,6 @@ from .stt import (
     SttSpec as SttSpec,
 )
 from .tts import (
-    DEFAULT_TTS_LOUDNESS as DEFAULT_TTS_LOUDNESS,
-)
-from .tts import (
     DEFAULT_TTS_PLAYER as DEFAULT_TTS_PLAYER,
 )
 from .tts import (
@@ -149,6 +146,9 @@ from .tts import (
 )
 from .tts import (
     PlayerMode as PlayerMode,
+)
+from .tts import (
+    PrefixReader as PrefixReader,
 )
 from .tts import (
     TeeReader as TeeReader,
