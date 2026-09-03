@@ -60,7 +60,10 @@ class Notification:
     # swayosd hides a card when its timer expires and offers no explicit hide,
     # so a card is held open by re-firing inside this window and let go by
     # firing once with a short one.
-    HOLD_MS = 2000
+    HOLD_MS = 1000
+    # A card kept up by re-firing needs a window wider than the gap between
+    # refreshes, or it blinks out in between.
+    TICK_HOLD_MS = 2000
     DISMISS_MS = 200
     # How much of a growing text `tail` keeps. One line at the card's width.
     CARD_CHARS = 52
@@ -162,6 +165,7 @@ class Notification:
     def elapsed(
         self,
         message: str = "",
+        timeout: int | None = None,
         *,
         icon: OsdIcon | None = None,
         level: float | None = None,
@@ -180,13 +184,16 @@ class Notification:
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
         text = f"{stamp}  {message}".rstrip()
         if level is None:
-            self.send(text, icon=icon)
+            self.send(text, timeout or self.TICK_HOLD_MS, icon=icon)
             return
 
         # One action carrying both, not a message followed by a bar: swayosd
         # holds a single content per window, so two calls overwrite each other
         # and the row flickers between them.
-        options = [("CUSTOM-PROGRESS-TEXT", self._titled(text)), ("DURATION", str(self.HOLD_MS))]
+        options = [
+            ("CUSTOM-PROGRESS-TEXT", self._titled(text)),
+            ("DURATION", str(timeout or self.TICK_HOLD_MS)),
+        ]
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))

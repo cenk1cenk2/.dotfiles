@@ -553,11 +553,14 @@ class Stt:
         Chime(ChimeDirection.UP).play()
 
         osd = self.NOTIFICATION
-        osd.send("listening")
+        # The opening frame, so the card is up before the first tick lands.
+        osd.elapsed(level=_level(self._adapter))
         # Finalised turns only — the endpoint publishes no partial deltas, so
         # what reaches the card is never taken back.
         if isinstance(self._adapter, SttStreaming):
-            self._adapter.subscribe(lambda text: osd.send(text[-48:]))
+            self._adapter.subscribe(
+                lambda text: osd.send(osd.tail(text), osd.TICK_HOLD_MS)
+            )
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
