@@ -118,9 +118,6 @@ from .stt import (
     SttAdapterHttp as SttAdapterHttp,
 )
 from .stt import (
-    SttAdapterHyprwhspr as SttAdapterHyprwhspr,
-)
-from .stt import (
     SttAdapterMic as SttAdapterMic,
 )
 from .stt import (

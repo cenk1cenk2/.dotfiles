@@ -64,6 +64,14 @@ USER_PATHS=(
     # the kitty platform split collapsed to a single globinclude
     "$HOME/.config/kitty/linux.conf"
     "$HOME/.config/kitty/macos.conf"
+    # hyprwhspr, replaced by speech.py's own capture. Its unit file and state
+    # are real files its installer wrote, not stow links, so removing the
+    # package leaves them. Uninstall `hyprwhspr` from the AUR separately.
+    "$HOME/.config/hyprwhspr"
+    "$HOME/.config/systemd/user/hyprwhspr.service"
+    "$HOME/.config/systemd/user/hyprwhspr.service.d"
+    "$HOME/.local/share/hyprwhspr"
+    "$HOME/.local/state/hyprwhspr"
 )
 
 # Real files install.py had already copied, so removing the source left them
@@ -117,10 +125,10 @@ done
 
 echo
 echo "== user units that should no longer be enabled"
-# waybar@sway: its package is gone, but .wants lives outside the package so
-# the enablement survived. tailscale-systray and hyprwhspr moved into
-# hyprland's autostart list, so leaving them enabled means two mechanisms
-# start the same unit.
+# waybar@sway and hyprwhspr: their packages are gone, but .wants lives outside
+# the package so the enablement survived. tailscale-systray moved into
+# hyprland's autostart list, so leaving it enabled means two mechanisms start
+# the same unit.
 #
 # NOTE: `systemctl --user disable` on a unit whose file is a stow symlink
 # ("linked" state) removes the unit file too, not just the .wants link. Only

@@ -15,7 +15,6 @@ local services = {
   "wayland-pipewire-idle-inhibit.service",
   "pimsync.service",
   "tailscale-systray.service",
-  "hyprwhspr.service",
 }
 
 hl.on("hyprland.start", function()

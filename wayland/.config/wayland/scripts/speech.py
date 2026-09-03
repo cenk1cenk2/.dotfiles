@@ -10,7 +10,6 @@ import math
 import os
 import signal
 import socket
-import subprocess
 import sys
 import threading
 import urllib.error
@@ -71,7 +70,6 @@ from lib import (
     ResponseFormat,
     SttAdapter,
     SttAdapterHttp,
-    SttAdapterHyprwhspr,
     SttAdapterMic,
     SttAdapterRealtime,
     SttProvider,
@@ -458,7 +456,7 @@ class Stt:
 
     def __init__(
         self,
-        adapter: SttAdapter,
+        adapter: SttAdapter | None = None,
         enricher: EnrichAdapter | None = None,
         output: OutputAdapter | None = None,
         duck: bool = False,
@@ -516,6 +514,7 @@ class Stt:
         save: bool,
         stream: bool = False,
     ) -> None:
+        assert self._adapter is not None, "a capture needs an adapter"
         recorder = self._recorder
         if recorder is not None:
             enrich_payload = enrich_spec.to_dict() if enrich_spec else None
@@ -547,8 +546,7 @@ class Stt:
         )
         if server:
             server.start()
-        # hyprwhspr's own start ping is off (audio_feedback: false), so this is
-        # the only cue that the microphone is live. Before the suppression, so
+        # The only cue that the microphone is live. Before the suppression, so
         # it is heard at full volume rather than ducking itself.
         Chime(ChimeDirection.UP).play()
 
@@ -579,11 +577,6 @@ class Stt:
         try:
             try:
                 captured = self._adapter.capture()
-            except subprocess.CalledProcessError as e:
-                reason = e.stderr or f"exit {e.returncode}"
-                self.log.error("recorder failed: %s", reason)
-                self._notify(f"Recorder failed:\n{reason}")
-                sys.exit(1)
             except (
                 urllib.error.URLError,
                 urllib.error.HTTPError,
@@ -878,8 +871,6 @@ class Stt:
         provider = SttProvider(source)
         adapter: SttAdapter
         match provider:
-            case SttProvider.HYPRWHSPR:
-                adapter = SttAdapterHyprwhspr()
             case SttProvider.HTTP:
                 if not os.environ.get(api_key_env, "").strip():
                     raise click.UsageError(f"{api_key_env} is empty")
@@ -1013,22 +1004,22 @@ class Stt:
     @cli.command("stop")
     def cmd_stop():
         """Stop the active session."""
-        Stt(SttAdapterHyprwhspr()).stop()
+        Stt().stop()
 
     @cli.command("kill")
     def cmd_kill():
         """Kill the session's process group."""
-        Stt(SttAdapterHyprwhspr()).kill()
+        Stt().kill()
 
     @cli.command("status")
     def cmd_status():
         """Print waybar-shaped status JSON."""
-        sys.stdout.write(Stt(SttAdapterHyprwhspr()).status_json() + "\n")
+        sys.stdout.write(Stt().status_json() + "\n")
 
     @cli.command("is-recording")
     def cmd_is_recording():
         """Exit 0 if a recording is live."""
-        sys.exit(0 if Stt(SttAdapterHyprwhspr()).is_recording() else 1)
+        sys.exit(0 if Stt().is_recording() else 1)
 
 class TtsPhase(StrEnum):
     WORKING = "working"

@@ -1,9 +1,10 @@
 """Speech-to-text backends.
 
-Two backends behind one `capture() -> str | None` call: hyprwhspr
-driving the microphone locally, and an OpenAI-compatible HTTP endpoint
-transcribing a payload an input adapter hands over. Callers configure
-the HTTP one through an `SttSpec`.
+Three behind one `capture() -> str | None` call, all against an
+OpenAI-compatible endpoint: a batch one transcribing whatever payload an
+input adapter hands over, a microphone one that captures first and posts
+what it recorded, and a realtime one streaming over a websocket. All
+three are configured through an `SttSpec`.
 
 The endpoint decodes whatever container the recorder produced, so
 nothing is transcoded on the way out."""
@@ -15,7 +16,6 @@ import json
 import logging
 import mimetypes
 import os
-import subprocess
 import threading
 import time
 import urllib.error
@@ -34,7 +34,6 @@ from .input import InputAdapter, MicCapture
 
 
 class SttProvider(StrEnum):
-    HYPRWHSPR = "hyprwhspr"
     HTTP = "http"
     MIC = "mic"
     REALTIME = "realtime"
@@ -132,68 +131,6 @@ class SttStreaming(SttRecorder, Protocol):
     handed to `on_segment` is ever revised or retracted."""
 
     def subscribe(self, on_segment: Callable[[str], None]) -> None: ...
-
-
-class SttAdapterHyprwhspr:
-    provider = SttProvider.HYPRWHSPR
-
-    # These run from the waybar poll every few seconds. With the daemon down
-    # the client opens its control FIFO and waits on `select` before giving
-    # up, so an unbounded call would hang the bar rather than answer it.
-    PROBE_TIMEOUT = 1.0
-
-    def _probe(self, *args: str) -> subprocess.CompletedProcess | None:
-        cmd = ["hyprwhspr", "record", *args]
-        log.debug("spawn: %s", " ".join(cmd))
-        try:
-            return subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.PROBE_TIMEOUT,
-                check=False,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            log.debug("hyprwhspr %s unavailable: %s", " ".join(args), e)
-            return None
-
-    def is_recording(self) -> bool:
-        result = self._probe("status")
-        if result is None:
-            return False
-
-        return "Recording in progress" in (result.stdout + result.stderr)
-
-    def stop(self) -> None:
-        self._probe("stop")
-
-    def cancel(self) -> None:
-        self._probe("cancel")
-
-    def capture(self) -> str | None:
-        # Blocks until the recording stops, which is what makes `stop`
-        # reachable only from the second press or the session socket.
-        cmd = ["hyprwhspr", "record", "capture"]
-        log.debug("spawn: %s", " ".join(cmd))
-        capture = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        stdout, stderr = capture.communicate()
-        message = stderr.decode("utf-8", errors="replace").strip()
-
-        # A daemon that is down exits non-zero with nothing on stdout, which
-        # is what silence looks like too: the returncode is the only thing
-        # that tells the two apart.
-        if capture.returncode != 0:
-            raise subprocess.CalledProcessError(
-                capture.returncode, cmd, output=stdout, stderr=message
-            )
-
-        log.debug("hyprwhspr stderr: %s", message)
-
-        return stdout.decode("utf-8", errors="replace").strip()
 
 
 class SttAdapterHttp:
