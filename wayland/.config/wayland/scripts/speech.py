@@ -611,7 +611,7 @@ class Stt:
         ticking = threading.Event()
 
         def tick() -> None:
-            while not ticking.wait(1.0):
+            while not ticking.wait(Notification.TICK_SECONDS):
                 redraw()
 
         ticker = threading.Thread(target=tick, daemon=True)
@@ -1480,13 +1480,14 @@ class Tts:
 
         if isinstance(self._enricher, EnrichStreaming):
             # Synthesis needs the whole rewrite before it can speak a word, so
-            # the card is the only place the wait shows as progress.
-            card = self.NOTIFICATION
-            parts: list[str] = []
-            for chunk in self._enricher.enrich_stream(text):
-                parts.append(chunk)
-                card.elapsed(card.tail("".join(parts)), icon=OsdIcon.THINKING, apart=True)
-            rewritten = "".join(parts)
+            # the card is the only place the wait shows as progress. A message
+            # card, because there is no level yet: a progress one would draw a
+            # bar for audio that has not been synthesised.
+            rewritten = "".join(
+                self.NOTIFICATION.echo(
+                    self._enricher.enrich_stream(text), icon=OsdIcon.THINKING
+                )
+            )
         else:
             self._notify("Rewriting for speech...", timeout=3000)
             rewritten = self._enricher.enrich(text)
@@ -1613,7 +1614,7 @@ class Tts:
         ticking = threading.Event()
 
         def tick() -> None:
-            while not ticking.wait(1.0):
+            while not ticking.wait(Notification.TICK_SECONDS):
                 if session.phase is not TtsPhase.SPEAKING:
                     osd.send(session.card(), osd.TICK_HOLD_MS, icon=OsdIcon.THINKING)
                     continue

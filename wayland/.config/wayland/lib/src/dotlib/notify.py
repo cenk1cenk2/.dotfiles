@@ -62,6 +62,9 @@ class Notification:
     # so a card is held open by re-firing inside this window and let go by
     # firing once with a short one.
     HOLD_MS = 1000
+    # How often a held card is redrawn. Short enough that a level meter reads
+    # as one, and well inside the hold so the card never blinks between.
+    TICK_SECONDS = 0.2
     # A card kept up by re-firing needs a window wider than the gap between
     # refreshes, or it blinks out in between.
     TICK_HOLD_MS = 2000
@@ -225,13 +228,20 @@ class Notification:
         return f"{self.title}\n{message}" if self.title else message
 
     def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
-        """Let it go, after a beat if there is a parting word."""
+        """Let it go, after a beat if there is a parting word.
+
+        Always redraws, even with nothing to say: swayosd hides a card when
+        its own timer runs out, so leaving the last one to expire holds a
+        finished job on screen for the rest of its hold."""
         self._started = 0.0
-        if message and not is_headless():
-            if self.channel is NotifyChannel.DESKTOP:
-                self._desktop(message, None)
-            else:
-                self._card(message, self.DISMISS_MS, icon)
+        if is_headless():
+            return
+
+        if message and self.channel is NotifyChannel.DESKTOP:
+            self._desktop(message, None)
+            return
+
+        self._card(message, self.DISMISS_MS, icon)
 
 
 class ChimeDirection(StrEnum):
