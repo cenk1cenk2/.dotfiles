@@ -558,16 +558,14 @@ class Stt:
         transcript: list[str] = []
 
         def draw() -> None:
-            # A progress card lays its text out in a narrow column beside the
-            # bar, wide enough for a clock and no more, so the meter is what
-            # there is to show until words arrive. From the first turn on the
-            # transcript takes the card instead, where it has the room.
+            # One card kind for the whole take. swayosd rebuilds the surface
+            # when the action changes, so a card that started as a meter and
+            # became a transcript tore itself down on the first turn and the
+            # text was never up long enough to read. A message card holds
+            # both the clock and the words; a progress card's text column is
+            # too narrow for a sentence, so the meter is what it cannot keep.
             said = osd.tail(" ".join(transcript))
-            osd.elapsed(
-                said,
-                level=None if said else _level(self._adapter),
-                apart=bool(said),
-            )
+            osd.elapsed(said, apart=bool(said))
 
         # One shape for both writers, so a turn landing between ticks is not
         # a bare line that the next tick wipes.
