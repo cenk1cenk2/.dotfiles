@@ -302,8 +302,13 @@ class SttAdapterRealtime:
     # 100ms frames: small enough that the server's VAD sees speech begin
     # promptly, large enough not to spend the take in syscalls.
     CHUNK_MS = 100
-    # A breath between sentences does not close a turn at the default
-    # settings; roughly two seconds of silence does.
+    # A turn closes on a pause of well under a second, but not in the first
+    # three seconds of a take: speaches only ends one when the last speech in
+    # its rolling 3s window has stopped AND the buffer already exceeds 3s
+    # (`input_audio_buffer_event_router.vad_detection_flow`, its own `FIX:
+    # magic number`). So the opening sentence is always one turn however it is
+    # spoken, and every pause after that splits. Neither `silence_duration_ms`
+    # nor `prefix_padding_ms` moves that floor; both were measured against it.
     # Silence pushed after the microphone closes so the server's own detector
     # ends the last turn. Added to the configured silence rather than fixed —
     # a shorter tail than the detector waits for would never close it.
