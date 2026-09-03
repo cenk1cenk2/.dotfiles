@@ -564,10 +564,13 @@ class Stt:
         # what reaches the card is never taken back.
         transcript: list[str] = []
 
-        # The meter and the turns arrive on different threads, so each
-        # updates only its own half and the card keeps the rest.
-        def tick_level() -> None:
-            osd.elapsed(level=_level(self._adapter) or 0.0)
+        # The meter ticks on one thread while turns close on another, and
+        # swayosd draws only what a call carries, so both redraw the whole
+        # card from what this run holds.
+        def redraw() -> None:
+            osd.elapsed(
+                osd.tail(" ".join(transcript)), level=_level(self._adapter), apart=True
+            )
 
         # Turns go to the sink as they close, not just to the card, when the
         # sink can take them and nothing downstream will rewrite them. An
@@ -581,12 +584,12 @@ class Stt:
             and isinstance(live_sink, OutputStreaming)
             and isinstance(self._adapter, SttStreaming)
         )
-        tick_level()
+        redraw()
         if isinstance(self._adapter, SttStreaming):
 
             def on_turn(text: str) -> None:
                 transcript.append(text)
-                osd.elapsed(osd.tail(" ".join(transcript)), apart=True)
+                redraw()
                 if live and live_sink is not None:
                     live_sink.write(text if len(transcript) == 1 else f" {text}")
 
@@ -598,7 +601,7 @@ class Stt:
 
         def tick() -> None:
             while not ticking.wait(1.0):
-                tick_level()
+                redraw()
 
         threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the

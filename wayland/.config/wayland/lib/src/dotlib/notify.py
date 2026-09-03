@@ -86,12 +86,6 @@ class Notification:
         self.osd_icon = osd_icon
         self.channel = channel
         self._started = 0.0
-        # What the card last showed. The meter ticks from one thread while
-        # text arrives on another, and neither knows what the other sent, so
-        # the card remembers both rather than making every caller pass both.
-        self._body = ""
-        self._level = 0.0
-        self._apart = False
 
     # ── the two channels ──────────────────────────────────────────
 
@@ -189,7 +183,7 @@ class Notification:
 
     def elapsed(
         self,
-        message: str | None = None,
+        message: str = "",
         timeout: int | None = None,
         *,
         icon: OsdIcon | None = None,
@@ -201,22 +195,12 @@ class Notification:
         The clock is ours: swayosd renders the string it is handed and has no
         notion of one running.
 
-        `message` and `level` are each remembered, so a caller that updates
-        one leaves the other standing. Passing nothing redraws what is already
-        there, which is what a clock tick is.
-
-        Always one `CUSTOM-PROGRESS`: swayosd rebuilds the surface when the
-        action changes, so a card that switched kind mid-job tore itself down
-        and took its text with it.
-"""
+        Every call carries the whole card. swayosd starts each action from
+        its defaults and clears the card's children before drawing, whatever
+        the action, so an option left out is not kept from last time but
+        drawn empty."""
         if is_headless():
             return
-
-        if message is not None:
-            self._body = message
-            self._apart = apart
-        if level is not None:
-            self._level = level
 
         if not self._started:
             self._started = time.monotonic()
@@ -225,8 +209,8 @@ class Notification:
         # `apart` drops the message below the clock with a blank line between,
         # for a body that is a clipped extract rather than a status: the gap is
         # what says the text is a fragment of something longer.
-        gap = "\n\n" if self._apart and self._body else "  "
-        text = f"{stamp}{gap}{self._body}".rstrip()
+        gap = "\n\n" if apart and message else "  "
+        text = f"{stamp}{gap}{message}".rstrip()
         options = [
             ("CUSTOM-PROGRESS-TEXT", self._titled(text)),
             ("DURATION", str(timeout or self.TICK_HOLD_MS)),
@@ -234,7 +218,7 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call("CUSTOM-PROGRESS", f"{min(max(self._level, 0.0), 1.0):.2f}", options)
+        self._call("CUSTOM-PROGRESS", f"{min(max(level or 0.0, 0.0), 1.0):.2f}", options)
 
     def _titled(self, message: str) -> str:
         """Title above, detail below. GTK renders the break in its label."""
