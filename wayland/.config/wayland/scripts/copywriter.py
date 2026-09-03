@@ -45,7 +45,7 @@ class Copywriter:
     ICON = (
         "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
     )
-    NOTIFICATION = Notification("Text Cleanup", ICON, OsdIcon.THINKING)
+    NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.THINKING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
