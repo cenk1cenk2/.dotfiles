@@ -15,7 +15,8 @@ from dotlib.cli import (
     create_logger,
 )
 from dotlib.notify import (
-    notify,
+    Notification,
+    OsdIcon,
 )
 from lib import (
     signal_waybar,
@@ -31,11 +32,12 @@ logging.getLogger("websocket").setLevel(logging.CRITICAL)
 class Recorder:
     WAYBAR_MODULE = "recorder"
     ICON = "/usr/share/icons/Adwaita/scalable/devices/camera-web.svg"
+    NOTIFICATION = Notification("Recording", ICON, OsdIcon.THINKING)
 
     log = logging.getLogger("recorder")
 
     def _notify(self, message, timeout=None):
-        notify("Recording...", message, self.ICON, timeout)
+        self.NOTIFICATION.send(message, timeout)
 
     def _signal_waybar(self):
         signal_waybar(self.WAYBAR_MODULE)
@@ -187,7 +189,11 @@ class Recorder:
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cli(verbose: bool):
         """Control OBS recording via WebSocket."""
-        create_logger(verbose)
+        # Waybar polls these on a tick; a trace of them would fill the
+        # cap before anything worth reading reached it.
+        polling = {"status"}
+        trace = None if polling & set(sys.argv) else "recorder.log"
+        create_logger(verbose, log_file=trace)
 
     @cli.command("toggle")
     def cmd_toggle():

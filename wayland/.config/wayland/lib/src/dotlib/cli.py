@@ -8,7 +8,6 @@ command output (waybar JSON, stdout sinks)."""
 from __future__ import annotations
 
 import logging
-import logging.handlers
 import os
 import signal
 import subprocess
@@ -26,8 +25,33 @@ _console: Console | None = None
 # Where a run leaves its trace. A compositor keybind has nowhere to put
 # stderr, so a script launched from one is undiagnosable without this.
 LOG_DIR = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-LOG_BYTES = 1 << 20
-LOG_BACKUPS = 2
+LOG_CAP = 256 << 10
+
+
+class CappedFileHandler(logging.FileHandler):
+    """Writes until the file reaches `cap`, then stops.
+
+    Keeps the first run rather than the most recent one, which is the
+    opposite of what a rotating log does. A fault is read from the time it
+    first happened; by the time anyone looks, the runs since have pushed it
+    out. Delete the file to arm it again."""
+
+    def __init__(self, path: str, cap: int = LOG_CAP):
+        super().__init__(path, delay=True)
+        self.cap = cap
+        try:
+            self._written = os.path.getsize(path)
+        except OSError:
+            self._written = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._written >= self.cap:
+            return
+        super().emit(record)
+        try:
+            self._written = self.stream.tell()
+        except (AttributeError, OSError):
+            pass
 
 
 def create_logger(
@@ -43,10 +67,9 @@ def create_logger(
     like `log.info("gpu: [green]%s[/]", name)`. Off by default so a message
     containing square brackets is not silently eaten as a style tag.
 
-    `log_file` names a rotating log under the state directory, which is the
-    only trace a run launched from a keybind leaves behind. It records at
-    DEBUG whatever the console level is: the run worth reading is the one
-    that already went wrong, and it will not be repeated with `--verbose`.
+    `log_file` names a log under the state directory, which is the only trace
+    a run launched from a keybind leaves behind. It follows the console
+    level, so `--verbose` is what fills it in.
     """
     global _console
     root = logging.getLogger()
@@ -73,27 +96,27 @@ def create_logger(
             h.setLevel(level)
 
     if log_file and not any(
-        isinstance(h, logging.handlers.RotatingFileHandler) for h in root.handlers
+        isinstance(h, CappedFileHandler) for h in root.handlers
     ):
         try:
             os.makedirs(LOG_DIR, exist_ok=True)
-            trace = logging.handlers.RotatingFileHandler(
-                os.path.join(LOG_DIR, log_file),
-                maxBytes=LOG_BYTES,
-                backupCount=LOG_BACKUPS,
-            )
-            trace.setLevel(logging.DEBUG)
+            trace = CappedFileHandler(os.path.join(LOG_DIR, log_file))
+            trace.setLevel(level)
             trace.setFormatter(
                 logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
             )
-            root.setLevel(logging.DEBUG)
             root.addHandler(trace)
-            # What was actually run. A trace of a keybind launch is worth
-            # little without it: the flags are the first thing in question
-            # when a run behaves like a different command.
-            root.debug("argv: %s", " ".join(sys.argv))
+            # What was actually run. A trace is worth little without it: the
+            # flags are the first thing in question when a run behaves like a
+            # different command. Straight at the file, because it answers a
+            # question nobody watching the console is asking.
+            trace.handle(
+                logging.LogRecord(
+                    "argv", level, __file__, 0, " ".join(sys.argv), (), None
+                )
+            )
         except OSError as e:
-            # A log that cannot be opened is not worth failing a capture over.
+            # A log that cannot be opened is not worth failing a run over.
             root.warning("no trace log: %s", e)
 
     return logging.getLogger(name) if name else root

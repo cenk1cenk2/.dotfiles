@@ -397,7 +397,13 @@ class SttSession(SocketSession):
         except json.JSONDecodeError, ValueError:
             return Response(ok=False, error=f"bad request: {raw!r}")
 
-        self.log.info("socket cmd: %s", cmd.value)
+        # A status poll is the bar asking, several times a second; only a
+        # command that changes something is worth a line.
+        self.log.log(
+            logging.DEBUG if cmd is Command.STATUS else logging.INFO,
+            "socket cmd: %s",
+            cmd.value,
+        )
         if cmd is Command.STATUS:
             with self._lock:
                 return Response(ok=True, state=SessionState(**asdict(self.state)))
@@ -1230,7 +1236,13 @@ class TtsSession(SocketSession):
         except json.JSONDecodeError, ValueError:
             return TtsResponse(ok=False, error=f"bad request: {raw!r}")
 
-        self.log.info("socket cmd: %s", cmd.value)
+        # A status poll is the bar asking, several times a second; only a
+        # command that changes something is worth a line.
+        self.log.log(
+            logging.DEBUG if cmd is Command.STATUS else logging.INFO,
+            "socket cmd: %s",
+            cmd.value,
+        )
         if cmd is Command.STATUS:
             with self._lock:
                 state = TtsState(**asdict(self.state))
