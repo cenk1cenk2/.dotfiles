@@ -96,15 +96,16 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
+        text = f"{self.title}  {message}" if self.title else message
+        self._call("CUSTOM-MESSAGE", text, options)
+
+    def _call(self, action: str, value: str, options: list[tuple[str, str]]) -> None:
         flat: list[str] = []
         for key, option in options:
             flat += [key, option]
-
-        text = f"{self.title}  {message}" if self.title else message
         cmd = [
             "busctl", "--user", "call", self.BUS, self.PATH, self.INTERFACE,
-            "HandleAction", "ssa(ss)", "CUSTOM-MESSAGE", text,
-            str(len(options)), *flat,
+            "HandleAction", "ssa(ss)", action, value, str(len(options)), *flat,
         ]
         log.debug("spawn: %s", " ".join(cmd))
         try:
@@ -136,14 +137,31 @@ class Notification:
             self._started = time.monotonic()
         self._card(message, timeout or self.HOLD_MS, icon)
 
-    def elapsed(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
+    def elapsed(
+        self,
+        message: str = "",
+        *,
+        icon: OsdIcon | None = None,
+        level: float | None = None,
+    ) -> None:
         """Say it again with the time since this notification first went up.
 
         The clock is ours: swayosd renders the string it is handed and has no
-        notion of one running."""
+        notion of one running. A `level` draws its progress bar underneath,
+        which is a real bar rather than block characters pretending to be one."""
         seconds = int(time.monotonic() - self._started) if self._started else 0
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
         self.send(f"{stamp}  {message}".rstrip(), icon=icon)
+        if level is not None and not is_headless():
+            self._bar(level)
+
+    def _bar(self, level: float) -> None:
+        """Draw the progress bar. A second action — swayosd takes them apart."""
+        self._call(
+            "CUSTOM-PROGRESS",
+            f"{min(max(level, 0.0), 1.0):.2f}",
+            [("DURATION", str(self.HOLD_MS))],
+        )
 
     def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
         """Let it go, after a beat if there is a parting word."""

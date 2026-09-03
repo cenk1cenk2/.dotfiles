@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import urllib.error
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -199,23 +200,42 @@ def subscript(value: int) -> str:
     """Render a number as subscript digits, for hanging a count off an icon."""
     return str(value).translate(SUBSCRIPT_DIGITS)
 
-def _bars(adapter: SttAdapter) -> str:
-    """A level meter for the card, or nothing when the adapter has no levels.
+def _level(adapter: SttAdapter) -> float | None:
+    """How loud the microphone is right now, 0 to 1, or None if unknowable.
 
-    An adapter driving someone else's daemon never sees the samples, so the
-    card falls back to the timer alone rather than drawing a dead row."""
+    A single number rather than a row of bars: the card is one line of text on
+    a surface shared with the volume popup, and a column chart drawn out of
+    block characters reads as mojibake at that size. An adapter driving
+    someone else's daemon never sees the samples and answers None."""
     if not isinstance(adapter, LevelSource):
-        return ""
+        return None
     frame = adapter.frame()
     if frame is None:
-        return ""
+        return None
 
-    blocks = " ▁▂▃▄▅▆▇█"
-    _, bars = frame
-    # A handful of columns, not the 32 the adapter reports: this is one line
-    # of text on a shared surface, not a waveform.
-    step = max(1, len(bars) // 12)
-    return "".join(blocks[min(len(blocks) - 1, int(b * len(blocks)))] for b in bars[::step])
+    peak, _ = frame
+    # Speech sits low in a linear scale, so a raw peak barely moves the meter.
+    # The root spreads the quiet end out to where the eye can see it.
+    return min(1.0, peak**0.5)
+
+CARD_CHARS = 52
+
+def _tail(text: str) -> str:
+    """The end of a growing text, flattened to fit one line on the card."""
+    flat = " ".join(text.split())
+
+    return flat[-CARD_CHARS:] if len(flat) > CARD_CHARS else flat
+
+def _echo(chunks: Iterator[str], card: Notification) -> Iterator[str]:
+    """Pass chunks through untouched, showing the tail of them on the card.
+
+    Wrapped around the stream rather than folded into the sink: the sink's job
+    is keystrokes, and only one caller wants to watch them go by."""
+    seen = ""
+    for chunk in chunks:
+        seen += chunk
+        card.send(_tail(seen), icon=OsdIcon.THINKING)
+        yield chunk
 
 def _input_choices(*modes: InputMode) -> click.Choice:
     """Choice over exactly the input modes a command can build.
@@ -550,7 +570,7 @@ class Stt:
 
         def tick() -> None:
             while not ticking.wait(1.0):
-                osd.elapsed(_bars(self._adapter))
+                osd.elapsed("listening", level=_level(self._adapter))
 
         threading.Thread(target=tick, daemon=True).start()
         # Quieting playback matters more here than for speech: whatever the
@@ -615,12 +635,15 @@ class Stt:
                 and isinstance(enricher, EnrichStreaming)
                 and isinstance(output, OutputAdapterType)
             ):
-                osd.send("enriching", icon=OsdIcon.THINKING)
+                osd.send(_tail(text), icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     OutputAdapterClipboard().write(text)
                 if server:
                     server.set_phase(Phase.OUTPUT)
-                output.write_stream(enricher.enrich_stream(text))
+                # Show the rewrite arriving rather than a spinner word: the
+                # card is the only place the text is visible before it lands
+                # in whatever window has focus.
+                output.write_stream(_echo(enricher.enrich_stream(text), osd))
                 osd.dismiss("typed", icon=OsdIcon.DONE)
                 Chime(ChimeDirection.DOWN).play()
                 return
