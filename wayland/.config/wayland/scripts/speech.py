@@ -49,6 +49,7 @@ from lib import (
     DEFAULT_TTS_TIMEOUT,
     DEFAULT_TTS_VOICE,
     PLAIN_FORMATS,
+    RealtimeUnavailable,
     AudioFormat,
     EnrichAdapter,
     EnrichProvider,
@@ -608,6 +609,13 @@ class Stt:
         try:
             try:
                 captured = self._adapter.capture()
+            except RealtimeUnavailable as e:
+                # Loud, because the alternative is a batch transcript that
+                # looks exactly like a realtime one and hides the fault.
+                self.log.error("realtime failed: %s", e)
+                osd.dismiss(f"Realtime failed: {e}", icon=OsdIcon.ERROR)
+                self._notify(f"Realtime failed: {e}", timeout=8000)
+                sys.exit(1)
             except (
                 urllib.error.URLError,
                 urllib.error.HTTPError,
@@ -634,11 +642,6 @@ class Stt:
                 sys.exit(1)
 
             self.log.info("captured %d chars", len(text))
-            if failure := getattr(self._adapter, "socket_error", None):
-                # The take is fine, but it was not the realtime one, and the
-                # card is the only place that difference is visible.
-                self.log.warning("realtime fell back to batch: %s", failure)
-                self._notify(f"Realtime unavailable: {failure}", timeout=6000)
 
             # The socket overrides land on the session, so read both back
             # from it rather than from the values this process started with.

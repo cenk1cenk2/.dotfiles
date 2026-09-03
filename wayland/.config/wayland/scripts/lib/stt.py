@@ -33,6 +33,15 @@ from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 from .input import InputAdapter, MicCapture
 
 
+class RealtimeUnavailable(RuntimeError):
+    """The realtime socket could not do the job it was asked for.
+
+    Raised rather than quietly recording for batch. The two produce the same
+    transcript, so a fallback is invisible from the outside, and a run that
+    was never realtime looks exactly like realtime that found nothing to
+    say."""
+
+
 class SttProvider(StrEnum):
     HTTP = "http"
     MIC = "mic"
@@ -317,6 +326,9 @@ class SttAdapterRealtime:
     STOP_DEADLINE = 8.0
     # Quiet spell after the last segment that counts as the take being over.
     SETTLE_SECONDS = 1.5
+    # Below this the server cannot close a turn at all, whatever is said into
+    # it, so a take this short yielding nothing is expected rather than broken.
+    MIN_TURN_SECONDS = 3.0
 
     def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
         self.spec = spec
@@ -468,13 +480,9 @@ class SttAdapterRealtime:
             # transcript at the end, which looks exactly like realtime that
             # produced no turns. Nothing on stderr survives a compositor
             # keybind, so the failure has to reach the caller.
-            log.warning("realtime unavailable (%s); recording for batch", e)
             self.socket_error = str(e) or e.__class__.__name__
-            ws = None
-
-        if ws is None:
-            self._stopped.wait()
-            return self._batch(0)
+            self.mic.cancel()
+            raise RealtimeUnavailable(f"socket refused: {self.socket_error}") from e
 
         threading.Thread(target=self._receive, args=(ws,), daemon=True).start()
         pump = threading.Thread(target=self._pump, args=(ws,), daemon=True)
@@ -505,7 +513,15 @@ class SttAdapterRealtime:
             segments = [text for _, text in self._segments]
 
         if not segments:
-            log.warning("realtime returned nothing; posting the whole take")
+            # A take shorter than the server's own floor cannot close a turn,
+            # so batch is the only thing that could ever have worked and this
+            # is not a fault. Longer than that, silence from the socket is.
+            seconds = len(self.mic.pcm()) / self.mic.rate / self.mic.SAMPLE_BYTES
+            if seconds > self.MIN_TURN_SECONDS:
+                raise RealtimeUnavailable(
+                    f"no turns in {seconds:.1f}s of audio"
+                )
+            log.info("%.1fs is under the turn floor; posting it whole", seconds)
             return self._batch(0)
 
         return " ".join(segments).strip()

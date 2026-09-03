@@ -115,6 +115,9 @@ from .stt import (
     LevelSource as LevelSource,
 )
 from .stt import (
+    RealtimeUnavailable as RealtimeUnavailable,
+)
+from .stt import (
     ResponseFormat as ResponseFormat,
 )
 from .stt import (
