@@ -1412,8 +1412,17 @@ class Tts:
         if self._enricher is None:
             return text
 
-        self._notify("Rewriting for speech...", timeout=3000)
-        rewritten = self._enricher.enrich(text)
+        if isinstance(self._enricher, EnrichStreaming):
+            # Synthesis needs the whole rewrite before it can speak a word, so
+            # the card is the only place the wait shows as progress.
+            rewritten = "".join(
+                self.NOTIFICATION.echo(
+                    self._enricher.enrich_stream(text), icon=OsdIcon.THINKING
+                )
+            )
+        else:
+            self._notify("Rewriting for speech...", timeout=3000)
+            rewritten = self._enricher.enrich(text)
         if not (rewritten and rewritten.strip()):
             self.log.warning("rewrite empty; speaking raw")
             self._notify("Rewrite failed, speaking raw text")
