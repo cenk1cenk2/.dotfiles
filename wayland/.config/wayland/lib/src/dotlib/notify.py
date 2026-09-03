@@ -144,10 +144,20 @@ class Notification:
         self._card(message, timeout or self.HOLD_MS, icon)
 
     def tail(self, message: str) -> str:
-        """The end of a growing text, flattened to fit one line on the card."""
-        flat = " ".join(message.split())
+        """The end of a growing text, flattened to fit one line on the card.
 
-        return flat[-self.CARD_CHARS :] if len(flat) > self.CARD_CHARS else flat
+        The end rather than the start, because the interesting part of a text
+        still arriving is the part that just arrived. `textwrap.shorten` keeps
+        the other end, so it cannot do this job — only its word boundary is
+        worth copying, so the line never opens mid-word."""
+        flat = " ".join(message.split())
+        if len(flat) <= self.CARD_CHARS:
+            return flat
+
+        clipped = flat[-self.CARD_CHARS :]
+        _, _, rest = clipped.partition(" ")
+
+        return f"…{rest}" if rest else clipped
 
     def echo(
         self, chunks: Iterator[str], *, icon: OsdIcon | None = None
