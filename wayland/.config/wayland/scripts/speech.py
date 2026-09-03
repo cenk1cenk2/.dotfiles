@@ -54,12 +54,14 @@ from lib import (
     EnrichAdapter,
     EnrichProvider,
     EnrichSpec,
+    EnrichStreaming,
     InputAdapter,
     InputAdapterClipboard,
     InputMode,
     LevelSource,
     OutputAdapter,
     OutputAdapterClipboard,
+    OutputAdapterType,
     OutputMode,
     PlayerAdapter,
     PlayerAdapterFfplay,
@@ -496,6 +498,7 @@ class Stt:
         enrich_spec: EnrichSpec | None,
         output_mode: OutputMode,
         save: bool,
+        stream: bool = False,
     ) -> None:
         recorder = self._recorder
         if recorder is not None:
@@ -596,6 +599,27 @@ class Stt:
             if server:
                 server.set_phase(Phase.WORKING)
             ticking.set()
+            # Typing is the slow part — roughly fifty characters a second —
+            # so when both halves can stream, the keystrokes start with the
+            # first token instead of after the last one. Only for `type`:
+            # every other sink wants one finished string, and stdout must
+            # stay whole because callers parse it.
+            if (
+                stream
+                and enricher is not None
+                and isinstance(enricher, EnrichStreaming)
+                and isinstance(output, OutputAdapterType)
+            ):
+                osd.show("enriching", icon=OsdIcon.THINKING)
+                if save and not is_headless():
+                    OutputAdapterClipboard().write(text)
+                if server:
+                    server.set_phase(Phase.OUTPUT)
+                output.write_stream(enricher.enrich_stream(text))
+                osd.dismiss("typed", icon=OsdIcon.DONE)
+                Chime(ChimeDirection.DOWN).play()
+                return
+
             if enricher is not None:
                 osd.show("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
@@ -768,6 +792,11 @@ class Stt:
         "--save/--no-save", default=True, help="Copy raw transcript to clipboard first."
     )
     @click.option(
+        "--stream/--no-stream",
+        default=True,
+        help="Type the enrichment as it is generated. Needs --enrich and --output type.",
+    )
+    @click.option(
         "--duck/--no-duck",
         default=True,
         help="Lower other applications while recording.",
@@ -799,6 +828,7 @@ class Stt:
         timeout,
         enrich,
         save,
+        stream,
         duck,
         duck_factor,
         pause_players,
@@ -878,6 +908,7 @@ class Stt:
             enrich_spec=enrich_spec,
             output_mode=output_mode,
             save=save,
+            stream=stream,
         )
 
     @cli.command("enrich")

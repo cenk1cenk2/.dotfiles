@@ -35,6 +35,9 @@ from .enrich import (
     EnrichSpec as EnrichSpec,
 )
 from .enrich import (
+    EnrichStreaming as EnrichStreaming,
+)
+from .enrich import (
     build_enricher as build_enricher,
 )
 from .enrich import (

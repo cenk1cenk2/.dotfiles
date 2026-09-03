@@ -18,9 +18,10 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import click
 from dotlib.cli import run
@@ -106,6 +107,17 @@ class EnrichAdapter(Protocol):
         ...
 
 
+@runtime_checkable
+class EnrichStreaming(Protocol):
+    """Backend that can emit the rewrite as it is generated.
+
+    Only the HTTP one can: the hyprpilot adapter shells out with a prompt
+    file and answers once, so callers ask by `isinstance` and fall back to
+    the one-shot `enrich`."""
+
+    def enrich_stream(self, text: str) -> Iterator[str]: ...
+
+
 class EnrichAdapterHttp:
     """OpenAI-compatible chat-completions endpoint."""
 
@@ -118,7 +130,7 @@ class EnrichAdapterHttp:
         self.spec = spec
         self.model = spec.model or self.DEFAULT_MODEL
 
-    def enrich(self, text: str) -> str | None:
+    def _body(self, text: str, stream: bool = False) -> dict[str, Any]:
         spec = self.spec
         body: dict[str, Any] = {
             "model": self.model,
@@ -148,10 +160,16 @@ class EnrichAdapterHttp:
             body["tool_ids"] = spec.tool_ids
         if spec.files:
             body["files"] = spec.files
+        if stream:
+            body["stream"] = True
 
+        return body
+
+    def _request(self, body: dict[str, Any]) -> urllib.request.Request:
+        spec = self.spec
         payload = json.dumps(body)
         log.debug("request: %s", payload)
-        req = urllib.request.Request(
+        return urllib.request.Request(
             f"{spec.base_url}/chat/completions",
             data=payload.encode(),
             headers={
@@ -160,6 +178,10 @@ class EnrichAdapterHttp:
                 "User-Agent": spec.user_agent,
             },
         )
+
+    def enrich(self, text: str) -> str | None:
+        spec = self.spec
+        req = self._request(self._body(text))
         try:
             with urllib.request.urlopen(req, timeout=spec.timeout) as resp:
                 data = json.loads(resp.read())
@@ -183,6 +205,33 @@ class EnrichAdapterHttp:
         log.info("enrichment complete (%d chars)", len(result))
 
         return result
+
+    def enrich_stream(self, text: str) -> Iterator[str]:
+        """Yield the rewrite as it is generated, in server-sent chunks.
+
+        Append-only: a chat completion never revises what it has already
+        emitted, which is what makes it safe to type straight into a window.
+        A failure part-way is not recoverable — the caller has already typed
+        what arrived — so it is logged and the stream simply ends."""
+        req = self._request(self._body(text, stream=True))
+        try:
+            with urllib.request.urlopen(req, timeout=self.spec.timeout) as resp:
+                for raw in resp:
+                    line = raw.decode(errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line.removeprefix("data:").strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(chunk)["choices"][0]["delta"]
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        log.debug("unparsed stream chunk: %s", chunk)
+                        continue
+                    if content := delta.get("content"):
+                        yield content
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            log.error("streaming enrichment failed: %s", e)
 
 
 class EnrichAdapterHyprpilot:
