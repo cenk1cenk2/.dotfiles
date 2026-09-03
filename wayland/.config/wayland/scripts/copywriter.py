@@ -11,10 +11,6 @@ from pathlib import Path
 
 import click
 import psutil
-from dotlib.audio import (
-    ChimeDirection,
-    play_chime,
-)
 from dotlib.cli import (
     create_logger,
 )
@@ -22,7 +18,9 @@ from dotlib.desktop import (
     set_headless,
 )
 from dotlib.notify import (
-    notify,
+    Chime,
+    ChimeDirection,
+    Notification,
 )
 
 from lib import (
@@ -46,6 +44,7 @@ class Copywriter:
     ICON = (
         "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
     )
+    NOTIFICATION = Notification("Copywriter", ICON)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
@@ -64,7 +63,7 @@ class Copywriter:
     # ── core ──────────────────────────────────────────────────────
 
     def _notify(self, message, timeout=None):
-        notify("Copywriter", message, self.ICON, timeout)
+        self.NOTIFICATION.send(message, timeout)
 
     def _find_workers(self) -> list[psutil.Process]:
         """Live `run` workers, excluding self.
@@ -152,7 +151,7 @@ class Copywriter:
             return
 
         self._output.write(result.strip())
-        play_chime(ChimeDirection.DOWN)
+        Chime(ChimeDirection.DOWN).play()
         self.log.info(
             "refined %s → %s (%d chars)",
             self._input.mode.value,

@@ -1,5 +1,9 @@
 """Quiet other applications' playback while a script makes noise of its own.
 
+This module only ever touches audio that belongs to somebody else. Sound this
+machine emits on its own behalf - the alert tone - is a notification, and lives
+with the other notifications in `notify`.
+
 Two halves, because no single mechanism covers everything. Players that speak
 MPRIS are paused outright: ducking a podcast to a third still loses the words,
 and pausing resumes at the same position with every volume untouched. Whatever
@@ -18,13 +22,10 @@ subscription; until then that is the price of leaving master volume alone."""
 from __future__ import annotations
 
 import logging
-import math
-import struct
 import subprocess
 import threading
 from collections.abc import Collection
 from dataclasses import dataclass
-from enum import StrEnum
 
 import pulsectl
 
@@ -36,60 +37,11 @@ DEFAULT_DUCK_FACTOR = 0.3
 # never stall an utterance.
 PLAYERCTL_TIMEOUT = 2.0
 
-# Root and fifth, an interval that reads as neither happy nor sad - the pairing
-# UI sound design reaches for when a tone has to be neutral. C4 and G4 sit low
-# enough not to pierce and well inside the 125Hz-5kHz band earcons are legible
-# in. Direction is the only thing that separates start from end, which is what
-# the earcon guidelines call a relative judgement: the one job pitch alone is
-# reliably good at.
-CHIME_NOTES_HZ = (261.63, 392.00)
-# Partials of a struck marimba bar, not a sine. The earcon research is blunt
-# about this - real instrument timbres were recognised significantly better
-# than sinusoidal tones, and a bar rings at roughly 1:4:10 rather than the
-# harmonic 1:2:3 a synthesised "bell" reaches for by default.
-# (frequency ratio, amplitude, decay multiplier)
-CHIME_PARTIALS = ((1.0, 1.0, 1.0), (4.0, 0.30, 0.30), (10.0, 0.10, 0.12))
-# Gap between strikes. Below the 0.0825s floor the guidelines set for a complex
-# earcon, which they explicitly relax for one of two notes.
-CHIME_NOTE_SECONDS = 0.07
-CHIME_DECAY_SECONDS = 0.17
-# First note louder and last note longer, so the pair lands as one rhythmic
-# unit rather than two loose beeps.
-CHIME_ACCENT = 1.15
-CHIME_TAIL = 1.3
-# Fast, but not instantaneous - a zero-length attack is a click.
-CHIME_ATTACK_SECONDS = 0.002
-# Silence before the first strike, and after the last. PipeWire suspends an
-# idle sink, and resuming one takes long enough that a tone this short can be
-# half over before the device is producing sound - so the opening note simply
-# is not there. The lead-in gives the sink something to wake up on; the tail
-# gives the buffer time to drain before `ffplay -autoexit` quits at input EOF.
-# Neither is audible, and neither lengthens the tone itself.
-CHIME_LEAD_SECONDS = 0.12
-CHIME_PAD_SECONDS = 0.06
-# Peak level after normalisation. Quiet relative to the speech: the level filter
-# sees the pair together, and a loud chime would drag the voice down with it.
-CHIME_GAIN = 0.22
-# Kokoro's rate, and the one the TTS player is already configured for. A
-# standalone chime has no stream to match, so it just needs to be sane.
-CHIME_SAMPLE_RATE = 24000
-# A tone this short either plays at once or not at all; a stuck player must not
-# hold up whatever the caller was about to do next.
-CHIME_TIMEOUT = 5.0
-
 # Volumes come back as floats; PulseAudio rounds through integer units, so an
 # exact comparison would reject a stream nobody touched.
 VOLUME_EPSILON = 0.01
 
 log = logging.getLogger(__name__)
-
-class ChimeDirection(StrEnum):
-    """Rising for something starting, falling for something finished, level for
-    something that happened along the way and left the job still running."""
-
-    UP = "up"
-    DOWN = "down"
-    FLAT = "flat"
 
 @dataclass(frozen=True)
 class DuckedStream:
@@ -364,107 +316,3 @@ class PlaybackSuppressor:
     def restore(self) -> None:
         self._ducker.restore()
         self._pauser.resume()
-
-def chime_pcm(
-    direction: ChimeDirection = ChimeDirection.UP,
-    sample_rate: int = CHIME_SAMPLE_RATE,
-) -> bytes:
-    """The alert tone as raw s16le mono, generated rather than shipped.
-
-    Rising means something is starting, falling means it has finished, level
-    means something happened mid-flight and the job is still running. All three
-    are the same notes over the same rhythm, so they read as one family rather
-    than three unrelated sounds.
-
-    Prepending the result to a synthesis stream keeps playback to a single
-    process: no second spawn to race the first, no gap, and it inherits whatever
-    the player is already doing about ducking and loudness.
-
-    Empty when headless, so a caller can splice it in unconditionally and get
-    silence rather than a tone nobody is there to hear."""
-    if is_headless():
-        log.debug("headless: no chime")
-        return b""
-
-    notes = CHIME_NOTES_HZ
-    if direction is ChimeDirection.DOWN:
-        notes = tuple(reversed(notes))
-    elif direction is ChimeDirection.FLAT:
-        # The root struck twice. Same timbre, same rhythm, same register as its
-        # siblings, so only the contour separates the three - which is the one
-        # job the earcon guidelines say pitch alone does reliably.
-        notes = (notes[0],) * len(notes)
-
-    span = CHIME_NOTE_SECONDS * (len(notes) - 1) + CHIME_DECAY_SECONDS * CHIME_TAIL
-    lead = int(sample_rate * CHIME_LEAD_SECONDS)
-    total = lead + int(sample_rate * (span + CHIME_PAD_SECONDS))
-    attack = max(1, int(sample_rate * CHIME_ATTACK_SECONDS))
-    last = len(notes) - 1
-    mix = [0.0] * total
-
-    for note, frequency in enumerate(notes):
-        start = lead + int(sample_rate * CHIME_NOTE_SECONDS * note)
-        accent = CHIME_ACCENT if note == 0 else 1.0
-        decay = CHIME_DECAY_SECONDS * (CHIME_TAIL if note == last else 1.0)
-        for ratio, amplitude, scale in CHIME_PARTIALS:
-            tau = decay * scale
-            omega = 2.0 * math.pi * frequency * ratio / sample_rate
-            for i in range(total - start):
-                # Test the decay alone, never the attack: the attack ramp opens
-                # at zero, so a combined test reads the first sample as a
-                # decayed tail and breaks before the note has begun.
-                decayed = math.exp(-i / sample_rate / tau)
-                # The tail is inaudible long before the buffer ends; stopping
-                # here is what keeps this from being a slow loop in pure Python.
-                if decayed < 1e-4:
-                    break
-                envelope = min(1.0, i / attack) * decayed
-                mix[start + i] += accent * amplitude * envelope * math.sin(omega * i)
-
-    # Normalise to the peak rather than trusting the partials to sum to
-    # something predictable, so the level is the same whatever they are set to.
-    scale = CHIME_GAIN / max(max(abs(v) for v in mix), 1e-9) * 32767
-
-    return struct.pack(f"<{total}h", *(int(v * scale) for v in mix))
-
-
-def play_chime(
-    direction: ChimeDirection = ChimeDirection.DOWN,
-    sample_rate: int = CHIME_SAMPLE_RATE,
-) -> None:
-    """Play the alert tone on its own, for a caller with no stream to ride.
-
-    Blocks for the length of the tone rather than detaching: it is a third of a
-    second, and a fire-and-forget child would linger as a zombie in any caller
-    that outlives it."""
-    pcm = chime_pcm(direction, sample_rate)
-    if not pcm:
-        return
-
-    cmd = [
-        "ffplay",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-nodisp",
-        "-autoexit",
-        "-f",
-        "s16le",
-        "-ar",
-        str(sample_rate),
-        "-ch_layout",
-        "mono",
-        "-i",
-        "pipe:0",
-    ]
-    log.debug("spawn: %s", " ".join(cmd))
-    try:
-        subprocess.run(
-            cmd,
-            input=pcm,
-            capture_output=True,
-            timeout=CHIME_TIMEOUT,
-            check=False,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        log.warning("chime failed: %s", e)

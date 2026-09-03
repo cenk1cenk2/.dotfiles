@@ -21,10 +21,7 @@ from typing import Any
 import click
 from dotlib.audio import (
     DEFAULT_DUCK_FACTOR,
-    ChimeDirection,
     PlaybackSuppressor,
-    chime_pcm,
-    play_chime,
 )
 from dotlib.cli import (
     create_logger,
@@ -34,7 +31,9 @@ from dotlib.desktop import (
     set_headless,
 )
 from dotlib.notify import (
-    notify,
+    Chime,
+    ChimeDirection,
+    Notification,
 )
 from lib import (
     DEFAULT_API_KEY_ENV,
@@ -358,7 +357,7 @@ class SttSession(SocketSession):
             self.suppressor.restore()
             # The job is not done though: nothing is written until the
             # transcription and any enrichment come back.
-            play_chime(ChimeDirection.FLAT)
+            Chime(ChimeDirection.FLAT).play()
             if "enrich" in obj:
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
@@ -390,6 +389,7 @@ class SttSession(SocketSession):
 
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
+    NOTIFICATION = Notification("Speech-to-Text", ICON)
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
     USER_PROMPT = (
         "Clean up the following speech transcription:\n"
@@ -420,7 +420,7 @@ class Stt:
     # ── core ──────────────────────────────────────────────────────
 
     def _notify(self, message, timeout=None):
-        notify("Speech-to-Text", message, self.ICON, timeout)
+        self.NOTIFICATION.send(message, timeout)
 
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> Response | None:
@@ -491,7 +491,7 @@ class Stt:
         # hyprwhspr's own start ping is off (audio_feedback: false), so this is
         # the only cue that the microphone is live. Before the suppression, so
         # it is heard at full volume rather than ducking itself.
-        play_chime(ChimeDirection.UP)
+        Chime(ChimeDirection.UP).play()
         # Quieting playback matters more here than for speech: whatever the
         # speakers are doing bleeds into the microphone and lands in the
         # transcript. Lifted again by the STOP handler as soon as the
@@ -556,7 +556,7 @@ class Stt:
             # After the write, not before: the chime means "the text has
             # landed", and a caller typing into a focused window wants the
             # keystrokes to arrive before the sound that announces them.
-            play_chime(ChimeDirection.DOWN)
+            Chime(ChimeDirection.DOWN).play()
             if enricher is not None:
                 self._notify("Done")
         finally:
@@ -1097,6 +1097,7 @@ def tts_speak_options():
 
 class Tts:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
+    NOTIFICATION = Notification("Text-to-Speech", ICON)
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
@@ -1137,7 +1138,7 @@ class Tts:
     # ── core ──────────────────────────────────────────────────────
 
     def _notify(self, message, timeout=None):
-        notify("Text-to-Speech", message, self.ICON, timeout)
+        self.NOTIFICATION.send(message, timeout)
 
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> TtsResponse | None:
@@ -1216,7 +1217,7 @@ class Tts:
                 # format goes without one.
                 if spec.response_format is AudioFormat.PCM:
                     source = PrefixReader(
-                        chime_pcm(ChimeDirection.UP, spec.sample_rate), source
+                        Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
@@ -1277,7 +1278,7 @@ class Tts:
                 # Deliberately over the speech that is already playing: the
                 # point is to say another one has arrived without waiting for
                 # the current utterance to end.
-                play_chime(ChimeDirection.FLAT)
+                Chime(ChimeDirection.FLAT).play()
                 self._notify("Queued behind the current utterance", timeout=3000)
             else:
                 error = resp.error if resp else "no session answered"
