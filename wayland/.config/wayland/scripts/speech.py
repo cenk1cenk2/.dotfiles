@@ -6,6 +6,7 @@ import http.client
 import io
 import json
 import logging
+import math
 import os
 import signal
 import socket
@@ -214,9 +215,15 @@ def _level(adapter: SttAdapter) -> float | None:
         return None
 
     peak, _ = frame
-    # Speech sits low in a linear scale, so a raw peak barely moves the meter.
-    # The root spreads the quiet end out to where the eye can see it.
-    return min(1.0, peak**0.5)
+    # Decibels, because hearing is logarithmic and a linear peak leaves normal
+    # speech sitting in the bottom tenth of the bar. -60dB is the bottom of the
+    # scale: quieter than that is a silent room, not a quiet talker.
+    decibels = 20 * math.log10(peak) if peak > 0 else -120.0
+    scaled = (decibels + 60.0) / 60.0
+
+    # Never quite empty. A bar at zero is indistinguishable from no bar, and
+    # the point of the meter is to show the microphone is live at all.
+    return min(1.0, max(0.04, scaled))
 
 CARD_CHARS = 52
 
