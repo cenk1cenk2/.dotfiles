@@ -96,8 +96,7 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
-        text = f"{self.title}  {message}" if self.title else message
-        self._call("CUSTOM-MESSAGE", text, options)
+        self._call("CUSTOM-MESSAGE", self._titled(message), options)
 
     def _call(self, action: str, value: str, options: list[tuple[str, str]]) -> None:
         flat: list[str] = []
@@ -149,19 +148,29 @@ class Notification:
         The clock is ours: swayosd renders the string it is handed and has no
         notion of one running. A `level` draws its progress bar underneath,
         which is a real bar rather than block characters pretending to be one."""
-        seconds = int(time.monotonic() - self._started) if self._started else 0
-        stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
-        self.send(f"{stamp}  {message}".rstrip(), icon=icon)
-        if level is not None and not is_headless():
-            self._bar(level)
+        if is_headless():
+            return
 
-    def _bar(self, level: float) -> None:
-        """Draw the progress bar. A second action — swayosd takes them apart."""
-        self._call(
-            "CUSTOM-PROGRESS",
-            f"{min(max(level, 0.0), 1.0):.2f}",
-            [("DURATION", str(self.HOLD_MS))],
-        )
+        if not self._started:
+            self._started = time.monotonic()
+        seconds = int(time.monotonic() - self._started)
+        stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
+        text = f"{stamp}  {message}".rstrip()
+        if level is None:
+            self.send(text, icon=icon)
+            return
+
+        # One action carrying both, not a message followed by a bar: swayosd
+        # holds a single content per window, so two calls overwrite each other
+        # and the row flickers between them.
+        options = [("CUSTOM-PROGRESS-TEXT", self._titled(text)), ("DURATION", str(self.HOLD_MS))]
+        chosen = icon or self.osd_icon
+        if chosen:
+            options.insert(0, ("CUSTOM-ICON", chosen.value))
+        self._call("CUSTOM-PROGRESS", f"{min(max(level, 0.0), 1.0):.2f}", options)
+
+    def _titled(self, message: str) -> str:
+        return f"{self.title}  {message}" if self.title else message
 
     def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
         """Let it go, after a beat if there is a parting word."""
