@@ -546,7 +546,7 @@ class Stt:
                 # other than this invocation asked for.
                 if not response.ok:
                     self.log.error("session refused the override: %s", response.error)
-                    self._notify(f"Override refused: {response.error}", timeout=6000)
+                    self._notify(f"Override refused\n{response.error}", timeout=6000)
                 return
 
         assert self._output is not None, "a capture requires an output adapter"
@@ -626,7 +626,7 @@ class Stt:
                 captured = self._adapter.capture()
             except RealtimeUnavailable as e:
                 self.log.error("realtime failed: %s", e)
-                self._notify(f"Realtime failed: {e}", timeout=8000)
+                self._notify(f"Realtime failed\n{e}", timeout=8000)
                 sys.exit(1)
             except (
                 urllib.error.URLError,
@@ -1229,11 +1229,11 @@ class TtsSession(SocketSession):
         return f"{chars} chars{self.waiting()}"
 
     def waiting(self) -> str:
-        """`, 2 waiting` when something is queued, empty when nothing is."""
+        """A line saying how many are queued, empty when nothing is."""
         with self._lock:
             count = len(self._queue)
 
-        return f", {count} waiting" if count else ""
+        return f"\n{count} waiting" if count else ""
 
     def pop(self) -> str | None:
         """Next queued utterance, or None once the backlog is drained."""
@@ -1602,7 +1602,7 @@ class Tts:
             else:
                 error = resp.error if resp else "no session answered"
                 self.log.warning("enqueue refused: %s", error)
-                self._notify(f"Not queued: {error}")
+                self._notify(f"Not queued\n{error}")
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)

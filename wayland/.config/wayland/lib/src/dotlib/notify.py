@@ -110,7 +110,7 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call("CUSTOM-MESSAGE", self._titled(message), options)
+        self._call("CUSTOM-MESSAGE", self._titled(self.wrapped(message)), options)
 
     def _call(self, action: str, value: str, options: list[tuple[str, str]]) -> None:
         flat: list[str] = []
@@ -149,6 +149,17 @@ class Notification:
         if not self._started:
             self._started = time.monotonic()
         self._card(message, timeout or self.HOLD_MS, icon)
+
+    def wrapped(self, message: str) -> str:
+        """The message laid out down the card, each line already short enough.
+
+        A card against a screen edge has rows and no width, so a long line
+        widens it until it runs out of room. Lines the caller wrote stay
+        where they are; only the long ones are broken."""
+        return "\n".join(
+            textwrap.fill(line, self.WRAP_CHARS) if line else ""
+            for line in message.splitlines()
+        )
 
     def tail(self, message: str) -> str:
         """The end of a growing text, flattened to fit one line on the card.
