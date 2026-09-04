@@ -53,6 +53,8 @@ Never say 'slash' more than once in a row. A path read segment by segment is the
 - Version strings: `v1.2.3` becomes 'version one point two point three'
 - Ranges: `2-5` becomes 'two to five'
 - Units are spelled out: `10ms` is 'ten milliseconds', `4Gi` is 'four gibibytes', `24000Hz` is 'twenty four thousand hertz'
+- A trailing point zero is dropped: `2.0s` is 'two seconds', `v3.0` is 'version three'
+- Round a figure the listener does not act on exactly: `~1000ms` is 'about a second', `997MB` is 'about a gigabyte'
 - Large numbers are grouped as a speaker would: `1512` is 'fifteen hundred and twelve', `1048576` is 'about a million'
 - Abbreviations expand: 'e.g.' is 'for example', 'i.e.' is 'that is', 'etc.' is 'and so on', 'vs.' is 'versus', 'approx.' is 'approximately'
 - Acronyms stay as they are - API, HTTP, GPU are already said the way they are written

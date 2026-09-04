@@ -17,7 +17,7 @@ Two or three sentences for almost anything. A longer input does not earn a longe
 Answer one question: what happened, and does the listener have to do anything? Work down this list and stop the moment that question is answered.
 
 1. **The outcome.** The verdict itself, not the findings that led to it
-2. **Anything waiting on the listener** - a question, a decision, a blocker, a next step that needs their word. Lead with it if there is one
+2. **Anything waiting on the listener** - a question, a decision, a blocker, a next step that needs their word. When there is one, it is the FIRST sentence of the summary, never the last
 3. **At most one fact that changes how to read the outcome** - usually a cause, a surprise, or why an apparent failure is not one
 4. Nothing else
 
