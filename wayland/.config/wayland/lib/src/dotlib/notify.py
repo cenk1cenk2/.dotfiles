@@ -33,6 +33,15 @@ class NotifyChannel(StrEnum):
     DESKTOP = "desktop"
 
 
+class Urgency(StrEnum):
+    """notify-send urgency. Critical holds the popup until dismissed, which is
+    the difference between a heads-up and something that must not be missed."""
+
+    LOW = "low"
+    NORMAL = "normal"
+    CRITICAL = "critical"
+
+
 class OsdIcon(StrEnum):
     """Freedesktop icon names, so the card says what kind of work this is."""
 
@@ -92,10 +101,14 @@ class Notification:
 
     # ── the two channels ──────────────────────────────────────────
 
-    def _desktop(self, message: str, timeout: int | None) -> None:
+    def _desktop(
+        self, message: str, timeout: int | None, urgency: Urgency | None = None
+    ) -> None:
         cmd = ["notify-send", self.title, message, "-i", self.icon]
         if timeout:
             cmd.extend(["-t", str(timeout)])
+        if urgency:
+            cmd.extend(["-u", urgency.value])
         log.debug("spawn: %s", " ".join(cmd))
         subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)
 
@@ -117,8 +130,18 @@ class Notification:
         for key, option in options:
             flat += [key, option]
         cmd = [
-            "busctl", "--user", "call", self.BUS, self.PATH, self.INTERFACE,
-            "HandleAction", "ssa(ss)", action, value, str(len(options)), *flat,
+            "busctl",
+            "--user",
+            "call",
+            self.BUS,
+            self.PATH,
+            self.INTERFACE,
+            "HandleAction",
+            "ssa(ss)",
+            action,
+            value,
+            str(len(options)),
+            *flat,
         ]
         log.debug("spawn: %s", " ".join(cmd))
         try:
@@ -136,14 +159,18 @@ class Notification:
         *,
         icon: OsdIcon | None = None,
         channel: NotifyChannel | None = None,
+        urgency: Urgency | None = None,
     ) -> None:
-        """Say something, on this notification's channel or an override."""
+        """Say something, on this notification's channel or an override.
+
+        Urgency only means anything to the desktop channel; a card has no
+        notion of it."""
         if is_headless():
             log.debug("headless: dropping %r", message)
             return
 
         if (channel or self.channel) is NotifyChannel.DESKTOP:
-            self._desktop(message, timeout)
+            self._desktop(message, timeout, urgency)
             return
 
         if not self._started:
@@ -233,7 +260,9 @@ class Notification:
         chosen = icon or self.osd_icon
         if chosen:
             options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call("CUSTOM-PROGRESS", f"{min(max(level or 0.0, 0.0), 1.0):.2f}", options)
+        self._call(
+            "CUSTOM-PROGRESS", f"{min(max(level or 0.0, 0.0), 1.0):.2f}", options
+        )
 
     def _titled(self, message: str) -> str:
         """Title above, detail below. GTK renders the break in its label."""
@@ -366,8 +395,8 @@ class Chime:
                     if decayed < 1e-4:
                         break
                     envelope = min(1.0, i / attack) * decayed
-                    mix[start + i] += accent * amplitude * envelope * math.sin(
-                        omega * i
+                    mix[start + i] += (
+                        accent * amplitude * envelope * math.sin(omega * i)
                     )
 
         # Normalise to the peak rather than trusting the partials to sum to
