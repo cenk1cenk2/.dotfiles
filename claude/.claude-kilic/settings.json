@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '[((.cwd // \"/\") | split(\"/\") | last), (.message // \"Waiting for input\")] | @tsv' | { IFS=$'\\t' read -r d m; notify-send -a \"Claude Code\" -i utilities-terminal -u normal \"Claude Code (kilic) — $d\" \"$m\"; } 2>/dev/null || true",
+            "command": "~/.claude/hooks/notify.py send kilic",
             "timeout": 5,
             "async": true
           }

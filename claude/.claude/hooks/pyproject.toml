@@ -1,0 +1,19 @@
+[project]
+name = "claude-hooks"
+version = "1.0.0"
+description = "Claude Code hook scripts."
+requires-python = ">=3.14"
+dependencies = [
+  "dotlib",
+  "click>=8.1",
+  "rich>=13.7",
+]
+
+[tool.uv]
+python-preference = "only-system"
+
+[tool.uv.sources]
+# Relative to this file's DEPLOYED location, not the repo: uv resolves a path
+# dependency against the directory holding the pyproject it reads, and stow
+# deploys this file as a symlink. A repo-relative path resolves to nothing.
+dotlib = { path = "../../.config/wayland/lib", editable = true }
