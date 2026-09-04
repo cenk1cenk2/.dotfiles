@@ -1,10 +1,30 @@
 {
-  // AMD. k10temp binds to the family 17h+ SMN function at 00:18.3;
-  // temp1_input is Tctl. Path carried over from the pre-overlay config,
-  // which listed hwmon4 and hwmon6 side by side to work around the
-  // per-boot renumbering that hwmon-path-abs removes outright.
-  "temperature#cpu": {
-    "hwmon-path-abs": "/sys/devices/pci0000:00/0000:00:18.3/hwmon",
-    "input-filename": "temp1_input",
+  "group/hardware": {
+    "orientation": "horizontal",
+    "modules": ["custom/gpu", "cpu", "memory", "temperature#cpu"],
+  },
+
+  // The nvidia driver registers no hwmon device — "hwmon" does not appear
+  // anywhere in /usr/src/nvidia-610.57.04/kernel-open, and none of this
+  // machine's 14 hwmon devices is the GPU — so the built-in temperature
+  // module has no file to read and NVML is the only source. nvidia-smi is
+  // a CLI over NVML; there is no cheaper interface.
+  //
+  // No "interval": one nvidia-smi holds the NVML handle open and emits a
+  // line every 5s, which waybar consumes as a continuous script. Polled
+  // instead, each tick would fork sh + nvidia-smi + awk and pay NVML
+  // init every time; held open it measures zero CPU ticks over 20s.
+  //
+  // Defined per host rather than gated on nvidia-smi existing: bat has an
+  // nvidia card too, and any nvidia-smi call there resets the dGPU's
+  // runtime-PM idle timer and pins it awake. Hosts that leave this
+  // undefined get the slot hidden.
+  "custom/gpu": {
+    "return-type": "json",
+    "restart-interval": 5,
+    "format": "󰢮 {}°C",
+    "exec": "nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits -lms 5000 | awk '{c=($1>=72)?\"critical\":(($1>=62)?\"warning\":\"\"); printf \"{\\\"text\\\":\\\"%d\\\",\\\"class\\\":\\\"%s\\\"}\\n\",$1,c; fflush()}'",
+    "tooltip": false,
+    "on-click": "~/.config/hypr/scripts/launch-app.py gpu_monitor",
   },
 }

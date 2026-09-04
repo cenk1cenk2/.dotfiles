@@ -156,6 +156,7 @@ window#waybar .modules-right {
 #custom-sunset,
 #custom-playerctl,
 #custom-copywriter,
+#custom-gpu,
 #custom-notification,
 #tray {
   padding: 0 6px;
@@ -264,6 +265,7 @@ window#waybar .modules-right {
 
 #battery.warning,
 #cpu.warning,
+#custom-gpu.warning,
 #memory.warning,
 #temperature.warning {
   background-color: @warning_color;
@@ -272,6 +274,7 @@ window#waybar .modules-right {
 
 #battery.critical,
 #cpu.critical,
+#custom-gpu.critical,
 #memory.critical,
 #temperature.critical,
 #network.disconnected,

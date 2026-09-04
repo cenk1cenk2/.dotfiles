@@ -44,6 +44,9 @@ M.apps = {
   process_manager = M.term.float_portrait_lg .. " btop",
   sensors = M.term.float_lg .. " zsh -ic 'hwatch sensors'",
   hwatch_sensors = M.term.float_lg .. " zsh -ic 'hwatch sensors'",
+  -- lm_sensors cannot see the nvidia GPU: the driver registers no hwmon
+  -- device, so nvidia-smi is the only thing that reports it.
+  gpu_monitor = M.term.float_lg .. " zsh -ic 'hwatch nvidia-smi'",
 }
 
 -- Volume query commands (return current %, no UI)

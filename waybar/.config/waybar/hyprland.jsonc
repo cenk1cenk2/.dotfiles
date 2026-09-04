@@ -3,15 +3,16 @@
   // Per-host overlay
   // -------------------------------------------------------------------------
   // WAYBAR_HOST is set by waybar@.service from systemd's %l (short
-  // hostname). Objects merge key by key and the FIRST definition wins:
-  // this file beats hosts/<name>.jsonc beats hosts/defaults.jsonc. So a
-  // key a host has to be able to override must not be set here — push it
-  // down to hosts/defaults.jsonc instead. A host file that doesn't exist
-  // only logs a warning, so a new machine still comes up on the defaults.
-  "include": [
-    "~/.config/waybar/hosts/$WAYBAR_HOST.jsonc",
-    "~/.config/waybar/hosts/defaults.jsonc",
-  ],
+  // hostname). Objects merge key by key and the FIRST definition wins, so
+  // this file beats hosts/<name>.jsonc: a host file supplies only keys
+  // this one leaves unset. Verified rather than assumed — height 24 here
+  // against 40 in an include logs "Bar configured (height: 24)".
+  //
+  // So anything a host has to differ on cannot be set here at all, and
+  // group/hardware is the case: only mau5 has a readable GPU sensor, so
+  // each host file owns its own copy of that list. A host with no file
+  // comes up without the group.
+  "include": ["~/.config/waybar/hosts/$WAYBAR_HOST.jsonc"],
 
   // -------------------------------------------------------------------------
   // Global configuration
@@ -122,11 +123,6 @@
       "custom/playerctl",
       "hyprland/language",
     ],
-  },
-
-  "group/hardware": {
-    "orientation": "horizontal",
-    "modules": ["cpu", "memory", "temperature#cpu"],
   },
 
   "group/connection": {
@@ -297,9 +293,20 @@
     "on-click": "~/.config/hypr/scripts/launch-app.py calendar",
   },
 
-  // The sensor itself comes from the host overlay (hwmon-path-abs +
-  // input-filename); setting it here would shadow hosts/<name>.jsonc.
+  // Probe every known CPU sensor and take the first that exists: coretemp
+  // temp1_input is Intel's "Package id 0", the 00:18.3 function is where
+  // k10temp binds on AMD family 17h+ and its temp1_input is Tctl.
+  //
+  // hwmon-path-abs takes the device directory *without* the hwmon<N>
+  // component, because that number is assigned in driver probe order and
+  // moves between boots — coretemp has been both hwmon7 and hwmon8 on one
+  // machine, where hwmon7 is now a USB-C power supply with no temp input.
   "temperature#cpu": {
+    "hwmon-path-abs": [
+      "/sys/devices/platform/coretemp.0/hwmon",
+      "/sys/devices/pci0000:00/0000:00:18.3/hwmon",
+    ],
+    "input-filename": "temp1_input",
     "warning-threshold": 72,
     "critical-threshold": 78,
     "interval": 3,

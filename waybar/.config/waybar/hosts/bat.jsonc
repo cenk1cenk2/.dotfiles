@@ -1,12 +1,9 @@
 {
-  // Intel. coretemp's temp1_input is "Package id 0".
-  //
-  // hwmon-path-abs takes the device directory *without* the hwmon<N>
-  // component, because that number is assigned in driver probe order and
-  // moves between boots — here coretemp has been both hwmon7 and hwmon8,
-  // and hwmon7 is currently a USB-C power supply with no temp input.
-  "temperature#cpu": {
-    "hwmon-path-abs": "/sys/devices/platform/coretemp.0/hwmon",
-    "input-filename": "temp1_input",
+  // No GPU readout: the dGPU is power-managed here, and nvidia-smi is the
+  // only way to read its temperature, which would reset the runtime-PM
+  // idle timer and pin the card awake.
+  "group/hardware": {
+    "orientation": "horizontal",
+    "modules": ["cpu", "memory", "temperature#cpu"],
   },
 }
