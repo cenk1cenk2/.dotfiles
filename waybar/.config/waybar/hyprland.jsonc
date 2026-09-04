@@ -8,10 +8,12 @@
   // this one leaves unset. Verified rather than assumed — height 24 here
   // against 40 in an include logs "Bar configured (height: 24)".
   //
-  // So anything a host has to differ on cannot be set here at all, and
-  // group/hardware is the case: only mau5 has a readable GPU sensor, so
-  // each host file owns its own copy of that list. A host with no file
-  // comes up without the group.
+  // So a host file carries only what this one leaves unset, which today is
+  // a single module definition. group/hardware below therefore holds the
+  // GPU slot for every machine, and the host that can actually read a GPU
+  // sensor is the one that defines the module: waybar hides a listed
+  // module nobody configured ("There is no configuration for
+  // 'custom/gpu', element will be hidden").
   "include": ["~/.config/waybar/hosts/$WAYBAR_HOST.jsonc"],
 
   // -------------------------------------------------------------------------
@@ -123,6 +125,11 @@
       "custom/playerctl",
       "hyprland/language",
     ],
+  },
+
+  "group/hardware": {
+    "orientation": "horizontal",
+    "modules": ["custom/gpu", "cpu", "memory", "temperature#cpu"],
   },
 
   "group/connection": {

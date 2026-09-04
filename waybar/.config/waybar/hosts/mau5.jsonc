@@ -1,9 +1,4 @@
 {
-  "group/hardware": {
-    "orientation": "horizontal",
-    "modules": ["custom/gpu", "cpu", "memory", "temperature#cpu"],
-  },
-
   // The nvidia driver registers no hwmon device — "hwmon" does not appear
   // anywhere in /usr/src/nvidia-610.57.04/kernel-open, and none of this
   // machine's 14 hwmon devices is the GPU — so the built-in temperature

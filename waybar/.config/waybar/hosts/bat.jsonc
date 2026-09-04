@@ -1,9 +1,0 @@
-{
-  // No GPU readout: the dGPU is power-managed here, and nvidia-smi is the
-  // only way to read its temperature, which would reset the runtime-PM
-  // idle timer and pin the card awake.
-  "group/hardware": {
-    "orientation": "horizontal",
-    "modules": ["cpu", "memory", "temperature#cpu"],
-  },
-}
