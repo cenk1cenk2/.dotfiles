@@ -1,7 +1,7 @@
-"""Telling the user something happened, by popup or by sound.
+"""Telling the user something happened, by popup, by sound, or by bell.
 
-Both halves answer the same question - how does a script get the user's
-attention - and both go quiet when nothing is there to notice. Manipulating
+All three answer the same question - how does a script get the user's
+attention - and all go quiet when nothing is there to notice. Manipulating
 audio that belongs to other applications is a different job and lives in
 `audio`."""
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import struct
 import subprocess
 import sys
@@ -457,3 +458,58 @@ class Chime:
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             log.warning("chime failed: %s", e)
+
+
+def _parent(pid: int) -> int:
+    """The ppid field of `/proc/<pid>/stat`, read past the comm parentheses so
+    a process named `(a b) c` cannot shift the offsets."""
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            return int(stat.read().rpartition(")")[2].split()[1])
+    except OSError, IndexError, ValueError:
+        return 0
+
+
+def _terminal() -> str | None:
+    """The nearest pty at or above this process.
+
+    A hook or a forked worker is handed pipes, not a terminal, so its own
+    descriptors say nothing about where its output is being watched. The
+    process that owns the window is up the tree, and its pty is the thing
+    worth ringing."""
+    pid = os.getpid()
+    while pid > 1:
+        for fd in (1, 2, 0):
+            try:
+                target = os.readlink(f"/proc/{pid}/fd/{fd}")
+            except OSError:
+                continue
+            if target.startswith("/dev/pts/"):
+                return target
+        pid = _parent(pid)
+
+    return None
+
+
+def bell() -> None:
+    """Ring the terminal's own bell.
+
+    The one channel that reaches a terminal rather than the desktop, so it
+    marks the right window when the popup is missed - tmux flags the window,
+    kitty raises an urgency hint.
+
+    Never stdout, which for a pipe-involved script belongs to the payload and
+    would carry the character downstream instead of to the terminal that can
+    act on it."""
+    for path in ("/dev/tty", _terminal()):
+        if not path:
+            continue
+        try:
+            with open(path, "w") as tty:
+                tty.write("\a")
+                tty.flush()
+            return
+        except OSError:
+            continue
+
+    log.debug("no terminal to ring")

@@ -11,7 +11,14 @@ from pathlib import Path
 
 import click
 from dotlib.cli import create_logger, run
-from dotlib.notify import Chime, ChimeDirection, Notification, NotifyChannel, Urgency
+from dotlib.notify import (
+    Chime,
+    ChimeDirection,
+    Notification,
+    NotifyChannel,
+    Urgency,
+    bell,
+)
 
 
 class Notify:
@@ -64,6 +71,9 @@ class Notify:
         # Chime first: the popup call blocks for its lifetime waiting on a
         # click, and the sound belongs to its appearance.
         Chime(ChimeDirection.UP).play()
+        # Marks the tmux window and the kitty tab, which the popup cannot do
+        # for a session the user is not currently looking at.
+        bell()
         clicked = Notification(
             f"Claude Code{label} — {directory}",
             icon="utilities-terminal",
