@@ -57,7 +57,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/notify.py send kilic",
-            "timeout": 5,
+            "timeout": 15,
             "async": true
           }
         ]

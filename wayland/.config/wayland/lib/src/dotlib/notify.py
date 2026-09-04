@@ -14,7 +14,7 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from enum import StrEnum
 
 from .desktop import is_headless
@@ -102,15 +102,28 @@ class Notification:
     # ── the two channels ──────────────────────────────────────────
 
     def _desktop(
-        self, message: str, timeout: int | None, urgency: Urgency | None = None
-    ) -> None:
+        self,
+        message: str,
+        timeout: int | None,
+        urgency: Urgency | None = None,
+        actions: Sequence[tuple[str, str]] | None = None,
+    ) -> str | None:
         cmd = ["notify-send", self.title, message, "-i", self.icon]
         if timeout:
             cmd.extend(["-t", str(timeout)])
         if urgency:
             cmd.extend(["-u", urgency.value])
+        for name, label in actions or ():
+            cmd.extend(["-A", f"{name}={label}"])
         log.debug("spawn: %s", " ".join(cmd))
+        if actions:
+            # notify-send stays up until the popup is activated or expires,
+            # then prints the chosen action's name — that is the return value,
+            # so a caller asking for actions accepts the wait.
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            return proc.stdout.strip() or None
         subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)
+        return None
 
     def _card(self, message: str, duration_ms: int, icon: OsdIcon | None) -> None:
         """One `HandleAction` on swayosd's bus.
@@ -160,18 +173,19 @@ class Notification:
         icon: OsdIcon | None = None,
         channel: NotifyChannel | None = None,
         urgency: Urgency | None = None,
-    ) -> None:
+        actions: Sequence[tuple[str, str]] | None = None,
+    ) -> str | None:
         """Say something, on this notification's channel or an override.
 
-        Urgency only means anything to the desktop channel; a card has no
-        notion of it."""
+        Urgency and actions only mean anything to the desktop channel; a card
+        has no notion of either. With actions the call blocks for the popup's
+        lifetime and returns the clicked action's name, or None."""
         if is_headless():
             log.debug("headless: dropping %r", message)
-            return
+            return None
 
         if (channel or self.channel) is NotifyChannel.DESKTOP:
-            self._desktop(message, timeout, urgency)
-            return
+            return self._desktop(message, timeout, urgency, actions)
 
         if not self._started:
             self._started = time.monotonic()
