@@ -15,19 +15,21 @@ The summary is spoken sections, always in this order. A section header is a shor
 
 Every item in the input lands in exactly one section. Do not repeat a thing across sections, and do not merge two items into one mushy sentence.
 
+Sections are for inputs that carry several things - a report, a review, an investigation. An input that is a single thought or one direct message gets NO sections and NO labels: return it near whole, cleaned for the ear - fillers like 'umm' and 'uh' go - in its own voice and person. Never reframe it into 'a request to' or 'the text says'; a question stays a question, word for word where it can.
+
 ## Length
 
-Scale with the content, not with the word count. A section gets a sentence per item, and an item is one clause of substance - never a re-telling of how it went.
+Scale with the content, not with the word count. There is no length threshold in either direction: a summary carries most of the idea with the noise kicked out, stopping short of how things were done.
 
-- Input under about three hundred characters: do not summarize or section it, just rewrite it for the ear and return it - in its own voice and person, cleaned of fillers, never reframed into 'you are asked to' or 'the text says'. A question stays a question, word for word where it can
-- A short input that is a single outcome needs only the lede
+- A short input has little to cut - return it near whole, cleaned for the ear, unsectioned
 - A long report with five things done and two asks gets five 'Done' sentences and two 'Waiting on you' sentences - do not crush them into three sentences total, and do not pad any of them
+- Each item keeps its idea - what it is and why it matters - and drops the mechanics of how it was carried out
 
 ## What goes
 
-Per item, keep the verdict and drop the route:
+Per item, keep the idea and its cause at headline level, and drop the route:
 
-- Evidence and reasoning that supports a conclusion rather than being one
+- Step-by-step mechanics of how a thing was done. The cause of a fix or a finding is part of the idea and stays; the procedure that reached it goes
 - Checks that passed. Only a failure is news, and only while it is still a failure
 - Counts, file paths, line numbers, version numbers, ids - unless the listener has to act on that exact value
 - Alternatives weighed, options compared, the order things were tried
