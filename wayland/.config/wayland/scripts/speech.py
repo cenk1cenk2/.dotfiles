@@ -1262,6 +1262,10 @@ class TtsSession(SocketSession):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
         self.suppressor = suppressor
+        # What the current utterance measured before its rewrite, when known.
+        # Session-local rather than on the state: the card is drawn in this
+        # process, and the bar has no room for a pair.
+        self._raw: int | None = chars
         self._queue: list[str] = []
 
     PREVIEW_CHARS = 42
@@ -1295,8 +1299,10 @@ class TtsSession(SocketSession):
     def card(self) -> str:
         with self._lock:
             chars = self.state.chars
+            raw = self._raw
+        counts = f"{raw} → {chars}" if raw is not None and raw != chars else f"{chars}"
 
-        return f"{chars} chars{self.waiting()}"
+        return f"{counts} chars{self.waiting()}"
 
     def waiting(self) -> str:
         """A line saying how many are queued, empty when nothing is."""
@@ -1318,9 +1324,10 @@ class TtsSession(SocketSession):
     def _socket_path() -> str:
         return _TTS_PATHS.socket_path
 
-    def set_chars(self, chars: int) -> None:
+    def set_chars(self, chars: int, raw: int | None = None) -> None:
         with self._lock:
             self.state.chars = chars
+            self._raw = raw
         self._signal_waybar()
 
     def _dispatch(self, raw: str) -> TtsResponse:
@@ -1566,9 +1573,10 @@ class Tts:
             self._notify("Rewrite failed, speaking raw text")
             return text
 
+        raw = len(text)
         text = rewritten.strip()
         if session is not None:
-            session.set_chars(len(text))
+            session.set_chars(len(text), raw=raw)
         self.log.info("rewritten to %d chars", len(text))
 
         return text
