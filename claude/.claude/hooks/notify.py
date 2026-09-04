@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import click
@@ -126,7 +127,11 @@ class Notify:
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block["text"]
 
-        return text[: cls.CONTEXT_CHARS]
+        # Keeps the opening rather than the tail, and stops on a word: this is
+        # the start of what Claude was saying, read at a glance from across the
+        # room. Collapsing the layout is the point too - a popup has no room
+        # for a heading and a list.
+        return textwrap.shorten(text, width=cls.CONTEXT_CHARS, placeholder=" …")
 
     # ── click-to-focus ────────────────────────────────────────────
 
