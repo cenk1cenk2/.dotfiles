@@ -3,6 +3,7 @@
   "positionX": "right",
   "positionY": "top",
   "cssPriority": "user",
+  "layer-shell-cover-screen": false,
   "control-center-margin-top": 64,
   "control-center-margin-bottom": 64,
   "control-center-margin-right": 0,
