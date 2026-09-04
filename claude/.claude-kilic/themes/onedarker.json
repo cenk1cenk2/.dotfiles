@@ -2,7 +2,7 @@
   "name": "Onedarker",
   "base": "dark",
   "overrides": {
-    "text": "#abb2bf",
+    "text": "#efefef",
     "inverseText": "#1e2127",
     "inactive": "#7c8a9d",
     "inactiveShimmer": "#979eab",
