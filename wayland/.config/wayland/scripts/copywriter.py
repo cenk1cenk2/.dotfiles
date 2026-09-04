@@ -164,7 +164,9 @@ class Copywriter:
             return
 
         self._output.write(result.strip())
-        self.NOTIFICATION.dismiss(f"{len(result.strip())} chars", icon=OsdIcon.DONE)
+        self.NOTIFICATION.dismiss(
+            f"{len(text)} → {len(result.strip())} chars", icon=OsdIcon.DONE
+        )
         Chime(ChimeDirection.DOWN).play()
         self.log.info(
             "refined %s → %s (%d chars)",
@@ -209,7 +211,9 @@ class Copywriter:
     )
     def cli(verbose: bool, headless: bool):
         """Refine clipboard text through AI."""
-        create_logger(verbose, log_file="copywriter.log", quiet={"status", "is-running"})
+        create_logger(
+            verbose, log_file="copywriter.log", quiet={"status", "is-running"}
+        )
         set_headless(headless)
 
     @cli.command("run")

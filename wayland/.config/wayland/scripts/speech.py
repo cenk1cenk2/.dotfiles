@@ -13,6 +13,7 @@ import socket
 import sys
 import threading
 import urllib.error
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -100,16 +101,19 @@ class Command(StrEnum):
     KILL = "kill"
     ENQUEUE = "enqueue"
 
+
 class Phase(StrEnum):
     RECORDING = "recording"
     WORKING = "working"
     OUTPUT = "output"
+
 
 @dataclass
 class SessionState:
     phase: Phase
     output: OutputMode
     enrich: EnrichProvider | None = None
+
 
 @dataclass
 class Response:
@@ -131,6 +135,7 @@ class Response:
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
+
 @dataclass(frozen=True)
 class SttPaths:
     socket_path: str
@@ -143,10 +148,12 @@ class SttPaths:
         stem = f"wayland-stt-{suffix}" if suffix else "wayland-stt"
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
+
 # Populated by the `stt` click callback once `--session` is known.
 _STT_PATHS: SttPaths = SttPaths.from_suffix("")
 
 log = logging.getLogger("speech.rpc")
+
 
 def _recv_request(conn: socket.socket) -> str:
     """Read one newline-framed request.
@@ -161,6 +168,7 @@ def _recv_request(conn: socket.socket) -> str:
         buf += data
 
     return buf.decode("utf-8", errors="replace").strip()
+
 
 def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
     """Send one newline-framed command to `socket_path`; return the raw reply.
@@ -197,11 +205,14 @@ def _rpc(socket_path: str, cmd: str, **kwargs) -> str | None:
     finally:
         sock.close()
 
+
 SUBSCRIPT_DIGITS = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
 
 def subscript(value: int) -> str:
     """Render a number as subscript digits, for hanging a count off an icon."""
     return str(value).translate(SUBSCRIPT_DIGITS)
+
 
 def _meter(peak: float) -> float:
     """A 0-to-1 bar position for a peak sample level.
@@ -216,6 +227,7 @@ def _meter(peak: float) -> float:
     scaled = (decibels + 60.0) / 60.0
 
     return min(1.0, max(0.04, scaled))
+
 
 def _level(adapter: SttAdapter) -> float | None:
     """How loud the microphone is right now, 0 to 1, or None if unknowable.
@@ -234,6 +246,7 @@ def _level(adapter: SttAdapter) -> float | None:
 
     return _meter(peak)
 
+
 def _input_choices(*modes: InputMode) -> click.Choice:
     """Choice over exactly the input modes a command can build.
 
@@ -241,6 +254,7 @@ def _input_choices(*modes: InputMode) -> click.Choice:
     carries modes no flag can select — a live capture belongs to the adapter
     that drives it, and `build_input` would refuse it."""
     return click.Choice([m.value for m in modes], case_sensitive=False)
+
 
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
@@ -252,6 +266,7 @@ def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
         parsed.append((name, rest))
 
     return tuple(parsed)
+
 
 class SocketSession:
     """UNIX-socket-backed live session: bind, serve, dispatch, unlink.
@@ -350,6 +365,7 @@ class SocketSession:
             pass
         self._signal_waybar()
 
+
 class SttSession(SocketSession):
     """Live recording session."""
 
@@ -433,6 +449,9 @@ class SttSession(SocketSession):
             # the recording needed - `run_once` keeps a restore of its own for
             # the paths that never reach a STOP.
             self.suppressor.restore()
+            # The bar and the card both read the phase, so it flips the moment
+            # the mic shuts rather than when the capture call returns.
+            self.set_phase(Phase.WORKING)
             # The job is not done though: nothing is written until the
             # transcription and any enrichment come back.
             Chime(ChimeDirection.FLAT).play()
@@ -469,6 +488,7 @@ class SttSession(SocketSession):
         # A file sink carries a path the socket payload does not, so
         # build_output refuses it and the client is told why.
         self.set_output(build_output(mode))
+
 
 class Stt:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
@@ -594,9 +614,14 @@ class Stt:
         # swayosd draws only what a call carries, so both redraw the whole
         # card from what this run holds.
         def redraw() -> None:
-            osd.elapsed(
-                osd.tail(" ".join(transcript)), level=_level(self._adapter), apart=True
-            )
+            tail = osd.tail(" ".join(transcript))
+            if server is not None and server.state.phase is not Phase.RECORDING:
+                # The mic is shut; what runs now is the take closing and the
+                # transcription coming back, so the card says so instead of
+                # holding a dead level bar.
+                osd.elapsed(f"transcribing\n\n{tail}".rstrip(), icon=OsdIcon.THINKING)
+                return
+            osd.elapsed(tail, level=_level(self._adapter), apart=True)
 
         # Turns go to the sink as they close, not just to the card, when the
         # sink can take them and nothing downstream will rewrite them. An
@@ -703,14 +728,27 @@ class Stt:
                     OutputAdapterClipboard().write(text)
                 if server:
                     server.set_phase(Phase.OUTPUT)
+                streamed = 0
+
+                def counted(chunks: Iterator[str]) -> Iterator[str]:
+                    nonlocal streamed
+                    for chunk in chunks:
+                        streamed += len(chunk)
+                        yield chunk
+
                 # Show the rewrite arriving rather than a spinner word: the
                 # card is the only place the text is visible before it lands
                 # in whatever window has focus.
-                output.write_stream(osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING))
-                osd.dismiss(f"{output.mode.value} done", icon=OsdIcon.DONE)
+                output.write_stream(
+                    counted(
+                        osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING)
+                    )
+                )
+                osd.dismiss(f"{len(text)} → {streamed} chars", icon=OsdIcon.DONE)
                 Chime(ChimeDirection.DOWN).play()
                 return
 
+            raw = len(text)
             if enricher is not None:
                 osd.send("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
@@ -729,7 +767,9 @@ class Stt:
                     text = enriched.strip()
                 else:
                     self.log.warning("enrichment empty; using raw")
-                    self._notify("Enrichment failed, using raw transcription", timeout=6000)
+                    self._notify(
+                        "Enrichment failed, using raw transcription", timeout=6000
+                    )
 
             if server:
                 server.set_phase(Phase.OUTPUT)
@@ -751,7 +791,12 @@ class Stt:
                     "typed turns do not prefix the take; %d chars dropped", len(text)
                 )
                 self._notify("Take and typed turns disagree", timeout=8000)
-            osd.dismiss(f"{len(text)} chars", icon=OsdIcon.DONE)
+            osd.dismiss(
+                f"{raw} → {len(text)} chars"
+                if enricher is not None
+                else f"{len(text)} chars",
+                icon=OsdIcon.DONE,
+            )
             # After the write, not before: the chime means "the text has
             # landed", and a caller typing into a focused window wants the
             # keystrokes to arrive before the sound that announces them.
@@ -856,9 +901,7 @@ class Stt:
     @click.option(
         "--input",
         "input_",
-        type=_input_choices(
-            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
-        ),
+        type=_input_choices(InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE),
         default=InputMode.FILE.value,
         help="Audio source for the http backend.",
     )
@@ -1062,9 +1105,7 @@ class Stt:
     @click.option(
         "--input",
         "input_",
-        type=_input_choices(
-            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
-        ),
+        type=_input_choices(InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE),
         default=InputMode.STDIN.value,
         help="Text source.",
     )
@@ -1143,15 +1184,19 @@ class Stt:
         """Exit 0 if a recording is live."""
         sys.exit(0 if Stt().is_recording() else 1)
 
+
 class TtsPhase(StrEnum):
     WORKING = "working"
     SPEAKING = "speaking"
+
 
 class TtsStyle(StrEnum):
     READ = "read"
     SUMMARY = "summary"
 
+
 TTS_PROMPTS = {TtsStyle.READ: "tts.md", TtsStyle.SUMMARY: "tts-summary.md"}
+
 
 @dataclass
 class TtsState:
@@ -1160,6 +1205,7 @@ class TtsState:
     chars: int
     # Previews of what is waiting behind the current utterance, oldest first.
     queued: list[str] = field(default_factory=list)
+
 
 @dataclass
 class TtsResponse:
@@ -1181,6 +1227,7 @@ class TtsResponse:
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
+
 @dataclass(frozen=True)
 class TtsPaths:
     socket_path: str
@@ -1193,8 +1240,10 @@ class TtsPaths:
         stem = f"wayland-tts-{suffix}" if suffix else "wayland-tts"
         return cls(socket_path=os.path.join(runtime, f"{stem}.sock"), suffix=suffix)
 
+
 # Populated by the `tts` click callback once `--session` is known.
 _TTS_PATHS: TtsPaths = TtsPaths.from_suffix("")
+
 
 class TtsSession(SocketSession):
     """Live playback session."""
@@ -1314,6 +1363,7 @@ class TtsSession(SocketSession):
 
         return TtsResponse(ok=False, error=f"unhandled command: {cmd.value}")
 
+
 def tts_speak_options():
     """Stack the synthesis knobs `speak` and `toggle` share.
 
@@ -1323,9 +1373,7 @@ def tts_speak_options():
         click.option(
             "--input",
             "input_",
-            type=_input_choices(
-            InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE
-        ),
+            type=_input_choices(InputMode.CLIPBOARD, InputMode.STDIN, InputMode.FILE),
             default=InputMode.CLIPBOARD.value,
             help="Text source.",
         ),
@@ -1415,6 +1463,7 @@ def tts_speak_options():
         return f
 
     return decorate
+
 
 class Tts:
     ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
@@ -1642,9 +1691,7 @@ class Tts:
                     osd.send(session.card(), osd.TICK_HOLD_MS, icon=OsdIcon.THINKING)
                     continue
                 meter = self._meter
-                osd.elapsed(
-                    session.card(), level=_meter(meter.peak) if meter else None
-                )
+                osd.elapsed(session.card(), level=_meter(meter.peak) if meter else None)
 
         ticker = threading.Thread(target=tick, daemon=True)
         ticker.start()
@@ -1833,13 +1880,17 @@ class Tts:
         """Exit 0 if playback is live."""
         sys.exit(0 if Tts().is_speaking() else 1)
 
+
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option("--headless", is_flag=True, help="Skip notifications and waybar signals.")
 def cli(verbose: bool, headless: bool):
     """Speech-to-text capture and text-to-speech playback."""
-    create_logger(verbose, log_file="speech.log", quiet={"status", "is-recording", "is-speaking"})
+    create_logger(
+        verbose, log_file="speech.log", quiet={"status", "is-recording", "is-speaking"}
+    )
     set_headless(headless)
+
 
 cli.add_command(Stt.cli, "stt")
 cli.add_command(Tts.cli, "tts")
