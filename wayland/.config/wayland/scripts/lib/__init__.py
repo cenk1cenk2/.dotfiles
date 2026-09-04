@@ -163,6 +163,9 @@ from .tts import (
     LevelReader as LevelReader,
 )
 from .tts import (
+    OnsetReader as OnsetReader,
+)
+from .tts import (
     PlayerAdapter as PlayerAdapter,
 )
 from .tts import (

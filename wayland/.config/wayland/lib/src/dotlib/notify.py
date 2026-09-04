@@ -99,6 +99,7 @@ class Notification:
         self.osd_icon = osd_icon
         self.channel = channel
         self._started = 0.0
+        self._stopped = 0.0
 
     # ── the two channels ──────────────────────────────────────────
 
@@ -188,8 +189,6 @@ class Notification:
         if (channel or self.channel) is NotifyChannel.DESKTOP:
             return self._desktop(message, timeout, urgency, actions)
 
-        if not self._started:
-            self._started = time.monotonic()
         self._card(message, timeout or self.HOLD_MS, icon)
 
     def wrapped(self, message: str) -> str:
@@ -233,9 +232,23 @@ class Notification:
             self.send(f"\n{self.tail(seen)}", icon=icon)
             yield chunk
 
-    def restart(self) -> None:
-        """Re-anchor the clock, so the next `elapsed` counts from now."""
-        self._started = 0.0
+    def start(self) -> None:
+        """Anchor the clock here, so `elapsed` counts from this instant.
+
+        Said rather than inferred: only the caller knows which moment is the
+        one worth measuring, and a card put up while the work is still being
+        set up would otherwise become the anchor by accident. The stop stamp
+        goes first, so a ticker reading the pair mid-call cannot pair a fresh
+        anchor with the last run's freeze and read a negative clock."""
+        self._stopped = 0.0
+        self._started = time.monotonic()
+
+    def freeze(self) -> None:
+        """Hold the clock where it stands, leaving the card up.
+
+        For work whose measured part ends before the job does - a recording
+        that is over while the transcription behind it still runs."""
+        self._stopped = time.monotonic()
 
     def elapsed(
         self,
@@ -246,7 +259,7 @@ class Notification:
         level: float | None = None,
         apart: bool = False,
     ) -> None:
-        """Redraw the card with the time since it first went up.
+        """Redraw the card with the time since the clock was anchored.
 
         The clock is ours: swayosd renders the string it is handed and has no
         notion of one running.
@@ -258,9 +271,10 @@ class Notification:
         if is_headless():
             return
 
-        if not self._started:
-            self._started = time.monotonic()
-        seconds = int(time.monotonic() - self._started)
+        # Zero until someone anchors it, and held once frozen: an unanchored
+        # clock counting from the first card is what `start` exists to avoid.
+        now = self._stopped or time.monotonic()
+        seconds = int(now - self._started) if self._started else 0
         stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
         # The message goes under the clock, never beside it: the card sits
         # against a screen edge, where it has rows to spare and no width. A
@@ -289,7 +303,7 @@ class Notification:
         Always redraws, even with nothing to say: swayosd hides a card when
         its own timer runs out, so leaving the last one to expire holds a
         finished job on screen for the rest of its hold."""
-        self._started = 0.0
+        self._started = self._stopped = 0.0
         if is_headless():
             return
 

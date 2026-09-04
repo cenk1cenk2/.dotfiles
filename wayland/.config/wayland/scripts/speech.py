@@ -60,6 +60,7 @@ from lib import (
     InputMode,
     LevelReader,
     LevelSource,
+    OnsetReader,
     OutputAdapter,
     OutputAdapterClipboard,
     OutputMode,
@@ -363,6 +364,7 @@ class SttSession(SocketSession):
         enricher: EnrichAdapter | None,
         adapter: SttRecorder,
         suppressor: PlaybackSuppressor,
+        osd: Notification,
     ):
         super().__init__()
         self.state = SessionState(
@@ -373,6 +375,10 @@ class SttSession(SocketSession):
         self.output = output
         self.enricher = enricher
         self.suppressor = suppressor
+        # Injected for the same reason the suppressor is: the clock has to be
+        # stopped from the STOP handler, which is the only place that knows
+        # when the microphone actually shut.
+        self.osd = osd
         self._adapter = adapter
         # Set once turns start reaching the sink. What is typed cannot be
         # taken back, so an override that would rewrite the take arrives too
@@ -416,6 +422,11 @@ class SttSession(SocketSession):
             # Stop first: an override that raises must not leave the recorder
             # running with no second toggle able to reach it.
             self._adapter.stop()
+            # The take ends where the microphone does. What follows - the
+            # silence tail, the settle, the transcription - is the job still
+            # running, not more recording, so the card keeps its turns coming
+            # with the clock held where the recording left it.
+            self.osd.freeze()
             # The microphone is shut, so nothing more can bleed into it.
             # Transcription and enrichment still have seconds to run, and
             # holding everyone else quiet through an LLM call is not something
@@ -558,7 +569,13 @@ class Stt:
         )
 
         server = (
-            SttSession(self._output, self._enricher, recorder, self._suppressor)
+            SttSession(
+                self._output,
+                self._enricher,
+                recorder,
+                self._suppressor,
+                self.NOTIFICATION,
+            )
             if recorder
             else None
         )
@@ -621,6 +638,10 @@ class Stt:
         # transcript. Lifted again by the STOP handler as soon as the
         # microphone shuts.
         self._suppressor.suppress()
+        # The microphone opens as `capture`'s first act, so this is the last
+        # instant before it is live - and past the suppression, which spawns
+        # processes of its own. The clock counts the take, never the setup.
+        osd.start()
         try:
             try:
                 captured = self._adapter.capture()
@@ -1520,9 +1541,6 @@ class Tts:
         try:
             with TtsAdapterHttp(spec).synth(text) as stream:
                 session.set_phase(TtsPhase.SPEAKING)
-                # The clock measures speech, so it starts here rather than at
-                # the top of a run that spends its first seconds rewriting.
-                self.NOTIFICATION.restart()
                 # Quiet the room at playback, not at synthesis: the backend
                 # can take seconds, and pausing before there is anything to
                 # hear just makes the wait silent.
@@ -1535,9 +1553,14 @@ class Tts:
                     source = PrefixReader(
                         Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
-                    # Outermost, so the chime registers on the meter and the
-                    # bar moves from the first sound rather than the first word.
+                    # Outside the prefix, so the chime registers on the meter
+                    # and the bar moves from the first sound rather than the
+                    # first word.
                     source = self._meter = LevelReader(source)
+                # Outermost, and the clock's anchor: synthesis can take seconds
+                # to hand over a first byte, so a run anchored at the open
+                # response would spend them counting silence.
+                source = OnsetReader(source, self.NOTIFICATION.start)
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
                 finally:

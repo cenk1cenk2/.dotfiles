@@ -20,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 import wave
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -204,6 +204,28 @@ class TeeReader:
         chunk = self._source.read(size)
         if chunk:
             self._sink.write(chunk)
+        return chunk
+
+
+class OnsetReader:
+    """Readable wrapper firing `on_onset` once, as the first bytes pass.
+
+    Where "the audio started" actually is: the pump only pulls once the
+    player is up and taking samples, so the first chunk through here is the
+    first that can be heard. The response opening is no answer - the headers
+    land while the backend is still generating the first word."""
+
+    def __init__(self, source: ByteStream, on_onset: Callable[[], None]):
+        self._source = source
+        self._on_onset = on_onset
+        self._fired = False
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._source.read(size)
+        if chunk and not self._fired:
+            self._fired = True
+            self._on_onset()
+
         return chunk
 
 
