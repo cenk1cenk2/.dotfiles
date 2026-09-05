@@ -1,0 +1,26 @@
+# Shadows /usr/share/applications/slack.desktop.
+#
+# Slack bundles its own Electron and reads no *-flags.conf, so it is the one
+# Chromium app here that the shared flag files cannot reach. The packaged
+# entry launches it bare; these are the electron-flags.conf switches restated
+# on the command line, which is the only channel slack offers.
+#
+# --ozone-platform-hint does not exist in this build (Chromium 152), hence the
+# explicit platform. --gtk-version=3 and -s are the packaged flags, kept.
+#
+# --gtk-version=4 was tried and is inert: every slack process still maps
+# libgtk-3.so.0, and the two errors it logs (a gtk_widget_get_scale_factor
+# assertion, and wayland_surface_factory calling ozone wayland incompatible
+# with Vulkan) appear identically under 3. Slack's Electron ignores the
+# switch, so the packaged value stays rather than implying a choice.
+[Desktop Entry]
+Name=Slack
+StartupWMClass=Slack
+Comment=Slack Desktop
+GenericName=Slack Client for Linux
+Exec=/usr/bin/slack --gtk-version=3 -s --force-dark-mode --enable-gpu-rasterization --enable-features=UseOzonePlatform,WaylandWindowDecorations,WebUIDarkMode,WebRTCPipeWireCapturer,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,CanvasOopRasterization,PlatformHEVCDecoderSupport --ozone-platform=wayland --disable-features=Vulkan %U
+Icon=slack
+Type=Application
+StartupNotify=true
+Categories=GNOME;GTK;Network;InstantMessaging;
+MimeType=x-scheme-handler/slack;
