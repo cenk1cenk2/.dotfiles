@@ -33,6 +33,8 @@
   lg2 = log --graph --abbrev-commit --decorate --format=format:'%C(bold blue)%h%C(reset) - %C(bold cyan)%aD%C(reset) %C(bold green)(%ar)%C(reset)%C(auto)%d%C(reset)%n''          %C(white)%s%C(reset) %C(dim white)- %an%C(reset)'
   lg = lg1
   ff = "!git pull --no-edit --ff-only origin \"$(git rev-parse --abbrev-ref HEAD)\""
+  trunk-name = "!t=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||'); [ -n \"$t\" ] || for b in main master; do git show-ref -q --verify \"refs/heads/$b\" && t=$b && break; done; echo \"$t\""
+  trunk = "!git symbolic-ref -q refs/remotes/origin/HEAD >/dev/null || git remote set-head origin --auto >/dev/null 2>&1; git checkout \"$(git trunk-name)\""
   root = rev-parse --show-toplevel
   origin = git remote get-url origin
 
