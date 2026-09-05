@@ -106,7 +106,7 @@ sed
 slurp
 smartmontools
 snapshot
-spotify
+spotify-launcher
 stow
 strace
 sudo
