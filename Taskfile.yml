@@ -10,9 +10,10 @@ vars:
 
 tasks:
   check:
-    desc: Diff every system-installed file against the repo, changing nothing.
+    desc: Diff everything installed outside stow against the repo, changing nothing.
     cmds:
       - ./install.py --dry-run
+      - ./claude-config.py --dry-run
 
   plan:
     label: "plan: {{ .to }} -> {{ .CLI_ARGS }}"
@@ -108,6 +109,7 @@ tasks:
             xsettingsd
             ydotool
             zathura
+      - ./claude-config.py
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
 
