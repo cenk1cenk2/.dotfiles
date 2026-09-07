@@ -28,32 +28,16 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + q", exec_then_reset(("%s stop"):format(d.recorder)))
 
   -- Speech-to-text direct typing with AI enrichment
-  hl.bind(
-    "s",
-    exec_then_reset(
-      ("%s stt toggle --output type --enrich"):format(d.speech)
-    )
-  )
+  hl.bind("s", exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)))
 
   -- Speech-to-text direct typing (raw, no enrichment), through our own capture
-  hl.bind(
-    "SHIFT + s",
-    exec_then_reset(("%s stt toggle --output type"):format(d.speech))
-  )
+  hl.bind("SHIFT + s", exec_then_reset(("%s stt toggle --output type"):format(d.speech)))
 
   -- Speech-to-text to clipboard with AI enrichment
-  hl.bind(
-    "c",
-    exec_then_reset(
-      ("%s stt toggle --output clipboard --enrich"):format(d.speech)
-    )
-  )
+  hl.bind("c", exec_then_reset(("%s stt toggle --output clipboard --enrich"):format(d.speech)))
 
   -- Speech-to-text to clipboard (raw, no enrichment), through our own capture
-  hl.bind(
-    "SHIFT + c",
-    exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech))
-  )
+  hl.bind("SHIFT + c", exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech)))
 
   -- Read clipboard aloud
   hl.bind("t", exec_then_reset(("%s tts toggle --enrich"):format(d.speech)))
@@ -62,13 +46,10 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + t", exec_then_reset(("%s tts toggle"):format(d.speech)))
 
   -- Summarize the clipboard aloud, rather than reading it in full
-  hl.bind(
-    "g",
-    exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech))
-  )
+  hl.bind("g", exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech)))
 
   -- Pause/resume the utterance being spoken
-  hl.bind("b", exec_then_reset(("%s tts pause"):format(d.speech)))
+  hl.bind("b", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
 
   -- Cycle playback rate: 1x, 1.5x, 2x
   hl.bind("f", exec_then_reset(("%s tts tempo"):format(d.speech)))
@@ -76,16 +57,8 @@ hl.define_submap(submap, function()
   -- Scrub the utterance. Deliberately without the reset every other bind
   -- here carries: scrubbing is held down, and leaving the submap after the
   -- first step would cost a Super+R for every three seconds.
-  hl.bind(
-    "right",
-    hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)),
-    { repeating = true }
-  )
-  hl.bind(
-    "left",
-    hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)),
-    { repeating = true }
-  )
+  hl.bind("right", hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)), { repeating = true })
+  hl.bind("left", hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)), { repeating = true })
 
   -- Copywriter: refine clipboard through AI
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))
