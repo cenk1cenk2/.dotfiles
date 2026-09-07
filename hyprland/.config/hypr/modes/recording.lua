@@ -51,9 +51,6 @@ hl.define_submap(submap, function()
   -- Pause/resume the utterance being spoken
   hl.bind("b", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
 
-  -- Cycle playback rate: 1x, 1.5x, 2x
-  hl.bind("f", exec_then_reset(("%s tts tempo"):format(d.speech)))
-
   -- Scrub the utterance. Deliberately without the reset every other bind
   -- here carries: scrubbing is held down, and leaving the submap after the
   -- first step would cost a Super+R for every three seconds.
