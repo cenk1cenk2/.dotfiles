@@ -49,7 +49,7 @@ hl.define_submap(submap, function()
   hl.bind("g", exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech)))
 
   -- Pause/resume the utterance being spoken
-  hl.bind("b", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
+  hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
 
   -- Scrub the utterance. Deliberately without the reset every other bind
   -- here carries: scrubbing is held down, and leaving the submap after the
