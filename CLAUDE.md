@@ -528,9 +528,9 @@ the profile label it is passed.
   popup rather than a missed one.
 
 - **That key is not a `settings.json` setting** — it has no entry in
-  the settings schema, so it lives only in the `.claude.json` beside
-  each profile's stowed files. That file is app-managed state, outside
-  stow, and rewritten by live sessions, so `claude-config.py` owns it
-  the way `install.py` owns `rootfs/`: `task deploy:linux:user`
-  applies it and `task check` diffs it. Re-run it with the profile's
-  sessions closed — a running one holds its own copy of the file.
+  the settings schema, so Claude Code reads it only from the
+  `.claude.json` beside each profile's stowed files: app-managed state,
+  outside stow, rewritten by live sessions, and carried by nothing in
+  this repo. Set it by hand with that profile's sessions closed, and
+  expect a new profile or a rebuilt machine to start at the 60 s
+  default until someone does.
