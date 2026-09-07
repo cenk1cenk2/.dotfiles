@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T/g) tts read/raw/gist | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T/g) tts read/raw/gist | (b/f/←→) pause/tempo/scrub | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -65,6 +65,26 @@ hl.define_submap(submap, function()
   hl.bind(
     "g",
     exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech))
+  )
+
+  -- Pause/resume the utterance being spoken
+  hl.bind("b", exec_then_reset(("%s tts pause"):format(d.speech)))
+
+  -- Cycle playback rate: 1x, 1.5x, 2x
+  hl.bind("f", exec_then_reset(("%s tts tempo"):format(d.speech)))
+
+  -- Scrub the utterance. Deliberately without the reset every other bind
+  -- here carries: scrubbing is held down, and leaving the submap after the
+  -- first step would cost a Super+R for every three seconds.
+  hl.bind(
+    "right",
+    hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)),
+    { repeating = true }
+  )
+  hl.bind(
+    "left",
+    hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)),
+    { repeating = true }
   )
 
   -- Copywriter: refine clipboard through AI

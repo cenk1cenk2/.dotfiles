@@ -15,8 +15,11 @@ import io
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 import wave
@@ -241,49 +244,322 @@ class PlayerAdapter(Protocol):
         the caller can tell the user that playback failed."""
         ...
 
+    def pause(self) -> bool: ...
 
-def _stream_to_player(cmd: list[str], stream: ByteStream) -> tuple[int, int]:
-    """Pump `stream` into `cmd`'s stdin, returning (bytes written, exit code).
+    def seek(self, seconds: float) -> bool: ...
 
-    The player deliberately stays in our process group so the session's
-    `killpg` reaches it. A BrokenPipeError only means it exited first —
-    killed mid-utterance, or `-autoexit` beating the tail of the body.
+    def cycle_tempo(self) -> float: ...
 
-    The `wait()` is deliberately untimed: it blocks for exactly as long as
-    the audio lasts. The session's socket thread keeps answering while it
-    runs, so `tts kill` stays the escape hatch for a player that never
-    returns."""
-    log.debug("spawn: %s", " ".join(cmd))
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-    )
-    assert proc.stdin is not None
 
-    written = 0
-    try:
-        while chunk := stream.read(CHUNK_BYTES):
+class PlayerBase:
+    """The pump every sink shares, and the transport over the running player.
+
+    Pause is a signal, but seek and speed both end in a *respawn*: a player
+    buffers seconds ahead of the speakers, so a change made at the pipe is
+    heard that much later, and ffplay's filter chain is fixed at startup
+    besides. Raw PCM is what makes a respawn cheap - the samples carry no
+    state, so a fresh player picks up mid-utterance wherever it is fed from.
+    Everything handed to a player is kept for exactly that: it is the only
+    copy of what has already been spoken, and a seek feeds it again.
+
+    A control runs on the session's socket thread and does no more than
+    record where it wants the player and kill the one that is up. The
+    respawn happens on the pump thread, so the pipe keeps one writer."""
+
+    TEMPOS = (1.0, 1.5)
+    # How long to block on a finished player before looking for a seek.
+    DRAIN_POLL_SECONDS = 0.1
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._sent = bytearray()
+        self._rate = DEFAULT_TTS_SAMPLE_RATE
+        # Where the running player was started, and how much audio it has
+        # played since. Split in two because a pause stops the clock.
+        self._origin = 0
+        self._played = 0.0
+        self._since: float | None = None
+        # Byte offset the pump should bring a player up at, once it looks.
+        self._pending: int | None = None
+        # Players a seek replaced, waiting for the pump to close and collect.
+        self._spent: list[subprocess.Popen] = []
+        self.paused = False
+        self.tempo = 1.0
+
+    # ── what a sink is ────────────────────────────────────────────
+
+    def _command(self, sample_rate: int) -> list[str]:
+        raise NotImplementedError(f"{type(self).__name__} declares no command")
+
+    @property
+    def seeks(self) -> bool:
+        """Whether a byte offset into this sink's stream means a time."""
+        return True
+
+    @property
+    def retimes(self) -> bool:
+        """Whether this sink's command has a filter chain to hold `atempo`."""
+        return False
+
+    # ── transport, from the session's socket thread ───────────────
+
+    def pause(self) -> bool:
+        """Flip the pause; returns the state it landed in.
+
+        SIGSTOP rather than holding the pump back: a writer that stops still
+        leaves the player's buffer to come. A frozen player stops reading
+        instead, the pipe fills, and the pump and the HTTP body behind it
+        stall on their own.
+
+        A pause taken before there is a player is held and applied at the
+        next spawn - synthesis takes seconds, and a press inside that window
+        means the utterance being prepared."""
+        with self._lock:
+            self.paused = not self.paused
+            if self.paused:
+                self._mark()
+            else:
+                self._since = time.monotonic()
+            self._signal(signal.SIGSTOP if self.paused else signal.SIGCONT)
+
+            return self.paused
+
+    def seek(self, seconds: float) -> bool:
+        """Scrub by `seconds`, negative to go back; False if the sink cannot.
+
+        Forward is capped at what has been synthesized: the stream arrives as
+        the backend writes it, so there is nothing past that to skip into."""
+        if not self.seeks:
+            return False
+
+        with self._lock:
+            self._restart(self._position + int(seconds * self._rate * 2))
+
+            return True
+
+    def cycle_tempo(self) -> float:
+        """Step to the next playback rate; returns the one it landed on.
+
+        Playback only - `TtsSpec.speed` is the rate the backend synthesizes at,
+        which is fixed for the utterance by the time a player sees it."""
+        if not self.retimes:
+            return self.tempo
+
+        with self._lock:
+            at = self._position
+            self.tempo = self.TEMPOS[
+                (self.TEMPOS.index(self.tempo) + 1) % len(self.TEMPOS)
+            ]
+            self._restart(at)
+
+            return self.tempo
+
+    # ── clock and process, always under the lock ──────────────────
+
+    @property
+    def _position(self) -> int:
+        """Byte offset of what is being heard now, at best estimate.
+
+        A player consumes in real time, so the wall clock is the readout -
+        none of them reports a position of its own. Clamped to what has been
+        sent, which is where the estimate lands if the backend ever ran
+        slower than playback and the player starved. Rounded to a sample,
+        because half of an s16 frame shifts every sample after it into noise.
+
+        A respawn already asked for wins over the clock: the player it will
+        replace is dead, so its clock says where playback *was*, and a scrub
+        held down out-paces the pump. Read that way, each step of a held key
+        moves on from the last rather than all of them landing together."""
+        if self._pending is not None:
+            return self._pending
+
+        running = (time.monotonic() - self._since) * self.tempo if self._since else 0.0
+        offset = self._origin + int((self._played + running) * self._rate * 2)
+
+        return max(0, min(offset, len(self._sent))) & ~1
+
+    def _mark(self) -> None:
+        """Fold the running segment into the played total, stopping the clock."""
+        if self._since is not None:
+            self._played += (time.monotonic() - self._since) * self.tempo
+            self._since = None
+
+    def _signal(self, sig: int) -> None:
+        if self._proc is None:
+            return
+        try:
+            self._proc.send_signal(sig)
+        except ProcessLookupError:
+            log.debug("player already gone")
+
+    def _restart(self, at: int) -> None:
+        """Post a respawn at byte `at` and drop the player that is up.
+
+        Killing it is what wakes the pump out of its blocking write; SIGKILL
+        reaches a stopped process, so a scrub works while paused."""
+        self._pending = max(0, min(at, len(self._sent))) & ~1
+        proc, self._proc = self._proc, None
+        if proc is not None:
+            proc.kill()
+            self._spent.append(proc)
+
+    # ── pump, from the run thread ─────────────────────────────────
+
+    def _spawn(self, at: int) -> None:
+        # Spawned under the lock, request included, so a seek arriving while
+        # the process comes up cannot read the clock of the player being
+        # replaced. Held down, a scrub steps from the last target rather than
+        # every step landing on the same one.
+        with self._lock:
+            cmd = self._command(self._rate)
+            log.debug("spawn at %d bytes: %s", at, " ".join(cmd))
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+            )
+            assert proc.stdin is not None
+            self._proc = proc
+            self._origin = at
+            self._played = 0.0
+            self._since = None if self.paused else time.monotonic()
+            if self.paused:
+                self._signal(signal.SIGSTOP)
+            self._pending = None
+            backlog = bytes(self._sent[at:])
+
+        # Everything already spoken past the seek point, before the live
+        # stream resumes. A paused player takes what fits in the pipe and
+        # this blocks on the rest until it is let go, which is the point.
+        if backlog:
+            self._push(backlog)
+
+    def _push(self, chunk: bytes) -> bool:
+        """Write to the player; False once it is gone, respawned or dead."""
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            return False
+
+        try:
             proc.stdin.write(chunk)
-            written += len(chunk)
-    except BrokenPipeError:
-        log.debug("player closed the pipe after %d bytes", written)
-    finally:
+        except BrokenPipeError:
+            log.debug("player closed the pipe")
+            with self._lock:
+                if self._proc is proc:
+                    self._proc = None
+                self._spent.append(proc)
+            return False
+
+        return True
+
+    def _reap(self) -> None:
+        """Close and collect the players a seek replaced.
+
+        On the pump thread, because it is the only one that writes to a
+        player's pipe and so the only one that may close one. Left undone,
+        the dropped stdin flushes into a dead pipe when Python finalizes it,
+        and the process stays a zombie for the length of the run."""
+        with self._lock:
+            spent, self._spent = self._spent, []
+        for proc in spent:
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except BrokenPipeError:
+                    pass
+            proc.wait()
+
+    def _close(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            return
         try:
             proc.stdin.close()
         except BrokenPipeError:
             pass
-        proc.wait()
 
-    return written, proc.returncode
+    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
+        """Drain `stream` into the sink; returns (bytes received, exit code).
+
+        The count is what the backend delivered rather than what reached a
+        player: a seek feeds the same samples twice, and the caller asks this
+        to find out whether any audio arrived at all.
+
+        The player deliberately stays in our process group so the session's
+        `killpg` reaches it. Only the last player's exit code is reported -
+        every one before it was killed on purpose, to be replaced."""
+        with self._lock:
+            self._sent = bytearray()
+            self._rate = sample_rate
+            self._origin = 0
+            self._played = 0.0
+            self._since = None
+            # `tempo` deliberately survives: a rate set to skim a backlog was
+            # meant for the backlog, not for the one item it was pressed on.
+            # Brings the first player up on the opening pass.
+            self._pending = 0
+
+        code = 0
+        draining = False
+        while True:
+            self._reap()
+            with self._lock:
+                pending = self._pending
+            if pending is not None:
+                self._spawn(pending)
+                if draining:
+                    self._close()
+                # Around again rather than on: a control pressed while the
+                # backlog was being written has already killed this player and
+                # posted the next request, and reading `_proc` now would find
+                # the hole it left and take it for a dead player.
+                continue
+            proc = self._proc
+            if proc is None:
+                break
+
+            if not draining:
+                chunk = stream.read(CHUNK_BYTES)
+                if chunk:
+                    with self._lock:
+                        self._sent += chunk
+                    # A failed write is a player that went away; the loop
+                    # respawns it and the backlog carries this chunk with it.
+                    self._push(chunk)
+                    continue
+
+                draining = True
+                self._close()
+
+            # Nothing left to feed. Waiting in slices rather than once, so a
+            # seek during the tail - the common case, since the backend runs
+            # ahead of the speakers - is still answered.
+            try:
+                code = proc.wait(timeout=self.DRAIN_POLL_SECONDS)
+            except subprocess.TimeoutExpired:
+                continue
+            with self._lock:
+                if self._proc is proc:
+                    self._proc = None
+                pending = self._pending
+            if pending is None:
+                break
+
+        self._reap()
+        with self._lock:
+            self.paused = False
+            self._since = None
+
+        return len(self._sent), code
 
 
-class PlayerAdapterFfplay:
+class PlayerAdapterFfplay(PlayerBase):
     """ffmpeg's player — the only sink that can demux a container.
 
-    Also the only one that can normalise: the level filter is an ffmpeg
-    filter, and the raw sinks below take a linear volume at best."""
+    Also the only one that can normalise or retime: both are ffmpeg filters,
+    and the raw sinks below take a linear volume at best."""
 
     mode = PlayerMode.FFPLAY
 
@@ -292,10 +568,21 @@ class PlayerAdapterFfplay:
         response_format: AudioFormat = AudioFormat.PCM,
         normalize: bool = True,
     ):
+        super().__init__()
         self.response_format = response_format
         self.normalize = normalize
 
-    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
+    @property
+    def seeks(self) -> bool:
+        # A container's bytes are not samples, so no offset into one names a
+        # time, and the position the transport works in has no meaning.
+        return self.response_format is AudioFormat.PCM
+
+    @property
+    def retimes(self) -> bool:
+        return self.seeks
+
+    def _command(self, sample_rate: int) -> list[str]:
         cmd = [
             "ffplay",
             "-hide_banner",
@@ -310,19 +597,25 @@ class PlayerAdapterFfplay:
         # `ch_layout` since the AVChannelLayout migration.
         if self.response_format is AudioFormat.PCM:
             cmd += ["-f", "s16le", "-ar", str(sample_rate), "-ch_layout", "mono"]
+        # `atempo` first: it changes the length of what follows, and the
+        # normaliser should read the samples as they will be heard.
+        filters = [f"atempo={self.tempo}"] if self.tempo != 1.0 else []
         if self.normalize:
-            cmd += ["-af", SPEECHNORM_FILTER]
+            filters.append(SPEECHNORM_FILTER)
+        if filters:
+            cmd += ["-af", ",".join(filters)]
         cmd += ["-i", "pipe:0"]
-        return _stream_to_player(cmd, stream)
+
+        return cmd
 
 
-class PlayerAdapterPwCat:
+class PlayerAdapterPwCat(PlayerBase):
     """PipeWire's own sink. Raw s16le only."""
 
     mode = PlayerMode.PW_CAT
 
-    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
-        cmd = [
+    def _command(self, sample_rate: int) -> list[str]:
+        return [
             "pw-cat",
             "-p",
             "--raw",
@@ -334,10 +627,9 @@ class PlayerAdapterPwCat:
             "1",
             "-",
         ]
-        return _stream_to_player(cmd, stream)
 
 
-class PlayerAdapterPaplay:
+class PlayerAdapterPaplay(PlayerBase):
     """PulseAudio compatibility sink. Raw s16le only.
 
     No file argument: `paplay` is libpulse's `pacat`, which reads stdin
@@ -345,15 +637,14 @@ class PlayerAdapterPaplay:
 
     mode = PlayerMode.PAPLAY
 
-    def play(self, stream: ByteStream, sample_rate: int) -> tuple[int, int]:
-        cmd = [
+    def _command(self, sample_rate: int) -> list[str]:
+        return [
             "paplay",
             "--raw",
             "--format=s16le",
             f"--rate={sample_rate}",
             "--channels=1",
         ]
-        return _stream_to_player(cmd, stream)
 
 
 _CLIPBOARD_MIMES = {

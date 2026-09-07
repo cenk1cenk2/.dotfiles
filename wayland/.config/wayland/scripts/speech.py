@@ -100,6 +100,9 @@ class Command(StrEnum):
     STOP = "stop"
     KILL = "kill"
     ENQUEUE = "enqueue"
+    PAUSE = "pause"
+    SEEK = "seek"
+    TEMPO = "tempo"
 
 
 class Phase(StrEnum):
@@ -1203,6 +1206,13 @@ class TtsState:
     phase: TtsPhase
     voice: str
     chars: int
+    # Orthogonal to the phase rather than one of its values: a pause taken
+    # while the backend is still synthesizing holds the player that has yet
+    # to spawn, and the session is working either way.
+    paused: bool = False
+    # Playback rate, which is the player's `atempo` and not the rate the
+    # backend synthesized at.
+    tempo: float = 1.0
     # Previews of what is waiting behind the current utterance, oldest first.
     queued: list[str] = field(default_factory=list)
 
@@ -1223,6 +1233,8 @@ class TtsResponse:
                 phase=TtsPhase(sd["phase"]),
                 voice=sd["voice"],
                 chars=int(sd["chars"]),
+                paused=bool(sd.get("paused")),
+                tempo=float(sd.get("tempo") or 1.0),
                 queued=list(sd.get("queued") or []),
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
@@ -1258,10 +1270,12 @@ class TtsSession(SocketSession):
         voice: str,
         chars: int,
         suppressor: PlaybackSuppressor,
+        player: PlayerAdapter,
     ):
         super().__init__()
         self.state = TtsState(phase=TtsPhase.WORKING, voice=voice, chars=chars)
         self.suppressor = suppressor
+        self.player = player
         # What the current utterance measured before its rewrite, when known.
         # Session-local rather than on the state: the card is drawn in this
         # process, and the bar has no room for a pair.
@@ -1295,6 +1309,38 @@ class TtsSession(SocketSession):
     def phase(self) -> TtsPhase:
         with self._lock:
             return self.state.phase
+
+    @property
+    def paused(self) -> bool:
+        with self._lock:
+            return self.state.paused
+
+    def pause(self) -> bool:
+        """Freeze or thaw the player; returns the state it landed in.
+
+        The room comes back with it: audio ducked and players stopped for an
+        utterance nobody is hearing quiet the desktop for nothing."""
+        paused = self.player.pause()
+        with self._lock:
+            self.state.paused = paused
+        if paused:
+            self.suppressor.restore()
+        else:
+            self.suppressor.suppress()
+        self._signal_waybar()
+
+        return paused
+
+    def seek(self, seconds: float) -> bool:
+        return self.player.seek(seconds)
+
+    def cycle_tempo(self) -> float:
+        tempo = self.player.cycle_tempo()
+        with self._lock:
+            self.state.tempo = tempo
+        self._signal_waybar()
+
+        return tempo
 
     def card(self) -> str:
         with self._lock:
@@ -1359,6 +1405,19 @@ class TtsSession(SocketSession):
             if not text:
                 return TtsResponse(ok=False, error="enqueue needs text")
             self.enqueue(text)
+            with self._lock:
+                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+        if cmd is Command.PAUSE:
+            self.pause()
+            with self._lock:
+                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+        if cmd is Command.SEEK:
+            if not self.seek(float(obj.get("seconds") or 0.0)):
+                return TtsResponse(ok=False, error="this sink cannot seek")
+            with self._lock:
+                return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
+        if cmd is Command.TEMPO:
+            self.cycle_tempo()
             with self._lock:
                 return TtsResponse(ok=True, state=TtsState(**asdict(self.state)))
         if cmd is Command.KILL:
@@ -1687,7 +1746,7 @@ class Tts:
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
         osd = self.NOTIFICATION
-        session = TtsSession(spec.voice, len(text), self._suppressor)
+        session = TtsSession(spec.voice, len(text), self._suppressor, self._player)
         session.start()
         # The card ticks from its own thread because the run blocks inside
         # synthesis and playback for as long as an utterance lasts.
@@ -1695,6 +1754,13 @@ class Tts:
 
         def tick() -> None:
             while not ticking.wait(Notification.TICK_SECONDS):
+                if session.paused:
+                    # Frozen rather than left running: the clock measures the
+                    # utterance, and none of it is being spoken right now.
+                    osd.freeze()
+                    osd.elapsed(f"Paused\n{session.card()}", level=0.0)
+                    continue
+                osd.thaw()
                 if session.phase is not TtsPhase.SPEAKING:
                     osd.send(session.card(), osd.TICK_HOLD_MS, icon=OsdIcon.THINKING)
                     continue
@@ -1725,6 +1791,37 @@ class Tts:
             self._suppressor.restore()
             session.stop()
 
+    def pause(self) -> None:
+        resp = self._send(Command.PAUSE)
+        if resp is None or not resp.ok:
+            self.log.info("nothing playing to pause")
+            return
+
+        # The card the session is already holding up says which way it went,
+        # so a notification here would only say it twice.
+        self.log.info("paused" if resp.state and resp.state.paused else "resumed")
+
+    def seek(self, seconds: float) -> None:
+        resp = self._send(Command.SEEK, seconds=seconds)
+        if resp is None:
+            self.log.info("nothing playing to seek")
+            return
+        if not resp.ok:
+            self.log.warning("seek refused: %s", resp.error)
+            self._notify(f"Cannot seek\n{resp.error}")
+            return
+
+        self.log.info("sought %+.1fs", seconds)
+
+    def tempo(self) -> None:
+        resp = self._send(Command.TEMPO)
+        if resp is None or not resp.ok:
+            self.log.info("nothing playing to retime")
+            return
+
+        rate = resp.state.tempo if resp.state else 1.0
+        self.log.info("playing at %.1fx", rate)
+
     def kill(self) -> None:
         # No reply is the *expected* outcome: the session killpg's itself
         # before it can answer, so there is nothing here to branch on.
@@ -1750,7 +1847,13 @@ class Tts:
                 f"Speaking {state.chars} chars ({state.voice})",
             ),
         }
-        text, tooltip = mapping[state.phase]
+        if state.paused:
+            text, tooltip = "󰏤", f"Paused at {state.chars} chars ({state.voice})"
+        else:
+            text, tooltip = mapping[state.phase]
+        if state.tempo != 1.0:
+            text += f" {state.tempo:g}x"
+            tooltip += f"\nPlaying at {state.tempo:g}x"
         if state.queued:
             # Subscript rather than a plain digit: the backlog is a footnote to
             # what is playing, and it has to sit against the icon without
@@ -1760,7 +1863,11 @@ class Tts:
             tooltip += f"\n\n{len(state.queued)} waiting:\n{waiting}"
 
         return json.dumps(
-            {"class": state.phase.value, "text": text, "tooltip": tooltip}
+            {
+                "class": "paused" if state.paused else state.phase.value,
+                "text": text,
+                "tooltip": tooltip,
+            }
         )
 
     # ── CLI ───────────────────────────────────────────────────────
@@ -1872,6 +1979,24 @@ class Tts:
             return
 
         ctx.invoke(Tts.cmd_speak, **speak_opts)
+
+    @cli.command("pause")
+    def cmd_pause():
+        """Toggle pause on the live session's playback."""
+        Tts().pause()
+
+    # Unknown options pass through, or click reads a negative SECONDS as a
+    # flag and refuses `seek -3` before the callback ever runs.
+    @cli.command("seek", context_settings={"ignore_unknown_options": True})
+    @click.argument("seconds", type=float)
+    def cmd_seek(seconds: float):
+        """Scrub the live utterance by SECONDS, negative to go back."""
+        Tts().seek(seconds)
+
+    @cli.command("tempo")
+    def cmd_tempo():
+        """Cycle the live session's playback rate."""
+        Tts().tempo()
 
     @cli.command("kill")
     def cmd_kill():

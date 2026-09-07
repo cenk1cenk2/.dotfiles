@@ -243,6 +243,10 @@ window#waybar .modules-right {
   background-color: @success_color;
 }
 
+#custom-tts.paused {
+  background-color: @bg_color_900;
+}
+
 #custom-copywriter {
   color: @bg_color_100;
   border-radius: 8px;

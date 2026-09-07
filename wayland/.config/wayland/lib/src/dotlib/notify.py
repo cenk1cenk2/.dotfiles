@@ -248,8 +248,25 @@ class Notification:
         """Hold the clock where it stands, leaving the card up.
 
         For work whose measured part ends before the job does - a recording
-        that is over while the transcription behind it still runs."""
+        that is over while the transcription behind it still runs.
+
+        A second call holds the first stamp: a ticker calling this every frame
+        of a pause would otherwise walk the frozen clock forward."""
+        if self._stopped:
+            return
+
         self._stopped = time.monotonic()
+
+    def thaw(self) -> None:
+        """Run the clock again from where `freeze` left it.
+
+        The anchor moves forward by the frozen span rather than being reset,
+        so a paused job resumes its own count instead of starting over."""
+        if not self._stopped:
+            return
+
+        self._started += time.monotonic() - self._stopped
+        self._stopped = 0.0
 
     def elapsed(
         self,
