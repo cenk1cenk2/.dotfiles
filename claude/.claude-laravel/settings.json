@@ -58,7 +58,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/notify.py send laravel",
-            "timeout": 15,
             "async": true
           }
         ]

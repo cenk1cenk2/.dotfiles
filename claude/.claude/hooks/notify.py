@@ -51,6 +51,10 @@ class Notify:
         """Read the hook payload from stdin and raise the alarm."""
         create_logger(verbose)
 
+        if Notify.focused():
+            Notify.log.debug("pane already in focus; staying quiet")
+            return
+
         try:
             payload = json.load(sys.stdin)
         except json.JSONDecodeError as e:
@@ -69,8 +73,9 @@ class Notify:
             body += f"\n\n{context}"
 
         label = f" ({profile})" if profile else ""
-        # Chime first: the popup call blocks for its lifetime waiting on a
-        # click, and the sound belongs to its appearance.
+        # Before the popup rather than after: the popup call blocks for its
+        # lifetime waiting on a click, and the sound belongs to its appearance
+        # rather than its dismissal.
         Chime(ChimeDirection.UP).play()
         # Marks the tmux window and the kitty tab, which the popup cannot do
         # for a session the user is not currently looking at.
@@ -133,7 +138,72 @@ class Notify:
         # for a heading and a list.
         return textwrap.shorten(text, width=cls.CONTEXT_CHARS, placeholder=" …")
 
-    # ── click-to-focus ────────────────────────────────────────────
+    # ── the pane this hook runs in ────────────────────────────────
+
+    @classmethod
+    def focused(cls) -> bool:
+        """Whether the user is already watching the pane this hook fired in.
+
+        Every layer has to agree: the pane is the active one in its tmux
+        window, that window is the session's current one, and kitty has focus
+        on the window hosting a client attached to it. Anything unreadable
+        answers no — an alarm nobody needed beats one nobody got."""
+        pane = os.environ.get("TMUX_PANE")
+        if not pane or not os.environ.get("TMUX"):
+            return cls._kitty_focused(os.getpid())
+
+        shown = run(
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                pane,
+                "#{pane_active}\t#{window_active}\t#{session_name}",
+            ],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+        if shown.returncode != 0:
+            return False
+        active_pane, active_window, session = (
+            shown.stdout.strip().split("\t") + [""] * 3
+        )[:3]
+        if active_pane != "1" or active_window != "1":
+            return False
+
+        # Scoped to the session rather than every client: another terminal
+        # attached elsewhere has focus of its own and says nothing about this
+        # pane.
+        listed = run(
+            ["tmux", "list-clients", "-t", session, "-F", "#{client_pid}"],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+
+        return any(
+            pid.isdigit() and cls._kitty_focused(int(pid))
+            for pid in listed.stdout.split()
+        )
+
+    @classmethod
+    def _kitty_focused(cls, pid: int) -> bool:
+        """Whether the kitty window running `pid` is the one being looked at.
+
+        All three flags, not the window's own: kitty marks the active window
+        of every tab, so `is_active` alone is true for a pane sitting behind
+        another tab or another OS window."""
+        found = cls._locate(pid)
+        if not found:
+            return False
+
+        _, os_window, tab, window = found
+
+        return bool(
+            os_window.get("is_focused")
+            and tab.get("is_active")
+            and window.get("is_active")
+        )
 
     @classmethod
     def focus(cls) -> None:
@@ -205,11 +275,39 @@ class Notify:
 
     @classmethod
     def _focus_kitty(cls, client_pid: int) -> None:
-        """Raise the kitty window whose shell hosts the tmux client.
+        """Raise the kitty window whose shell hosts the tmux client."""
+        found = cls._locate(client_pid)
+        if not found:
+            cls.log.debug("no kitty window found for client pid %d", client_pid)
+            return
 
-        Each kitty instance suffixes the configured socket with its own pid,
-        which is also what Hyprland knows the OS window by."""
-        ancestors = cls._ancestors(client_pid)
+        sock, _, _, window = found
+        # Each kitty instance suffixes the configured socket with its own pid,
+        # which is also what Hyprland knows the OS window by.
+        instance = sock.rsplit("-", 1)[-1]
+        if instance.isdigit():
+            cls._focus_hyprland(int(instance))
+        run(
+            [
+                "kitty",
+                "@",
+                "--to",
+                f"unix:{sock}",
+                "focus-window",
+                "--match",
+                f"id:{window['id']}",
+            ],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+
+    @classmethod
+    def _locate(cls, pid: int) -> tuple[str, dict, dict, dict] | None:
+        """The kitty socket, OS window, tab and window running `pid`.
+
+        A tmux client sits under a wrapper rather than being a foreground
+        process itself, so the chain above it counts as a match too."""
+        ancestors = cls._ancestors(pid)
         for sock in glob.glob("/tmp/kitty.sock*"):
             listed = run(
                 ["kitty", "@", "--to", f"unix:{sock}", "ls"],
@@ -229,26 +327,10 @@ class Notify:
                             p.get("pid") for p in window.get("foreground_processes", [])
                         }
                         pids.add(window.get("pid"))
-                        if client_pid not in pids and not pids & ancestors:
-                            continue
-                        instance = sock.rsplit("-", 1)[-1]
-                        if instance.isdigit():
-                            cls._focus_hyprland(int(instance))
-                        run(
-                            [
-                                "kitty",
-                                "@",
-                                "--to",
-                                f"unix:{sock}",
-                                "focus-window",
-                                "--match",
-                                f"id:{window['id']}",
-                            ],
-                            log=cls.log,
-                            timeout=cls.RUN_TIMEOUT,
-                        )
-                        return
-        cls.log.debug("no kitty window found for client pid %d", client_pid)
+                        if pid in pids or pids & ancestors:
+                            return sock, os_window, tab, window
+
+        return None
 
     @classmethod
     def _focus_hyprland(cls, pid: int) -> None:

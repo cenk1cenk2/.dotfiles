@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions, waybar and kitty configuration, and NVIDIA dGPU
-runtime power. Everything below is an established rule — apply it to
+script conventions, waybar and kitty configuration, Claude Code hooks,
+and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
 every new script (and every touch of an old one) without re-discussion.
 
 Linux (Arch, Wayland) is the only deployment target. `Taskfile.yml` has
@@ -352,6 +352,15 @@ for per-item results (`log.info("  filler: [red]%s[/]", …)`).
   `subprocess.TimeoutExpired`; `run` re-raises it rather than
   folding it into a returncode.
 
+- **`Chime.play()` detaches by default.** It returns in ~10ms
+  rather than the ~0.6s the tone lasts, so the popup or the write a
+  chime announces is not held up by its own announcement.
+  `wait=True` is for the callers that need the tone finished before
+  the next line runs — `speech.py`'s mic-live cue, which has to be
+  heard at full volume before the playback suppressor ducks it.
+  Detached players are swept on the next `play()`, so a caller that
+  outlives many chimes collects no zombies.
+
 ### Adapter pattern
 
 Where a script talks to multiple providers (enrichment backends,
@@ -489,3 +498,38 @@ not set. Read the active line, never the comment above it.
 - Custom module `signal` numbers come from `waybar-signal.sh`, which
   is the whole map: a module whose number is missing there is never
   poked and only refreshes on its `interval`.
+
+## Claude Code hooks
+
+`claude/.claude/hooks/notify.py` is the only hook, wired as
+`Notification` in both profiles' `settings.json` and differing only in
+the profile label it is passed.
+
+- **A hook's `timeout` is a cancel deadline, never a delay**, and
+  Claude Code does not enforce it at all on a hook with `async: true`.
+  A notification that arrives late is never the timeout's doing.
+
+- **`idle_prompt` notifications wait out
+  `messageIdleNotifThresholdMs`**, 60000 by default and 0 here.
+  `permission_prompt` fires immediately, so the "waiting for your
+  input" one is the only kind that is ever late. The delay is a
+  per-turn `setTimeout` armed when a turn completes and guarded on no
+  dialog being on screen, so 0 costs one notification at the end of a
+  turn rather than a poll.
+
+- **The hook stays quiet when the pane is already being watched**,
+  which is what makes a 0 threshold liveable. `Notify.focused()` wants
+  every layer to agree: the pane is active in its tmux window, that
+  window is the session's current one, and kitty reports the OS window
+  hosting a client attached to that session as focused with the tab
+  and window active. `is_active` alone is not enough — kitty marks the
+  active window of every tab, including tabs nobody is looking at.
+  Anything unreadable answers no, so a broken step costs a redundant
+  popup rather than a missed one.
+
+- **That key is not a `settings.json` setting** — it has no entry in
+  the settings schema, so it lives only in each profile's own
+  `~/.claude-<profile>/.claude.json`. That file is app-managed state,
+  outside stow, and written by live sessions: set the key with the
+  profile's sessions closed or re-read it afterwards, and expect a
+  fresh profile to be back on the 60 s default.
