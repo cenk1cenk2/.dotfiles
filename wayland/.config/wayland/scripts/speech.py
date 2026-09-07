@@ -59,7 +59,6 @@ from lib import (
     InputAdapter,
     InputAdapterClipboard,
     InputMode,
-    LevelReader,
     LevelSource,
     OnsetReader,
     OutputAdapter,
@@ -1306,11 +1305,6 @@ class TtsSession(SocketSession):
         self._signal_waybar()
 
     @property
-    def phase(self) -> TtsPhase:
-        with self._lock:
-            return self.state.phase
-
-    @property
     def paused(self) -> bool:
         with self._lock:
             return self.state.paused
@@ -1563,7 +1557,6 @@ class Tts:
         self._player = player
         self._copy = copy
         self._enricher = enricher
-        self._meter: LevelReader | None = None
         self._suppressor = PlaybackSuppressor(
             duck=duck,
             factor=duck_factor,
@@ -1649,7 +1642,6 @@ class Tts:
         notifications."""
         spec = self._spec
         buffer = io.BytesIO() if self._copy else None
-        self._meter = None
         # A dead backend and a dead player are different faults with
         # different fixes, so the notification has to tell them apart.
         # Backend first: URLError and TimeoutError are OSError subclasses
@@ -1669,14 +1661,14 @@ class Tts:
                     source = PrefixReader(
                         Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
-                    # Outside the prefix, so the chime registers on the meter
-                    # and the bar moves from the first sound rather than the
-                    # first word.
-                    source = self._meter = LevelReader(source)
-                # Outermost, and the clock's anchor: synthesis can take seconds
-                # to hand over a first byte, so a run anchored at the open
-                # response would spend them counting silence.
-                source = OnsetReader(source, self.NOTIFICATION.start)
+                # One card at the first byte that can be heard, then gone. At
+                # the open response it would advertise silence, since synthesis
+                # takes seconds to hand a byte over; held open for the utterance
+                # it would cost five `busctl` forks a second. The waybar module
+                # carries the state that outlives the card.
+                source = OnsetReader(
+                    source, lambda: self._notify(session.card(), timeout=3000)
+                )
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
                 finally:
@@ -1737,7 +1729,7 @@ class Tts:
                 # point is to say another one has arrived without waiting for
                 # the current utterance to end.
                 Chime(ChimeDirection.FLAT).play()
-                self._notify("Queued behind the current utterance", timeout=3000)
+                self._notify("Queued", timeout=3000)
             else:
                 error = resp.error if resp else "no session answered"
                 self.log.warning("enqueue refused: %s", error)
@@ -1745,30 +1737,8 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
-        osd = self.NOTIFICATION
         session = TtsSession(spec.voice, len(text), self._suppressor, self._player)
         session.start()
-        # The card ticks from its own thread because the run blocks inside
-        # synthesis and playback for as long as an utterance lasts.
-        ticking = threading.Event()
-
-        def tick() -> None:
-            while not ticking.wait(Notification.TICK_SECONDS):
-                if session.paused:
-                    # Frozen rather than left running: the clock measures the
-                    # utterance, and none of it is being spoken right now.
-                    osd.freeze()
-                    osd.elapsed(f"Paused\n{session.card()}", level=0.0)
-                    continue
-                osd.thaw()
-                if session.phase is not TtsPhase.SPEAKING:
-                    osd.send(session.card(), osd.TICK_HOLD_MS, icon=OsdIcon.THINKING)
-                    continue
-                meter = self._meter
-                osd.elapsed(session.card(), level=_meter(meter.peak) if meter else None)
-
-        ticker = threading.Thread(target=tick, daemon=True)
-        ticker.start()
         try:
             # Enrich before synthesis, not after: the backend reads whatever
             # it is handed, so the rewrite has to land before the audio does.
@@ -1778,16 +1748,12 @@ class Tts:
                     break
                 queued = session.pop()
                 if queued is None:
-                    osd.dismiss()
                     break
                 session.set_phase(TtsPhase.WORKING)
                 session.set_chars(len(queued))
                 self.log.info("dequeued %d chars", len(queued))
                 spoken = queued
         finally:
-            ticking.set()
-            ticker.join(timeout=Notification.TIMEOUT)
-            osd.dismiss()
             self._suppressor.restore()
             session.stop()
 
