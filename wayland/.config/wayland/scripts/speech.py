@@ -601,9 +601,9 @@ class Stt:
         )
         if server:
             server.start()
-        # The only cue that the microphone is live. Before the suppression, so
-        # it is heard at full volume rather than ducking itself.
-        Chime(ChimeDirection.UP).play()
+        # The only cue that the microphone is live. Waited on, and before the
+        # suppression, so it is heard at full volume rather than ducking itself.
+        Chime(ChimeDirection.UP).play(wait=True)
 
         osd = self.NOTIFICATION
         # Finalised turns only — the endpoint publishes no partial deltas, so

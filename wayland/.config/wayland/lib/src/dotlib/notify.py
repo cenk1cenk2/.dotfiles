@@ -17,6 +17,7 @@ import textwrap
 import time
 from collections.abc import Iterator, Sequence
 from enum import StrEnum
+from typing import ClassVar
 
 from .desktop import is_headless
 
@@ -368,6 +369,10 @@ class Chime:
     # not hold up whatever the caller was about to do next.
     TIMEOUT = 5.0
 
+    # Detached players still sounding. Swept on the next call, so a caller that
+    # outlives many chimes does not collect a zombie per tone.
+    _playing: ClassVar[list[subprocess.Popen[bytes]]] = []
+
     def __init__(
         self,
         direction: ChimeDirection = ChimeDirection.UP,
@@ -435,12 +440,14 @@ class Chime:
 
         return struct.pack(f"<{total}h", *(int(v * scale) for v in mix))
 
-    def play(self) -> None:
+    def play(self, wait: bool = False) -> None:
         """Play the tone on its own, for a caller with no stream to ride.
 
-        Blocks for the length of the tone rather than detaching: it is a third
-        of a second, and a fire-and-forget child would linger as a zombie in any
-        caller that outlives it."""
+        Detached, so the announcement does not delay the thing it announces:
+        the popup or the write behind a chime lands a third of a second sooner.
+        `wait` is for the callers that need the tone finished before the next
+        line runs - suppression about to duck it, or a player about to take the
+        sink."""
         pcm = self.pcm()
         if not pcm:
             return
@@ -462,16 +469,40 @@ class Chime:
             "pipe:0",
         ]
         log.debug("spawn: %s", " ".join(cmd))
+        if wait:
+            try:
+                subprocess.run(
+                    cmd,
+                    input=pcm,
+                    capture_output=True,
+                    timeout=self.TIMEOUT,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+                log.warning("chime failed: %s", e)
+
+            return
+
+        self._playing[:] = [p for p in self._playing if p.poll() is None]
         try:
-            subprocess.run(
+            player = subprocess.Popen(
                 cmd,
-                input=pcm,
-                capture_output=True,
-                timeout=self.TIMEOUT,
-                check=False,
+                stdin=subprocess.PIPE,
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+                start_new_session=True,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            assert player.stdin is not None
+            # The whole tone goes over in one write with nothing reading yet:
+            # a fifth of a second of 16-bit mono sits well inside the 64KiB a
+            # pipe buffers before it blocks.
+            player.stdin.write(pcm)
+            player.stdin.close()
+        except (FileNotFoundError, BrokenPipeError) as e:
             log.warning("chime failed: %s", e)
+            return
+
+        self._playing.append(player)
 
 
 def _parent(pid: int) -> int:
