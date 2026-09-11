@@ -3,13 +3,14 @@
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 model_reasoning_summary = "concise"
+model_verbosity = "low"
 
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
 approvals_reviewer = "auto_review"
 
 personality = "pragmatic"
-web_search = "cached"
+web_search = "indexed"
 
 project_doc_fallback_filenames = ["CLAUDE.md", "AGENTS.md"]
 
@@ -24,12 +25,12 @@ generate_memories = true
 newline = "ctrl_m"
 
 [features]
-use_linux_sandbox_bwrap = true
 multi_agent = true
 apps = true
-terminal_resize_reflow = true
 memories = true
-remote_control = true
+
+[features.context_management]
+experimental_mode = true
 
 [tui]
 notifications = true
@@ -53,16 +54,16 @@ show_tooltips = false
 [[hooks.PermissionRequest.hooks]]
 type = "command"
 command = "~/.config/wayland/scripts/notify.py codex kilic"
-# async = true
-timeout = 5
+async = true
+timeout = 10
 
 [[hooks.Stop]]
 
 [[hooks.Stop.hooks]]
 type = "command"
 command = "~/.config/wayland/scripts/notify.py codex kilic"
-# async = true
-timeout = 5
+async = true
+timeout = 10
 
 status_line = [
   "model-with-reasoning",
