@@ -1,7 +1,7 @@
 -- Output configuration
 
 -- Default monitor configuration
--- kanshi will handle dynamic monitor configuration
+-- outputs/profiles.lua handles dynamic monitor configuration
 hl.monitor({
   output = "",
   mode = "preferred",

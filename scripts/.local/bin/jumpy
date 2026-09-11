@@ -23,7 +23,6 @@ import re
 import socket
 import subprocess
 import sys
-from enum import StrEnum
 from pathlib import Path
 
 import click
@@ -84,11 +83,6 @@ class Hyprctl:
         return self._request(f"eval {expr}") == "ok"
 
 
-class DisplayBackend(StrEnum):
-    KANSHI = "kanshi"
-    NATIVE = "native"
-
-
 def _complete_sound(
     ctx: click.Context, param: click.Parameter, incomplete: str
 ) -> list[CompletionItem]:
@@ -119,20 +113,18 @@ def _complete_sound(
 def _complete_display(
     ctx: click.Context, param: click.Parameter, incomplete: str
 ) -> list[CompletionItem]:
-    """Candidates for `jumpy display`: the profiles the selected backend
-    defines, plus the two verbs. Reads `--backend` off the partial parse, so
-    completing after `--backend native` offers profiles.lua's names."""
+    """Candidates for `jumpy display`: profiles.lua's profiles, plus the two
+    verbs."""
     if ctx.params.get("args"):
         return []
-    backend = DisplayBackend(ctx.params.get("backend") or DisplayBackend.KANSHI)
     items = [
         CompletionItem("ls", help="List available profiles"),
         CompletionItem("reload", help="Re-run auto-match"),
     ]
     try:
         items += [
-            CompletionItem(name, help=f"{backend} profile")
-            for name in Jumpy().display_profiles(backend)
+            CompletionItem(name, help="display profile")
+            for name in Jumpy().display_profiles()
         ]
     except OSError:
         return []
@@ -142,8 +134,6 @@ def _complete_display(
 
 class Jumpy:
     AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
-    DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
-    KANSHI_CONFIG = Path.home() / ".config/kanshi/config"
     DISPLAY_MODULE = "outputs.profiles"
     PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"
 
@@ -211,82 +201,49 @@ class Jumpy:
         raise click.ClickException(f"no node matches {media_class!r} + {card_name!r}")
 
     def _ensure_native(self) -> Hyprctl:
-        # Guard the `require`-driven native paths (reload / switch): fail
-        # unless profiles.lua is ALREADY loaded in a running instance.
-        # Probed through `package.loaded` so the check never *loads* the
-        # module itself — force-loading it via `require` while kanshi is
-        # still running would wire profiles.lua's hotplug hooks alongside
-        # kanshi, and the two would fight over every monitor event. The
-        # Hyprctl self-discovers the instance socket, so bare-env callers
-        # (SSH, systemd, home-assistant) work without
+        # Guard the `require`-driven paths (reload / switch): fail unless
+        # profiles.lua is ALREADY loaded in a running instance. Probed
+        # through `package.loaded` so the check never *loads* the module
+        # itself — force-loading it via `require` here would wire
+        # profiles.lua's hotplug hooks a second time outside init.lua's
+        # normal load order. The Hyprctl self-discovers the instance socket,
+        # so bare-env callers (SSH, systemd, home-assistant) work without
         # HYPRLAND_INSTANCE_SIGNATURE.
         hypr = Hyprctl()
         if not hypr.eval(f'assert(package.loaded["{self.DISPLAY_MODULE}"])'):
             raise click.ClickException(
-                "--backend native needs a running Hyprland with profiles.lua "
+                "jumpy display needs a running Hyprland with profiles.lua "
                 "loaded (uncomment its require in ~/.config/hypr/outputs/init.lua)."
             )
 
         return hypr
 
-    def display_profiles(self, backend: DisplayBackend) -> list[str]:
-        """Profile names the backend defines, in file order.
+    def display_profiles(self) -> list[str]:
+        """Profile names profiles.lua defines, in file order.
 
-        Reading either file is side-effect-free, so this never needs the native
+        Reading the file is side-effect-free, so this never needs the native
         load guard — the .lua file is the source of truth (0.56 still can't
         return a Lua value through hyprctl)."""
-        if backend is DisplayBackend.NATIVE:
-            text = self.PROFILES_LUA.read_text()
-            return [m.group(1) for m in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text)]
+        text = self.PROFILES_LUA.read_text()
+        return [m.group(1) for m in re.finditer(r'\["([^"]+)"\]\s*=\s*\{', text)]
 
-        text = self.KANSHI_CONFIG.read_text()
-        seen: list[str] = []
-        for match in re.finditer(r"^\s*profile\s+(\S+)\s*\{", text, re.MULTILINE):
-            if match.group(1) not in seen:
-                seen.append(match.group(1))
-        return seen
-
-    def display_ls(self, backend: DisplayBackend) -> None:
+    def display_ls(self) -> None:
         # One per line, deliberately plain: this is the machine-readable list.
-        for name in self.display_profiles(backend):
+        for name in self.display_profiles():
             sys.stdout.write(f"{name}\n")
 
-    def display_reload(self, backend: DisplayBackend) -> None:
-        if backend is DisplayBackend.NATIVE:
-            hypr = self._ensure_native()
-            if not hypr.eval(f'require("{self.DISPLAY_MODULE}").auto_apply()'):
-                raise click.ClickException("reload failed.")
-            return
+    def display_reload(self) -> None:
+        hypr = self._ensure_native()
+        if not hypr.eval(f'require("{self.DISPLAY_MODULE}").auto_apply()'):
+            raise click.ClickException("reload failed.")
 
-        try:
-            log.debug("spawn: kanshictl reload")
-            subprocess.run(["kanshictl", "reload"], check=True, timeout=10)
-        except subprocess.TimeoutExpired:
-            # Hyprland 0.56 never ACKs a wlr-output-management apply that
-            # changes nothing, so kanshi's reload hangs whenever the
-            # config is already active. Already-applied is success.
-            log.warning("kanshictl reload timed out — state already active.")
-
-    def display_switch(self, profile: str, backend: DisplayBackend) -> None:
-        if backend is DisplayBackend.NATIVE:
-            hypr = self._ensure_native()
-            # profiles.lua's apply() emits its own "Applied profile" notify.
-            if not hypr.eval(
-                f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
-            ):
-                raise click.ClickException(f"switch to {profile} failed.")
-            return
-
-        log.debug("spawn: wayland-user.sh kanshictl switch %s", profile)
-        subprocess.run(
-            ["/etc/udev/scripts/wayland-user.sh", "kanshictl", "switch", profile],
-            check=True,
-        )
-        Notification(
-            "display",
-            self.DISPLAY_ICON,
-            channel=NotifyChannel.DESKTOP,
-        ).send(f"Trigger profile {profile}.")
+    def display_switch(self, profile: str) -> None:
+        hypr = self._ensure_native()
+        # profiles.lua's apply() emits its own "Applied profile" notify.
+        if not hypr.eval(
+            f'require("{self.DISPLAY_MODULE}").apply({json.dumps(profile)})'
+        ):
+            raise click.ClickException(f"switch to {profile} failed.")
 
     # ── CLI ──────────────────────────────────────────────────────────
 
@@ -319,15 +276,9 @@ class Jumpy:
                 ctx.exit(2)
 
     @cli.command("display")
-    @click.option(
-        "--backend",
-        type=click.Choice([b.value for b in DisplayBackend]),
-        default=DisplayBackend.KANSHI.value,
-        help="Profile backend: kanshi (default) or native profiles.lua.",
-    )
     @click.argument("args", nargs=-1, shell_complete=_complete_display)
     @click.pass_context
-    def cmd_display(ctx: click.Context, backend: str, args: tuple[str, ...]) -> None:
+    def cmd_display(ctx: click.Context, args: tuple[str, ...]) -> None:
         """Apply or list Hyprland monitor profiles.
 
         \b
@@ -335,16 +286,15 @@ class Jumpy:
         jumpy display reload    re-run auto-match
         jumpy display <profile> apply a profile
         """
-        chosen = DisplayBackend(backend)
         match list(args):
             case [] | ["help"]:
                 click.echo(ctx.get_help())
             case ["ls"]:
-                Jumpy().display_ls(chosen)
+                Jumpy().display_ls()
             case ["reload"]:
-                Jumpy().display_reload(chosen)
+                Jumpy().display_reload()
             case [profile]:
-                Jumpy().display_switch(profile, chosen)
+                Jumpy().display_switch(profile)
             case _:
                 click.echo(ctx.get_help())
                 ctx.exit(2)
