@@ -29,7 +29,7 @@ from pathlib import Path
 import click
 from click.shell_completion import CompletionItem, get_completion_class
 from dotlib.cli import create_logger
-from dotlib.notify import notify
+from dotlib.notify import Notification, NotifyChannel
 from rich.console import Console
 from rich.table import Table
 
@@ -202,7 +202,11 @@ class Jumpy:
             if card_name in (props.get("alsa.card_name"), props.get("media.name")):
                 log.debug("spawn: wpctl set-default %s", node["id"])
                 subprocess.run(["wpctl", "set-default", str(node["id"])], check=True)
-                notify(f"wireplumber [{media_class}]", card_name, self.AUDIO_ICON)
+                Notification(
+                    f"wireplumber [{media_class}]",
+                    self.AUDIO_ICON,
+                    channel=NotifyChannel.DESKTOP,
+                ).send(card_name)
                 return
         raise click.ClickException(f"no node matches {media_class!r} + {card_name!r}")
 
@@ -278,7 +282,11 @@ class Jumpy:
             ["/etc/udev/scripts/wayland-user.sh", "kanshictl", "switch", profile],
             check=True,
         )
-        notify("display", f"Trigger profile {profile}.", self.DISPLAY_ICON)
+        Notification(
+            "display",
+            self.DISPLAY_ICON,
+            channel=NotifyChannel.DESKTOP,
+        ).send(f"Trigger profile {profile}.")
 
     # ── CLI ──────────────────────────────────────────────────────────
 
