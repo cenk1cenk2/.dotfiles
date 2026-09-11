@@ -1,52 +1,72 @@
 ---@class Profile
----@field required string[]
+---@field required HL.MonitorSpec[]  Catalog entries (`M.monitors.X`), matched on their `output` selector.
 ---@field monitors HL.MonitorSpec[]
 ---@field order? integer  Lower wins on ties (same `required` count). Missing = lowest priority.
----@field exec? string[]
+---@field exec? string[][]  Lists of command strings. `apply` flattens one level, so helpers returning a `string[]` compose in the same list.
 ---@field on_demand? boolean
 
 ---@class Monitors
----@field ANY string
----@field LG_38GN950 string
----@field ASUS_VG27A string
----@field ASUS_XG17A string
----@field ASUS_MB16 string
----@field GPD string
----@field SAMSUNG_ATNA60 string
----@field SONY_BRAVIA7 string
+---@field ANY HL.MonitorSpec
+---@field LG_38GN950 HL.MonitorSpec
+---@field ASUS_VG27A HL.MonitorSpec
+---@field ASUS_XG17A HL.MonitorSpec
+---@field ASUS_MB16 HL.MonitorSpec
+---@field GPD HL.MonitorSpec
+---@field SAMSUNG_ATNA60 HL.MonitorSpec
+---@field SONY_BRAVIA7 HL.MonitorSpec
 
+-- The catalog is the single place a panel's fixed capabilities are
+-- written down. Profiles carry only layout (mode, position, scale,
+-- transform) and `extend` the entry, so a capability never has to be
+-- repeated per profile and can never drift between two of them.
 ---@class ProfilesModule
 ---@field monitors Monitors
 ---@field profiles table<string, Profile>
----@field _connected table<string, boolean>       Descriptions of connected KNOWN monitors, including ones a profile disabled. Maintained from monitor.added/removed. Matching reads this, never `hl.get_monitor` — Hyprland's Lua queries see only *enabled* outputs, so a profile that disables a monitor it requires (docked → GPD) would otherwise self-invalidate on the next event.
+---@field _connected table<string, string>       Connected KNOWN monitors as description → name, including ones a profile disabled. Keyed by description because that is the stable identity state persistence and the removed-markers are written in; the name rides along so name selectors can be matched too. Maintained from monitor.added/removed. Matching reads this, never `hl.get_monitor` — Hyprland's Lua queries see only *enabled* outputs, so a profile that disables a monitor it requires (docked → GPD) would otherwise self-invalidate on the next event.
 ---@field _active string|nil                       Name of the last-applied profile. `auto_apply` no-ops when the match is unchanged, so `exec` side effects fire only on real transitions.
 ---@field _disabled_by_active table<string, boolean> Descriptions the active profile disabled — what `rescue` re-enables when nothing matches.
 ---@field _pending_removed table<string, boolean>   One-shot markers for rule-driven disables in flight. A disable emits exactly one `monitor.removed`; the handler consumes the marker and keeps the monitor in `_connected`. A later removed for the same description (no marker left) is a genuine unplug and drops it — a lifetime shield here would mask real unplugs of profile-disabled monitors forever.
 ---@field _debounce HL.Timer|nil                   Re-arming oneshot that coalesces a burst of monitor events into one `auto_apply` after quiescence. Replaces the old fixed settle window — it decides *when* matching runs, never *whether* `_connected` is trusted.
----@field match fun(): string|nil
----@field apply fun(name: string): boolean
----@field auto_apply fun(): boolean
----@field rescue fun()
----@field list fun(): string[]
-
----@type ProfilesModule
 local M = {
   monitors = {
-    -- Wildcard sentinel. `M.apply` expands `output = M.monitors.ANY`
-    -- into one rule per currently-connected monitor that isn't
-    -- explicitly targeted by the profile. This is *not* a real
-    -- Hyprland selector — the empty-string catch-all and a literal
-    -- "*" both fail to override leftover `desc:` rules from a
+    -- Wildcard sentinel. `M.apply` expands a spec whose `output` is
+    -- `M.monitors.ANY.output` into one rule per currently-connected
+    -- monitor that isn't explicitly targeted by the profile. This is
+    -- *not* a real Hyprland selector — the empty-string catch-all and a
+    -- literal "*" both fail to override leftover `desc:` rules from a
     -- previous profile, so we generate per-monitor `desc:` rules
     -- ourselves.
-    ANY = "*",
-    LG_38GN950 = "desc:LG Electronics 38GN950",
-    ASUS_VG27A = "desc:ASUSTek COMPUTER INC VG27A",
-    ASUS_XG17A = "desc:ASUSTek COMPUTER INC ASUS XG17A",
-    ASUS_MB16 = "desc:ASUSTek COMPUTER INC MB16QHG",
-    GPD = "desc:Japan Display Inc. GPD1001H",
-    SAMSUNG_ATNA60 = "desc:Samsung Display Corp. ATNA60KA04-0",
-    SONY_BRAVIA7 = "desc:Sony SONY TV  *30",
+    ANY = { output = "*" },
+    LG_38GN950 = {
+      output = "desc:LG Electronics 38GN950",
+      bitdepth = 10,
+      supports_hdr = 1,
+      supports_wide_color = 1,
+      vrr = true,
+    },
+    ASUS_VG27A = {
+      output = "desc:ASUSTek COMPUTER INC VG27A",
+      bitdepth = 10,
+      supports_hdr = 1,
+      supports_wide_color = 1,
+    },
+    ASUS_XG17A = { output = "desc:ASUSTek COMPUTER INC ASUS XG17A" },
+    ASUS_MB16 = { output = "desc:ASUSTek COMPUTER INC MB16QHG" },
+    GPD = { output = "desc:Japan Display Inc. GPD1001H" },
+    SAMSUNG_ATNA60 = {
+      output = "desc:Samsung Display Corp. ATNA60KA04-0",
+      bitdepth = 10,
+      supports_hdr = 1,
+      supports_wide_color = 1,
+      vrr = true,
+    },
+    SONY_BRAVIA7 = {
+      output = "desc:Sony SONY TV  *30",
+      bitdepth = 10,
+      supports_hdr = 1,
+      supports_wide_color = 1,
+      vrr = true,
+    },
   },
   profiles = {},
   _connected = {},
@@ -55,6 +75,23 @@ local M = {
   _pending_removed = {},
   _debounce = nil,
 }
+
+-- Shallow overlay of a catalog entry. Returns a fresh table so a profile
+-- can never mutate the catalog it extends.
+---@param base HL.MonitorSpec
+---@param ext table  Partial HL.MonitorSpec — no field required.
+---@return HL.MonitorSpec
+local function extend(base, ext)
+  local spec = {}
+  for k, v in pairs(base) do
+    spec[k] = v
+  end
+  for k, v in pairs(ext) do
+    spec[k] = v
+  end
+
+  return spec
+end
 
 -- Audio routing helper.
 ---@param sink string
@@ -75,128 +112,56 @@ M.profiles = {
     order = 1,
     required = { M.monitors.LG_38GN950, M.monitors.ASUS_VG27A, M.monitors.ASUS_XG17A },
     monitors = {
-      {
-        output = M.monitors.LG_38GN950,
-        mode = "3840x1600@160",
-        position = "0x1440",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ASUS_VG27A,
-        mode = "2560x1440@164.999",
-        position = "700x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ASUS_XG17A,
+      extend(M.monitors.LG_38GN950, { mode = "3840x1600@160", position = "0x1440", scale = "1", disabled = false }),
+      extend(M.monitors.ASUS_VG27A, { mode = "2560x1440@164.999", position = "700x0", scale = "1", disabled = false }),
+      extend(M.monitors.ASUS_XG17A, {
         mode = "1920x1080@239.964",
         position = "960x3040",
         scale = "1",
         transform = 2,
         disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("Scarlett 8i6 USB", "Scarlett 8i6 USB"),
+    exec = { audio("Scarlett 8i6 USB", "Scarlett 8i6 USB") },
   },
 
   ["main-bottom"] = {
     order = 2,
     required = { M.monitors.LG_38GN950, M.monitors.ASUS_XG17A },
     monitors = {
-      {
-        output = M.monitors.LG_38GN950,
-        mode = "3840x1600@160",
-        position = "0x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ASUS_XG17A,
+      extend(M.monitors.LG_38GN950, { mode = "3840x1600@160", position = "0x0", scale = "1", disabled = false }),
+      extend(M.monitors.ASUS_XG17A, {
         mode = "1920x1080@239.964",
         position = "960x1600",
         scale = "1",
         transform = 2,
         disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("Scarlett 8i6 USB", "Scarlett 8i6 USB"),
+    exec = { audio("Scarlett 8i6 USB", "Scarlett 8i6 USB") },
   },
 
   ["main-top"] = {
     order = 3,
     required = { M.monitors.LG_38GN950, M.monitors.ASUS_VG27A },
     monitors = {
-      {
-        output = M.monitors.LG_38GN950,
-        mode = "3840x1600@160",
-        position = "0x1440",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ASUS_VG27A,
-        mode = "2560x1440@164.999",
-        position = "700x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      extend(M.monitors.LG_38GN950, { mode = "3840x1600@160", position = "0x1440", scale = "1", disabled = false }),
+      extend(M.monitors.ASUS_VG27A, { mode = "2560x1440@164.999", position = "700x0", scale = "1", disabled = false }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("Scarlett 8i6 USB", "Scarlett 8i6 USB"),
+    exec = { audio("Scarlett 8i6 USB", "Scarlett 8i6 USB") },
   },
 
   ["main-solo"] = {
     order = 4,
     required = { M.monitors.LG_38GN950 },
     monitors = {
-      {
-        output = M.monitors.LG_38GN950,
-        mode = "3840x1600@160",
-        position = "0x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      extend(M.monitors.LG_38GN950, { mode = "3840x1600@160", position = "0x0", scale = "1", disabled = false }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("Scarlett 8i6 USB", "Scarlett 8i6 USB"),
+    exec = { audio("Scarlett 8i6 USB", "Scarlett 8i6 USB") },
   },
 
   -- ── GPD-only / portable layouts ────────────────────────────────────
@@ -205,7 +170,7 @@ M.profiles = {
     order = 1,
     required = { M.monitors.GPD },
     monitors = {
-      { output = M.monitors.GPD, mode = "2560x1600@60.009", position = "0x0", scale = "2", disabled = false },
+      extend(M.monitors.GPD, { mode = "2560x1600@60.009", position = "0x0", scale = "2", disabled = false }),
     },
   },
 
@@ -216,18 +181,8 @@ M.profiles = {
     order = 5,
     required = { M.monitors.GPD, M.monitors.LG_38GN950 },
     monitors = {
-      {
-        output = M.monitors.LG_38GN950,
-        mode = "3840x1600@119.982",
-        position = "0x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      { output = M.monitors.GPD, disabled = true },
+      extend(M.monitors.LG_38GN950, { mode = "3840x1600@119.982", position = "0x0", scale = "1", disabled = false }),
+      extend(M.monitors.GPD, { disabled = true }),
     },
   },
 
@@ -237,15 +192,14 @@ M.profiles = {
     monitors = {
       -- `transform = 0` is explicit: 0.56 merges rules per selector, so
       -- omitting it would inherit `main`/`main-bottom`'s XG17A rotation.
-      {
-        output = M.monitors.ASUS_XG17A,
+      extend(M.monitors.ASUS_XG17A, {
         mode = "1920x1080@239.964",
         position = "0x0",
         scale = "1",
         transform = 0,
         disabled = false,
-      },
-      { output = M.monitors.GPD, mode = "2560x1600@60.009", position = "350x1080", scale = "2", disabled = false },
+      }),
+      extend(M.monitors.GPD, { mode = "2560x1600@60.009", position = "350x1080", scale = "2", disabled = false }),
     },
   },
 
@@ -253,14 +207,8 @@ M.profiles = {
     order = 3,
     required = { M.monitors.GPD, M.monitors.ASUS_MB16 },
     monitors = {
-      {
-        output = M.monitors.ASUS_MB16,
-        mode = "2560x1600@119.963",
-        position = "0x0",
-        scale = "1.333",
-        disabled = false,
-      },
-      { output = M.monitors.GPD, mode = "2560x1600@60.009", position = "300x1200", scale = "2", disabled = false },
+      extend(M.monitors.ASUS_MB16, { mode = "2560x1600@119.963", position = "0x0", scale = "1.333", disabled = false }),
+      extend(M.monitors.GPD, { mode = "2560x1600@60.009", position = "300x1200", scale = "2", disabled = false }),
     },
   },
 
@@ -270,24 +218,16 @@ M.profiles = {
     order = 1,
     required = { M.monitors.SAMSUNG_ATNA60 },
     monitors = {
-      {
-        output = M.monitors.SAMSUNG_ATNA60,
+      extend(M.monitors.SAMSUNG_ATNA60, {
         mode = "3200x2000@120",
         position = "0x0",
         -- 1.66667 (200/120), not 1.67: Hyprland only accepts fractional
         -- scales that are multiples of 1/120, and 1.67×120=200.4 is
         -- rejected. 200/120 gives a clean 1920×1200 logical.
         scale = "1.66667",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
         disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
   },
 
@@ -295,28 +235,19 @@ M.profiles = {
     order = 3,
     required = { M.monitors.SAMSUNG_ATNA60, M.monitors.ASUS_MB16 },
     monitors = {
-      {
-        output = M.monitors.SAMSUNG_ATNA60,
+      extend(M.monitors.SAMSUNG_ATNA60, {
         mode = "3200x2000@120",
         position = "0x0",
         scale = "1.66667",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
         disabled = false,
-      },
-      {
-        output = M.monitors.ASUS_MB16,
+      }),
+      extend(M.monitors.ASUS_MB16, {
         mode = "2560x1600@119.963",
         position = "1920x0",
         scale = "1.333",
         disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
   },
 
@@ -327,23 +258,10 @@ M.profiles = {
     required = { M.monitors.SONY_BRAVIA7 },
     on_demand = true,
     monitors = {
-      {
-        output = M.monitors.SONY_BRAVIA7,
-        mode = "3840x2160@119.880",
-        position = "0x0",
-        scale = "2",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      extend(M.monitors.SONY_BRAVIA7, { mode = "3840x2160@119.880", position = "0x0", scale = "2", disabled = false }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("HDA NVidia", "Scarlett 8i6 USB"),
+    exec = { audio("HDA NVidia", "Scarlett 8i6 USB") },
   },
 
   ["tv-4k"] = {
@@ -351,23 +269,10 @@ M.profiles = {
     required = { M.monitors.SONY_BRAVIA7 },
     on_demand = true,
     monitors = {
-      {
-        output = M.monitors.SONY_BRAVIA7,
-        mode = "3840x2160@119.880",
-        position = "0x0",
-        scale = "1",
-        bitdepth = 10,
-        supports_hdr = 1,
-        supports_wide_color = 1,
-        vrr = true,
-        disabled = false,
-      },
-      {
-        output = M.monitors.ANY,
-        disabled = true,
-      },
+      extend(M.monitors.SONY_BRAVIA7, { mode = "3840x2160@119.880", position = "0x0", scale = "1", disabled = false }),
+      extend(M.monitors.ANY, { disabled = true }),
     },
-    exec = audio("HDA NVidia", "Scarlett 8i6 USB"),
+    exec = { audio("HDA NVidia", "Scarlett 8i6 USB") },
   },
 }
 
@@ -376,44 +281,51 @@ M.profiles = {
 -- Matching runs over `M._connected`, NOT `hl.get_monitor` — the Lua
 -- query resolver sees only enabled outputs, so it can't observe a
 -- monitor a profile has disabled (docked disables the GPD it requires).
--- We compare `desc:` selectors ourselves against the tracked set.
+-- We resolve selectors ourselves against the tracked set.
 
--- Strip a selector's `desc:` prefix to the raw description text.
+-- Selector resolution in Hyprland's shape: a `desc:` selector matches
+-- when its text occurs anywhere in the description, anything else is an
+-- exact output-name match (`DP-1`, `eDP-1`). Plain `find`, never a Lua
+-- pattern — descriptions carry `*`, `.` and `-` literally.
 ---@param sel string
----@return string
-local function needle_of(sel)
-  return sel:sub(1, 5) == "desc:" and sel:sub(6) or sel
+---@param mon { description: string, name: string }
+---@return boolean
+local function selector_matches(sel, mon)
+  local d = sel:match("^desc:(.*)")
+  if d then
+    return mon.description:find(d, 1, true) ~= nil
+  end
+
+  return mon.name == sel
 end
 
--- A description is "known" when it prefix-matches one of the selectors
--- in `M.monitors`. Only known monitors enter `_connected` — a fallback /
--- headless output or an unexpected display never gets swept into an ANY
--- disable rule.
----@param desc string
----@return boolean
-local function is_known(desc)
-  for _, sel in pairs(M.monitors) do
-    if sel ~= M.monitors.ANY then
-      local n = needle_of(sel)
-      if desc:sub(1, #n) == n then
-        return true
-      end
+-- Every connected description a selector covers. The one place the
+-- registry is scanned — satisfaction, disable marking and the ANY
+-- expansion all read it, so they can never drift apart.
+---@param sel string
+---@return string[]
+local function connected_matching(sel)
+  ---@type string[]
+  local hits = {}
+  for desc, name in pairs(M._connected) do
+    if selector_matches(sel, { description = desc, name = name }) then
+      hits[#hits + 1] = desc
     end
   end
 
-  return false
+  return hits
 end
 
--- True when a connected description prefix-matches the selector. Plain
--- (non-pattern) comparison so the literal `*`, `.`, `-` in descriptions
--- match verbatim — same shape as Hyprland's `desc:` resolver, but over
--- `_connected` (which includes monitors we disabled).
----@param sel string
+-- A monitor is "known" when it matches one of the catalog selectors.
+-- Only known monitors enter `_connected` — a fallback / headless output
+-- or an unexpected display never gets swept into an ANY disable rule.
+---@param desc string
+---@param name string
 ---@return boolean
-local function selector_present(sel)
-  local n = needle_of(sel)
-  for desc in pairs(M._connected) do
-    if desc:sub(1, #n) == n then
+local function is_known(desc, name)
+  local mon = { description = desc, name = name }
+  for _, spec in pairs(M.monitors) do
+    if spec.output ~= M.monitors.ANY.output and selector_matches(spec.output, mon) then
       return true
     end
   end
@@ -421,11 +333,17 @@ local function selector_present(sel)
   return false
 end
 
+---@param sel string
+---@return boolean
+local function selector_present(sel)
+  return #connected_matching(sel) > 0
+end
+
 ---@param profile Profile
 ---@return boolean
 local function is_profile_satisfied(profile)
   for _, req in ipairs(profile.required) do
-    if not selector_present(req) then
+    if not selector_present(req.output) then
       return false
     end
   end
@@ -494,8 +412,8 @@ local function save_state()
     f:write(("  active = %q,\n"):format(M._active))
   end
   f:write("  connected = {\n")
-  for desc in pairs(M._connected) do
-    f:write(("    [%q] = true,\n"):format(desc))
+  for desc, name in pairs(M._connected) do
+    f:write(("    [%q] = %q,\n"):format(desc, name))
   end
   f:write("  },\n  disabled = {\n")
   for desc in pairs(M._disabled_by_active) do
@@ -519,8 +437,8 @@ local function load_state()
     return
   end
   M._active = state.active
-  for desc in pairs(state.connected or {}) do
-    M._connected[desc] = true
+  for desc, name in pairs(state.connected or {}) do
+    M._connected[desc] = name
   end
   for desc in pairs(state.disabled or {}) do
     M._disabled_by_active[desc] = true
@@ -534,20 +452,29 @@ end
 ---@param sel string
 ---@param into table<string, boolean>
 local function mark_disabled(sel, into)
-  local n = needle_of(sel)
-  for desc in pairs(M._connected) do
-    if desc:sub(1, #n) == n then
-      into[desc] = true
-    end
+  for _, desc in ipairs(connected_matching(sel)) do
+    into[desc] = true
   end
 end
 
 ---@param name string
+---@param opts? { exec: boolean }  `exec = false` suppresses the profile's commands *and* the applied-notify — for the reload re-assertion, which transitions nothing and must stay silent.
 ---@return boolean
-function M.apply(name)
+function M.apply(name, opts)
   local profile = M.profiles[name]
   if not profile then
     hl.exec_cmd(("notify-send -u critical display 'Unknown profile %s.'"):format(name))
+
+    return false
+  end
+
+  -- A manual apply of an unsatisfied profile (tv with the TV off) would
+  -- write no rule for the monitor that is missing and then expand ANY
+  -- over every monitor that is present, disabling the lot — every screen
+  -- dark, with nothing left to un-do it from. `auto_apply` only ever
+  -- applies profiles `match` already found satisfied, so it never trips.
+  if not is_profile_satisfied(profile) then
+    hl.exec_cmd(("notify-send -u critical display 'Profile %s needs monitors that are not connected.'"):format(name))
 
     return false
   end
@@ -559,24 +486,22 @@ function M.apply(name)
   ---@type table<string, boolean>
   local targeted = {}
   for _, spec in ipairs(profile.monitors) do
-    if spec.output and spec.output ~= "" and spec.output ~= M.monitors.ANY then
+    if spec.output and spec.output ~= "" and spec.output ~= M.monitors.ANY.output then
       targeted[spec.output] = true
     end
   end
 
   for _, spec in ipairs(profile.monitors) do
-    if spec.output == M.monitors.ANY then
+    if spec.output == M.monitors.ANY.output then
       -- Expand ANY over connected known monitors not claimed by a
-      -- targeted selector — one `desc:` rule each. Drawn from
+      -- targeted selector — one `desc:` rule each, carrying the full
+      -- description so it resolves to exactly that monitor. Drawn from
       -- `_connected` so monitors a previous profile disabled are still
       -- covered (the enabled-only query would miss them).
       local claimed = {}
       for tgt in pairs(targeted) do
-        local n = needle_of(tgt)
-        for desc in pairs(M._connected) do
-          if desc:sub(1, #n) == n then
-            claimed[desc] = true
-          end
+        for _, desc in ipairs(connected_matching(tgt)) do
+          claimed[desc] = true
         end
       end
       for desc in pairs(M._connected) do
@@ -601,15 +526,21 @@ function M.apply(name)
     end
   end
 
-  for _, cmd in ipairs(profile.exec or {}) do
-    hl.exec_cmd(cmd)
-  end
+  if not (opts and opts.exec == false) then
+    -- One level of flattening: every entry is a list of commands, so
+    -- `audio(...)` and a literal `{ "cmd" }` compose in the same list.
+    for _, entry in ipairs(profile.exec or {}) do
+      for _, cmd in ipairs(entry) do
+        hl.exec_cmd(cmd)
+      end
+    end
 
-  hl.exec_cmd(
-    ("notify-send display 'Applied profile %s.' " .. "-i /usr/share/icons/Adwaita/scalable/devices/video-display.svg"):format(
-      name
+    hl.exec_cmd(
+      ("notify-send display 'Applied profile %s.' " .. "-i /usr/share/icons/Adwaita/scalable/devices/video-display.svg"):format(
+        name
+      )
     )
-  )
+  end
 
   -- Only disables that actually flip a monitor emit `monitor.removed`;
   -- ones the previous profile already disabled fire nothing, so they
@@ -636,9 +567,20 @@ end
 -- undock-to-disabled-panel case — the enabled-only query can't see a
 -- disabled monitor, and re-enabling fires real monitor.added events
 -- that re-drive matching.
+--
+-- `transform = 0` is part of the rescue: 0.56 merges rules per selector,
+-- so a rescued monitor would otherwise keep the rotation the previous
+-- profile gave it (XG17A's 2). Scale is deliberately left alone — a
+-- leftover scale (the GPD's 2) is the right one at preferred/auto.
 function M.rescue()
   for desc in pairs(M._connected) do
-    hl.monitor({ output = "desc:" .. desc, disabled = false, mode = "preferred", position = "auto" })
+    hl.monitor({
+      output = "desc:" .. desc,
+      disabled = false,
+      mode = "preferred",
+      position = "auto",
+      transform = 0,
+    })
   end
   M._disabled_by_active = {}
   M._pending_removed = {}
@@ -706,8 +648,8 @@ end
 
 hl.on("hyprland.start", function()
   for _, mon in ipairs(hl.get_monitors()) do
-    if is_known(mon.description) then
-      M._connected[mon.description] = true
+    if is_known(mon.description, mon.name) then
+      M._connected[mon.description] = mon.name
     end
   end
   -- Debounced, not direct: boot-time monitors enumerate hundreds of ms
@@ -716,8 +658,8 @@ hl.on("hyprland.start", function()
   schedule()
 end)
 hl.on("monitor.added", function(mon)
-  if is_known(mon.description) then
-    M._connected[mon.description] = true
+  if is_known(mon.description, mon.name) then
+    M._connected[mon.description] = mon.name
     save_state()
   end
   schedule()
@@ -749,9 +691,24 @@ end)
 -- live query brings back everything else.
 load_state()
 for _, mon in ipairs(hl.get_monitors()) do
-  if is_known(mon.description) then
-    M._connected[mon.description] = true
+  if is_known(mon.description, mon.name) then
+    M._connected[mon.description] = mon.name
   end
+  -- Visible means enabled, so it is not disabled any more: a reload wipes
+  -- the previous VM's runtime rules and `default-screen.lua`'s top-level
+  -- catch-all re-enables whatever the active profile had switched off.
+  -- Clearing the marker here lets the re-assertion below compute
+  -- `_pending_removed` fresh — markers for exactly the monitors it
+  -- disables again, and none at all when the rules did survive.
+  M._disabled_by_active[mon.description] = nil
+end
+-- Re-assert the active layout rather than leaving it to `auto_apply`,
+-- whose `name == M._active` short-circuit would never re-apply it. A
+-- same-state re-application is a compositor-level no-op, so this is free
+-- when nothing was wiped; `exec = false` keeps it silent either way,
+-- since a reload is not a transition.
+if M._active and M.profiles[M._active] then
+  M.apply(M._active, { exec = false })
 end
 schedule()
 
