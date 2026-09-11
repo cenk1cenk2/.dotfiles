@@ -17,7 +17,7 @@ hyprland/.config/hypr/
 │   ├── default-keyboard.conf  # Keyboard configuration (us,de,tr layouts)
 │   └── default-touchpad.conf  # Touchpad and device-specific settings
 ├── outputs/
-│   └── default-screen.conf    # Monitor configuration (with kanshi)
+│   └── default-screen.conf    # Monitor configuration (dynamic profiles in outputs/profiles.lua)
 ├── modes/
 │   ├── resize.conf            # Resize mode (submap)
 │   └── screenshot.conf        # Screenshot mode (submap)
@@ -84,7 +84,7 @@ Use `Hyprland NVIDIA` when the whole desktop should run on NVIDIA or the HDMI po
 - **Idle Daemon**: hypridle (official Hyprland)
 - **Lock Screen**: hyprlock (official Hyprland)
 - **Clipboard Manager**: clipse
-- **Monitor Hotplug**: kanshi (kept from Sway config)
+- **Monitor Hotplug**: native Hyprland Lua profiles (`outputs/profiles.lua`)
 - **Notification Daemon**: swaync
 - **Status Bar**: waybar
 - **OSD**: swayosd
@@ -253,7 +253,7 @@ The following scripts have been successfully ported to Hyprland:
 
 - ✅ `recorder.py` - Screen recording with wl-screenrec
 - ✅ `grimshot.py` - Screenshot utility using hyprctl instead of swaymsg
-- ✅ `display-profile.py` - Monitor profile switching using kanshictl (compositor-agnostic)
+- ✅ `jumpy display` - Monitor profile switching via `outputs/profiles.lua` (Hyprland-native)
 - ✅ `new-workspace.py` - Replaced with native Hyprland `empty` workspace dispatcher
 
 ## Keybindings Reference
@@ -323,7 +323,7 @@ Based on Base16 Seti UI with Catppuccin-inspired accents.
 ## Notes
 
 - Device-specific input configs may need adjustment based on `hyprctl devices`
-- Monitor configuration handled by kanshi
+- Monitor configuration handled by `outputs/profiles.lua`
 - GTK theme integration via xsettingsd and gsettings
 - Systemd session management for clean startup/shutdown
 - hyprpaper IPC enabled for dynamic wallpaper management

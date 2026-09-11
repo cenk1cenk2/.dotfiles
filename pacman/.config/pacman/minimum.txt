@@ -55,7 +55,6 @@ hunspell-en_us
 imagemagick
 inxi
 iptables-nft
-kanshi
 khal
 kitty
 kitty-shell-integration
