@@ -499,6 +499,55 @@ not set. Read the active line, never the comment above it.
   is the whole map: a module whose number is missing there is never
   poked and only refreshes on its `interval`.
 
+## Agent permissions
+
+Claude Code, opencode and codex each carry the same policy in their own
+dialect, across both profile pairs: read-only git and shell commands auto-run,
+cloud and cluster writes are blocked, everything else asks. Blocked are `aws`,
+`eksctl`, the `argocd` write verbs, the `kubectl` / `kubecolor` /
+`rancher kubectl` write verbs, `helm`, `velero`, `terraform` / `tofu` and
+`pulumi`. Every prefix is written twice, because a flag may sit between the
+executable and the verb (`kubectl -n ns delete …`).
+
+**Claude Code and opencode enforce this; codex does not** — its rules file is
+stowed in a form codex will not read, for the reason and the trade-off in the
+codex section below. Treat codex as carrying no deny list.
+
+The three formats share no source, so a change to one is a change to all three:
+`claude/.claude-*/settings.json` (`permissions.deny`),
+`opencode/.config/opencode-*/opencode.jsonc` (`permission.bash`) and
+`codex/.codex-*/rules/guardrails.rules`.
+
+- **None of the three is a security boundary.** All match text against argv, so
+  `bash -lc 'aws s3 ls > /tmp/o'` evades every one of them — codex evaluates
+  the wrapper as a single opaque command, and for the other two the wrapped
+  text never matches a pattern. They stop accidents. Enforcement that does not
+  depend on the command text needs a sandbox or a `PreToolUse` hook.
+- **opencode takes the last matching rule**, via a `findLast` over the rules in
+  config order with no sorting, so a catch-all belongs **above** the rules that
+  carve exceptions out of it and a read restore **below** the deny it undoes. A
+  `"*": "ask"` at the foot of a block silently kills every rule above it.
+- **opencode patterns match the whole command, not a prefix**, and a trailing
+  `" *"` becomes `( .*)?` — so `"git status *"` covers both `git status` and
+  `git status --porcelain`, while a bare `"git status"` matches that exact
+  string and nothing else. Write the trailing form.
+- **Claude Code evaluates deny, then ask, then allow**, and specificity does
+  not reorder that, so a deny cannot be narrowed by an `ask`. Its `*` works
+  anywhere in a pattern, a trailing ` *` (or the `:*` suffix, end-of-pattern
+  only) also matches the bare command, and deny reaches into compound commands,
+  command substitution, and past leading `FOO=bar` assignments.
+- **codex `prefix_rule` matches an argv prefix with no wildcard**, so the
+  flag-before-verb spelling cannot be expressed there and falls back to an
+  approval prompt. A pattern element may be a list of alternatives in any
+  position, which is what collapses each cross-product to one rule. Test with
+  `codex execpolicy check --rules <file> -- <argv…>`, which evaluates raw argv
+  and does no shell splitting.
+- **`kubectl -n ns auth can-i <write-verb> …` is blocked under Claude Code.**
+  The flag-before-verb patterns match a write verb anywhere after a flag, and
+  `can-i` takes one as its argument; Claude's precedence offers no carve-out.
+  opencode restores the read below the deny, and codex never matches it. Read
+  through the `kubernetes-*` MCP server instead.
+
 ## codex
 
 Two homes, one per account: hyprpilot patches `CODEX_HOME` to
@@ -506,9 +555,27 @@ Two homes, one per account: hyprpilot patches `CODEX_HOME` to
 `work/codex/*`, so both stay logged in side by side.
 
 - **`CODEX_HOME` carries the whole state dir, credentials included**, and
-  only `config.toml` in there is stowed. `auth.json`, the sqlite history,
-  `memories/`, `skills/` and the logs (hundreds of MB) are live state this
-  repo does not carry, so each home needs its own `codex login`.
+  `config.toml` and `rules/` in there are stowed. `auth.json`, the sqlite
+  history, `memories/`, `skills/` and the logs (hundreds of MB) are live state
+  this repo does not carry, so each home needs its own `codex login`.
+- **`rules/guardrails.rules` is stowed but does not load**, so codex enforces
+  no deny list and rests on `sandbox_mode` and `approval_policy` alone. Codex
+  skips a `.rules` file that is a symlink — `collect_policy_files` in
+  `core/src/exec_policy.rs` stats each entry without following it and gates on
+  `file_type().is_file()` — and `--no-folding` deploys exactly that. The file
+  records the policy the other two agents enforce, ready for the day the
+  loading is fixed. `find ~/.codex-*/rules/ -maxdepth 1 -type f -name
+  '*.rules'` prints nothing, which is the whole symptom: there is no error and
+  no log line.
+  - **Fix it when codex becomes something you rely on**, not before: linking
+    `rules/` as a whole directory makes codex read it, at the price of a
+    codex-only step in `deploy:linux:user` plus a `.stow-local-ignore`, against
+    the repo's one-symlink-per-file rule. Linking the directory also puts the
+    `default.rules` codex writes from its own TUI inside the repo, so that
+    needs gitignoring at the same time.
+- **`default.rules` is codex's own file**, written when a command is added to
+  the allow list from its TUI. It lands beside the symlink as a real file,
+  outside this repo. The rules this repo owns live in `guardrails.rules`.
 - **`codex-remote-control@.service` is templated on the same suffix** —
   `Environment=CODEX_HOME=%h/.codex-%i`, so `@kilic` and `@laravel` are the
   instances. Stow links it; nothing enables it. Enable an instance by hand

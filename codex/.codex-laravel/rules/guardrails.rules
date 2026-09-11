@@ -1,0 +1,424 @@
+# `forbidden` blocks a matching command outright, before the sandbox is consulted
+# — it is not merely a refusal to leave the sandbox. Mirrors `permissions.deny` in
+# the Claude Code profiles and the `bash` deny rules in the opencode ones.
+#
+# Two known gaps, both of which fall back to an approval prompt rather than
+# running silently:
+#   * `prefix_rule` matches an argv prefix, so a flag before the verb
+#     (`kubectl -n ns delete ...`) is not matched. The Claude and opencode configs
+#     carry an extra wildcard form for this; codex cannot express it.
+#   * A command wrapped in `bash -lc` with a redirect or substitution is evaluated
+#     as one opaque argv and is not matched.
+#
+# `default.rules` is left alone on purpose: Codex writes there itself when a
+# command is added to the allow list from the TUI, and that file is not stowed.
+
+prefix_rule(
+  pattern = [
+    ["aws", "eksctl"],
+  ],
+  decision = "forbidden",
+  justification = "The AWS CLIs are blocked; read through the MCP servers where one is configured.",
+  match = [
+    "aws s3 ls",
+    "eksctl get cluster",
+  ],
+  not_match = [
+    "awk -f x.awk",
+  ],
+)
+
+# kubecolor passes its arguments straight through to kubectl.
+prefix_rule(
+  pattern = [
+    ["kubectl", "kubecolor"],
+    [
+      "annotate",
+      "apply",
+      "attach",
+      "autoscale",
+      "certificate",
+      "cordon",
+      "cp",
+      "create",
+      "debug",
+      "delete",
+      "drain",
+      "edit",
+      "exec",
+      "expose",
+      "label",
+      "patch",
+      "port-forward",
+      "proxy",
+      "replace",
+      "run",
+      "scale",
+      "set",
+      "taint",
+      "uncordon",
+    ],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "kubectl apply -f manifest.yaml",
+    "kubecolor delete pod foo",
+  ],
+  not_match = [
+    "kubectl get pods",
+    "kubectl logs foo",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    ["kubectl", "kubecolor"],
+    ["auth"],
+    ["reconcile"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "kubectl auth reconcile foo",
+  ],
+  not_match = [
+    "kubectl auth can-i create pods",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    ["kubectl", "kubecolor"],
+    ["rollout"],
+    ["restart", "undo", "pause", "resume"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "kubectl rollout restart foo",
+  ],
+  not_match = [
+    "kubectl rollout status deploy/foo",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "rancher",
+    "kubectl",
+    [
+      "annotate",
+      "apply",
+      "attach",
+      "autoscale",
+      "certificate",
+      "cordon",
+      "cp",
+      "create",
+      "debug",
+      "delete",
+      "drain",
+      "edit",
+      "exec",
+      "expose",
+      "label",
+      "patch",
+      "port-forward",
+      "proxy",
+      "replace",
+      "run",
+      "scale",
+      "set",
+      "taint",
+      "uncordon",
+    ],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "rancher kubectl delete pod foo",
+  ],
+  not_match = [
+    "rancher kubectl get pods",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "rancher",
+    "kubectl",
+    ["auth"],
+    ["reconcile"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "rancher kubectl auth reconcile foo",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "rancher",
+    "kubectl",
+    ["rollout"],
+    ["restart", "undo", "pause", "resume"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "rancher kubectl rollout restart foo",
+  ],
+)
+
+# `del`, `delete` and `un` are aliases of `uninstall`. `test` creates pods.
+prefix_rule(
+  pattern = [
+    "helm",
+    ["del", "delete", "install", "push", "registry", "rollback", "test", "un", "uninstall", "upgrade"],
+  ],
+  decision = "forbidden",
+  justification = "Releases are reconciled by ArgoCD, not installed by hand.",
+  match = [
+    "helm upgrade --install foo ./chart",
+    "helm un foo",
+    "helm test foo",
+  ],
+  not_match = [
+    "helm list -A",
+    "helm template ./chart",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "helm",
+    ["plugin"],
+    ["install", "uninstall", "update"],
+  ],
+  decision = "forbidden",
+  justification = "Releases are reconciled by ArgoCD, not installed by hand.",
+  match = [
+    "helm plugin install x",
+  ],
+  not_match = [
+    "helm plugin list",
+  ],
+)
+
+# Reads (`app get|diff|list|history|manifests`) stay available; only the
+# mutating verbs are named, so the profiles without an argocd MCP keep them.
+prefix_rule(
+  pattern = [
+    "argocd",
+    ["account", "app", "appset", "cert", "cluster", "gpg", "proj", "repo", "repocreds"],
+    [
+      "actions",
+      "add",
+      "add-source",
+      "add-ssh",
+      "add-tls",
+      "confirm-deletion",
+      "create",
+      "delete",
+      "delete-resource",
+      "edit",
+      "generate",
+      "patch",
+      "patch-resource",
+      "remove-source",
+      "rm",
+      "rollback",
+      "rotate-auth",
+      "set",
+      "sync",
+      "terminate-op",
+      "unset",
+      "update-password",
+    ],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "argocd app sync guestbook",
+    "argocd repo rm https://example.invalid",
+  ],
+  not_match = [
+    "argocd app get guestbook",
+    "argocd app diff guestbook",
+    "argocd app list",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "argocd",
+    ["admin"],
+  ],
+  decision = "forbidden",
+  justification = "Every `argocd admin` subcommand is administrative.",
+  match = [
+    "argocd admin dashboard",
+  ],
+  not_match = [
+    "argocd app get guestbook",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "velero",
+    ["install", "uninstall", "create", "delete"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "velero delete backup foo",
+    "velero install",
+  ],
+  not_match = [
+    "velero backup get",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "velero",
+    ["backup", "restore", "schedule", "backup-location", "snapshot-location"],
+    ["create", "delete"],
+  ],
+  decision = "forbidden",
+  justification = "Cluster writes go through a merge request, never the CLI.",
+  match = [
+    "velero backup delete foo",
+    "velero restore create --from-backup b",
+  ],
+  not_match = [
+    "velero backup get",
+    "velero backup describe foo",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    ["terraform", "tofu"],
+    ["apply", "destroy", "import", "taint", "untaint"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "terraform apply",
+    "tofu destroy",
+  ],
+  not_match = [
+    "terraform plan",
+    "terraform show",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    ["terraform", "tofu"],
+    ["state"],
+    ["mv", "rm", "push", "replace-provider"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "terraform state mv x",
+  ],
+  not_match = [
+    "terraform state list",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    ["terraform", "tofu"],
+    ["workspace"],
+    ["new", "delete"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "terraform workspace new x",
+  ],
+  not_match = [
+    "terraform workspace show",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "pulumi",
+    ["up", "destroy", "import", "refresh", "cancel"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "pulumi up",
+    "pulumi destroy",
+  ],
+  not_match = [
+    "pulumi preview",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "pulumi",
+    ["state"],
+    ["delete", "unprotect"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "pulumi state delete x",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "pulumi",
+    ["stack"],
+    ["rm"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "pulumi stack rm x",
+  ],
+)
+
+prefix_rule(
+  pattern = [
+    "pulumi",
+    ["config"],
+    ["set", "rm"],
+  ],
+  decision = "forbidden",
+  justification = "Cloud writes go through a merge request, never the CLI.",
+  match = [
+    "pulumi config set x",
+  ],
+)
+
+# Mirrors the in-place editor denies in the Claude Code and opencode profiles:
+# these rewrite a file with no diff for the user to review.
+prefix_rule(
+  pattern = [
+    ["sed", "perl", "awk", "gawk"],
+    ["-i", "-pi", "-p", "--in-place"],
+  ],
+  decision = "forbidden",
+  justification = "In-place edits bypass review; use the editing tools instead.",
+  match = [
+    "sed -i s/a/b/ file",
+    "perl -pi -e s/a/b/ file",
+  ],
+  not_match = [
+    "sed s/a/b/ file",
+    "awk -f script.awk file",
+  ],
+)
