@@ -43,12 +43,16 @@ show_tooltips = false
 # Hooks run with the session cwd as their working directory and take the event
 # JSON on stdin. Codex requires trusting each hook definition once (`/hooks`);
 # editing a command changes its hash and re-triggers the review.
+#
+# Same script Claude Code's Notification hook uses: it reads the payload on
+# stdin, stays quiet when the pane is already being watched, and focuses the
+# tmux pane and kitty window on click. The trailing word is the popup label.
 
 [[hooks.PermissionRequest]]
 
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = '''jq -r '.tool_name // "a tool"' | { read -r t; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Needs approval to run $t"; } 2>/dev/null || true'''
+command = "~/.config/wayland/scripts/notify.py codex kilic"
 # async = true
 timeout = 5
 
@@ -56,7 +60,7 @@ timeout = 5
 
 [[hooks.Stop.hooks]]
 type = "command"
-command = '''cat >/dev/null 2>&1; notify-send -a "Codex" -i utilities-terminal -u normal "Codex — ${PWD##*/}" "Turn finished" 2>/dev/null || true'''
+command = "~/.config/wayland/scripts/notify.py codex kilic"
 # async = true
 timeout = 5
 

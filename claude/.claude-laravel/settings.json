@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/notify.py send laravel",
+            "command": "~/.config/wayland/scripts/notify.py claude laravel",
             "async": true
           }
         ]

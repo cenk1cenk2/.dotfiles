@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions, waybar and kitty configuration, Claude Code hooks,
-and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
+script conventions, waybar and kitty configuration, agent notification
+hooks, and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
 every new script (and every touch of an old one) without re-discussion.
 
 Linux (Arch, Wayland) is the only deployment target. `Taskfile.yml` has
@@ -499,11 +499,45 @@ not set. Read the active line, never the comment above it.
   is the whole map: a module whose number is missing there is never
   poked and only refreshes on its `interval`.
 
-## Claude Code hooks
+## codex
 
-`claude/.claude/hooks/notify.py` is the only hook, wired as
-`Notification` in both profiles' `settings.json` and differing only in
-the profile label it is passed.
+Two homes, one per account: hyprpilot patches `CODEX_HOME` to
+`~/.codex-kilic` for `personal/codex/*` and `~/.codex-laravel` for
+`work/codex/*`, so both stay logged in side by side.
+
+- **`CODEX_HOME` carries the whole state dir, credentials included**, and
+  only `config.toml` in there is stowed. `auth.json`, the sqlite history,
+  `memories/`, `skills/` and the logs (hundreds of MB) are live state this
+  repo does not carry, so each home needs its own `codex login`.
+- **`codex-remote-control@.service` is templated on the same suffix** —
+  `Environment=CODEX_HOME=%h/.codex-%i`, so `@kilic` and `@laravel` are the
+  instances. Stow links it; nothing enables it. Enable an instance by hand
+  when the remote-control daemon is wanted.
+- **Model ids come from `codex debug models`, never from memory.** It prints
+  slug, visibility and API support as JSON; `visibility: "hide"` entries are
+  live but unlisted. `gpt-6-astra` is the whole of the gpt-6 line.
+- **`--profile` only applies to runtime commands.** The `codex` agent entry
+  passes `--profile default`, so `hyprpilot <profile> -- login status` errors
+  out; `-- sandbox -- sh -c '…'` is a runtime command and is the way to read
+  the launched environment.
+- **Editing a hook command re-triggers codex's trust review.** Hook
+  definitions are hashed and confirmed once via `/hooks`; a changed command
+  is a new definition and stays inert until re-trusted.
+
+## Agent notification hook
+
+`wayland/.config/wayland/scripts/notify.py` is the only hook, shared by
+Claude Code (`Notification` in both profiles' `settings.json`) and codex
+(`PermissionRequest` and `Stop` in both `config.toml`s). The vendor is the
+subcommand, the profile label its argument: `notify.py codex laravel`. It
+sits in the wayland scripts project rather than either vendor's package
+because most of it is the tmux/kitty/hyprland focus chain, which neither
+vendor owns.
+
+- **Both vendors' payloads are the same shape** — `cwd`, `transcript_path` —
+  and differ only in what names the event: Claude sends a ready-made
+  `message`, codex sends `hook_event_name` and carries the answer inline as
+  `last_assistant_message` on `Stop`. Nothing parses a codex transcript.
 
 - **A hook's `timeout` is a cancel deadline, never a delay**, and
   Claude Code does not enforce it at all on a hook with `async: true`.

@@ -23,7 +23,13 @@ from dotlib.notify import (
 
 
 class Notify:
-    """Claude Code Notification hook: desktop popup with context, plus a chime.
+    """Agent hook: desktop popup with context, plus a chime.
+
+    Serves Claude Code's Notification hook and codex's PermissionRequest /
+    Stop hooks. Both hand the same shape on stdin — `cwd` and
+    `transcript_path` — and differ only in what names the event: Claude
+    sends a ready-made `message`, codex sends `hook_event_name` plus the
+    fields that event carries.
 
     Clicking the popup focuses the pane this hook was spawned in: the right
     tmux window on the right client, and the kitty window hosting it."""
@@ -44,54 +50,64 @@ class Notify:
     cli = click.Group()
 
     @staticmethod
-    @cli.command("send")
+    @cli.command("claude")
     @click.argument("profile", required=False)
     @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
-    def cmd_send(profile: str | None, verbose: bool) -> None:
-        """Read the hook payload from stdin and raise the alarm."""
+    def cmd_claude(profile: str | None, verbose: bool) -> None:
+        """Read a Claude Code hook payload from stdin and raise the alarm."""
         create_logger(verbose)
 
-        if Notify.focused():
-            Notify.log.debug("pane already in focus; staying quiet")
+        payload = Notify.payload()
+        if payload is None:
             return
 
-        try:
-            payload = json.load(sys.stdin)
-        except json.JSONDecodeError as e:
-            Notify.log.warning("bad hook payload: %s", e)
-            payload = {}
-
-        directory = Path(payload.get("cwd") or "/").name or "/"
         message = payload.get("message") or "Waiting for input"
 
-        urgency = Urgency.NORMAL
-        if any(word in message.lower() for word in Notify.URGENT_WORDS):
-            urgency = Urgency.CRITICAL
-
-        body = message
-        if context := Notify.context(payload.get("transcript_path")):
-            body += f"\n\n{context}"
-
-        label = f" ({profile})" if profile else ""
-        # Before the popup rather than after: the popup call blocks for its
-        # lifetime waiting on a click, and the sound belongs to its appearance
-        # rather than its dismissal.
-        Chime(ChimeDirection.UP).play()
-        # Marks the tmux window and the kitty tab, which the popup cannot do
-        # for a session the user is not currently looking at.
-        bell()
-        clicked = Notification(
-            f"Claude Code{label} — {directory}",
-            icon="utilities-terminal",
-            channel=NotifyChannel.DESKTOP,
-        ).send(
-            body,
-            timeout=Notify.SHOW_MS,
-            urgency=urgency,
-            actions=[("default", "Focus")],
+        Notify.alarm(
+            vendor="Claude Code",
+            profile=profile,
+            payload=payload,
+            message=message,
+            # The hook's own message is generic ("needs your permission"); what
+            # Claude was saying when it stopped is the part worth reading from
+            # across the room.
+            context=Notify.transcript(payload.get("transcript_path")),
         )
-        if clicked:
-            Notify.focus()
+
+    @staticmethod
+    @cli.command("codex")
+    @click.argument("profile", required=False)
+    @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
+    def cmd_codex(profile: str | None, verbose: bool) -> None:
+        """Read a codex hook payload from stdin and raise the alarm."""
+        create_logger(verbose)
+
+        payload = Notify.payload()
+        if payload is None:
+            return
+
+        # Codex names the event rather than writing the prose, and carries the
+        # answer inline on Stop — so no transcript parsing on either path, and
+        # `URGENT_WORDS` still decides urgency off the sentence built here.
+        match payload.get("hook_event_name"):
+            case "PermissionRequest":
+                tool = payload.get("tool_name") or "a tool"
+                message = f"Needs approval to run {tool}"
+                context = ""
+            case "Stop":
+                message = "Turn finished"
+                context = Notify.shorten(payload.get("last_assistant_message"))
+            case other:
+                message = f"{other or 'Codex'} fired"
+                context = ""
+
+        Notify.alarm(
+            vendor="Codex",
+            profile=profile,
+            payload=payload,
+            message=message,
+            context=context,
+        )
 
     @staticmethod
     @cli.command("focus")
@@ -102,12 +118,67 @@ class Notify:
         Notify.focus()
 
     @classmethod
-    def context(cls, transcript: str | None) -> str:
-        """The last assistant text in the transcript.
+    def payload(cls) -> dict | None:
+        """The hook payload, or None when the user is already watching.
 
-        The hook's own message is generic ("needs your permission"); what
-        Claude was saying when it stopped is the part worth reading from
-        across the room."""
+        The focus check comes before the read so a watched pane costs no
+        parsing, and an unreadable payload still alarms — the event happened
+        whether or not its JSON survived."""
+        if cls.focused():
+            cls.log.debug("pane already in focus; staying quiet")
+            return None
+
+        try:
+            return json.load(sys.stdin)
+        except json.JSONDecodeError as e:
+            cls.log.warning("bad hook payload: %s", e)
+            return {}
+
+    @classmethod
+    def alarm(
+        cls,
+        vendor: str,
+        profile: str | None,
+        payload: dict,
+        message: str,
+        context: str,
+    ) -> None:
+        """Chime, mark the terminal, and pop a popup that focuses on click."""
+        directory = Path(payload.get("cwd") or "/").name or "/"
+
+        urgency = Urgency.NORMAL
+        if any(word in message.lower() for word in cls.URGENT_WORDS):
+            urgency = Urgency.CRITICAL
+
+        body = f"{message}\n\n{context}" if context else message
+
+        label = f" ({profile})" if profile else ""
+        # Before the popup rather than after: the popup call blocks for its
+        # lifetime waiting on a click, and the sound belongs to its appearance
+        # rather than its dismissal.
+        Chime(ChimeDirection.UP).play()
+        # Marks the tmux window and the kitty tab, which the popup cannot do
+        # for a session the user is not currently looking at.
+        bell()
+        clicked = Notification(
+            f"{vendor}{label} — {directory}",
+            icon="utilities-terminal",
+            channel=NotifyChannel.DESKTOP,
+        ).send(
+            body,
+            timeout=cls.SHOW_MS,
+            urgency=urgency,
+            actions=[("default", "Focus")],
+        )
+        if clicked:
+            cls.focus()
+
+    @classmethod
+    def transcript(cls, transcript: str | None) -> str:
+        """The last assistant text in a Claude Code transcript.
+
+        Claude-only: codex hands the same text inline on Stop, so nothing
+        reads its transcript and its JSONL shape stays unparsed here."""
         if not transcript:
             return ""
 
@@ -132,11 +203,15 @@ class Notify:
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block["text"]
 
-        # Keeps the opening rather than the tail, and stops on a word: this is
-        # the start of what Claude was saying, read at a glance from across the
-        # room. Collapsing the layout is the point too - a popup has no room
-        # for a heading and a list.
-        return textwrap.shorten(text, width=cls.CONTEXT_CHARS, placeholder=" …")
+        return cls.shorten(text)
+
+    @classmethod
+    def shorten(cls, text: str | None) -> str:
+        """Keeps the opening rather than the tail, and stops on a word: this is
+        the start of what the agent was saying, read at a glance from across
+        the room. Collapsing the layout is the point too - a popup has no room
+        for a heading and a list."""
+        return textwrap.shorten(text or "", width=cls.CONTEXT_CHARS, placeholder=" …")
 
     # ── the pane this hook runs in ────────────────────────────────
 

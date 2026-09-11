@@ -1,0 +1,86 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+model_reasoning_summary = "concise"
+
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+
+personality = "pragmatic"
+web_search = "cached"
+
+project_doc_fallback_filenames = ["CLAUDE.md", "AGENTS.md"]
+
+[history]
+persistence = "save-all"
+
+[memories]
+use_memories = true
+generate_memories = true
+
+[terminal]
+newline = "ctrl_m"
+
+[features]
+use_linux_sandbox_bwrap = true
+multi_agent = true
+apps = true
+terminal_resize_reflow = true
+memories = true
+remote_control = true
+
+[tui]
+notifications = true
+notification_method = "bel"
+notification_condition = "always"
+show_tooltips = false
+
+# Desktop notifications alongside the bell above. `notification_method` is a
+# single-value enum (auto/osc9/bel), so bel and a native notification cannot
+# both come from [tui] — hooks are independent of it and stack on top.
+# Hooks run with the session cwd as their working directory and take the event
+# JSON on stdin. Codex requires trusting each hook definition once (`/hooks`);
+# editing a command changes its hash and re-triggers the review.
+#
+# Same script Claude Code's Notification hook uses: it reads the payload on
+# stdin, stays quiet when the pane is already being watched, and focuses the
+# tmux pane and kitty window on click. The trailing word is the popup label.
+
+[[hooks.PermissionRequest]]
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "~/.config/wayland/scripts/notify.py codex laravel"
+# async = true
+timeout = 5
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "~/.config/wayland/scripts/notify.py codex laravel"
+# async = true
+timeout = 5
+
+status_line = [
+  "model-with-reasoning",
+  "run-state",
+  "permissions",
+  "approval-mode",
+  "five-hour-limit",
+  "weekly-limit",
+  "project-name",
+  "git-branch",
+  "branch-changes",
+  "pull-request-number",
+  "context-used",
+]
+status_line_use_colors = true
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[notice]
+hide_full_access_warning = true

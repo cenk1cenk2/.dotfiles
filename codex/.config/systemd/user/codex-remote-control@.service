@@ -1,5 +1,5 @@
 [Unit]
-Description=Codex remote control daemon
+Description=Codex remote control daemon (%i)
 Documentation=https://developers.openai.com/codex/
 Wants=network-online.target
 PartOf=graphical-session.target
@@ -8,6 +8,10 @@ After=network-online.target graphical-session.target
 [Service]
 Type=simple
 Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The instance name is the hyprpilot profile suffix: `@kilic` drives
+# ~/.codex-kilic, `@laravel` drives ~/.codex-laravel. Same split the
+# `*/codex/*` CODEX_HOME patches in hyprpilot's config.yaml apply.
+Environment=CODEX_HOME=%h/.codex-%i
 ExecCondition=/bin/zsh -lc 'command -v codex >/dev/null'
 ExecStart=/bin/zsh -lc 'exec codex remote-control --json'
 Restart=on-failure
