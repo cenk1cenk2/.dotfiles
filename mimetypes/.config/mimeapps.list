@@ -32,3 +32,6 @@ x-scheme-handler/slack=slack.desktop
 x-scheme-handler/terminal=kitty.desktop;
 x-scheme-handler/webcal=brave-browser.desktop
 x-scheme-handler/yazi=yazi.desktop;
+x-scheme-handler/opendeck=opendeck-handler.desktop
+x-scheme-handler/openaction=opendeck-handler.desktop
+x-scheme-handler/streamdeck=opendeck-handler.desktop
