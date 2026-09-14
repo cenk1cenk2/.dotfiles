@@ -23,8 +23,9 @@ class LaunchApp:
     def command_for(self, name: str) -> str:
         lua = (
             "local definitions = dofile(os.getenv('HYPR_DEFINITIONS')); "
-            "local app = definitions.apps[os.getenv('HYPR_APP')]; "
-            "if app == nil then os.exit(2) end; "
+            "local name = os.getenv('HYPR_APP'); "
+            "local app = definitions.apps[name] or definitions[name]; "
+            "if type(app) ~= 'string' then os.exit(2) end; "
             "io.write(app)"
         )
         proc = self._hypr.run_lua(
