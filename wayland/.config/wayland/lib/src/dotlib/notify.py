@@ -48,7 +48,9 @@ class OsdIcon(StrEnum):
     """Freedesktop icon names, so the card says what kind of work this is."""
 
     MIC = "audio-input-microphone"
-    SPEAKER = "audio-speakers"
+    # Not `audio-speakers`: Tela ships that one with a NaN arc, and GTK 4.22
+    # spins on it, leaking gigabytes a second until swayosd is OOM-killed.
+    SPEAKER = "audio-volume-high"
     THINKING = "system-run"
     WRITING = "document-edit-symbolic"
     DONE = "object-select"
