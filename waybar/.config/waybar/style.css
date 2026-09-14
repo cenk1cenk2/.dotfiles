@@ -228,6 +228,10 @@ window#waybar .modules-right {
   background-color: @success_color;
 }
 
+#custom-stt.paused {
+  background-color: @bg_color_900;
+}
+
 #custom-tts {
   color: @bg_color_100;
   border-radius: 8px;

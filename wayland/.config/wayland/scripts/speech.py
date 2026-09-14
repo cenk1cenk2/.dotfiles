@@ -115,6 +115,7 @@ class SessionState:
     phase: Phase
     output: OutputMode
     enrich: EnrichProvider | None = None
+    paused: bool = False
 
 
 @dataclass
@@ -134,6 +135,7 @@ class Response:
                 phase=Phase(sd["phase"]),
                 output=OutputMode(sd["output"]),
                 enrich=EnrichProvider(enrich_val) if enrich_val else None,
+                paused=bool(sd.get("paused")),
             )
         return cls(ok=bool(obj.get("ok", False)), state=state, error=obj.get("error"))
 
@@ -443,8 +445,12 @@ class SttSession(SocketSession):
             # The take ends where the microphone does. What follows - the
             # silence tail, the settle, the transcription - is the job still
             # running, not more recording, so the card keeps its turns coming
-            # with the clock held where the recording left it.
-            self.osd.freeze()
+            # with the clock held where the recording left it. A paused take
+            # is already held at its last live second.
+            with self._lock:
+                paused, self.state.paused = self.state.paused, False
+            if not paused:
+                self.osd.freeze()
             # The microphone is shut, so nothing more can bleed into it.
             # Transcription and enrichment still have seconds to run, and
             # holding everyone else quiet through an LLM call is not something
@@ -467,6 +473,8 @@ class SttSession(SocketSession):
             if obj.get("output"):
                 self._apply_output_override(OutputMode(obj["output"]))
             return Response(ok=True)
+        if cmd is Command.PAUSE:
+            return self.pause()
         if cmd is Command.KILL:
             self._adapter.cancel()
             # SIGKILL runs no `finally`, so the ducked streams and the paused
@@ -475,6 +483,31 @@ class SttSession(SocketSession):
             os.killpg(0, signal.SIGKILL)
 
         return Response(ok=False, error=f"unhandled command: {cmd.value}")
+
+    def pause(self) -> Response:
+        """Toggle a thinking pause: the microphone stays open, the take is cut.
+
+        Playback stays suppressed, since the room is expected back in a moment.
+        The resume chime finishes before the cut lifts, so it never reaches
+        the take."""
+        with self._lock:
+            if self.state.phase is not Phase.RECORDING:
+                return Response(ok=False, error="the take is already closed")
+            resuming = self.state.paused
+        if resuming:
+            Chime(ChimeDirection.FLAT).play(wait=True)
+        paused = self._adapter.pause()
+        if paused:
+            self.osd.freeze()
+            Chime(ChimeDirection.FLAT).play()
+        else:
+            self.osd.thaw()
+        with self._lock:
+            self.state.paused = paused
+            state = SessionState(**asdict(self.state))
+        self._signal_waybar()
+
+        return Response(ok=True, state=state)
 
     def _apply_enrich_override(self, spec_dict: dict | None) -> None:
         new_enricher: EnrichAdapter | None = None
@@ -622,6 +655,9 @@ class Stt:
                 # transcription coming back, so the card says so instead of
                 # holding a dead level bar.
                 osd.elapsed(f"transcribing\n\n{tail}".rstrip(), icon=OsdIcon.THINKING)
+                return
+            if server is not None and server.state.paused:
+                osd.elapsed(f"paused\n\n{tail}".rstrip())
                 return
             osd.elapsed(tail, level=_level(self._adapter), apart=True)
 
@@ -816,6 +852,17 @@ class Stt:
             recorder.stop()
             SttSession._signal_waybar()
 
+    def pause(self):
+        resp = self._send(Command.PAUSE)
+        if resp is None:
+            self.log.info("nothing recording to pause")
+            return
+        if not resp.ok:
+            self.log.info("not paused: %s", resp.error)
+            return
+
+        self.log.info("paused" if resp.state and resp.state.paused else "resumed")
+
     def kill(self):
         recorder = self._recorder
         if self._send(Command.KILL) is None and recorder:
@@ -861,9 +908,17 @@ class Stt:
             Phase.WORKING: (f"󰼭 󰧑 {icon}", f"Processing{enrich_label} → {label}"),
             Phase.OUTPUT: (icon, f"Outputting → {label}"),
         }
-        text, tooltip = mapping[state.phase]
+        paused = state.paused and state.phase is Phase.RECORDING
+        if paused:
+            text, tooltip = f"󰏤 {icon}", f"Paused recording → {label}"
+        else:
+            text, tooltip = mapping[state.phase]
         return json.dumps(
-            {"class": state.phase.value, "text": text, "tooltip": tooltip}
+            {
+                "class": "paused" if paused else state.phase.value,
+                "text": text,
+                "tooltip": tooltip,
+            }
         )
 
     # ── CLI ───────────────────────────────────────────────────────
@@ -1170,6 +1225,11 @@ class Stt:
     def cmd_stop():
         """Stop the active session."""
         Stt().stop()
+
+    @cli.command("pause")
+    def cmd_pause():
+        """Toggle a thinking pause on the live recording."""
+        Stt().pause()
 
     @cli.command("kill")
     def cmd_kill():

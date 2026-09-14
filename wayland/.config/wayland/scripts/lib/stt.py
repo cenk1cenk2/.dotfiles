@@ -128,6 +128,8 @@ class SttRecorder(SttAdapter, Protocol):
 
     def cancel(self) -> None: ...
 
+    def pause(self) -> bool: ...
+
 
 @runtime_checkable
 class LevelSource(Protocol):
@@ -280,6 +282,9 @@ class SttAdapterMic:
         self.mic.cancel()
         self._stopped.set()
 
+    def pause(self) -> bool:
+        return self.mic.pause()
+
     def frame(self) -> tuple[float, list[float]] | None:
         return self.mic.frame()
 
@@ -363,6 +368,9 @@ class SttAdapterRealtime:
     def cancel(self) -> None:
         self.mic.cancel()
         self._stopped.set()
+
+    def pause(self) -> bool:
+        return self.mic.pause()
 
     def frame(self) -> tuple[float, list[float]] | None:
         return self.mic.frame()

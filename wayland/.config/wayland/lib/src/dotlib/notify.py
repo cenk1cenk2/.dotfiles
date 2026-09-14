@@ -251,6 +251,17 @@ class Notification:
         that is over while the transcription behind it still runs."""
         self._stopped = time.monotonic()
 
+    def thaw(self) -> None:
+        """Run a frozen clock on from where it was held.
+
+        The anchor moves after the stop stamp clears, so a ticker reading the
+        pair mid-call sees the clock jump ahead for one frame, never backwards."""
+        if not self._stopped:
+            return
+        held = time.monotonic() - self._stopped
+        self._stopped = 0.0
+        self._started += held
+
     def elapsed(
         self,
         message: str = "",

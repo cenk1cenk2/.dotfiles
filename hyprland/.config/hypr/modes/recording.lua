@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (t/T/g) tts read/raw/gist | (b/f/←→) pause/tempo/scrub | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause |(t/T/g) tts read/raw/gist | (b/f/←→) pause/tempo/scrub | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -47,6 +47,10 @@ hl.define_submap(submap, function()
 
   -- Summarize the clipboard aloud, rather than reading it in full
   hl.bind("g", exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech)))
+
+  -- Pause/resume the dictation. Resets like the stt toggles: live typing
+  -- sends keystrokes through the compositor, and an open submap would catch them.
+  hl.bind("d", exec_then_reset(("%s stt pause"):format(d.speech)))
 
   -- Pause/resume the utterance being spoken
   hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })

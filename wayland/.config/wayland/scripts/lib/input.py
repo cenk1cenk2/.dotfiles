@@ -188,6 +188,7 @@ class MicCapture:
         self._pcm = bytearray()
         self._lock = threading.Lock()
         self._started = 0.0
+        self._paused = False
 
     # ── lifecycle ─────────────────────────────────────────────────
 
@@ -222,9 +223,16 @@ class MicCapture:
 
     def _drain(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
-        while chunk := self._proc.stdout.read(4096):
+        while True:
+            # A chunk that straddles a pause toggle is dropped whole: it holds
+            # the start of the pause chime, or the tail of the resume one.
+            live = not self._paused
+            chunk = self._proc.stdout.read(4096)
+            if not chunk:
+                return
             with self._lock:
-                self._pcm += chunk
+                if live and not self._paused:
+                    self._pcm += chunk
 
     def is_recording(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -255,6 +263,16 @@ class MicCapture:
         self.stop()
         with self._lock:
             self._pcm.clear()
+
+    def pause(self) -> bool:
+        """Toggle cutting the capture; returns whether it is now paused.
+
+        The recorder keeps running and what it hears is discarded rather than
+        zeroed, so a resumed take continues the sentence it left: silence
+        would let the realtime detector close the turn mid-thought."""
+        with self._lock:
+            self._paused = not self._paused
+            return self._paused
 
     # ── readouts ──────────────────────────────────────────────────
 
