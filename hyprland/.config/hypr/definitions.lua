@@ -109,6 +109,8 @@ M.volume = {
   up = osd("--output-volume raise"),
   down = osd("--output-volume lower"),
   mute = osd("--output-volume mute-toggle"),
+  mic_up = osd("--input-volume raise"),
+  mic_down = osd("--input-volume lower"),
   mic_mute = osd("--input-volume mute-toggle"),
 }
 
@@ -117,6 +119,15 @@ M.player = {
   toggle = osd("--player spotify --playerctl play-pause"),
   next = osd("--player spotify --playerctl next"),
   prev = osd("--player spotify --playerctl previous"),
+}
+
+-- Whichever player is active, for controls that are not Spotify-bound
+M.media = {
+  toggle = osd("--player auto --playerctl play-pause"),
+  next = osd("--player auto --playerctl next"),
+  prev = osd("--player auto --playerctl prev"),
+  stop = osd("--player auto --playerctl stop"),
+  shift = osd("--player shift --playerctl play-pause"),
 }
 
 -- Recording
