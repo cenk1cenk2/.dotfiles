@@ -286,8 +286,15 @@ window#waybar .modules-right {
 #memory.critical,
 #temperature.critical,
 #network.disconnected,
-#bluetooth.disabled,
-#pulseaudio.muted,
+#bluetooth.disabled {
+  background-color: @error_color;
+  color: @bg_color_100;
+}
+
+/* Every pulseaudio instance receives muted, sink-muted and source-muted
+ * regardless of which device changed, so a bare .muted matches both. */
+#pulseaudio.sink.sink-muted,
+#pulseaudio.source.source-muted,
 #wireplumber.muted {
   background-color: @error_color;
   color: @bg_color_100;
@@ -306,7 +313,8 @@ window#waybar .modules-right {
 #cpu.critical,
 #memory.critical,
 #temperature.critical,
-#pulseaudio.muted,
+#pulseaudio.sink.sink-muted,
+#pulseaudio.source.source-muted,
 #wireplumber.muted {
   /* animation-name: blink-critical; */
   /* animation-timing-function: linear; */

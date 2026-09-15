@@ -140,7 +140,8 @@
   "group/status": {
     "orientation": "horizontal",
     "modules": [
-      "pulseaudio",
+      "pulseaudio#source",
+      "pulseaudio#sink",
       "backlight",
       "battery",
       "custom/notification",
@@ -274,22 +275,34 @@
     "on-click": "~/.config/hypr/scripts/launch-app.py network_manager",
   },
 
-  "pulseaudio": {
+  "pulseaudio#sink": {
     "scroll-step": 5,
-    "format": "{icon} {volume}%{format_source}",
-    "format-muted": " {format_source}",
-    "format-source": "",
-    "format-source-muted": "󰍭",
+    "format": "{icon} {volume}%",
+    "format-muted": "",
     "format-icons": {
       "headphone": "󰋋",
       "headset": "󰋎",
       "default": ["", "󰕾", ""],
     },
-    "tooltip-format": "{icon} {volume}% {format_source}",
+    "tooltip-format": "{icon} {volume}%",
     "on-click": "~/.config/hypr/scripts/launch-app.py audio_mixer",
     "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
     "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
+  },
+
+  // {volume} is the sink's everywhere except inside format-source, where it
+  // is the source's. The source level reaches "format" only as
+  // {format_source}, or as {source_volume}.
+  "pulseaudio#source": {
+    "format": "{format_source}",
+    "format-source": "󰍬 {volume}%",
+    "format-source-muted": "󰍭",
+    "tooltip-format": "󰍬 {source_volume}%",
+    "on-click": "~/.config/hypr/scripts/launch-app.py audio_mixer",
+    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+    "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%+",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-",
   },
 
   "clock": {
