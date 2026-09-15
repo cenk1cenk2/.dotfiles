@@ -72,6 +72,9 @@ USER_PATHS=(
     "$HOME/.config/systemd/user/hyprwhspr.service.d"
     "$HOME/.local/share/hyprwhspr"
     "$HOME/.local/state/hyprwhspr"
+    # playerctl-waybar, replaced by waybar's native mpris module. It only
+    # poked RTMIN+5 on spotify metadata changes; mpris is D-Bus driven.
+    "$HOME/.config/systemd/user/playerctl-waybar.service"
 )
 
 # Real files install.py had already copied, so removing the source left them

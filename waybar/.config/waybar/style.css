@@ -154,7 +154,8 @@ window#waybar .modules-right {
 #language,
 #custom-adaptive-light,
 #custom-sunset,
-#custom-playerctl,
+#mpris,
+#privacy,
 #custom-copywriter,
 #custom-gpu,
 #custom-notification,
@@ -186,7 +187,7 @@ window#waybar .modules-right {
   color: @success_color;
 }
 
-#custom-playerctl {
+#mpris {
   color: #1db954;
   margin-right: 4px;
 }
@@ -275,6 +276,7 @@ window#waybar .modules-right {
 #cpu.warning,
 #custom-gpu.warning,
 #memory.warning,
+#privacy,
 #temperature.warning {
   background-color: @warning_color;
   color: @bg_color_100;

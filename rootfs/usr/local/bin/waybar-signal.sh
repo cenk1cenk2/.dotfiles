@@ -3,7 +3,6 @@
 set -u
 
 declare -A signal
-signal[playerctl]=5
 signal[scratchpad]=7
 signal[recorder]=8
 signal[clipboard]=9
