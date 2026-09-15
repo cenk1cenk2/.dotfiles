@@ -401,8 +401,7 @@ class SttAdapterRealtime:
                 raw = ws.recv()
             except (OSError, websocket.WebSocketException) as e:
                 if not self._closing:
-                    log.error("realtime socket dropped: %s", e)
-                    self.socket_error = str(e) or e.__class__.__name__
+                    self._drop("realtime socket dropped", e)
                 return
             if not raw:
                 return
@@ -484,11 +483,24 @@ class SttAdapterRealtime:
             )
         except (OSError, websocket.WebSocketException) as e:
             if not self._closing:
-                log.error("realtime send failed: %s", e)
-                self.socket_error = str(e) or e.__class__.__name__
+                self._drop("realtime send failed", e)
             return False
 
         return True
+
+    def _drop(self, what: str, error: Exception) -> None:
+        """End the take the moment the socket stops being usable.
+
+        Nothing reconnects, so every second recorded past a drop is speech
+        that can never be transcribed. Stopping here wakes `capture`, which
+        raises while the speaker is still mid-thought rather than at the
+        next toggle."""
+        with self._lock:
+            if self.socket_error:
+                return
+            self.socket_error = str(error) or error.__class__.__name__
+        log.error("%s: %s", what, error)
+        self.stop()
 
     # ── capture ───────────────────────────────────────────────────
 
@@ -537,7 +549,7 @@ class SttAdapterRealtime:
         # loses whatever the socket had not been read for yet.
         deadline = time.monotonic() + self.STOP_DEADLINE
         counted, since = -1, time.monotonic()
-        while time.monotonic() < deadline:
+        while not self.socket_error and time.monotonic() < deadline:
             done = self._delivered
             if done != counted:
                 counted, since = done, time.monotonic()
