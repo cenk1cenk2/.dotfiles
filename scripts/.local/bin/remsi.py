@@ -683,10 +683,25 @@ class Analyzer:
         fillers: list[Region] = []
         stutters: list[Region] = []
         prev_letters: str | None = None
-        for w in words:
+        for i, w in enumerate(words):
             text = w.text.strip()
             letters = re.sub(r"[^a-z]", "", text.lower())
             if w.start >= w.end:
+                # Whisper collapses a word it could not align to a zero-length
+                # stamp, but the word was still spoken somewhere between its
+                # neighbours. Skipping it turns that audio into a GAP and cuts it.
+                if letters and not FILLER_PATTERN.match(letters):
+                    start = words[i - 1].end if i > 0 else w.start
+                    end = words[i + 1].start if i + 1 < len(words) else w.end
+                    if end > start:
+                        speech.append(Region(start, end, RegionKind.SPEECH))
+                        log.debug(
+                            "zero-length word: %r %s → %s",
+                            text,
+                            format_timestamp(start),
+                            format_timestamp(end),
+                        )
+                    prev_letters = letters
                 continue
             is_filler = (not text) or bool(letters and FILLER_PATTERN.match(letters))
             if is_filler:
