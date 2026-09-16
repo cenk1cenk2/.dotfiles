@@ -56,7 +56,7 @@ class RegionKind(StrEnum):
     SILENCE = "silence"
     FILLER = "filler"
     STUTTER = "stutter"
-    REPEAT = "repeat"
+    AI = "ai"
     GAP = "gap"
     SPEECH = "speech"
 
@@ -66,7 +66,7 @@ class RegionKind(StrEnum):
             self.SILENCE: 2,
             self.FILLER: 1,
             self.STUTTER: 1,
-            self.REPEAT: 1,
+            self.AI: 1,
             self.GAP: 0,
             self.SPEECH: -1,
         }[self]
@@ -78,7 +78,7 @@ class RegionKind(StrEnum):
             self.SILENCE: "yellow",
             self.FILLER: "red",
             self.STUTTER: "blue",
-            self.REPEAT: "magenta",
+            self.AI: "magenta",
             self.GAP: "dim",
             self.SPEECH: "green",
         }[self]
@@ -355,43 +355,43 @@ class TranscriptionAdapterHttp:
         return []
 
 
-# ── Repeat detection ─────────────────────────────────────────────────
+# ── AI cutter ────────────────────────────────────────────────────────
 
 
-class RepeatDetectorHttp:
-    """Asks an OpenAI-compatible chat model which stretches of a
-    transcript are false starts or retakes, and maps its answer back to
-    whisper's timings.
+class AiCutterHttp:
+    """Hands the whisper transcript to an OpenAI-compatible chat model,
+    which reads it sentence by sentence and returns the broken
+    sentences: false starts, restarts and retakes the speaker abandoned.
 
-    The model answers with word indices, not seconds: it copies integers
-    from the prompt reliably where it would round or invent timestamps,
-    and every index is checkable. Never raises; a failed chunk logs and
-    adds no regions, so an LLM outage cannot cost the encode."""
+    The transcript rides along as an attached JSON document in the user
+    message. It is a text part, not a `file` part: through agentgateway
+    the Ollama backend rejects file parts with HTTP 400 and the codex
+    backend drops them silently.
+
+    Never raises; a failed call logs and yields no regions, so an LLM
+    outage cannot cost the encode. The validated result is written to
+    `cache`, and read back instead of asking again when it exists."""
 
     name = "http"
-    # ~6k input tokens per request; the overlap gives words near a chunk
-    # edge full context in the neighbouring chunk, which owns them.
-    CHUNK_WORDS = 1200
-    OVERLAP_WORDS = 100
-    PAUSE = 0.5
-    TIMEOUT = 120.0
+    TIMEOUT = 300.0
     SCHEMA: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
-            "repeats": {
+            "cuts": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "first": {"type": "integer"},
-                        "last": {"type": "integer"},
+                        "start": {"type": "number"},
+                        "end": {"type": "number"},
+                        "text": {"type": "string"},
                     },
-                    "required": ["first", "last"],
+                    "required": ["start", "end", "text"],
                     "additionalProperties": False,
                 },
             }
         },
-        "required": ["repeats"],
+        "required": ["cuts"],
         "additionalProperties": False,
     }
 
@@ -402,30 +402,27 @@ class RepeatDetectorHttp:
         system_prompt: str,
         max_len: float,
         api_key_env: str = "AI_KILIC_DEV_API_KEY",
+        cache: Path | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.system_prompt = system_prompt
         self.max_len = max_len
         self.api_key_env = api_key_env
+        self.cache = cache
 
-    @classmethod
-    def _render(cls, words: list[TimedWord], lo: int, hi: int) -> str:
-        """`INDEX:word` entries, with a line break at every pause —
-        a restart almost always follows one."""
-        parts: list[str] = []
-        for i in range(lo, hi):
-            if i > lo:
-                pause = words[i].start - words[i - 1].end >= cls.PAUSE
-                parts.append("\n" if pause else " ")
-            parts.append(f"{i}:{words[i].text.strip()}")
-        return "".join(parts)
-
-    def _complete(
-        self, words: list[TimedWord], lo: int, hi: int
-    ) -> list[tuple[int, int]]:
-        """One chat completion over `words[lo:hi]`; raises on transport or
-        parse failure."""
+    def _complete(self, words: list[TimedWord]) -> list[dict[str, Any]]:
+        """One chat completion over the whole transcript; raises on
+        transport, empty, or unparseable responses."""
+        transcript = json.dumps(
+            {
+                "words": [
+                    {"word": w.text.strip(), "start": w.start, "end": w.end}
+                    for w in words
+                ]
+            },
+            ensure_ascii=False,
+        )
         body = {
             "model": self.model,
             "temperature": 0,
@@ -433,14 +430,23 @@ class RepeatDetectorHttp:
                 {"role": "system", "content": self.system_prompt},
                 {
                     "role": "user",
-                    "content": f"Transcript, words {lo}-{hi - 1} of {len(words)}:\n"
-                    + self._render(words, lo, hi),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Find the broken sentences in the attached transcript.",
+                        },
+                        {
+                            "type": "text",
+                            "text": f'<attachment name="transcript.json">\n'
+                            f"{transcript}\n</attachment>",
+                        },
+                    ],
                 },
             ],
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "repeats",
+                    "name": "cuts",
                     "strict": True,
                     "schema": self.SCHEMA,
                 },
@@ -456,6 +462,14 @@ class RepeatDetectorHttp:
                 "Authorization": f"Bearer {os.environ.get(self.api_key_env, '')}",
             },
         )
+        log.info(
+            "sending transcript to %s: %d words, %d KB attached (timeout %ds)",
+            self.model,
+            len(words),
+            len(transcript) // 1024,
+            self.TIMEOUT,
+        )
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=self.TIMEOUT) as resp:
                 data = json.loads(resp.read())
@@ -465,72 +479,88 @@ class RepeatDetectorHttp:
                 f"{e.read().decode(errors='replace')}"
             ) from e
 
-        content = data["choices"][0]["message"]["content"].strip()
+        choice = data["choices"][0]
+        content = (choice["message"].get("content") or "").strip()
+        log.info(
+            "response from %s in %.1fs (finish=%s, usage=%s)",
+            data.get("model", self.model),
+            time.monotonic() - started,
+            choice.get("finish_reason"),
+            data.get("usage"),
+        )
         log.debug("response: %s", content)
+        if not content:
+            raise RuntimeError(f"empty response from {data.get('model', self.model)}")
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
         parsed = json.loads(content)
-        hits = parsed if isinstance(parsed, list) else parsed.get("repeats", [])
-        return [
-            (h["first"], h["last"])
-            for h in hits
-            if isinstance(h, dict)
-            and type(h.get("first")) is int
-            and type(h.get("last")) is int
-        ]
+        hits = parsed if isinstance(parsed, list) else parsed.get("cuts", [])
+        return [h for h in hits if isinstance(h, dict)]
 
     @staticmethod
     def _hits_to_regions(
-        words: list[TimedWord], hits: list[tuple[int, int]], max_len: float
+        words: list[TimedWord], hits: list[dict[str, Any]], max_len: float
     ) -> list[Region]:
-        """Clamp, union overlapping index ranges, and map to whisper
-        timings; drops empty spans and anything longer than `max_len`."""
-        last_index = len(words) - 1
-        spans = sorted((max(0, a), min(last_index, b)) for a, b in hits)
-        merged: list[tuple[int, int]] = []
-        for a, b in spans:
-            if a > b:
+        """Snap each cut to the nearest whisper word boundaries, union
+        overlaps, and drop empty cuts or anything longer than `max_len`."""
+        starts = [w.start for w in words]
+        ends = [w.end for w in words]
+
+        spans: list[tuple[int, int, str]] = []
+        for h in hits:
+            start, end = h.get("start"), h.get("end")
+            if not isinstance(start, int | float) or not isinstance(end, int | float):
+                log.warning("dropping ai cut without numeric times: %r", h)
                 continue
-            if merged and a <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            first = min(range(len(words)), key=lambda i: abs(starts[i] - start))
+            last = min(range(len(words)), key=lambda i: abs(ends[i] - end))
+            if first > last:
+                log.warning("dropping inverted ai cut: %r", h)
+                continue
+            spans.append((first, last, str(h.get("text", ""))))
+
+        spans.sort()
+        merged: list[tuple[int, int, str]] = []
+        for first, last, text in spans:
+            if merged and first <= merged[-1][1]:
+                prev = merged[-1]
+                merged[-1] = (prev[0], max(prev[1], last), f"{prev[2]} {text}")
             else:
-                merged.append((a, b))
+                merged.append((first, last, text))
 
         regions: list[Region] = []
-        for a, b in merged:
-            start, end = words[a].start, words[b].end
+        for first, last, text in merged:
+            start, end = words[first].start, words[last].end
             if end <= start:
                 continue
-            text = " ".join(w.text.strip() for w in words[a : b + 1])
+            spoken = " ".join(w.text.strip() for w in words[first : last + 1])
             if end - start > max_len:
                 log.warning(
-                    "ignoring %.1fs repeat longer than --repeat-max: %r",
+                    "ignoring %.1fs ai cut longer than --ai-max: %r",
                     end - start,
-                    text,
+                    spoken,
                 )
                 continue
-            log.debug(
-                "repeat: %r %s → %s",
-                text,
+            log.info(
+                "ai cut: %s → %s (%.1fs) %r",
                 format_timestamp(start),
                 format_timestamp(end),
+                end - start,
+                spoken,
             )
-            regions.append(Region(start, end, RegionKind.REPEAT))
+            if text and text.split() != spoken.split():
+                log.debug("model quoted %r for that span", text)
+            regions.append(Region(start, end, RegionKind.AI))
         return regions
 
     def detect(self, words: list[TimedWord]) -> list[Region]:
-        n = len(words)
-        if not n:
+        if not words:
             return []
-        step = self.CHUNK_WORDS - self.OVERLAP_WORDS
-        half = self.OVERLAP_WORDS // 2
-        hits: list[tuple[int, int]] = []
-        for lo in range(0, max(n - self.OVERLAP_WORDS, 1), step):
-            hi = min(lo + self.CHUNK_WORDS, n)
-            owned_lo = lo + half if lo > 0 else 0
-            owned_hi = hi - half if hi < n else n
-            log.info("asking %s about words %d-%d of %d", self.model, lo, hi - 1, n)
+        if self.cache and self.cache.exists():
+            log.info("reading ai cuts from %s", self.cache)
+            hits = json.loads(self.cache.read_text())
+        else:
             try:
-                chunk_hits = self._complete(words, lo, hi)
+                hits = self._complete(words)
             except (
                 RuntimeError,
                 OSError,
@@ -540,10 +570,32 @@ class RepeatDetectorHttp:
                 TypeError,
                 AttributeError,
             ) as e:
-                log.error("repeat detection failed for words %d-%d: %s", lo, hi - 1, e)
-                continue
-            hits.extend((a, b) for a, b in chunk_hits if owned_lo <= a < owned_hi)
-        return self._hits_to_regions(words, hits, self.max_len)
+                log.error("ai cutter failed: %s", e)
+                return []
+            log.info("%s suggested %d cut(s)", self.model, len(hits))
+        regions = self._hits_to_regions(words, hits, self.max_len)
+        if self.cache and not self.cache.exists():
+            self.cache.write_text(
+                json.dumps(
+                    [
+                        {
+                            "start": r.start,
+                            "end": r.end,
+                            "text": " ".join(
+                                w.text.strip()
+                                for w in words
+                                if w.start >= r.start and w.end <= r.end
+                            ),
+                        }
+                        for r in regions
+                    ],
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            log.info("wrote %d ai cut(s) to %s", len(regions), self.cache)
+        return regions
 
 
 # ── Analyzer ─────────────────────────────────────────────────────────
@@ -555,12 +607,12 @@ class Analyzer:
         noise: str,
         duration: float,
         stt_adapter: TranscriptionAdapter | None = None,
-        repeat_detector: RepeatDetectorHttp | None = None,
+        ai_cutter: AiCutterHttp | None = None,
     ):
         self.noise = noise
         self.duration = duration
         self.stt_adapter = stt_adapter
-        self.repeat_detector = repeat_detector
+        self.ai_cutter = ai_cutter
 
     @staticmethod
     def get_duration(input_file: Path) -> float | None:
@@ -686,7 +738,7 @@ class Analyzer:
             return []
         words = self.stt_adapter.transcribe(input_file)
         speech, fillers, stutters = self._classify_words(words)
-        repeats = self.repeat_detector.detect(words) if self.repeat_detector else []
+        ai_cuts = self.ai_cutter.detect(words) if self.ai_cutter else []
         # Clamp gaps to what the transcript actually covers: a truncated STT
         # response (a long file can exceed the endpoint's size limit) would
         # otherwise make every untranscribed stretch of real speech a GAP and
@@ -700,7 +752,7 @@ class Analyzer:
             # overridden by a 0.1s inter-word pause.
             if g.end <= covered and (g.end - g.start) >= self.duration
         ]
-        regions = fillers + gaps + stutters + repeats
+        regions = fillers + gaps + stutters + ai_cuts
         for i, r in enumerate(regions, 1):
             log.info(
                 "%d. %s → %s (%.1fs) [%s]%s[/]",
@@ -712,11 +764,11 @@ class Analyzer:
                 r.kind,
             )
         log.info(
-            "speech: %d · fillers: %d · stutters: %d · repeats: %d · gaps: %d",
+            "speech: %d · fillers: %d · stutters: %d · ai cuts: %d · gaps: %d",
             len(speech),
             len(fillers),
             len(stutters),
-            len(repeats),
+            len(ai_cuts),
             len(gaps),
         )
         return regions
@@ -2328,14 +2380,14 @@ class Remsi:
                 fillers = self.analyzer.detect_filler_words(input_file, silences)
                 n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
                 n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
-                n_repeat = sum(1 for r in fillers if r.kind == RegionKind.REPEAT)
+                n_ai = sum(1 for r in fillers if r.kind == RegionKind.AI)
                 parts: list[str] = []
                 if n_filler:
                     parts.append(f"[yellow]{n_filler}[/] filler(s)")
                 if n_stutter:
                     parts.append(f"[yellow]{n_stutter}[/] stutter(s)")
-                if n_repeat:
-                    parts.append(f"[yellow]{n_repeat}[/] repeat(s)")
+                if n_ai:
+                    parts.append(f"[yellow]{n_ai}[/] ai cut(s)")
                 if parts:
                     console.print("found " + ", ".join(parts))
         except RuntimeError as e:
@@ -2441,13 +2493,13 @@ class Remsi:
             detected.append(f"[yellow]{len(silences)}[/] silence(s)")
         n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
         n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
-        n_repeat = sum(1 for r in fillers if r.kind == RegionKind.REPEAT)
+        n_ai = sum(1 for r in fillers if r.kind == RegionKind.AI)
         if n_filler:
             detected.append(f"[yellow]{n_filler}[/] filler(s)")
         if n_stutter:
             detected.append(f"[yellow]{n_stutter}[/] stutter(s)")
-        if n_repeat:
-            detected.append(f"[yellow]{n_repeat}[/] repeat(s)")
+        if n_ai:
+            detected.append(f"[yellow]{n_ai}[/] ai cut(s)")
         if detected:
             console.print("detected " + " and ".join(detected))
         console.print(f"trimmed [yellow]{removed:.1f}s[/] ([bold]{pct:.1f}%[/])")
@@ -2547,33 +2599,39 @@ class Remsi:
         help="Enable filler-word detection via STT.",
     )
     @click.option(
-        "-r",
-        "--with-repeats",
+        "-a",
+        "--with-ai",
         is_flag=True,
-        help="Cut restarted sentences via LLM; needs -w.",
+        help="Cut broken sentences via LLM; needs -w.",
     )
     @click.option(
-        "--repeat-model",
+        "--ai-model",
         default="kilic.dev/default",
-        help="Chat model for repeat detection.",
+        help="Chat model for the AI cutter.",
     )
     @click.option(
-        "--repeat-max",
+        "--ai-max",
         type=float,
         default=10.0,
-        help="Longest repeat we'll cut (s).",
+        help="Longest AI cut (s).",
     )
     @click.option(
-        "--repeat-prompt",
+        "--ai-prompt",
         type=click.Path(path_type=Path),
         default=Path(__file__).resolve().with_name("remsi.md"),
-        help="System prompt file for repeat detection.",
+        help="System prompt file for the AI cutter.",
     )
     @click.option(
         "--transcript",
         type=click.Path(path_type=Path),
         default=None,
         help="Whisper JSON cache; read if present, else written.",
+    )
+    @click.option(
+        "--ai-cuts",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="AI cuts JSON cache; read if present, else written.",
     )
     @click.option(
         "--stt-provider",
@@ -2584,7 +2642,7 @@ class Remsi:
     @click.option(
         "--http-base-url",
         default="https://ai.kilic.dev/v1",
-        help="HTTP base URL (STT and repeat detection).",
+        help="HTTP base URL (STT and AI cutter).",
     )
     @click.option(
         "--http-model",
@@ -2628,11 +2686,12 @@ class Remsi:
         fade_audio_filter,
         suffix,
         with_whisper,
-        with_repeats,
-        repeat_model,
-        repeat_max,
-        repeat_prompt,
+        with_ai,
+        ai_model,
+        ai_max,
+        ai_prompt,
         transcript,
+        ai_cuts,
         stt_provider,
         http_base_url,
         http_model,
@@ -2649,6 +2708,8 @@ class Remsi:
             raise click.UsageError("-o/--output requires a single input file")
         if transcript is not None and len(inputs) > 1:
             raise click.UsageError("--transcript requires a single input file")
+        if ai_cuts is not None and len(inputs) > 1:
+            raise click.UsageError("--ai-cuts requires a single input file")
 
         # Transcription adapter — only built when STT is enabled.
         stt_adapter: TranscriptionAdapter | None = None
@@ -2667,18 +2728,19 @@ class Remsi:
                 case _:
                     raise click.UsageError(f"unknown stt provider: {stt_provider!r}")
 
-        repeat_detector: RepeatDetectorHttp | None = None
-        if with_repeats:
+        ai_cutter: AiCutterHttp | None = None
+        if with_ai:
             if not with_whisper:
-                raise click.UsageError("-r/--with-repeats requires -w/--with-whisper")
-            prompt = Path(repeat_prompt).expanduser()
+                raise click.UsageError("-a/--with-ai requires -w/--with-whisper")
+            prompt = Path(ai_prompt).expanduser()
             if not prompt.exists():
-                raise click.UsageError(f"repeat prompt not found at {prompt}")
-            repeat_detector = RepeatDetectorHttp(
+                raise click.UsageError(f"ai prompt not found at {prompt}")
+            ai_cutter = AiCutterHttp(
                 base_url=http_base_url,
-                model=repeat_model,
+                model=ai_model,
                 system_prompt=prompt.read_text().strip(),
-                max_len=repeat_max,
+                max_len=ai_max,
+                cache=ai_cuts,
             )
 
         # GPU resolution — explicit name, auto-detect, or disable.
@@ -2730,7 +2792,7 @@ class Remsi:
             noise=noise,
             duration=duration,
             stt_adapter=stt_adapter,
-            repeat_detector=repeat_detector,
+            ai_cutter=ai_cutter,
         )
 
         Remsi(
