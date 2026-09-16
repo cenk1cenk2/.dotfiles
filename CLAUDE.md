@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions, waybar and kitty configuration, agent notification
-hooks, and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
+script conventions, waybar, kitty and OBS configuration, agent
+notification hooks, and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
 every new script (and every touch of an old one) without re-discussion.
 
 Linux (Arch, Wayland) is the only deployment target. `Taskfile.yml` has
@@ -498,6 +498,24 @@ not set. Read the active line, never the comment above it.
 - Custom module `signal` numbers come from `waybar-signal.sh`, which
   is the whole map: a module whose number is missing there is never
   poked and only refreshes on its `interval`.
+
+## OBS Studio
+
+- **The `obs/` package is not stowed.** OBS saves every config file by
+  writing a temp file and renaming it over the target, which replaces a
+  symlink with a real file on the first save (profile switch, any settings
+  change, and every exit for the active scene collection) — a stowed deploy
+  silently decouples from the repo. `deploy:linux:user` copies the package
+  instead (`cp -a obs/.config/obs-studio/. ~/.config/obs-studio/`).
+- Repo is source of truth and deploy overwrites live, so intentional
+  changes made in the OBS UI must be copied back into `obs/` by hand —
+  diff live against the repo before deploying.
+- The package carries the `mau5-h265` profile (NVENC HEVC
+  `obs_nvenc_hevc_tex`, CQVBR target quality 18, preset p6, hybrid MP4,
+  libfdk_aac 256 kbps) and the `mau5` scene collection. `user.ini` and the
+  rest of `~/.config/obs-studio` stay app-managed, outside the repo.
+- `recordEncoder.json` stores only non-default keys; obs-nvenc defaults
+  (tune `hq`, multipass `qres`, profile `main`, 2 B-frames) fill the rest.
 
 ## Agent permissions
 

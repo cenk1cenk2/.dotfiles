@@ -108,6 +108,7 @@ tasks:
             xsettingsd
             ydotool
             zathura
+      - cp -a obs/.config/obs-studio/. ~/.config/obs-studio/
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
 
