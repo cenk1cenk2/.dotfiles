@@ -72,10 +72,10 @@
       }
     },
     "compressor#0": {
-      "attack": 15.0,
+      "attack": 25.0,
       "boost-amount": 6.0,
       "boost-threshold": -72.0,
-      "bypass": false,
+      "bypass": true,
       "dry": -80.01,
       "hpf-frequency": 150.0,
       "hpf-mode": "24 dB/oct",
@@ -87,10 +87,10 @@
       "link-to-sidechain": -80.01,
       "lpf-frequency": 20000.0,
       "lpf-mode": "Off",
-      "makeup": 4.0,
+      "makeup": 0.0,
       "mode": "Downward",
       "output-gain": 0.0,
-      "ratio": 3.5,
+      "ratio": 1.2,
       "release": 150.0,
       "release-threshold": -80.01,
       "sidechain": {
@@ -105,7 +105,7 @@
       "sidechain-to-input": -80.01,
       "sidechain-to-link": -80.01,
       "stereo-split": false,
-      "threshold": -18.0,
+      "threshold": -12.0,
       "wet": 0.0
     },
     "deesser#0": {
