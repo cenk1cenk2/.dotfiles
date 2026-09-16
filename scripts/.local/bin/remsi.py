@@ -233,7 +233,7 @@ class TranscriptionAdapter(Protocol):
 
     name: str
 
-    def transcribe(self, input_file: Path) -> list[TimedWord]: ...
+    def transcribe(self, input_file: Path, workdir: Path) -> list[TimedWord]: ...
 
 
 class TranscriptionAdapterHttp:
@@ -253,51 +253,57 @@ class TranscriptionAdapterHttp:
         base_url: str,
         model: str,
         api_key_env: str = "AI_KILIC_DEV_API_KEY",
-        cache: Path | None = None,
     ):
         self.script = script
         self.base_url = base_url
         self.model = model
         self.api_key_env = api_key_env
-        self.cache = cache
 
-    def transcribe(self, input_file: Path) -> list[TimedWord]:
-        if self.cache and self.cache.exists():
-            log.info("reading transcript from %s", self.cache)
-            return self._parse(json.loads(self.cache.read_text()))
+    def transcribe(self, input_file: Path, workdir: Path) -> list[TimedWord]:
+        transcript = workdir / "transcript.json"
+        if transcript.exists():
+            log.info("skipping transcription, reading %s", transcript)
+            return self._parse(json.loads(transcript.read_text()))
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
-            _extract_wav(input_file, tmp.name)
-            cmd = [
-                str(self.script),
-                "--headless",
-                "stt",
-                "toggle",
-                "--source",
-                "http",
-                "--input",
-                "file",
-                "--input-file",
-                tmp.name,
-                "--output",
-                "stdout",
-                "--response-format",
-                "verbose_json",
-                # Repeated because that is how the OpenAI shape spells a
-                # list; without the word entry there are no word timings.
-                "--field",
-                "timestamp_granularities[]=segment",
-                "--field",
-                "timestamp_granularities[]=word",
-                "--model",
-                self.model,
-                "--base-url",
-                self.base_url,
-                "--api-key-env",
-                self.api_key_env,
-            ]
-            log.info("spawn: %s", " ".join(cmd))
-            result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+        sound = workdir / "sound.wav"
+        if sound.exists():
+            log.info("skipping audio extraction, reading %s", sound)
+        else:
+            # Extract beside the target and rename, so an interrupted run
+            # never leaves a truncated sound.wav to be reused.
+            partial = sound.with_suffix(".wav.part")
+            _extract_wav(input_file, str(partial))
+            partial.rename(sound)
+        cmd = [
+            str(self.script),
+            "--headless",
+            "stt",
+            "toggle",
+            "--source",
+            "http",
+            "--input",
+            "file",
+            "--input-file",
+            str(sound),
+            "--output",
+            "stdout",
+            "--response-format",
+            "verbose_json",
+            # Repeated because that is how the OpenAI shape spells a
+            # list; without the word entry there are no word timings.
+            "--field",
+            "timestamp_granularities[]=segment",
+            "--field",
+            "timestamp_granularities[]=word",
+            "--model",
+            self.model,
+            "--base-url",
+            self.base_url,
+            "--api-key-env",
+            self.api_key_env,
+        ]
+        log.info("spawn: %s", " ".join(cmd))
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
 
         if result.returncode != 0:
             raise RuntimeError(
@@ -310,9 +316,11 @@ class TranscriptionAdapterHttp:
             raise RuntimeError(
                 f"speech.py returned no JSON: {result.stdout[:200]}"
             ) from e
-        if self.cache:
-            self.cache.write_text(result.stdout)
-            log.info("wrote transcript to %s", self.cache)
+        transcript.write_text(result.stdout)
+        transcript.with_suffix(".txt").write_text(
+            str(data.get("text", "")).strip() + "\n"
+        )
+        log.info("wrote %s", transcript)
         return self._parse(data)
 
     @staticmethod
@@ -369,8 +377,8 @@ class AiCutterHttp:
     backend drops them silently.
 
     Never raises; a failed call logs and yields no regions, so an LLM
-    outage cannot cost the encode. The validated result is written to
-    `cache`, and read back instead of asking again when it exists."""
+    outage cannot cost the encode. The validated cuts are written to
+    `ai.json` in the workdir, and read back instead of asking again."""
 
     name = "http"
     TIMEOUT = 300.0
@@ -402,14 +410,12 @@ class AiCutterHttp:
         system_prompt: str,
         max_len: float,
         api_key_env: str = "AI_KILIC_DEV_API_KEY",
-        cache: Path | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.system_prompt = system_prompt
         self.max_len = max_len
         self.api_key_env = api_key_env
-        self.cache = cache
 
     def _complete(self, words: list[TimedWord]) -> list[dict[str, Any]]:
         """One chat completion over the whole transcript; raises on
@@ -552,12 +558,13 @@ class AiCutterHttp:
             regions.append(Region(start, end, RegionKind.AI))
         return regions
 
-    def detect(self, words: list[TimedWord]) -> list[Region]:
+    def detect(self, words: list[TimedWord], workdir: Path) -> list[Region]:
         if not words:
             return []
-        if self.cache and self.cache.exists():
-            log.info("reading ai cuts from %s", self.cache)
-            hits = json.loads(self.cache.read_text())
+        cache = workdir / "ai.json"
+        if cache.exists():
+            log.info("skipping ai cutter, reading %s", cache)
+            hits = json.loads(cache.read_text())
         else:
             try:
                 hits = self._complete(words)
@@ -574,8 +581,8 @@ class AiCutterHttp:
                 return []
             log.info("%s suggested %d cut(s)", self.model, len(hits))
         regions = self._hits_to_regions(words, hits, self.max_len)
-        if self.cache and not self.cache.exists():
-            self.cache.write_text(
+        if not cache.exists():
+            cache.write_text(
                 json.dumps(
                     [
                         {
@@ -594,7 +601,7 @@ class AiCutterHttp:
                 )
                 + "\n"
             )
-            log.info("wrote %d ai cut(s) to %s", len(regions), self.cache)
+            log.info("wrote %d ai cut(s) to %s", len(regions), cache)
         return regions
 
 
@@ -634,7 +641,18 @@ class Analyzer:
             log.debug("ffprobe stderr: %s", result.stderr.strip())
             return None
 
-    def detect_silence(self, input_file: Path, total: float) -> list[Region]:
+    def detect_silence(
+        self, input_file: Path, total: float, workdir: Path
+    ) -> list[Region]:
+        cache = workdir / "silence.json"
+        params = {"noise": self.noise, "duration": self.duration}
+        if cache.exists():
+            data = json.loads(cache.read_text())
+            if data.get("params") == params:
+                log.info("skipping silence detection, reading %s", cache)
+                return [Region(a, b, RegionKind.SILENCE) for a, b in data["silences"]]
+            log.info("silence parameters changed, ignoring %s", cache)
+
         cmd = [
             "ffmpeg",
             "-i",
@@ -673,6 +691,17 @@ class Analyzer:
                 silence_start = None
         if silence_start is not None:
             silences.append(Region(silence_start, total, RegionKind.SILENCE))
+        cache.write_text(
+            json.dumps(
+                {
+                    "params": params,
+                    "silences": [[r.start, r.end] for r in silences],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        log.info("wrote %s", cache)
         return silences
 
     @staticmethod
@@ -747,13 +776,13 @@ class Analyzer:
         return gaps
 
     def detect_filler_words(
-        self, input_file: Path, silences: list[Region]
+        self, input_file: Path, silences: list[Region], workdir: Path
     ) -> list[Region]:
         if self.stt_adapter is None:
             return []
-        words = self.stt_adapter.transcribe(input_file)
+        words = self.stt_adapter.transcribe(input_file, workdir)
         speech, fillers, stutters = self._classify_words(words)
-        ai_cuts = self.ai_cutter.detect(words) if self.ai_cutter else []
+        ai_cuts = self.ai_cutter.detect(words, workdir) if self.ai_cutter else []
         # Clamp gaps to what the transcript actually covers: a truncated STT
         # response (a long file can exceed the endpoint's size limit) would
         # otherwise make every untranscribed stretch of real speech a GAP and
@@ -2367,7 +2396,7 @@ class Remsi:
         self.suffix = suffix
         self.analyze_only = analyze_only
 
-    def process(self, input_file: Path, output_file: Path) -> None:
+    def process(self, input_file: Path, output_file: Path, workdir: Path) -> None:
         console.rule(f"[bold yellow]{input_file.name}[/]")
         t_start = time.monotonic()
 
@@ -2384,7 +2413,7 @@ class Remsi:
         t_probe = time.monotonic()
         try:
             console.rule("[bold yellow]Silence detection[/]")
-            silences = self.analyzer.detect_silence(input_file, total)
+            silences = self.analyzer.detect_silence(input_file, total, workdir)
             console.print(f"found [yellow]{len(silences)}[/] silent region(s)")
 
             fillers: list[Region] = []
@@ -2392,7 +2421,9 @@ class Remsi:
                 console.rule(
                     f"[bold yellow]Speech analysis ({self.analyzer.stt_adapter.name})[/]"
                 )
-                fillers = self.analyzer.detect_filler_words(input_file, silences)
+                fillers = self.analyzer.detect_filler_words(
+                    input_file, silences, workdir
+                )
                 n_filler = sum(1 for r in fillers if r.kind == RegionKind.FILLER)
                 n_stutter = sum(1 for r in fillers if r.kind == RegionKind.STUTTER)
                 n_ai = sum(1 for r in fillers if r.kind == RegionKind.AI)
@@ -2526,7 +2557,9 @@ class Remsi:
             f"encode {t_end - t_analysis:.1f}s[/])"
         )
 
-    def run(self, inputs: list[Path], output: Path | None) -> None:
+    def run(
+        self, inputs: list[Path], output: Path | None, workdir: Path | None
+    ) -> None:
         for input_file in inputs:
             if not input_file.exists():
                 log.error("%s not found", input_file)
@@ -2535,7 +2568,43 @@ class Remsi:
                 output_file = output
             else:
                 output_file = input_file.with_stem(f"{input_file.stem}-{self.suffix}")
-            self.process(input_file, output_file)
+            if workdir is None:
+                with tempfile.TemporaryDirectory(prefix="remsi_") as tmp:
+                    self._process_in(input_file, output_file, Path(tmp))
+            else:
+                self._claim(workdir, input_file)
+                self._process_in(input_file, output_file, workdir)
+
+    def _process_in(self, input_file: Path, output_file: Path, workdir: Path) -> None:
+        """Run `process` with every scratch file (filter scripts, cut parts)
+        under `workdir/tmp`, so remsi writes nowhere else but the output."""
+        scratch = workdir / "tmp"
+        scratch.mkdir(exist_ok=True)
+        log.info("workdir: %s", workdir)
+        tempfile.tempdir = str(scratch)
+        try:
+            self.process(input_file, output_file, workdir)
+        finally:
+            tempfile.tempdir = None
+
+    @staticmethod
+    def _claim(workdir: Path, input_file: Path) -> None:
+        """Bind a persistent workdir to one input, refusing to reuse
+        artifacts that were made from a different file."""
+        stat = input_file.stat()
+        stamp = {
+            "input": str(input_file.resolve()),
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        }
+        workdir.mkdir(parents=True, exist_ok=True)
+        manifest = workdir / "input.json"
+        if manifest.exists() and json.loads(manifest.read_text()) != stamp:
+            raise click.UsageError(
+                f"{workdir} holds artifacts of a different input; "
+                "pick another --workdir or empty it"
+            )
+        manifest.write_text(json.dumps(stamp, indent=2) + "\n")
 
     # ── CLI ──────────────────────────────────────────────────────────
 
@@ -2637,16 +2706,10 @@ class Remsi:
         help="System prompt file for the AI cutter.",
     )
     @click.option(
-        "--transcript",
-        type=click.Path(path_type=Path),
+        "--workdir",
+        type=click.Path(file_okay=False, path_type=Path),
         default=None,
-        help="Whisper JSON cache; read if present, else written.",
-    )
-    @click.option(
-        "--ai-cuts",
-        type=click.Path(path_type=Path),
-        default=None,
-        help="AI cuts JSON cache; read if present, else written.",
+        help="Keep artifacts here and skip finished steps; default is a temp dir.",
     )
     @click.option(
         "--stt-provider",
@@ -2705,8 +2768,7 @@ class Remsi:
         ai_model,
         ai_max,
         ai_prompt,
-        transcript,
-        ai_cuts,
+        workdir,
         stt_provider,
         http_base_url,
         http_model,
@@ -2721,10 +2783,8 @@ class Remsi:
         create_logger(verbose, name="remsi", markup=True)
         if output is not None and len(inputs) > 1:
             raise click.UsageError("-o/--output requires a single input file")
-        if transcript is not None and len(inputs) > 1:
-            raise click.UsageError("--transcript requires a single input file")
-        if ai_cuts is not None and len(inputs) > 1:
-            raise click.UsageError("--ai-cuts requires a single input file")
+        if workdir is not None and len(inputs) > 1:
+            raise click.UsageError("--workdir requires a single input file")
 
         # Transcription adapter — only built when STT is enabled.
         stt_adapter: TranscriptionAdapter | None = None
@@ -2738,7 +2798,6 @@ class Remsi:
                         script=script,
                         base_url=http_base_url,
                         model=http_model,
-                        cache=transcript,
                     )
                 case _:
                     raise click.UsageError(f"unknown stt provider: {stt_provider!r}")
@@ -2755,7 +2814,6 @@ class Remsi:
                 model=ai_model,
                 system_prompt=prompt.read_text().strip(),
                 max_len=ai_max,
-                cache=ai_cuts,
             )
 
         # GPU resolution — explicit name, auto-detect, or disable.
@@ -2816,7 +2874,7 @@ class Remsi:
             min_cut=min_cut,
             suffix=f"{suffix}-cheap" if cheap else suffix,
             analyze_only=analyze,
-        ).run(list(inputs), output)
+        ).run(list(inputs), output, workdir)
 
 
 if __name__ == "__main__":
