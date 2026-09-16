@@ -516,6 +516,10 @@ not set. Read the active line, never the comment above it.
   rest of `~/.config/obs-studio` stay app-managed, outside the repo.
 - `recordEncoder.json` stores only non-default keys; obs-nvenc defaults
   (tune `hq`, multipass `qres`, profile `main`, 2 B-frames) fill the rest.
+- `keyint_sec: 1` is there for `remsi`: its default `cut` encoder stream-copies
+  and can only cut on keyframes, so the obs-nvenc auto GOP (250 frames, 4.17s
+  at 60fps) left up to 4s of silence at every cut. `remsi`'s NVENC re-encode
+  mirrors this profile, so change one, change both.
 
 ## Agent permissions
 

@@ -1,1 +1,1 @@
-{"rate_control":"CQVBR","target_quality":18,"max_bitrate":100000,"preset":"p6"}
+{"rate_control":"CQVBR","target_quality":18,"max_bitrate":100000,"preset":"p6","keyint_sec":1}
