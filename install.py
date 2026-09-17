@@ -641,9 +641,18 @@ def check_sudoers(entry: Entry) -> str | None:
     return f"{entry.source}: {detail}"
 
 
-def gate_sudoers(package: Package) -> bool:
-    """Re-check sudoers as installed. This is the owner and mode gate."""
-    cmd = package.privileged(["visudo", "-c"])
+def gate_sudoers(packages: list[Package]) -> bool:
+    """Re-check sudoers as installed. This is the owner and mode gate.
+
+    Takes every package that contributed a gated file rather than one of them:
+    a pathless `visudo -c` reads the system sudoers, so it needs root whenever
+    any contributor writes as root. Picking a single package would let a
+    `sudo: false` one run the check unprivileged and report a false failure on
+    a perfectly good sudoers tree.
+    """
+    cmd = ["visudo", "-c"]
+    if any(package.sudo for package in packages):
+        cmd = ["sudo", *cmd]
     log.info("spawn: %s", " ".join(cmd))
     done = subprocess.run(
         cmd, check=False, capture_output=True, text=True, timeout=SPAWN_TIMEOUT
@@ -872,21 +881,27 @@ def install(args: argparse.Namespace) -> int:
     log.info("every replaced file is backed up; wrote %s", notes)
     log.info("installing")
 
-    gated: dict[str, Package] = {}
+    gated: dict[str, list[Package]] = {}
     for change in pending:
         entry = change.entry
         write = install_file(entry)
         rule = entry.rule
         if rule is not None and rule.validate is not None:
-            gated[rule.validate] = entry.package
+            gated.setdefault(rule.validate, [])
+            if entry.package not in gated[rule.validate]:
+                gated[rule.validate].append(entry.package)
         log.info(
             "installed %s%s", entry.dest, "" if write == "install" else f" ({write})"
         )
 
-    for strategy, package in gated.items():
+    for strategy, contributors in gated.items():
         log.info("%s", "-" * 60)
-        log.info("verifying %s as installed (%s)", strategy, package.name)
-        if not GATES[strategy](package):
+        log.info(
+            "verifying %s as installed (%s)",
+            strategy,
+            ", ".join(p.name for p in contributors),
+        )
+        if not GATES[strategy](contributors):
             log.error("%s is NOT valid; restore from %s now", strategy, backup)
             return 1
 
