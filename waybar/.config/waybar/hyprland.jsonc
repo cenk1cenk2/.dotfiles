@@ -118,6 +118,19 @@
     "exec-if": "~/.config/wayland/scripts/copywriter.py is-running",
     "signal": 11,
   },
+
+  // Hidden while unzoomed: exec-if fails at 1x, and waybar hides a module
+  // whose exec-if fails rather than rendering an empty one.
+  "custom/zoom": {
+    "interval": 5,
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/hypr/scripts/zoom.py status",
+    "exec-if": "~/.config/hypr/scripts/zoom.py is-zoomed",
+    "on-click": "~/.config/hypr/scripts/zoom.py toggle",
+    "signal": 12,
+  },
+
   "privacy": {
     "icon-size": 14,
     "icon-spacing": 4,
@@ -203,6 +216,7 @@
     "custom/stt",
     "custom/tts",
     "custom/copywriter",
+    "custom/zoom",
     "hyprland/submap",
     "hyprland/window",
   ],

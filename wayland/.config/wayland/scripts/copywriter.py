@@ -23,6 +23,9 @@ from dotlib.notify import (
     Notification,
     OsdIcon,
 )
+from dotlib.waybar import (
+    signal_waybar,
+)
 
 from lib import (
     EnrichAdapter,
@@ -36,7 +39,6 @@ from lib import (
     build_output,
     enrich_options,
     load_prompt,
-    signal_waybar,
     spec_from_options,
 )
 

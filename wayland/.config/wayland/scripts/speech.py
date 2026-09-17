@@ -37,6 +37,9 @@ from dotlib.notify import (
     Notification,
     OsdIcon,
 )
+from dotlib.waybar import (
+    signal_waybar,
+)
 
 from lib import (
     DEFAULT_API_KEY_ENV,
@@ -89,7 +92,6 @@ from lib import (
     copy_audio,
     enrich_options,
     load_prompt,
-    signal_waybar,
     spec_from_options,
 )
 

@@ -133,6 +133,9 @@ M.media = {
 -- Recording
 M.recorder = "~/.config/wayland/scripts/recorder.py"
 
+-- Cursor zoom
+M.zoom = "~/.config/hypr/scripts/zoom.py"
+
 -- Speech-to-text
 M.speech = [[zsh -c '~/.config/wayland/scripts/speech.py "$@"' zsh]]
 M.copywriter = [[zsh -c '~/.config/wayland/scripts/copywriter.py "$@"' zsh]]

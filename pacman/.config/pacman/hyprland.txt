@@ -1,5 +1,4 @@
 # hyprqt6engine
-hypr-zoom
 hyprcursor
 hypridle
 hyprland
