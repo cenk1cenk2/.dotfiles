@@ -83,29 +83,43 @@ these need re-checking.
   resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
   because pressure-vessel does not import `nvidia_layers.json` into the
   container. Use `MANGOHUD=1 %command%` for the overlay.
-- **Nothing under `rootfs/` or `rootfs-geoclue/` is stowed.** Both are copied to
-  `/` by `install.py` as real root-owned files, so no edit there is live on
-  save — every one needs `task deploy:linux:system` to take effect. That task
-  also runs the reloads the copied files need (`systemctl daemon-reload`,
-  `udevadm control --reload`, `sysctl --system`, `systemctl restart keyd`).
-  `./install.py --dry-run` (or `task check`) reports what would change without
-  touching anything; bare `task` only lists tasks and copies nothing.
-- **Two path groups get extra care in `install.py`**, because a bad file there
-  costs privilege escalation or every means of authenticating:
-  - `rootfs/etc/sudoers.d/*` (`SUDOERS`) is validated with `visudo -c -f`
-    *before* anything is written, and a pathless `sudo visudo -c` runs after as
-    the gate — `-f` checks syntax only, it does **not** check owner or mode.
-    `sudoers.d/clamav` needs mode `0440`, which git cannot express, so it sits
-    in `MODE_OVERRIDES`.
-  - `rootfs/etc/pam.d/*` (`ATOMIC`) is placed by `install` to a temp name plus
-    `mv -T`, not by `install` directly. `install` is unlink-then-create, and
-    `/etc/pam.d/other` is `pam_deny` on all four stanzas, so a crash between the
-    two would deny every login until repaired by hand.
-- **All checks run before the first write.** Git mode assert, sudoers
-  validation, then the whole backup pass; only then does anything get
-  installed. A failure at any point leaves the system untouched, the same
-  plan-then-abort behaviour stow has.
-- Replaced files are backed up under `~/.local/state/dotfiles/install/<stamp>/`
+- **`install.py` copies the packages stow cannot symlink**, driven by a
+  `.install.json` at each package root; no package is named in the script.
+  `rootfs` and `rootfs-geoclue` target `/` as `root:root` with sudo, `obs` and
+  `opendeck` target `~` as the invoking user. Copied files are real files, so no
+  edit is live on save — `task deploy:linux:system` covers the system packages,
+  `task deploy:linux:user` the rest. A package's `post` commands run after its
+  files land (`systemctl daemon-reload`, `udevadm control --reload`,
+  `sysctl --system` for `rootfs`), for every selected package rather than only
+  those that changed, because a run that installs a unit and then dies before
+  reloading would otherwise leave the next run reporting nothing to do.
+  `./install.py --dry-run` (or `task check`) reports what would change across
+  every package; bare `task` only lists tasks and copies nothing.
+- **Two destination prefixes get extra care**, because a bad file there costs
+  privilege escalation or every means of authenticating. Both are floors keyed
+  on the destination path, not on a package, so a new `/`-targeted package
+  cannot opt out of them by omitting a rule:
+  - `/etc/sudoers.d/` is validated with `visudo -c -f` *before* anything is
+    written, and a pathless `sudo visudo -c` runs after as the gate — `-f`
+    checks syntax only, it does **not** check owner or mode. `sudoers.d/clamav`
+    needs mode `0440`, which git cannot express, so it sits in that package's
+    `modes` map.
+  - `/etc/pam.d/` is placed by `install` to a temp name plus `mv -T`, not by
+    `install` directly. `install` is unlink-then-create, and `/etc/pam.d/other`
+    is `pam_deny` on all four stanzas, so a crash between the two would deny
+    every login until repaired by hand.
+- **A `.install.json` path matching no tracked file is an error**, not a silent
+  no-op, and so is an unknown key or strategy name. The mistake this catches is
+  the package-prefixed spelling (`rootfs/etc/sudoers.d/clamav` instead of
+  `etc/sudoers.d/clamav`), which would install that file 0644 and skip its
+  validation without a word. A package that declares `sudo` owns its files
+  `root:root` unless it says otherwise.
+- **All checks run before the first write**, across every selected package —
+  config parse, git mode assert, sudoers validation, then the whole backup pass.
+  A failure at any point leaves the system untouched, the same plan-then-abort
+  behaviour stow has.
+- Replaced files are backed up under `~/.local/state/dotfiles/install/<stamp>/`,
+  keyed by `<package>/<path>` so two packages cannot clobber each other's copy,
   with a `manifest.json` recording each path's previous kind, mode, owner or
   symlink target.
 
@@ -505,8 +519,8 @@ not set. Read the active line, never the comment above it.
   writing a temp file and renaming it over the target, which replaces a
   symlink with a real file on the first save (profile switch, any settings
   change, and every exit for the active scene collection) — a stowed deploy
-  silently decouples from the repo. `deploy:linux:user` copies the package
-  instead (`cp -a obs/.config/obs-studio/. ~/.config/obs-studio/`).
+  silently decouples from the repo. It is copied by `./install.py obs` instead,
+  which also diffs live against the repo and backs up whatever it replaces.
 - Repo is source of truth and deploy overwrites live, so intentional
   changes made in the OBS UI must be copied back into `obs/` by hand —
   diff live against the repo before deploying.
@@ -520,6 +534,60 @@ not set. Read the active line, never the comment above it.
   and can only cut on keyframes, so the obs-nvenc auto GOP (250 frames, 4.17s
   at 60fps) left up to 4s of silence at every cut. `remsi`'s NVENC re-encode
   mirrors this profile, so change one, change both.
+
+## OpenDeck (Stream Deck)
+
+- **The `opendeck/` package is not stowed**, for the same reason as OBS: the app
+  and its plugins rewrite these files in place. It is copied by
+  `./install.py opendeck`, and **OpenDeck must be stopped first**
+  (`systemctl --user stop app-opendeck@autostart.service`) or it overwrites the
+  deploy on exit. It also rewrites the profile JSON in its own formatting after
+  a restart, semantically identical — take its bytes rather than fighting it.
+- **`settings/` is gitignored and must stay that way.** It holds live
+  credentials: a Home Assistant long-lived token and a Spotify refresh token,
+  access token and client secret. `plugins/` is gitignored too, 39M of
+  downloaded bundles and binaries that are reinstalled from the OpenDeck UI.
+- **Plugins write into the images tree**, so those files are theirs, not ours:
+  the twelve multiobs Record / Pause / Scene icons on `Capture` (regenerated as
+  a set on OBS connect), `Sound/Keypad.0.0` (pipewire, encodes the device name),
+  and `HA/Keypad.13.0` (the sensor value rendered into the artwork). Replacing
+  one is overwritten on the next event. A key whose `states[].image` points into
+  `plugins/` has no file at all and is the plugin's to draw.
+- **Two profile files are permanently dirty** and that is expected:
+  `Default.json` carries the stopwatch's running text and `Music.json` the
+  current track and position. The deck-level `profiles/sd-*.json` holds only
+  `selected_profile`, so it is gitignored outright.
+- Icons are 144x144 SVGs whose glyphs are Tela's own path data, recoloured to
+  `#17191e` and knocked out of a coloured tile, with a dark plate across the top
+  because most labels render `alignment: top, size: 13`. The keys OpenDeck draws
+  text through the middle of get a dark key and a coloured glyph instead.
+- Multiobs exposes `bgColorActive` / `bgColorInactive` / `bgColorIntermediate` /
+  `fgColor` per key in the profile JSON. Setting those beats supplying an image,
+  because they cannot be overwritten the way a file can.
+
+## Icons
+
+- The GTK, Qt, rofi and xsettingsd icon theme is `Tela-yellow-dark`, installed
+  at `/usr/share/icons/`. It is **not a pacman package** and appears in no
+  `pacman/*.txt` list, so a rebuilt machine has eight tracked files pointing at
+  a theme that is not there; `index.theme` inherits `hicolor,Adwaita,breeze`, so
+  the fallback is Adwaita rather than nothing.
+- **Notification icons are freedesktop names, never absolute paths** —
+  `notify-send -i` and swayosd both resolve a name through the configured theme,
+  so a name follows the theme and degrades to Adwaita, where a hardcoded path
+  simply breaks. `OsdIcon` in `dotlib/notify.py` is the shared set.
+- **105 icon names in Tela carry literal `NaN` in their path data.** GTK 4.22
+  spins on one, leaking gigabytes a second until swayosd is OOM-killed — which
+  is why `OsdIcon.SPEAKER` is `audio-volume-high` and not `audio-speakers`.
+  Grep a candidate for `NaN` before adopting it; among the affected are
+  `text-markdown`, `text-x-markdown`, `network-no-route` and `torrent`.
+- Tela encodes volume and signal *level* with `opacity=".3"` rather than with
+  shape, so `audio-volume-muted` renders as an unmuted speaker at any size where
+  the fade is not obvious, and promoting the faded parts makes it identical to
+  `audio-volume-high`. It ships no slashed speaker at all.
+- `*.svg` is deliberately **not** in git-lfs: the whole set is ~81 KB of text
+  that deltas well, and LFS would cost readable diffs, `git blame` and
+  three-way merges. Fonts and raster art stay in LFS, where the size is real.
 
 ## Agent permissions
 
