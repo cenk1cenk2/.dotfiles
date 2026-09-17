@@ -11,7 +11,7 @@
       "dry": -100.0,
       "middle-level": 0.0,
       "middle-panorama": 0.0,
-      "mode": "LR > LL (Mono, Left Channel)",
+      "mode": "LR > LL (Mono Left Channel)",
       "mutel": false,
       "muter": false,
       "phasel": false,
@@ -90,7 +90,7 @@
       "makeup": 0.0,
       "mode": "Downward",
       "output-gain": 0.0,
-      "ratio": 1.5,
+      "ratio": 3.0,
       "release": 150.0,
       "release-threshold": -80.01,
       "sidechain": {
@@ -204,7 +204,8 @@
       "equalizer#0",
       "compressor#0",
       "deesser#0",
-      "equalizer#1"
+      "equalizer#1",
+      "limiter#0"
     ],
     "equalizer#1": {
       "bypass": false,
@@ -257,6 +258,23 @@
           "type": "Hi-shelf"
         }
       }
+    },
+    "limiter#0": {
+      "bypass": false,
+      "input-gain": 0.0,
+      "output-gain": 0.0,
+      "attack": 5.0,
+      "release": 5.0,
+      "lookahead": 5.0,
+      "threshold": -1.0,
+      "gain-boost": false,
+      "stereo-link": 100.0,
+      "alr": false,
+      "mode": "Herm Thin",
+      "oversampling": "True Peak/24 bit",
+      "dithering": "None",
+      "sidechain-type": "Internal",
+      "sidechain-preamp": -80.01
     }
   }
 }
