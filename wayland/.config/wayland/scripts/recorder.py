@@ -31,7 +31,7 @@ logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
 class Recorder:
     WAYBAR_MODULE = "recorder"
-    ICON = "/usr/share/icons/Adwaita/scalable/devices/camera-web.svg"
+    ICON = "camera-web"
     # A desktop notification, not a card: an output path is worth reading
     # after looking away, and a card is gone in a second.
     NOTIFICATION = Notification("Recording", ICON, channel=NotifyChannel.DESKTOP)

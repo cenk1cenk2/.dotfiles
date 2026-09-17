@@ -46,7 +46,7 @@ from lib import (
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
     ICON = (
-        "/usr/share/icons/Adwaita/symbolic/legacy/accessories-text-editor-symbolic.svg"
+        "accessories-text-editor"
     )
     NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.WRITING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)

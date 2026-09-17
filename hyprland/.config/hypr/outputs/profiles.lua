@@ -536,7 +536,7 @@ function M.apply(name, opts)
     end
 
     hl.exec_cmd(
-      ("notify-send display 'Applied profile %s.' " .. "-i /usr/share/icons/Adwaita/scalable/devices/video-display.svg"):format(
+      ("notify-send display 'Applied profile %s.' " .. "-i video-display"):format(
         name
       )
     )

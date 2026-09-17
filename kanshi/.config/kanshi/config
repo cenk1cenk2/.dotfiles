@@ -52,7 +52,7 @@ profile main {
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,3040 scale 1.0 transform 180 adaptive_sync off
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
-    exec notify-send "display" "Applied profile main." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile main." -i video-display
     exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
@@ -62,7 +62,7 @@ profile main-bottom {
     output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 scale 1.0 transform normal adaptive_sync off
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 960,1600 scale 1.0 transform 180 adaptive_sync off
     output "*" disable
-    exec notify-send "display" "Applied profile main-bottom." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile main-bottom." -i video-display
     exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
@@ -72,7 +72,7 @@ profile main-top {
     output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,1440 scale 1.0 transform normal adaptive_sync off
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" enable mode 2560x1440@164.999Hz position 700,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
-    exec notify-send "display" "Applied profile main-top." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile main-top." -i video-display
     exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
@@ -81,7 +81,7 @@ profile main-top {
 profile main-solo {
     output "LG Electronics 38GN950 207NTSU62014" enable mode 3840x1600@160.000Hz position 0,0 scale 1.0 transform normal adaptive_sync off
     output "*" disable
-    exec notify-send "display" "Applied profile main-solo." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile main-solo." -i video-display
     exec jumpy sound 'Audio/Sink' 'Scarlett 8i6 USB'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
@@ -96,7 +96,7 @@ profile tv {
     output "LG Electronics 38GN950 207NTSU62014" disable
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
-    exec notify-send "display" "Applied profile tv." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile tv." -i video-display
     exec jumpy sound 'Audio/Sink' 'HDA NVidia'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }
@@ -107,7 +107,7 @@ profile tv-4k {
     output "LG Electronics 38GN950 207NTSU62014" disable
     output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
-    exec notify-send "display" "Applied profile tv-4k." -i /usr/share/icons/Adwaita/scalable/devices/video-display.svg
+    exec notify-send "display" "Applied profile tv-4k." -i video-display
     exec jumpy sound 'Audio/Sink' 'HDA NVidia'
     exec jumpy sound 'Audio/Source' 'Scarlett 8i6 USB'
 }

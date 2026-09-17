@@ -528,7 +528,7 @@ class SttSession(SocketSession):
 
 
 class Stt:
-    ICON = "/usr/share/icons/Adwaita/scalable/devices/microphone.svg"
+    ICON = "audio-input-microphone"
     NOTIFICATION = Notification("STT", ICON, OsdIcon.MIC)
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
     # Biases the recogniser toward the vocabulary this machine dictates in.
@@ -1588,7 +1588,7 @@ def tts_speak_options():
 
 
 class Tts:
-    ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
+    ICON = "audio-headphones"
     NOTIFICATION = Notification("TTS", ICON, OsdIcon.SPEAKER)
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.

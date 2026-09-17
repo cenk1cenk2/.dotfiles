@@ -141,8 +141,8 @@ def _complete_display(
 
 
 class Jumpy:
-    AUDIO_ICON = "/usr/share/icons/Adwaita/scalable/devices/audio-headphones.svg"
-    DISPLAY_ICON = "/usr/share/icons/Adwaita/scalable/devices/video-display.svg"
+    AUDIO_ICON = "audio-headphones"
+    DISPLAY_ICON = "video-display"
     KANSHI_CONFIG = Path.home() / ".config/kanshi/config"
     DISPLAY_MODULE = "outputs.profiles"
     PROFILES_LUA = Path.home() / ".config/hypr/outputs/profiles.lua"

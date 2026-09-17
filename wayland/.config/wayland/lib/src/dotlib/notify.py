@@ -63,7 +63,7 @@ class Notification:
     Title and icons belong to the script rather than the message, so they are
     bound once and every call after that carries only what changed. The same
     message text serves either channel; only the icon differs, because
-    notify-send wants a path and swayosd wants a freedesktop name.
+    the two resolve a freedesktop name against different icon sets.
 
     Both channels go quiet when headless — there is nobody to tell."""
 
