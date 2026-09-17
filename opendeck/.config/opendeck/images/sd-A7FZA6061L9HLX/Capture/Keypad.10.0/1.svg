@@ -1,3 +1,8 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:9173e589d3cfa53dabd03af5e6347668a893605c403a551faa5a6c2f8eb44733
-size 1700
+
+		<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">
+			
+			<path fill="#efefef" fill-rule="evenodd" d="M40 100V52h64v48H40zm4-4h56V56l-56 .183V96zm48-28l4 8H84l4-8h4zm4 16v8H48v-8h48zM48 60h16v8H48v-8zm42 8a4 4 0 110-8 4 4 0 010 8zM48.013 48v-4H96v4H48.013zM60 40v-4h22v4H60z"/>
+			<text x="10" y="28" text-anchor="start" font-size="24" font-family="Arial, sans-serif" font-weight="bold" fill="#efefef">1</text>
+			<rect x="0" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="9" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="18" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="27" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="36" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="45" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="54" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="63" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="72" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="81" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="90" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="99" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="108" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="117" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/><rect x="126" y="0" width="9" height="144" fill="#666666" fill-opacity="0.6"/><rect x="135" y="0" width="9" height="144" fill="#333333" fill-opacity="0.6"/>
+		</svg>
+		

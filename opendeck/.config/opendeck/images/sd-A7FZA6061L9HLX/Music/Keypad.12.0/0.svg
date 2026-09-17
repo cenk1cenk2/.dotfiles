@@ -1,3 +1,29 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:69aacbbd5c386fcdf082961a802f7a04024b09189beadd6e4f6adccd048ae7dd
-size 4510
+
+			<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+
+			<defs>
+				<pattern id="iconPattern" patternUnits="userSpaceOnUse" width="120" height="120">
+					<image href="data:image/jpeg;base64,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" x="0" y="0" width="120" height="120"/>
+				</pattern>
+
+				<filter id="innerGlow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+					<feGaussianBlur in="SourceAlpha" stdDeviation="0" result="blur"/>
+					<feComposite in="SourceAlpha" in2="blur" operator="out" result="innerEdge"/>
+					<feFlood flood-color="#null" flood-opacity="1" result="glowColor"/>
+					<feComposite in="glowColor" in2="innerEdge" operator="in" result="coloredGlow"/>
+					<feComposite in="coloredGlow" in2="coloredGlow" operator="over"/>
+				</filter>
+			</defs>
+
+			<rect width="120" height="120" fill="url(#iconPattern)"/>
+
+			
+			
+			
+			<path d="M 65,29 C 59,19 49,12 37,12 20,12 7,25 7,42 7,75 25,80 65,118 105,80 123,75 123,42 123,25 110,12 93,12 81,12 71,19 65,29 z"
+				fill="#1db954" stroke="#191414" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+				transform="translate(19.655172413793103, 19.655172413793103) scale(0.6206896551724138)"
+				vector-effect="non-scaling-stroke"/>
+		
+			</svg>
+		
