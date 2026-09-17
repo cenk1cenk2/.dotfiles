@@ -4,3 +4,15 @@ __pycache__/
 # calendar feed URLs are bearer credentials, machine-local only
 pimsync/.config/pimsync/urls/*
 !pimsync/.config/pimsync/urls/.gitkeep
+
+# OpenDeck plugin settings carry live credentials -- a Home Assistant
+# long-lived token, a Spotify refresh token and client secret. The deck's own
+# layout is tracked; per-plugin settings are re-entered in the OpenDeck UI.
+opendeck/.config/opendeck/settings/
+# 39M of downloaded plugin bundles and their binaries. Reinstalled from the
+# OpenDeck UI, not carried here.
+opendeck/.config/opendeck/plugins/
+# The deck-level profile file holds only "selected_profile" -- which page the
+# deck is showing right now. Pure live state, rewritten on every profile
+# switch; the profiles themselves are one directory deeper and are tracked.
+opendeck/.config/opendeck/profiles/*.json
