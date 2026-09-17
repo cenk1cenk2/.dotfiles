@@ -8,6 +8,7 @@ signal[recorder]=8
 signal[clipboard]=9
 signal[stt]=10
 signal[copywriter]=11
+signal[zoom]=12
 signal[tts]=13
 signal[pacman]=14
 signal[idle]=15

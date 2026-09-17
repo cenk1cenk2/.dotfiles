@@ -126,6 +126,12 @@ hl.config({
 -- Global animation
 hl.animation({ leaf = "global", enabled = true, speed = 0.5, bezier = "default" })
 
+-- Cursor zoom, driven by scripts/zoom.py. Speed is in 100ms units, so 1.5 is
+-- ~150ms: the upstream default for this leaf is 7 (700ms), far too slow for
+-- something bound to a key.
+hl.curve("easeInOutCubic", { type = "bezier", points = { { 0.65, 0.05 }, { 0.36, 1 } } })
+hl.animation({ leaf = "zoomFactor", enabled = true, speed = 1.5, bezier = "easeInOutCubic" })
+
 -- Disable borders and gaps when only one tiled window in workspace
 hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 

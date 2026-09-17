@@ -195,4 +195,3 @@ from .tts import (
 from .tts import (
     copy_audio as copy_audio,
 )
-from .waybar import signal_waybar as signal_waybar
