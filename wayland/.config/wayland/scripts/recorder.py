@@ -18,7 +18,7 @@ from dotlib.notify import (
     Notification,
     NotifyChannel,
 )
-from lib import (
+from dotlib.waybar import (
     signal_waybar,
 )
 

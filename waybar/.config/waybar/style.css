@@ -263,6 +263,14 @@ window#waybar .modules-right {
   background-color: @warning_color;
 }
 
+#custom-zoom {
+  background-color: @accent_color;
+  color: @bg_color_100;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-weight: bold;
+}
+
 #mode,
 #submap {
   color: @accent_color;

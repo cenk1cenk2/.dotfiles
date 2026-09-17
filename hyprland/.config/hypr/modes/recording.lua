@@ -68,7 +68,7 @@ hl.define_submap(submap, function()
   hl.bind("SHIFT + w", exec_then_reset(("%s kill"):format(d.copywriter)))
 
   -- Toggle zoom
-  hl.bind("z", exec_then_reset("hypr-zoom -easing=InOutCubic -interp=Linear -target 1.5"))
+  hl.bind("z", exec_then_reset(("%s toggle"):format(d.zoom)))
 
   -- Stop speech-to-text
   hl.bind("q", exec_then_reset(("%s stt kill"):format(d.speech)))

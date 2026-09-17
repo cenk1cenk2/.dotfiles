@@ -211,7 +211,7 @@ recording mode; there is no separate AI mode).
 - **R** (Shift+r) - Pause/resume recording
 - **o** - Open OBS window
 - **Q** (Shift+q) - Stop recording
-- **z** - Toggle zoom (hypr-zoom)
+- **z** - Toggle zoom (1.5x, native cursor zoom)
 
 ### Speech-to-Text (stt)
 
