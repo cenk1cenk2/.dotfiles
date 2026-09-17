@@ -75,7 +75,7 @@
       "attack": 25.0,
       "boost-amount": 6.0,
       "boost-threshold": -72.0,
-      "bypass": true,
+      "bypass": false,
       "dry": -80.01,
       "hpf-frequency": 150.0,
       "hpf-mode": "24 dB/oct",
@@ -90,7 +90,7 @@
       "makeup": 0.0,
       "mode": "Downward",
       "output-gain": 0.0,
-      "ratio": 1.2,
+      "ratio": 1.5,
       "release": 150.0,
       "release-threshold": -80.01,
       "sidechain": {
