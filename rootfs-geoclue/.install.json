@@ -1,0 +1,8 @@
+{
+  "target": "/",
+  "owner": "root:root",
+  "sudo": true,
+  "post": [
+    ["systemctl", "daemon-reload"]
+  ]
+}

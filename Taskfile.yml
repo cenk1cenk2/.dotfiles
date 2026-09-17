@@ -10,7 +10,7 @@ vars:
 
 tasks:
   check:
-    desc: Diff every system-installed file against the repo, changing nothing.
+    desc: Diff every copied (not stowed) package against the repo, changing nothing.
     cmds:
       - ./install.py --dry-run
 
@@ -108,7 +108,7 @@ tasks:
             xsettingsd
             ydotool
             zathura
-      - cp -a obs/.config/obs-studio/. ~/.config/obs-studio/
+      - ./install.py obs opendeck
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
 
@@ -117,7 +117,4 @@ tasks:
     platforms:
       - linux
     cmds:
-      - ./install.py
-      - sudo systemctl daemon-reload
-      - sudo udevadm control --reload
-      - sudo sysctl --system
+      - ./install.py rootfs rootfs-geoclue

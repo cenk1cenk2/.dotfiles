@@ -1,0 +1,23 @@
+{
+  "target": "/",
+  "owner": "root:root",
+  "sudo": true,
+  "modes": {
+    "etc/sudoers.d/clamav": "0440"
+  },
+  "rules": [
+    {
+      "paths": ["etc/pam.d/"],
+      "write": "atomic"
+    },
+    {
+      "paths": ["etc/sudoers.d/"],
+      "validate": "sudoers"
+    }
+  ],
+  "post": [
+    ["systemctl", "daemon-reload"],
+    ["udevadm", "control", "--reload"],
+    ["sysctl", "--system"]
+  ]
+}
