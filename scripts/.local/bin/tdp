@@ -131,6 +131,23 @@ class PowerLimit:
 
 
 @dataclass
+class PeripheralBattery:
+    """One UPower device that is not a system power supply (BT keyboard, mouse, …)."""
+
+    model: str
+    kind: str
+    percentage: str
+    state: str
+    native_path: str
+
+    @property
+    def via(self) -> str:
+        return (
+            "Bluetooth" if self.native_path.startswith("/org/bluez/") else "USB/other"
+        )
+
+
+@dataclass
 class BatteryStatus:
     backend: str
     limit: str
@@ -464,6 +481,7 @@ class Tdp:
         input_text: str | None = None,
         check: bool = True,
         echo_output: bool = False,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.log.debug("spawn: %s", " ".join(cmd))
         proc = subprocess.run(
@@ -473,6 +491,7 @@ class Tdp:
             stderr=subprocess.PIPE,
             text=True,
             check=False,
+            timeout=timeout,
         )
         if proc.stderr:
             self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
@@ -1367,6 +1386,47 @@ class Tdp:
 
         return rows
 
+    def peripheral_batteries(self) -> list[PeripheralBattery]:
+        """Batteries UPower tracks outside sysfs, from one `upower --dump`.
+
+        Skips `power supply: yes` devices, which are the laptop battery,
+        AC adapter and the DisplayDevice aggregate already shown above.
+        """
+        if shutil.which("upower") is None:
+            return []
+        try:
+            proc = self.run(["upower", "--dump"], check=False, timeout=5)
+        except subprocess.TimeoutExpired:
+            self.log.debug("upower --dump timed out")
+            return []
+
+        devices: list[PeripheralBattery] = []
+        for block in proc.stdout.split("\n\n"):
+            if not block.startswith("Device:"):
+                continue
+            fields: dict[str, str] = {}
+            kind = "?"
+            for line in block.splitlines()[1:]:
+                key, sep, value = line.strip().partition(":")
+                if sep:
+                    fields.setdefault(key, value.strip())
+                elif line.startswith("  ") and not line.startswith("   "):
+                    kind = line.strip()
+            if fields.get("power supply") == "yes" or "percentage" not in fields:
+                continue
+            state = fields.get("state", "unknown")
+            devices.append(
+                PeripheralBattery(
+                    fields.get("model") or fields.get("serial") or "?",
+                    kind,
+                    fields["percentage"],
+                    "—" if state == "unknown" else state,
+                    fields.get("native-path", ""),
+                )
+            )
+
+        return devices
+
     def charge_types_device(self) -> Path | None:
         for path in sorted(self.POWER_SUPPLY_PATH.glob("BAT*/charge_types")):
             return path.parent
@@ -1417,6 +1477,25 @@ class Tdp:
         if charge_device is not None:
             self.console.rule("[bold yellow]Battery charge mode[/]")
             self.console.print(self.charge_types_table(charge_device))
+
+        peripherals = self.peripheral_batteries()
+        if peripherals:
+            table = Table(box=None)
+            table.add_column("Device", style="bold")
+            table.add_column("Kind")
+            table.add_column("Charge", justify="right")
+            table.add_column("State")
+            table.add_column("Via")
+            for device_battery in peripherals:
+                table.add_row(
+                    device_battery.model,
+                    device_battery.kind,
+                    device_battery.percentage,
+                    device_battery.state,
+                    device_battery.via,
+                )
+            self.console.rule("[bold yellow]Peripheral batteries[/]")
+            self.console.print(table)
 
     def charge_types_table(self, device: Path) -> Table:
         current, choices = self.parse_charge_types(device)
