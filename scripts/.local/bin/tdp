@@ -487,8 +487,7 @@ class Tdp:
         proc = subprocess.run(
             cmd,
             input=input_text,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=False,
             timeout=timeout,
@@ -813,17 +812,9 @@ class Tdp:
         self.console.print(table)
 
     def nvidia_power_rows(self) -> list[list[str]]:
-        query = ",".join(
-            [
-                "pci.bus_id",
-                "power.draw",
-                "enforced.power.limit",
-                "power.default_limit",
-                "power.min_limit",
-                "power.max_limit",
-                "memory.used",
-                "pstate",
-            ]
+        query = (
+            "pci.bus_id,power.draw,enforced.power.limit,power.default_limit,"
+            "power.min_limit,power.max_limit,memory.used,pstate"
         )
         proc = self.run(
             [
@@ -937,8 +928,10 @@ class Tdp:
                     snapshot.format_duration(snapshot.active_ms),
                     snapshot.format_duration(snapshot.suspended_ms),
                     f"[{ratio_style}]{ratio:.1%}[/]" if ratio is not None else "?",
-                    f"[{'red' if snapshot.pinning_holders else 'green'}]"
-                    f"{len(snapshot.pinning_holders)}[/]/{len(snapshot.holders)}",
+                    (
+                        f"[{'red' if snapshot.pinning_holders else 'green'}]"
+                        f"{len(snapshot.pinning_holders)}[/]/{len(snapshot.holders)}"
+                    ),
                 ]
             )
             table.add_row(*row)
@@ -1360,8 +1353,10 @@ class Tdp:
             rows.append(
                 (
                     "Health",
-                    f"{health:.0f}% "
-                    f"({energy_full / 1e6:.1f}/{energy_design / 1e6:.1f} Wh)",
+                    (
+                        f"{health:.0f}% "
+                        f"({energy_full / 1e6:.1f}/{energy_design / 1e6:.1f} Wh)"
+                    ),
                 )
             )
         energy_now = num("energy_now")
