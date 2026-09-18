@@ -28,12 +28,14 @@ name = "dotlib"
 version = "1.0.0"
 source = { editable = "../lib" }
 dependencies = [
+    { name = "click" },
     { name = "pulsectl" },
     { name = "rich" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1" },
     { name = "pulsectl", specifier = ">=24.12" },
     { name = "rich", specifier = ">=13.7" },
 ]

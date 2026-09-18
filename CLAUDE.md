@@ -240,8 +240,12 @@ these need re-checking.
   package at `wayland/.config/wayland/lib/` (deployed
   `~/.config/wayland/lib`): `cli` (create_logger, RunResult, run),
   `desktop` (the headless flag), `notify`. Domain code stays in its own
-  project — `hyprctl`, `rofi`, `window_icons` in hyprland; `enrich`,
-  `stt`, `tts`, `waybar` and friends in wayland.
+  project — `hyprctl`, `rofi`, `window_icons` in hyprland; `stt`, `tts`,
+  `waybar` and friends in wayland.
+
+- `enrich` is in `dotlib` too, because two projects ask an LLM: the wayland
+  scripts (`speech`, `copywriter`) and `remsi`, whose AI cutter used to carry
+  its own copy of the chat-completions client.
 
 - Each consumer declares it as a uv path dependency with
   `editable = true`, so an edit to `dotlib` is live in every consumer on

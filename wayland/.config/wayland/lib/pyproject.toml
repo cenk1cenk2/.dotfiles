@@ -7,6 +7,8 @@ dependencies = [
   "rich>=13.7",
   # libpulse bindings for the sink-input ducking in `audio`.
   "pulsectl>=24.12",
+  # `enrich.enrich_options` builds the flags every enriching command shares.
+  "click>=8.1",
 ]
 
 # A path dependency has to be an installable package: uv builds it even in

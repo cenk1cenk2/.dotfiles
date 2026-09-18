@@ -31,6 +31,17 @@ from dotlib.desktop import (
     is_headless,
     set_headless,
 )
+from dotlib.enrich import (
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL,
+    EnrichAdapter,
+    EnrichProvider,
+    EnrichSpec,
+    EnrichStreaming,
+    build_enricher,
+    enrich_options,
+    spec_from_options,
+)
 from dotlib.notify import (
     Chime,
     ChimeDirection,
@@ -42,8 +53,6 @@ from dotlib.waybar import (
 )
 
 from lib import (
-    DEFAULT_API_KEY_ENV,
-    DEFAULT_BASE_URL,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
     DEFAULT_VAD_SILENCE_MS,
@@ -55,10 +64,6 @@ from lib import (
     PLAIN_FORMATS,
     RealtimeUnavailable,
     AudioFormat,
-    EnrichAdapter,
-    EnrichProvider,
-    EnrichSpec,
-    EnrichStreaming,
     InputAdapter,
     InputAdapterClipboard,
     InputMode,
@@ -86,13 +91,10 @@ from lib import (
     TeeReader,
     TtsAdapterHttp,
     TtsSpec,
-    build_enricher,
     build_input,
     build_output,
     copy_audio,
-    enrich_options,
     load_prompt,
-    spec_from_options,
 )
 
 

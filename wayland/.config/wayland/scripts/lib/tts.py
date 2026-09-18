@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
+from dotlib.enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
 
 class AudioFormat(StrEnum):

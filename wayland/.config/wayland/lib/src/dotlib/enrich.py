@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 import click
+
 from dotlib.cli import run
 
 
@@ -67,6 +68,21 @@ class EnrichSpec:
     num_ctx: int | None = None
     tool_ids: list[str] | None = None
     files: list[dict[str, Any]] | None = None
+
+    # The `json_schema` member of OpenAI's `response_format`, spelled as the
+    # wire does: {"name": ..., "strict": ..., "schema": {...}}. Carrying the
+    # whole member rather than the bare schema keeps the name and the strict
+    # flag with it, which are per-caller.
+    json_schema: dict[str, Any] | None = None
+
+    # Filename for the attachment part. Set it and `text` rides along as a
+    # second, named text part instead of being substituted into the template,
+    # which is how a whole document is handed over without the instruction
+    # drowning in it. A text part, never a `file` part: through agentgateway
+    # the Ollama backend rejects file parts with HTTP 400 and the codex
+    # backend drops them silently.
+    attachment: str | None = None
+
     user_agent: str = "enrich/1.0"
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,16 +148,32 @@ class EnrichAdapterHttp:
 
     def _body(self, text: str, stream: bool = False) -> dict[str, Any]:
         spec = self.spec
+        content: str | list[dict[str, Any]]
+        if spec.attachment:
+            # The template is the instruction on its own here — the payload is
+            # the attachment, so substituting it in would send it twice.
+            content = [
+                {"type": "text", "text": self.user_prompt_template},
+                {
+                    "type": "text",
+                    "text": f'<attachment name="{spec.attachment}">\n'
+                    f"{text}\n</attachment>",
+                },
+            ]
+        else:
+            content = self.user_prompt_template.format(text=text)
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {
-                    "role": "user",
-                    "content": self.user_prompt_template.format(text=text),
-                },
+                {"role": "user", "content": content},
             ],
         }
+        if spec.json_schema:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": spec.json_schema,
+            }
         if spec.thinking in ("high", "medium", "low"):
             body["reasoning_effort"] = spec.thinking
         if spec.temperature is not None:
@@ -225,7 +257,7 @@ class EnrichAdapterHttp:
                         break
                     try:
                         delta = json.loads(chunk)["choices"][0]["delta"]
-                    except (json.JSONDecodeError, KeyError, IndexError):
+                    except json.JSONDecodeError, KeyError, IndexError:
                         log.debug("unparsed stream chunk: %s", chunk)
                         continue
                     if content := delta.get("content"):

@@ -11,14 +11,11 @@ from __future__ import annotations
 import bisect
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -29,6 +26,7 @@ from typing import Any, ClassVar, Protocol
 import click
 from click.shell_completion import get_completion_class
 from dotlib.cli import create_logger
+from dotlib.enrich import EnrichSpec, build_enricher
 from rich.console import Console
 from rich.table import Table
 
@@ -372,9 +370,7 @@ class AiCutterHttp:
     sentences: false starts, restarts and retakes the speaker abandoned.
 
     The transcript rides along as an attached JSON document in the user
-    message. It is a text part, not a `file` part: through agentgateway
-    the Ollama backend rejects file parts with HTTP 400 and the codex
-    backend drops them silently.
+    message, which is `dotlib.enrich`'s `attachment` knob.
 
     Never raises; a failed call logs and yields no regions, so an LLM
     outage cannot cost the encode. The validated cuts are written to
@@ -382,6 +378,7 @@ class AiCutterHttp:
 
     name = "http"
     TIMEOUT = 300.0
+    USER_PROMPT = "Find the broken sentences in the attached transcript."
     SCHEMA: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
@@ -411,11 +408,24 @@ class AiCutterHttp:
         max_len: float,
         api_key_env: str = "AI_KILIC_DEV_API_KEY",
     ):
-        self.base_url = base_url.rstrip("/")
         self.model = model
-        self.system_prompt = system_prompt
         self.max_len = max_len
-        self.api_key_env = api_key_env
+        self.enricher = build_enricher(
+            EnrichSpec(
+                model=model,
+                base_url=base_url.rstrip("/"),
+                api_key_env=api_key_env,
+                timeout=self.TIMEOUT,
+                # The cuts are timestamps read off the transcript, not prose:
+                # nothing here benefits from sampling.
+                temperature=0,
+                json_schema={"name": "cuts", "strict": True, "schema": self.SCHEMA},
+                attachment="transcript.json",
+                user_agent="remsi/1.0",
+            ),
+            system_prompt,
+            self.USER_PROMPT,
+        )
 
     def _complete(self, words: list[TimedWord]) -> list[dict[str, Any]]:
         """One chat completion over the whole transcript; raises on
@@ -429,45 +439,6 @@ class AiCutterHttp:
             },
             ensure_ascii=False,
         )
-        body = {
-            "model": self.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Find the broken sentences in the attached transcript.",
-                        },
-                        {
-                            "type": "text",
-                            "text": f'<attachment name="transcript.json">\n'
-                            f"{transcript}\n</attachment>",
-                        },
-                    ],
-                },
-            ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "cuts",
-                    "strict": True,
-                    "schema": self.SCHEMA,
-                },
-            },
-        }
-        payload = json.dumps(body)
-        log.debug("request: %s", payload)
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=payload.encode(),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {os.environ.get(self.api_key_env, '')}",
-            },
-        )
         log.info(
             "sending transcript to %s: %d words, %d KB attached (timeout %ds)",
             self.model,
@@ -476,27 +447,11 @@ class AiCutterHttp:
             self.TIMEOUT,
         )
         started = time.monotonic()
-        try:
-            with urllib.request.urlopen(req, timeout=self.TIMEOUT) as resp:
-                data = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(
-                f"HTTP {e.code} (model={self.model}): "
-                f"{e.read().decode(errors='replace')}"
-            ) from e
-
-        choice = data["choices"][0]
-        content = (choice["message"].get("content") or "").strip()
-        log.info(
-            "response from %s in %.1fs (finish=%s, usage=%s)",
-            data.get("model", self.model),
-            time.monotonic() - started,
-            choice.get("finish_reason"),
-            data.get("usage"),
-        )
+        content = (self.enricher.enrich(transcript) or "").strip()
+        log.info("%s answered in %.1fs", self.model, time.monotonic() - started)
         log.debug("response: %s", content)
         if not content:
-            raise RuntimeError(f"empty response from {data.get('model', self.model)}")
+            raise RuntimeError(f"empty response from {self.model}")
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
         parsed = json.loads(content)
         hits = parsed if isinstance(parsed, list) else parsed.get("cuts", [])

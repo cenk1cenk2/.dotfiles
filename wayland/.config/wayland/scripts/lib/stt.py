@@ -29,8 +29,8 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 import websocket
+from dotlib.enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
-from .enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 from .input import InputAdapter, MicCapture
 
 

@@ -17,6 +17,13 @@ from dotlib.cli import (
 from dotlib.desktop import (
     set_headless,
 )
+from dotlib.enrich import (
+    EnrichAdapter,
+    EnrichStreaming,
+    build_enricher,
+    enrich_options,
+    spec_from_options,
+)
 from dotlib.notify import (
     Chime,
     ChimeDirection,
@@ -28,18 +35,13 @@ from dotlib.waybar import (
 )
 
 from lib import (
-    EnrichAdapter,
-    EnrichStreaming,
     InputAdapter,
     InputMode,
     OutputAdapter,
     OutputMode,
-    build_enricher,
     build_input,
     build_output,
-    enrich_options,
     load_prompt,
-    spec_from_options,
 )
 
 
