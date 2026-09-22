@@ -3,6 +3,13 @@
   "owner": "root:root",
   "sudo": true,
   "post": [
-    ["systemctl", "daemon-reload"]
+    ["systemctl", "daemon-reload"],
+    [
+      "systemctl",
+      "enable",
+      "mnt-norsu-rock.automount",
+      "mnt-norsu-WD4P_1.automount",
+      "mnt-norsu-WD4P_2.automount"
+    ]
   ]
 }

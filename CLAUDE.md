@@ -33,10 +33,10 @@ not automatically dead — see the kitty section.
   --suffix=mount /mnt/norsu/WD4P_1`. Moving a mount point renames both its
   units; a mismatched name is loaded and simply never triggers.
 - `TimeoutIdleSec=60` plus `WantedBy=remote-fs.target` reproduce what
-  `x-systemd.automount,x-systemd.idle-timeout=60s` gave in fstab. `install.py`
-  only places files, so a fresh machine also needs `systemctl enable` on the
-  three automount units — without it they are inert and `/mnt/norsu/*` is
-  empty with no error anywhere.
+  `x-systemd.automount,x-systemd.idle-timeout=60s` gave in fstab. The package's
+  `post` enables the three automount units by name, because placing a unit
+  file does not wire it into `remote-fs.target` and an unenabled automount is
+  inert after a reboot — `/mnt/norsu/*` is then empty with no error anywhere.
 - **The SMB credentials are not in this repo.** `/mnt/.norsu` is root-owned
   plaintext `username=` / `password=`, named to sit beside the `/mnt/norsu`
   tree it unlocks, and written by hand on a rebuilt machine. Every mount fails
