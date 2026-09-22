@@ -1,0 +1,9 @@
+[Unit]
+Description=Automount norsu.thor.arpa rock
+
+[Automount]
+Where=/mnt/norsu/rock
+TimeoutIdleSec=60
+
+[Install]
+WantedBy=remote-fs.target

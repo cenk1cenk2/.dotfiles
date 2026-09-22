@@ -1,0 +1,9 @@
+[Unit]
+Description=Automount norsu.thor.arpa WD4P_1
+
+[Automount]
+Where=/mnt/norsu/WD4P_1
+TimeoutIdleSec=60
+
+[Install]
+WantedBy=remote-fs.target

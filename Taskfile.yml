@@ -117,4 +117,4 @@ tasks:
     platforms:
       - linux
     cmds:
-      - ./install.py rootfs rootfs-geoclue
+      - ./install.py rootfs rootfs-geoclue rootfs-automount

@@ -1,0 +1,10 @@
+[Unit]
+Description=norsu.thor.arpa WD4P_1
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=//norsu.thor.arpa/WD4P_1
+Where=/mnt/norsu/WD4P_1
+Type=cifs
+Options=rw,relatime,vers=3.0,credentials=/mnt/.norsu,uid=1000,gid=1000,iocharset=utf8,rsize=65536,wsize=65536,mfsymlinks,cache=strict,noserverino
