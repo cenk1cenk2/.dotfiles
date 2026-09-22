@@ -1,0 +1,741 @@
+#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" python "$0" "$@"'
+# vim: ft=python
+"""Sync agent session state between two machines over ssh."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
+from enum import StrEnum
+from pathlib import Path
+from typing import ClassVar
+
+import click
+from dotlib.cli import create_logger, run
+from rich.console import Console
+from rich.table import Table
+
+
+class Vendor(StrEnum):
+    CLAUDE = "claude"
+    CODEX = "codex"
+    OPENCODE = "opencode"
+
+
+class Merge(StrEnum):
+    """How two copies of one path become one.
+
+    APPEND covers files only ever extended, and only by the machine that
+    owns them. Both sides holding a different body means the session was
+    resumed on both, which no merge can reconcile — that is a CONFLICT.
+    """
+
+    APPEND = "append"
+    LINES = "lines"
+    INDEX = "index"
+
+
+class Action(StrEnum):
+    SAME = "same"
+    PULL = "pull"
+    PUSH = "push"
+    MERGE = "merge"
+    CONFLICT = "conflict"
+
+
+@dataclass(frozen=True)
+class Profile:
+    name: str
+    vendor: Vendor
+    root: Path
+
+    @property
+    def relative_root(self) -> Path:
+        return self.root.relative_to(Path.home())
+
+
+@dataclass(frozen=True)
+class Entry:
+    path: str
+    size: int
+    digest: str | None = None
+
+
+@dataclass
+class Step:
+    path: str
+    action: Action
+    merge: Merge
+    note: str = ""
+    payload: str | None = None
+
+
+@dataclass
+class Report:
+    profile: Profile
+    steps: list[Step] = field(default_factory=list)
+    skipped: str | None = None
+
+    def count(self, action: Action) -> int:
+        return sum(1 for s in self.steps if s.action is action)
+
+
+class Synco:
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+    def cli(verbose: bool) -> None:
+        create_logger(verbose, name="synco")
+
+    console: ClassVar[Console] = Console(force_terminal=None)
+    log = logging.getLogger("synco")
+
+    HOSTNAME_PATH = Path("/proc/sys/kernel/hostname")
+    STATE_DIR = (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "synco"
+    )
+    RCLONE_TIMEOUT = 900.0
+    SSH_CONTROL = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "synco-ssh-%C"
+    # All the sftp backend probes for on its own. Anything else has to name
+    # its remote command too (--sftp-hashes sha256 --sftp-sha256sum-command
+    # sha256sum); asking without that silently drops the hash from the
+    # listing and sends every file through a body fetch instead. A hash only
+    # decides whether two copies are identical — the byte comparison is what
+    # rules on which one to keep.
+    HASH = "md5"
+
+    # Mirrors the env patches in ~/.config/hyprpilot/config.yaml, which is the
+    # source of truth for which profile writes where. The two share no parser,
+    # so a state directory moved there has to be moved here in the same commit.
+    PROFILES: ClassVar[tuple[Profile, ...]] = (
+        Profile("personal/claude", Vendor.CLAUDE, Path.home() / ".claude-kilic"),
+        Profile("work/claude", Vendor.CLAUDE, Path.home() / ".claude-laravel"),
+        Profile("personal/codex", Vendor.CODEX, Path.home() / ".codex-kilic"),
+        Profile("work/codex", Vendor.CODEX, Path.home() / ".codex-laravel"),
+        Profile(
+            "personal/kilic",
+            Vendor.OPENCODE,
+            Path.home() / ".local/share/opencode-kilic",
+        ),
+        Profile(
+            "work/ollama",
+            Vendor.OPENCODE,
+            Path.home() / ".local/share/opencode-laravel",
+        ),
+    )
+
+    # Only transcripts and memories. Everything absent from this map — caches,
+    # shell snapshots, plugins, per-project state — stays machine-local.
+    INCLUDES: ClassVar[dict[Vendor, tuple[str, ...]]] = {
+        Vendor.CLAUDE: (
+            "projects/**",
+            "plans/**",
+            "history.jsonl",
+        ),
+        Vendor.CODEX: (
+            "sessions/**",
+            "memories/**",
+            "history.jsonl",
+            "session_index.jsonl",
+        ),
+        Vendor.OPENCODE: (),
+    }
+
+    # Credentials are excluded by path rather than by flag, so no invocation
+    # can opt into shipping them. The rest is either machine-local or stowed:
+    # a stowed file is a symlink into the repo, and writing through one would
+    # edit the checkout.
+    EXCLUDES: ClassVar[dict[Vendor, tuple[str, ...]]] = {
+        Vendor.CLAUDE: (
+            ".credentials.json",
+            ".claude.json",
+            ".claude.json.backup",
+            "settings.json",
+        ),
+        Vendor.CODEX: (
+            "auth.json",
+            "config.toml",
+            "rules/**",
+            "**/*.sqlite",
+            "**/*.sqlite-shm",
+            "**/*.sqlite-wal",
+        ),
+        Vendor.OPENCODE: (),
+    }
+
+    MERGES: ClassVar[dict[Vendor, tuple[tuple[str, Merge], ...]]] = {
+        Vendor.CLAUDE: (
+            ("history.jsonl", Merge.LINES),
+            ("projects/*/memory/MEMORY.md", Merge.INDEX),
+        ),
+        Vendor.CODEX: (
+            ("history.jsonl", Merge.LINES),
+            ("session_index.jsonl", Merge.LINES),
+            ("memories/raw_memories.md", Merge.LINES),
+            ("memories/MEMORY.md", Merge.INDEX),
+        ),
+        Vendor.OPENCODE: (),
+    }
+
+    ACTION_STYLES: ClassVar[dict[Action, str]] = {
+        Action.SAME: "dim",
+        Action.PULL: "cyan",
+        Action.PUSH: "green",
+        Action.MERGE: "yellow",
+        Action.CONFLICT: "red",
+    }
+
+    @classmethod
+    def select(cls, names: tuple[str, ...], vendors: tuple[str, ...]) -> list[Profile]:
+        selected = [
+            p
+            for p in cls.PROFILES
+            if (not names or p.name in names) and (not vendors or p.vendor in vendors)
+        ]
+        if not selected:
+            raise click.ClickException("no profile matched")
+
+        return selected
+
+    def __init__(self, peer: str, user: str | None, dry_run: bool) -> None:
+        self.peer = peer
+        self.user = user
+        self.dry_run = dry_run
+        self.stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.backup_root = self.STATE_DIR / self.stamp
+        self.manifest: list[dict[str, object]] = []
+
+    @property
+    def hostname(self) -> str:
+        return self.HOSTNAME_PATH.read_text().strip()
+
+    def remote(self, profile: Profile) -> str:
+        return f":sftp:{profile.relative_root}"
+
+    @property
+    def ssh_target(self) -> str:
+        return f"{self.user}@{self.peer}" if self.user else self.peer
+
+    @property
+    def ssh_command(self) -> str:
+        # rclone runs one md5sum per remote file and --sftp-ssh cannot
+        # multiplex, so without a shared control socket every hash pays a
+        # fresh TCP connect and key exchange.
+        return (
+            "ssh -o BatchMode=yes"
+            " -o ControlMaster=auto"
+            f" -o ControlPath={self.SSH_CONTROL}"
+            " -o ControlPersist=60s"
+            f" {self.ssh_target}"
+        )
+
+    def filters(self, profile: Profile) -> list[str]:
+        """rclone-side filters matching `wanted`.
+
+        Without these the listing walks and hashes the whole state directory
+        — caches, plugins, file history — to have most of it dropped here
+        afterwards. rclone anchors a pattern at the root with a leading
+        slash, which is what `full_match` does.
+        """
+        args: list[str] = []
+        for pattern in self.EXCLUDES[profile.vendor]:
+            args += ["--exclude", f"/{pattern}"]
+        for pattern in self.INCLUDES[profile.vendor]:
+            args += ["--include", f"/{pattern}"]
+
+        return args
+
+    def merge_kind(self, profile: Profile, path: str) -> Merge:
+        for pattern, kind in self.MERGES[profile.vendor]:
+            if Path(path).full_match(pattern):
+                return kind
+
+        return Merge.APPEND
+
+    def wanted(self, profile: Profile, path: str) -> bool:
+        target = Path(path)
+        if any(target.full_match(p) for p in self.EXCLUDES[profile.vendor]):
+            return False
+
+        return any(target.full_match(p) for p in self.INCLUDES[profile.vendor])
+
+    def rclone_command(self, *args: str) -> list[str]:
+        # rclone's own sftp client reads none of ~/.ssh/config, so a peer's
+        # port, user, key or ProxyJump would have to be restated as flags.
+        # Delegating to the ssh binary keeps that config the one source.
+        return [
+            "rclone",
+            "--skip-links",
+            "--sftp-skip-links",
+            "--sftp-ssh",
+            self.ssh_command,
+            *args,
+        ]
+
+    def transfer(self, *args: str) -> None:
+        """Run a copy with rclone's own progress display.
+
+        Its output is left uncaptured so the meter can redraw, and aimed at
+        stderr because stdout here carries the plan tables. rclone falls back
+        to plain log lines by itself when that is not a terminal.
+        """
+        cmd = self.rclone_command("--progress", "--stats", "1s", *args)
+        self.log.info("spawn: %s", " ".join(cmd))
+        subprocess.run(
+            cmd,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+            timeout=self.RCLONE_TIMEOUT,
+            check=True,
+        )
+
+    def rclone(self, *args: str) -> str:
+        cmd = self.rclone_command(*args)
+        result = run(cmd, log=self.log, timeout=self.RCLONE_TIMEOUT, check=True)
+
+        return result.stdout
+
+    def scan_local(self, profile: Profile) -> dict[str, Entry]:
+        entries: dict[str, Entry] = {}
+        if not profile.root.is_dir():
+            return entries
+
+        for path in profile.root.rglob("*"):
+            if path.is_symlink() or not path.is_file():
+                continue
+            relative = str(path.relative_to(profile.root))
+            if not self.wanted(profile, relative):
+                continue
+            entries[relative] = Entry(relative, path.stat().st_size)
+
+        return entries
+
+    def scan_remote(self, profile: Profile) -> dict[str, Entry]:
+        listing = self.rclone(
+            "lsjson",
+            "-R",
+            "--hash",
+            "--hash-type",
+            self.HASH,
+            *self.filters(profile),
+            self.remote(profile),
+        )
+        entries: dict[str, Entry] = {}
+        for item in json.loads(listing or "[]"):
+            if item["IsDir"]:
+                continue
+            path = item["Path"]
+            if not self.wanted(profile, path):
+                continue
+            entries[path] = Entry(
+                path,
+                item["Size"],
+                (item.get("Hashes") or {}).get(self.HASH),
+            )
+
+        return entries
+
+    @classmethod
+    def digest(cls, path: Path) -> str:
+        with path.open("rb") as handle:
+            return hashlib.file_digest(handle, cls.HASH).hexdigest()
+
+    def fetch(self, profile: Profile, paths: list[str], into: Path) -> None:
+        """Copy `paths` off the peer into a staging tree."""
+        if not paths:
+            return
+        # Under the state dir, never beside `into`: apply fetches straight
+        # into the profile root, which would drop the list in $HOME.
+        listing = self.backup_root / f"fetch-{profile.name.replace('/', '-')}.txt"
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        listing.write_text("".join(f"{p}\n" for p in paths))
+        self.transfer(
+            "copy",
+            "--files-from",
+            str(listing),
+            self.remote(profile),
+            str(into),
+        )
+
+    def send(self, profile: Profile, paths: list[str], source: Path) -> None:
+        if not paths:
+            return
+        listing = self.backup_root / f"send-{profile.vendor}-{source.name}.txt"
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        listing.write_text("".join(f"{p}\n" for p in paths))
+        self.transfer(
+            "copy",
+            "--files-from",
+            str(listing),
+            str(source),
+            self.remote(profile),
+        )
+
+    @staticmethod
+    def is_prefix(shorter: bytes, longer: bytes) -> bool:
+        return longer.startswith(shorter)
+
+    @staticmethod
+    def merge_lines(local: str, remote: str) -> str:
+        """Both sides' lines, in an order consistent with both.
+
+        A two-way diff rather than a set union: a log is an ordered record,
+        and deduping it would reorder the lines that repeat and drop the
+        entries that genuinely happened twice. Every line of both sides
+        survives, so merging a file with itself returns it byte-identical.
+
+        Split on newlines alone. `splitlines` also breaks on U+2028, U+2029
+        and U+0085, which JSON does not escape, so a pasted line separator
+        inside a record would split that record into two invalid ones.
+        """
+        ours = local.split("\n")
+        theirs = remote.split("\n")
+        merged: list[str] = []
+        matcher = SequenceMatcher(None, ours, theirs, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            merged.extend(ours[i1:i2])
+            if tag != "equal":
+                merged.extend(theirs[j1:j2])
+
+        return "\n".join(merged)
+
+    @staticmethod
+    def merge_index(local: str, remote: str, prefer_remote: bool) -> str:
+        """Union of memory-index bullets, keyed on the file each one links to.
+
+        Two lines pointing at the same memory would read as two memories, so
+        the target is the identity and the newer side wins the wording. The
+        memory itself travels as its own file, so nothing is lost either way.
+
+        Built on the line merge, so a line that links to nothing — a blank,
+        a heading — is carried through rather than keyed on its own text,
+        which would collapse every blank line in the file into one.
+        """
+
+        def target(line: str) -> str:
+            return line.partition("](")[2].partition(")")[0]
+
+        winner = {
+            key: line
+            for line in (remote if prefer_remote else local).split("\n")
+            if (key := target(line))
+        }
+        merged: list[str] = []
+        seen: set[str] = set()
+        for line in Synco.merge_lines(local, remote).split("\n"):
+            key = target(line)
+            if not key:
+                merged.append(line)
+            elif key not in seen:
+                seen.add(key)
+                merged.append(winner.get(key, line))
+
+        return "\n".join(merged)
+
+    def plan(self, profile: Profile, staging: Path) -> Report:
+        report = Report(profile)
+        if not self.INCLUDES[profile.vendor]:
+            report.skipped = "no file-backed state; lives in sqlite"
+            return report
+        if not profile.root.is_dir():
+            report.skipped = f"{profile.root} absent"
+            return report
+
+        local = self.scan_local(profile)
+        remote = self.scan_remote(profile)
+
+        undecided: list[str] = []
+        mergeable: list[str] = []
+        for path in sorted(set(local) | set(remote)):
+            kind = self.merge_kind(profile, path)
+            if path not in remote:
+                report.steps.append(Step(path, Action.PUSH, kind))
+            elif path not in local:
+                report.steps.append(Step(path, Action.PULL, kind))
+            elif kind is not Merge.APPEND:
+                mergeable.append(path)
+            elif self.unchanged(profile, path, local[path], remote[path]):
+                report.steps.append(Step(path, Action.SAME, kind))
+            else:
+                undecided.append(path)
+
+        # Bodies are only pulled where the listing could not settle it, so
+        # an unchanged tree costs one listing and no transfer.
+        self.fetch(profile, undecided + mergeable, staging)
+        for path in undecided:
+            report.steps.append(self.decide(profile, path, staging))
+        for path in mergeable:
+            report.steps.append(self.combine(profile, path, staging))
+
+        return report
+
+    def unchanged(
+        self, profile: Profile, path: str, ours: Entry, theirs: Entry
+    ) -> bool:
+        """Whether the listing alone proves the two copies identical.
+
+        A false answer only costs a fetch: every path this rejects is settled
+        on its bytes, so a backend that reports no hash stays correct.
+        """
+        if ours.size != theirs.size or theirs.digest is None:
+            return False
+
+        return theirs.digest == self.digest(profile.root / path)
+
+    def combine(self, profile: Profile, path: str, staging: Path) -> Step:
+        kind = self.merge_kind(profile, path)
+        target = profile.root / path
+        landed = staging / path
+        ours = target.read_text()
+        theirs = landed.read_text()
+        if kind is Merge.INDEX:
+            peer_is_newer = landed.stat().st_mtime > target.stat().st_mtime
+            merged = self.merge_index(ours, theirs, peer_is_newer)
+        else:
+            merged = self.merge_lines(ours, theirs)
+        if merged == ours == theirs:
+            return Step(path, Action.SAME, kind)
+
+        return Step(path, Action.MERGE, kind, payload=merged)
+
+    def decide(self, profile: Profile, path: str, staging: Path) -> Step:
+        ours = (profile.root / path).read_bytes()
+        theirs = (staging / path).read_bytes()
+        if ours == theirs:
+            return Step(path, Action.SAME, Merge.APPEND)
+        if self.is_prefix(ours, theirs):
+            return Step(path, Action.PULL, Merge.APPEND, "peer extended it")
+        if self.is_prefix(theirs, ours):
+            return Step(path, Action.PUSH, Merge.APPEND, "we extended it")
+
+        return Step(path, Action.CONFLICT, Merge.APPEND, "resumed on both")
+
+    def backup(self, profile: Profile, path: str) -> None:
+        source = profile.root / path
+        if not source.is_file():
+            return
+        target = self.backup_root / profile.name.replace("/", "-") / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        self.manifest.append(
+            {
+                "profile": profile.name,
+                "path": path,
+                "size": source.stat().st_size,
+                "backup": str(target),
+            }
+        )
+        # Rewritten on every backup, not once at the end: a run that dies
+        # partway would otherwise leave a directory of copies with nothing
+        # saying what any of them was.
+        (self.backup_root / "manifest.json").write_text(
+            json.dumps(self.manifest, indent=2)
+        )
+
+    def apply(self, profile: Profile, report: Report, staging: Path) -> None:
+        pull = [s.path for s in report.steps if s.action is Action.PULL]
+        push = [s.path for s in report.steps if s.action is Action.PUSH]
+
+        for path in pull:
+            self.backup(profile, path)
+        self.fetch(profile, pull, profile.root)
+
+        for step in report.steps:
+            if step.action is Action.MERGE:
+                push.append(self.write_merge(profile, step))
+            elif step.action is Action.CONFLICT:
+                push.extend(self.write_conflict(profile, step, staging))
+
+        self.send(profile, push, profile.root)
+
+    def write_merge(self, profile: Profile, step: Step) -> str:
+        assert step.payload is not None
+        self.backup(profile, step.path)
+        (profile.root / step.path).write_text(step.payload)
+
+        return step.path
+
+    def write_conflict(self, profile: Profile, step: Step, staging: Path) -> list[str]:
+        """Park both bodies side by side. Neither original is touched.
+
+        Both sidecars go to both machines: the one holding our body is the
+        half the peer does not already have.
+        """
+        target = profile.root / step.path
+        already = {
+            self.digest(p) for p in target.parent.glob(f"{target.name}.conflict-*")
+        }
+        parked: list[str] = []
+        for side, body in ((self.hostname, target), (self.peer, staging / step.path)):
+            # A conflict stays one until someone resolves it by hand, so
+            # without this every later run parks the same two bodies again.
+            if self.digest(body) in already:
+                continue
+            name = f"{step.path}.conflict-{side}-{self.stamp}"
+            shutil.copy2(body, profile.root / name)
+            parked.append(name)
+
+        return parked
+
+    def live_vendors(self) -> set[Vendor]:
+        """Which vendors have a process running on either machine.
+
+        One round trip rather than one per vendor: the probe prints the
+        names it finds, because `pgrep` prints pids and those say nothing
+        about which vendor they belong to.
+        """
+        probe = "; ".join(f"pgrep -x {v} >/dev/null && echo {v}" for v in Vendor)
+        live = {
+            vendor
+            for vendor in Vendor
+            if run(
+                ["pgrep", "-x", "-u", str(os.getuid()), str(vendor)],
+                log=self.log,
+                timeout=30.0,
+            ).returncode
+            == 0
+        }
+        remote = run(
+            [*self.ssh_command.split(), probe],
+            log=self.log,
+            timeout=30.0,
+        )
+
+        return live | {v for v in Vendor if str(v) in remote.stdout.split()}
+
+    def render(self, reports: list[Report], live: set[Vendor]) -> None:
+        table = Table(box=None)
+        table.add_column("Profile", style="bold")
+        table.add_column("Same", justify="right")
+        table.add_column("Pull", justify="right", style="cyan")
+        table.add_column("Push", justify="right", style="green")
+        table.add_column("Merge", justify="right", style="yellow")
+        table.add_column("Conflict", justify="right", style="red")
+        table.add_column("Note")
+        for report in reports:
+            table.add_row(
+                report.profile.name,
+                str(report.count(Action.SAME)),
+                str(report.count(Action.PULL)),
+                str(report.count(Action.PUSH)),
+                str(report.count(Action.MERGE)),
+                str(report.count(Action.CONFLICT)),
+                report.skipped or "",
+            )
+        self.console.print(table)
+
+        for report in reports:
+            moving = [s for s in report.steps if s.action is not Action.SAME]
+            if not moving:
+                continue
+            self.console.rule(f"[bold yellow]{report.profile.name}[/]")
+            detail = Table(box=None)
+            detail.add_column("Action", style="bold")
+            detail.add_column("Path")
+            detail.add_column("Why")
+            for step in moving:
+                detail.add_row(
+                    f"[{self.ACTION_STYLES[step.action]}]{step.action}[/]",
+                    step.path,
+                    step.note or str(step.merge),
+                )
+            self.console.print(detail)
+
+        if live:
+            names = ", ".join(sorted(live))
+            # A transcript appended to mid-run lands on the peer truncated,
+            # and the next run sees a strict prefix and repairs it. Worth
+            # saying out loud, not worth refusing the run over.
+            self.console.print(
+                f"[yellow]running:[/] {names} — transfers may be a turn behind"
+            )
+
+    def sync(self, profiles: list[Profile]) -> int:
+        live = self.live_vendors()
+        staging = self.backup_root / "peer"
+        staging.mkdir(parents=True, exist_ok=True)
+
+        reports = [self.plan(p, staging / p.name.replace("/", "-")) for p in profiles]
+        self.render(reports, live)
+
+        if self.dry_run:
+            self.console.print("[dim]dry run: nothing written[/]")
+            return 0
+
+        for report in reports:
+            if report.skipped:
+                continue
+            slug = report.profile.name.replace("/", "-")
+            self.apply(report.profile, report, staging / slug)
+
+        self.console.print(f"backups: [bold]{self.backup_root}[/]")
+
+        return sum(r.count(Action.CONFLICT) for r in reports)
+
+    @cli.group("agents", invoke_without_command=True)
+    @click.option("--peer", default=None, help="Host to sync against. Required.")
+    @click.option("--user", default=None, help="Remote user. Default: ssh config.")
+    @click.option("--profile", "profiles", multiple=True, help="Profile to sync.")
+    @click.option(
+        "--vendor",
+        type=click.Choice([v.value for v in Vendor]),
+        multiple=True,
+        help="Vendor to sync.",
+    )
+    @click.option("-n", "--dry-run", is_flag=True, help="Plan only, write nothing.")
+    @click.pass_context
+    def cmd_agents(
+        ctx: click.Context,
+        peer: str | None,
+        user: str | None,
+        profiles: tuple[str, ...],
+        vendor: tuple[str, ...],
+        dry_run: bool,
+    ) -> None:
+        """Sync agent sessions and memories with a peer machine."""
+        ctx.obj = Synco.select(profiles, vendor)
+        # Checked here rather than declared required, so the subcommands that
+        # never reach the network are not made to name a host.
+        if ctx.invoked_subcommand is not None:
+            return
+        if peer is None:
+            raise click.UsageError("--peer is required to sync", ctx)
+
+        synco = Synco(peer, user, dry_run)
+        conflicts = synco.sync(ctx.obj)
+        if conflicts:
+            synco.console.print(
+                f"[red]{conflicts} conflict(s)[/] parked beside their originals"
+            )
+            sys.exit(1)
+
+    @cmd_agents.command("profiles")
+    @click.pass_obj
+    def cmd_agents_profiles(selected: list[Profile]) -> None:
+        """List the profiles synco knows and where their state lives."""
+        table = Table(box=None)
+        table.add_column("Profile", style="bold")
+        table.add_column("Vendor")
+        table.add_column("Root")
+        table.add_column("State")
+        table.add_column("Present")
+        for profile in selected:
+            table.add_row(
+                profile.name,
+                profile.vendor,
+                str(profile.root),
+                "sqlite" if not Synco.INCLUDES[profile.vendor] else "files",
+                "yes" if profile.root.is_dir() else "no",
+            )
+        Synco.console.print(table)
+
+
+if __name__ == "__main__":
+    Synco.cli()
