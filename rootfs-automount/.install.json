@@ -2,15 +2,5 @@
   "target": "/",
   "owner": "root:root",
   "sudo": true,
-  "post": [
-    ["systemctl", "daemon-reload"],
-    [
-      "systemctl",
-      "enable",
-      "--now",
-      "mnt-norsu-rock.automount",
-      "mnt-norsu-WD4P_1.automount",
-      "mnt-norsu-WD4P_2.automount"
-    ]
-  ]
+  "post": [["systemctl", "daemon-reload"]]
 }
