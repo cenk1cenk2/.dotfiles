@@ -23,6 +23,25 @@ not automatically dead — see the kitty section.
   inherited from outside the selected UWSM profile and the selected
   profile must actively neutralize that inherited value.
 
+## Automounts (`rootfs-automount`)
+
+- The three `norsu.thor.arpa` CIFS shares mount from native systemd units in
+  `/etc/systemd/system` — `mnt-norsu-{rock,WD4P_1,WD4P_2}.{mount,automount}`,
+  deployed by `./install.py rootfs-automount`. Nothing about them is in
+  `/etc/fstab`, which carries only local disks.
+- **A unit name is the escaped mount point**, `systemd-escape -p
+  --suffix=mount /mnt/norsu/WD4P_1`. Moving a mount point renames both its
+  units; a mismatched name is loaded and simply never triggers.
+- `TimeoutIdleSec=60` plus `WantedBy=remote-fs.target` reproduce what
+  `x-systemd.automount,x-systemd.idle-timeout=60s` gave in fstab. `install.py`
+  only places files, so a fresh machine also needs `systemctl enable` on the
+  three automount units — without it they are inert and `/mnt/norsu/*` is
+  empty with no error anywhere.
+- **The SMB credentials are not in this repo.** `/mnt/.norsu` is root-owned
+  plaintext `username=` / `password=`, named to sit beside the `/mnt/norsu`
+  tree it unlocks, and written by hand on a rebuilt machine. Every mount fails
+  with a permission error until it exists.
+
 ## NVIDIA dGPU runtime power (hybrid profile, RTX 5070 / nvidia-open)
 
 Goal state: the dGPU reaches D3cold whenever idle. Verified against driver
