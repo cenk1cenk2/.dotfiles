@@ -19,6 +19,7 @@ name are.
     ./install.py                every package that has a .install.json
     ./install.py obs rootfs     only these
     ./install.py -n             diff everything, change nothing
+    ./install.py --dirty        untracked files too, not just the index
 
 Two path groups get extra care, both declared by `rootfs/.install.json` rather
 than assumed here. `etc/sudoers.d` is validated with `visudo` before anything
@@ -336,20 +337,45 @@ def installable() -> list[str]:
     )
 
 
-def manifest(package: Package) -> list[Entry]:
+def manifest(package: Package, *, dirty: bool) -> list[Entry]:
     """Every file this script installs for a package, derived from git.
 
     Three separate hand counts of `rootfs` disagreed; the index is the only
-    source that cannot drift as files are added.
+    source that cannot drift as files are added. That does mean a file written
+    but never `git add`ed is not installed and is not reported missing either,
+    which `dirty` exists to cover.
     """
+    listed = [
+        (source, git_mode)
+        for git_mode, _, _, source in (
+            line.split(maxsplit=3)
+            for line in git("ls-files", "-s", package.name).splitlines()
+        )
+    ]
+    if dirty:
+        # An untracked file has no index entry, so its mode comes off disk in
+        # the two values git would have recorded. `--exclude-standard` keeps
+        # .gitignore honoured, which is what holds the gitignored credential
+        # files out of a dirty run.
+        for source in git(
+            "ls-files", "-o", "--exclude-standard", package.name
+        ).splitlines():
+            path = REPO / source
+            if path.is_symlink():
+                git_mode = "120000"
+            elif os.access(path, os.X_OK):
+                git_mode = "100755"
+            else:
+                git_mode = "100644"
+            listed.append((source, git_mode))
+
     entries = []
-    tracked: set[str] = set()
-    for line in git("ls-files", "-s", package.name).splitlines():
-        git_mode, _, _, source = line.split(maxsplit=3)
+    known: set[str] = set()
+    for source, git_mode in listed:
         relative = source.split("/", 1)[1]
         if relative == CONFIG:
             continue
-        tracked.add(relative)
+        known.add(relative)
         if relative.startswith(package.ignore):
             continue
         if git_mode not in ("100644", "100755"):
@@ -368,21 +394,21 @@ def manifest(package: Package) -> list[Entry]:
     # nothing. The likely mistake is the old package-prefixed spelling
     # ("rootfs/etc/sudoers.d/clamav"), which would quietly install that file
     # 0644 instead of 0440 and skip the rule that validates it.
-    inert = [f"modes[{key!r}]" for key in package.modes if key not in tracked]
+    inert = [f"modes[{key!r}]" for key in package.modes if key not in known]
     inert += [
         f"ignore[{prefix!r}]"
         for prefix in package.ignore
-        if not any(name.startswith(prefix) for name in tracked)
+        if not any(name.startswith(prefix) for name in known)
     ]
     inert += [
         f"rules[].paths[{prefix!r}]"
         for rule in package.rules
         for prefix in rule.paths
-        if not any(name.startswith(prefix) for name in tracked)
+        if not any(name.startswith(prefix) for name in known)
     ]
     if inert:
         raise SystemExit(
-            f"{package.name}/{CONFIG}: matches no tracked file: {', '.join(inert)}"
+            f"{package.name}/{CONFIG}: matches no file: {', '.join(inert)}"
         )
     return sorted(entries, key=lambda e: e.relative)
 
@@ -786,7 +812,10 @@ def install(args: argparse.Namespace) -> int:
             ", sudo" if package.sudo else "",
         )
 
-    changes = [inspect(e) for p in packages for e in manifest(p)]
+    if args.dirty:
+        log.info("dirty: untracked files included, gitignored paths still not")
+
+    changes = [inspect(e) for p in packages for e in manifest(p, dirty=args.dirty)]
     pending = [c for c in changes if c.needed]
     log.info(
         "%d of %d managed file(s) need work; %d already correct",
@@ -929,6 +958,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="Show the diffs and change nothing.",
+    )
+    parser.add_argument(
+        "--dirty",
+        action="store_true",
+        help="Install untracked files too. Gitignored paths stay out.",
     )
     args = parser.parse_args()
     logging.basicConfig(

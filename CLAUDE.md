@@ -95,6 +95,14 @@ these need re-checking.
   reloading would otherwise leave the next run reporting nothing to do.
   `./install.py --dry-run` (or `task check`) reports what would change across
   every package; bare `task` only lists tasks and copies nothing.
+- **Only tracked files are installed**, because the file list is `git ls-files`
+  over the package. A file written but never `git add`ed is skipped in silence
+  and the run still reports success, since nothing failed — it just had nothing
+  to copy. `--dirty` adds the untracked files on top via
+  `git ls-files -o --exclude-standard`, so gitignored paths (the OpenDeck
+  `settings/` credentials, `plugins/`) stay out either way, and an untracked
+  symlink is rejected exactly as a tracked one is. Their mode comes off the
+  executable bit on disk, git recording nothing else.
 - **Two destination prefixes get extra care**, because a bad file there costs
   privilege escalation or every means of authenticating. Both are floors keyed
   on the destination path, not on a package, so a new `/`-targeted package
@@ -108,7 +116,7 @@ these need re-checking.
     `install` directly. `install` is unlink-then-create, and `/etc/pam.d/other`
     is `pam_deny` on all four stanzas, so a crash between the two would deny
     every login until repaired by hand.
-- **A `.install.json` path matching no tracked file is an error**, not a silent
+- **A `.install.json` path matching no file is an error**, not a silent
   no-op, and so is an unknown key or strategy name. The mistake this catches is
   the package-prefixed spelling (`rootfs/etc/sudoers.d/clamav` instead of
   `etc/sudoers.d/clamav`), which would install that file 0644 and skip its
