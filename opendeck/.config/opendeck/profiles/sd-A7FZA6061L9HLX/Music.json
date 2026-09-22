@@ -64,21 +64,22 @@
     {
       "action": {
         "controllers": [
-          "Keypad"
+          "Keypad",
+          "Encoder"
         ],
-        "disable_automatic_states": true,
+        "disable_automatic_states": false,
         "encoder": null,
-        "icon": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/actions/volume-down@2x.png",
-        "name": "Volume Down",
-        "plugin": "com.ntanis.essentials-for-spotify.sdPlugin",
-        "property_inspector": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/pi/volume-down-button.html",
+        "icon": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
+        "name": "Run Command",
+        "plugin": "com.amansprojects.starterpack.sdPlugin",
+        "property_inspector": "plugins/com.amansprojects.starterpack.sdPlugin/propertyInspector/runCommand.html",
         "states": [
           {
             "alignment": "middle",
             "background_colour": "#000000",
             "colour": "#FFFFFF",
             "family": "Liberation Sans",
-            "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-down@2x.png",
+            "image": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
             "image_scale": 100,
             "name": "",
             "show": true,
@@ -91,31 +92,35 @@
           }
         ],
         "supported_in_multi_actions": true,
-        "tooltip": "Decreases the playback volume.",
-        "uuid": "com.ntanis.essentials-for-spotify.volume-down-button",
+        "tooltip": "Run a command",
+        "uuid": "com.amansprojects.starterpack.runcommand",
         "visible_in_action_list": true
       },
       "children": null,
       "context": "Keypad.1.0",
       "current_state": 0,
       "settings": {
-        "step": 5
+        "down": "sh -c '~/.config/hypr/scripts/launch-app.py volume.down'",
+        "file": "",
+        "rotate": "",
+        "show": false,
+        "up": ""
       },
       "states": [
         {
-          "alignment": "middle",
-          "background_colour": "#000000",
+          "alignment": "top",
+          "background_colour": "#17191e",
           "colour": "#FFFFFF",
           "family": "Liberation Sans",
-          "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-down@2x.png",
+          "image": "0.svg",
           "image_scale": 100,
           "name": "",
           "show": true,
-          "size": 16,
+          "size": 13,
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "",
+          "text": "Output Down",
           "underline": false
         }
       ]
@@ -123,37 +128,22 @@
     {
       "action": {
         "controllers": [
-          "Keypad"
+          "Keypad",
+          "Encoder"
         ],
-        "disable_automatic_states": true,
+        "disable_automatic_states": false,
         "encoder": null,
-        "icon": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/actions/volume-mute-unmute@2x.png",
-        "name": "Volume Mute / Unmute",
-        "plugin": "com.ntanis.essentials-for-spotify.sdPlugin",
-        "property_inspector": "",
+        "icon": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
+        "name": "Run Command",
+        "plugin": "com.amansprojects.starterpack.sdPlugin",
+        "property_inspector": "plugins/com.amansprojects.starterpack.sdPlugin/propertyInspector/runCommand.html",
         "states": [
           {
             "alignment": "middle",
             "background_colour": "#000000",
             "colour": "#FFFFFF",
             "family": "Liberation Sans",
-            "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-mute@2x.png",
-            "image_scale": 100,
-            "name": "",
-            "show": true,
-            "size": 16,
-            "stroke_colour": "#000000",
-            "stroke_size": 3,
-            "style": "Regular",
-            "text": "",
-            "underline": false
-          },
-          {
-            "alignment": "middle",
-            "background_colour": "#000000",
-            "colour": "#FFFFFF",
-            "family": "Liberation Sans",
-            "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-unmute@2x.png",
+            "image": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
             "image_scale": 100,
             "name": "",
             "show": true,
@@ -166,45 +156,35 @@
           }
         ],
         "supported_in_multi_actions": true,
-        "tooltip": "Toggles between muting and unmuting the volume.",
-        "uuid": "com.ntanis.essentials-for-spotify.volume-mute-unmute-button",
+        "tooltip": "Run a command",
+        "uuid": "com.amansprojects.starterpack.runcommand",
         "visible_in_action_list": true
       },
       "children": null,
       "context": "Keypad.2.0",
       "current_state": 0,
-      "settings": {},
+      "settings": {
+        "down": "sh -c '~/.config/hypr/scripts/launch-app.py volume.mute'",
+        "file": "",
+        "rotate": "",
+        "show": false,
+        "up": ""
+      },
       "states": [
         {
-          "alignment": "middle",
-          "background_colour": "#000000",
+          "alignment": "top",
+          "background_colour": "#17191e",
           "colour": "#FFFFFF",
           "family": "Liberation Sans",
-          "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-mute@2x.png",
+          "image": "0.svg",
           "image_scale": 100,
           "name": "",
           "show": true,
-          "size": 16,
+          "size": 13,
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "",
-          "underline": false
-        },
-        {
-          "alignment": "middle",
-          "background_colour": "#000000",
-          "colour": "#FFFFFF",
-          "family": "Liberation Sans",
-          "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-unmute@2x.png",
-          "image_scale": 100,
-          "name": "",
-          "show": true,
-          "size": 16,
-          "stroke_colour": "#000000",
-          "stroke_size": 3,
-          "style": "Regular",
-          "text": "",
+          "text": "Output Mute",
           "underline": false
         }
       ]
@@ -212,21 +192,22 @@
     {
       "action": {
         "controllers": [
-          "Keypad"
+          "Keypad",
+          "Encoder"
         ],
-        "disable_automatic_states": true,
+        "disable_automatic_states": false,
         "encoder": null,
-        "icon": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/actions/volume-up@2x.png",
-        "name": "Volume Up",
-        "plugin": "com.ntanis.essentials-for-spotify.sdPlugin",
-        "property_inspector": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/pi/volume-up-button.html",
+        "icon": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
+        "name": "Run Command",
+        "plugin": "com.amansprojects.starterpack.sdPlugin",
+        "property_inspector": "plugins/com.amansprojects.starterpack.sdPlugin/propertyInspector/runCommand.html",
         "states": [
           {
             "alignment": "middle",
             "background_colour": "#000000",
             "colour": "#FFFFFF",
             "family": "Liberation Sans",
-            "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-up@2x.png",
+            "image": "plugins/com.amansprojects.starterpack.sdPlugin/icons/runCommand.png",
             "image_scale": 100,
             "name": "",
             "show": true,
@@ -239,31 +220,35 @@
           }
         ],
         "supported_in_multi_actions": true,
-        "tooltip": "Increases the playback volume.",
-        "uuid": "com.ntanis.essentials-for-spotify.volume-up-button",
+        "tooltip": "Run a command",
+        "uuid": "com.amansprojects.starterpack.runcommand",
         "visible_in_action_list": true
       },
       "children": null,
       "context": "Keypad.3.0",
       "current_state": 0,
       "settings": {
-        "step": 5
+        "down": "sh -c '~/.config/hypr/scripts/launch-app.py volume.up'",
+        "file": "",
+        "rotate": "",
+        "show": false,
+        "up": ""
       },
       "states": [
         {
-          "alignment": "middle",
-          "background_colour": "#000000",
+          "alignment": "top",
+          "background_colour": "#17191e",
           "colour": "#FFFFFF",
           "family": "Liberation Sans",
-          "image": "plugins/com.ntanis.essentials-for-spotify.sdPlugin/images/states/volume-up@2x.png",
+          "image": "0.svg",
           "image_scale": 100,
           "name": "",
           "show": true,
-          "size": 16,
+          "size": 13,
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "",
+          "text": "Output Up",
           "underline": false
         }
       ]
