@@ -1,6 +1,6 @@
 #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" python "$0" "$@"'
 # vim: ft=python
-"""Sync agent session state between two machines over ssh."""
+"""Sync agent session state against a peer machine or a mounted archive."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
 import click
 from dotlib.cli import create_logger, run
@@ -105,6 +105,119 @@ class Report:
         return sum(1 for s in self.steps if s.action is action)
 
 
+class Transport(Protocol):
+    """Where the other copy of the state lives."""
+
+    @property
+    def name(self) -> str: ...
+
+    def check(self) -> None: ...
+
+    def remote(self, profile: Profile) -> str: ...
+
+    def flags(self) -> list[str]: ...
+
+    def shell(self, script: str) -> list[str] | None:
+        """Argv running `script` on the far side, or None where nothing runs."""
+
+
+@dataclass(frozen=True)
+class Peer:
+    """A machine reached over ssh."""
+
+    host: str
+    user: str | None = None
+
+    CONTROL: ClassVar[Path] = (
+        Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "synco-ssh-%C"
+    )
+
+    @property
+    def name(self) -> str:
+        return self.host
+
+    @property
+    def command(self) -> str:
+        # rclone runs one md5sum per remote file and --sftp-ssh cannot
+        # multiplex, so without a shared control socket every hash pays a
+        # fresh TCP connect and key exchange.
+        target = f"{self.user}@{self.host}" if self.user else self.host
+
+        return (
+            "ssh -o BatchMode=yes"
+            " -o ControlMaster=auto"
+            f" -o ControlPath={self.CONTROL}"
+            " -o ControlPersist=60s"
+            f" {target}"
+        )
+
+    def check(self) -> None:
+        return None
+
+    def remote(self, profile: Profile) -> str:
+        return f":sftp:{profile.relative_root}"
+
+    def flags(self) -> list[str]:
+        # rclone's own sftp client reads none of ~/.ssh/config, so a peer's
+        # port, user, key or ProxyJump would have to be restated as flags.
+        # Delegating to the ssh binary keeps that config the one source.
+        return [
+            "--sftp-skip-links",
+            "--sftp-ssh",
+            self.command,
+            # ssh is the one connecting, so it is the one checking host keys
+            # against known_hosts — a mismatch is refused there. This only
+            # quiets rclone warning about the client it is not using.
+            "--sftp-known-hosts-file",
+            "none",
+            # Answers rclone would otherwise probe the peer for and then
+            # complain it cannot cache, having no config file to cache into.
+            "--sftp-shell-type",
+            "unix",
+            "--sftp-md5sum-command",
+            "md5sum",
+            "--sftp-sha1sum-command",
+            "sha1sum",
+        ]
+
+    def shell(self, script: str) -> list[str]:
+        return [*self.command.split(), script]
+
+
+@dataclass(frozen=True)
+class Archive:
+    """A directory on a mounted share, holding what every machine sent it."""
+
+    base: Path
+
+    @property
+    def name(self) -> str:
+        return "archive"
+
+    def check(self) -> None:
+        # Reading the path is also what fires the automount. An unmounted
+        # mount point is an empty directory that plans as a far side holding
+        # nothing, and the push that follows lands underneath it, where the
+        # next mount hides it for good.
+        mounted = any(
+            parent.is_mount()
+            for parent in (self.base, *self.base.parents)
+            if parent != Path("/")
+        )
+        if not mounted:
+            raise click.ClickException(f"{self.base} is not on a mounted share")
+        self.base.mkdir(parents=True, exist_ok=True)
+
+    def remote(self, profile: Profile) -> str:
+        return str(self.base / profile.relative_root)
+
+    def flags(self) -> list[str]:
+        return []
+
+    def shell(self, script: str) -> None:
+        return None
+
+
 class Synco:
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
@@ -119,7 +232,7 @@ class Synco:
         Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "synco"
     )
     RCLONE_TIMEOUT = 900.0
-    SSH_CONTROL = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "synco-ssh-%C"
+    ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
     # All the sftp backend probes for on its own. Anything else has to name
     # its remote command too (--sftp-hashes sha256 --sftp-sha256sum-command
     # sha256sum); asking without that silently drops the hash from the
@@ -226,9 +339,8 @@ class Synco:
 
         return selected
 
-    def __init__(self, peer: str, user: str | None, dry_run: bool) -> None:
-        self.peer = peer
-        self.user = user
+    def __init__(self, transport: Transport, dry_run: bool) -> None:
+        self.transport = transport
         self.dry_run = dry_run
         self.stamp = time.strftime("%Y%m%d-%H%M%S")
         self.backup_root = self.STATE_DIR / self.stamp
@@ -237,26 +349,6 @@ class Synco:
     @property
     def hostname(self) -> str:
         return self.HOSTNAME_PATH.read_text().strip()
-
-    def remote(self, profile: Profile) -> str:
-        return f":sftp:{profile.relative_root}"
-
-    @property
-    def ssh_target(self) -> str:
-        return f"{self.user}@{self.peer}" if self.user else self.peer
-
-    @property
-    def ssh_command(self) -> str:
-        # rclone runs one md5sum per remote file and --sftp-ssh cannot
-        # multiplex, so without a shared control socket every hash pays a
-        # fresh TCP connect and key exchange.
-        return (
-            "ssh -o BatchMode=yes"
-            " -o ControlMaster=auto"
-            f" -o ControlPath={self.SSH_CONTROL}"
-            " -o ControlPersist=60s"
-            f" {self.ssh_target}"
-        )
 
     def filters(self, profile: Profile) -> list[str]:
         """rclone-side filters matching `wanted`.
@@ -289,30 +381,7 @@ class Synco:
         return any(target.full_match(p) for p in self.INCLUDES[profile.vendor])
 
     def rclone_command(self, *args: str) -> list[str]:
-        # rclone's own sftp client reads none of ~/.ssh/config, so a peer's
-        # port, user, key or ProxyJump would have to be restated as flags.
-        # Delegating to the ssh binary keeps that config the one source.
-        return [
-            "rclone",
-            "--skip-links",
-            "--sftp-skip-links",
-            "--sftp-ssh",
-            self.ssh_command,
-            # ssh is the one connecting, so it is the one checking host keys
-            # against known_hosts — a mismatch is refused there. This only
-            # quiets rclone warning about the client it is not using.
-            "--sftp-known-hosts-file",
-            "none",
-            # Answers rclone would otherwise probe the peer for and then
-            # complain it cannot cache, having no config file to cache into.
-            "--sftp-shell-type",
-            "unix",
-            "--sftp-md5sum-command",
-            "md5sum",
-            "--sftp-sha1sum-command",
-            "sha1sum",
-            *args,
-        ]
+        return ["rclone", "--skip-links", *self.transport.flags(), *args]
 
     def transfer(self, *args: str) -> None:
         """Run a copy with rclone's own progress display.
@@ -353,15 +422,24 @@ class Synco:
         return entries
 
     def scan_remote(self, profile: Profile) -> dict[str, Entry]:
-        listing = self.rclone(
-            "lsjson",
-            "-R",
-            "--hash",
-            "--hash-type",
-            self.HASH,
-            *self.filters(profile),
-            self.remote(profile),
-        )
+        try:
+            listing = self.rclone(
+                "lsjson",
+                "-R",
+                "--hash",
+                "--hash-type",
+                self.HASH,
+                *self.filters(profile),
+                self.transport.remote(profile),
+            )
+        except subprocess.CalledProcessError as error:
+            # rclone exits 3 for a directory that is not there, which is a
+            # profile the archive has never been sent. The sftp backend
+            # answers that case with an empty listing instead, and a copy
+            # creates the directory either way.
+            if error.returncode != 3:
+                raise
+            listing = ""
         entries: dict[str, Entry] = {}
         for item in json.loads(listing or "[]"):
             if item["IsDir"]:
@@ -394,7 +472,7 @@ class Synco:
             "copy",
             "--files-from",
             str(listing),
-            self.remote(profile),
+            self.transport.remote(profile),
             str(into),
         )
 
@@ -409,7 +487,7 @@ class Synco:
             "--files-from",
             str(listing),
             str(source),
-            self.remote(profile),
+            self.transport.remote(profile),
         )
 
     @staticmethod
@@ -624,7 +702,7 @@ class Synco:
         self.manifest.append(
             {
                 "profile": profile.name,
-                "side": self.peer,
+                "side": self.transport.name,
                 "path": path,
                 "size": source.stat().st_size,
                 "backup": str(target),
@@ -635,13 +713,13 @@ class Synco:
         )
 
     def unmoved(self, profile: Profile, report: Report, push: list[str]) -> list[str]:
-        """Drop pushes whose peer copy changed since the plan decided on it.
+        """Drop pushes whose far copy changed since the plan decided on it.
 
-        The peer is a live machine. Between reading its state and writing to
-        it, one of its own agents can append to the very file about to be
-        overwritten, and those bytes exist nowhere else. Anything that moved
-        is left alone and settles on the next run, when both bodies are in
-        view again.
+        Between reading the other side and writing to it, an agent on the
+        peer — or another machine syncing to the same archive — can append
+        to the very file about to be overwritten, and those bytes exist
+        nowhere else. Anything that moved is left alone and settles on the
+        next run, when both bodies are in view again.
         """
         if not push:
             return []
@@ -653,11 +731,13 @@ class Synco:
             if now is None or before is None or now.same_as(before):
                 safe.append(path)
                 continue
-            self.log.warning("%s changed on %s since planning", path, self.peer)
+            self.log.warning(
+                "%s changed on %s since planning", path, self.transport.name
+            )
             for step in report.steps:
                 if step.path == path:
                     step.action = Action.CONFLICT
-                    step.note = f"changed on {self.peer} mid-run"
+                    step.note = f"changed on {self.transport.name} mid-run"
 
         return safe
 
@@ -679,7 +759,8 @@ class Synco:
             self.digest(p) for p in target.parent.glob(f"{target.name}.conflict-*")
         }
         parked: list[str] = []
-        for side, body in ((self.hostname, target), (self.peer, staging / step.path)):
+        sides = ((self.hostname, target), (self.transport.name, staging / step.path))
+        for side, body in sides:
             # A conflict stays one until someone resolves it by hand, so
             # without this every later run parks the same two bodies again.
             if self.digest(body) in already:
@@ -691,7 +772,7 @@ class Synco:
         return parked
 
     def live_vendors(self) -> set[Vendor]:
-        """Which vendors have a process running on either machine.
+        """Which vendors have a process running on either side.
 
         One round trip rather than one per vendor: the probe prints the
         names it finds, because `pgrep` prints pids and those say nothing
@@ -708,8 +789,11 @@ class Synco:
             ).returncode
             == 0
         }
+        command = self.transport.shell(probe)
+        if command is None:
+            return live
         remote = run(
-            [*self.ssh_command.split(), probe],
+            command,
             log=self.log,
             timeout=30.0,
         )
@@ -767,6 +851,7 @@ class Synco:
         )
 
     def sync(self, profiles: list[Profile]) -> int:
+        self.transport.check()
         live = self.live_vendors()
         staging = self.backup_root / "peer"
         staging.mkdir(parents=True, exist_ok=True)
@@ -797,8 +882,15 @@ class Synco:
         return sum(r.count(Action.CONFLICT) for r in reports)
 
     @cli.group("agents", invoke_without_command=True)
-    @click.option("--peer", default=None, help="Host to sync against. Required.")
+    @click.option("--peer", default=None, help="Host to sync against, over ssh.")
     @click.option("--user", default=None, help="Remote user. Default: ssh config.")
+    @click.option(
+        "--archive",
+        is_flag=False,
+        flag_value=str(ARCHIVE),
+        default=None,
+        help="Directory to sync against instead of a peer.",
+    )
     @click.option("--profile", "profiles", multiple=True, help="Profile to sync.")
     @click.option(
         "--vendor",
@@ -812,20 +904,31 @@ class Synco:
         ctx: click.Context,
         peer: str | None,
         user: str | None,
+        archive: str | None,
         profiles: tuple[str, ...],
         vendor: tuple[str, ...],
         dry_run: bool,
     ) -> None:
-        """Sync agent sessions and memories with a peer machine."""
+        """Sync agent sessions and memories with a peer machine or an archive."""
         ctx.obj = Synco.select(profiles, vendor)
         # Checked here rather than declared required, so the subcommands that
-        # never reach the network are not made to name a host.
+        # never reach the far side are not made to name one.
         if ctx.invoked_subcommand is not None:
             return
-        if peer is None:
-            raise click.UsageError("--peer is required to sync", ctx)
+        if peer and archive:
+            raise click.UsageError("--peer and --archive are exclusive", ctx)
+        if archive and user:
+            raise click.UsageError("--user belongs to --peer", ctx)
 
-        synco = Synco(peer, user, dry_run)
+        transport: Transport
+        if peer:
+            transport = Peer(peer, user)
+        elif archive:
+            transport = Archive(Path(archive))
+        else:
+            raise click.UsageError("--peer or --archive is required to sync", ctx)
+
+        synco = Synco(transport, dry_run)
         conflicts = synco.sync(ctx.obj)
         if conflicts:
             synco.console.print(
