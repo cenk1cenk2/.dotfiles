@@ -187,3 +187,6 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 [hook "hk-pre-push"]
 	command = test \"${HK:-1}\" = \"0\" || /usr/bin/mise x hk -- hk run pre-push --from-hook
 	event = pre-push
+[hook "hk-prepare-commit-msg"]
+	command = test \"${HK:-1}\" = \"0\" || /usr/bin/mise x hk -- hk run prepare-commit-msg --from-hook
+	event = prepare-commit-msg

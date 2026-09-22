@@ -610,7 +610,7 @@ class Synco:
 
         return live | {v for v in Vendor if str(v) in remote.stdout.split()}
 
-    def render(self, reports: list[Report], live: set[Vendor]) -> None:
+    def summary(self, reports: list[Report]) -> Table:
         table = Table(box=None)
         table.add_column("Profile", style="bold")
         table.add_column("Same", justify="right")
@@ -629,7 +629,11 @@ class Synco:
                 str(report.count(Action.CONFLICT)),
                 report.skipped or "",
             )
-        self.console.print(table)
+
+        return table
+
+    def render(self, reports: list[Report], live: set[Vendor]) -> None:
+        self.console.print(self.summary(reports))
 
         for report in reports:
             moving = [s for s in report.steps if s.action is not Action.SAME]
@@ -675,6 +679,10 @@ class Synco:
             slug = report.profile.name.replace("/", "-")
             self.apply(report.profile, report, staging / slug)
 
+        # Repeated after the run because rclone's progress meter pushes the
+        # planning copy far off screen on a transfer of any size.
+        self.console.rule("[bold yellow]Done[/]")
+        self.console.print(self.summary(reports))
         self.console.print(f"backups: [bold]{self.backup_root}[/]")
 
         return sum(r.count(Action.CONFLICT) for r in reports)
