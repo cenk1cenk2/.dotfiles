@@ -36,11 +36,18 @@ class Merge(StrEnum):
     APPEND covers files only ever extended, and only by the machine that
     owns them. Both sides holding a different body means the session was
     resumed on both, which no merge can reconcile — that is a CONFLICT.
+
+    NEWER is for the files an agent rewrites in place — plans, individual
+    memories. The prefix rule misreads those: shortening one reads as the
+    other side having extended it, and the deleted text comes back. The
+    later mtime wins and the other body is kept in the backup tree; two
+    edits the transport cannot order become a CONFLICT like any other.
     """
 
     APPEND = "append"
     LINES = "lines"
     INDEX = "index"
+    NEWER = "newer"
 
 
 class Action(StrEnum):
@@ -64,9 +71,16 @@ class Profile:
 
 @dataclass(frozen=True)
 class Entry:
-    path: str
     size: int
     digest: str | None = None
+
+    def same_as(self, other: Entry | None) -> bool:
+        return (
+            other is not None
+            and self.size == other.size
+            and self.digest is not None
+            and self.digest == other.digest
+        )
 
 
 @dataclass
@@ -83,6 +97,9 @@ class Report:
     profile: Profile
     steps: list[Step] = field(default_factory=list)
     skipped: str | None = None
+    # The peer as the plan saw it, so a push can tell whether the copy it is
+    # about to overwrite is still the one it decided about.
+    remote: dict[str, Entry] = field(default_factory=dict)
 
     def count(self, action: Action) -> int:
         return sum(1 for s in self.steps if s.action is action)
@@ -173,13 +190,18 @@ class Synco:
     MERGES: ClassVar[dict[Vendor, tuple[tuple[str, Merge], ...]]] = {
         Vendor.CLAUDE: (
             ("history.jsonl", Merge.LINES),
+            # Order matters: the index is matched before the catch-all that
+            # covers the individual memories beside it.
             ("projects/*/memory/MEMORY.md", Merge.INDEX),
+            ("projects/*/memory/**", Merge.NEWER),
+            ("plans/**", Merge.NEWER),
         ),
         Vendor.CODEX: (
             ("history.jsonl", Merge.LINES),
             ("session_index.jsonl", Merge.LINES),
             ("memories/raw_memories.md", Merge.LINES),
             ("memories/MEMORY.md", Merge.INDEX),
+            ("memories/**", Merge.NEWER),
         ),
         Vendor.OPENCODE: (),
     }
@@ -276,6 +298,19 @@ class Synco:
             "--sftp-skip-links",
             "--sftp-ssh",
             self.ssh_command,
+            # ssh is the one connecting, so it is the one checking host keys
+            # against known_hosts — a mismatch is refused there. This only
+            # quiets rclone warning about the client it is not using.
+            "--sftp-known-hosts-file",
+            "none",
+            # Answers rclone would otherwise probe the peer for and then
+            # complain it cannot cache, having no config file to cache into.
+            "--sftp-shell-type",
+            "unix",
+            "--sftp-md5sum-command",
+            "md5sum",
+            "--sftp-sha1sum-command",
+            "sha1sum",
             *args,
         ]
 
@@ -313,7 +348,7 @@ class Synco:
             relative = str(path.relative_to(profile.root))
             if not self.wanted(profile, relative):
                 continue
-            entries[relative] = Entry(relative, path.stat().st_size)
+            entries[relative] = Entry(path.stat().st_size)
 
         return entries
 
@@ -335,7 +370,6 @@ class Synco:
             if not self.wanted(profile, path):
                 continue
             entries[path] = Entry(
-                path,
                 item["Size"],
                 (item.get("Hashes") or {}).get(self.HASH),
             )
@@ -450,6 +484,7 @@ class Synco:
 
         local = self.scan_local(profile)
         remote = self.scan_remote(profile)
+        report.remote = remote
 
         undecided: list[str] = []
         mergeable: list[str] = []
@@ -493,10 +528,26 @@ class Synco:
         kind = self.merge_kind(profile, path)
         target = profile.root / path
         landed = staging / path
+        # Whole seconds on both sides. The peer's mtime arrives truncated,
+        # so comparing it against a local one that still carries fractions
+        # makes a gap look almost a second smaller than it was.
+        drift = int(landed.stat().st_mtime) - int(target.stat().st_mtime)
+        peer_is_newer = drift > 0
+        if kind is Merge.NEWER:
+            if target.read_bytes() == landed.read_bytes():
+                return Step(path, Action.SAME, kind)
+            if drift > 0:
+                return Step(path, Action.PULL, kind, "peer's is newer")
+            if drift < 0:
+                return Step(path, Action.PUSH, kind, "ours is newer")
+
+            # Too close to call, so call neither: picking a side here would
+            # overwrite the other body on nothing but rounding.
+            return Step(path, Action.CONFLICT, kind, "edited within a second")
+
         ours = target.read_text()
         theirs = landed.read_text()
         if kind is Merge.INDEX:
-            peer_is_newer = landed.stat().st_mtime > target.stat().st_mtime
             merged = self.merge_index(ours, theirs, peer_is_newer)
         else:
             merged = self.merge_lines(ours, theirs)
@@ -553,7 +604,62 @@ class Synco:
             elif step.action is Action.CONFLICT:
                 push.extend(self.write_conflict(profile, step, staging))
 
-        self.send(profile, push, profile.root)
+        for path in push:
+            self.backup_peer(profile, path, staging)
+        self.send(profile, self.unmoved(profile, report, push), profile.root)
+
+    def backup_peer(self, profile: Profile, path: str, staging: Path) -> None:
+        """Keep the peer's body before a push overwrites it.
+
+        Planning already fetched every path whose copies disagreed, so the
+        bytes are usually here for free; a path the peer never had has
+        nothing to keep.
+        """
+        source = staging / path
+        if not source.is_file():
+            return
+        target = self.backup_root / f"{profile.name.replace('/', '-')}-peer" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        self.manifest.append(
+            {
+                "profile": profile.name,
+                "side": self.peer,
+                "path": path,
+                "size": source.stat().st_size,
+                "backup": str(target),
+            }
+        )
+        (self.backup_root / "manifest.json").write_text(
+            json.dumps(self.manifest, indent=2)
+        )
+
+    def unmoved(self, profile: Profile, report: Report, push: list[str]) -> list[str]:
+        """Drop pushes whose peer copy changed since the plan decided on it.
+
+        The peer is a live machine. Between reading its state and writing to
+        it, one of its own agents can append to the very file about to be
+        overwritten, and those bytes exist nowhere else. Anything that moved
+        is left alone and settles on the next run, when both bodies are in
+        view again.
+        """
+        if not push:
+            return []
+        current = self.scan_remote(profile)
+        safe: list[str] = []
+        for path in push:
+            before = report.remote.get(path)
+            now = current.get(path)
+            if now is None or before is None or now.same_as(before):
+                safe.append(path)
+                continue
+            self.log.warning("%s changed on %s since planning", path, self.peer)
+            for step in report.steps:
+                if step.path == path:
+                    step.action = Action.CONFLICT
+                    step.note = f"changed on {self.peer} mid-run"
+
+        return safe
 
     def write_merge(self, profile: Profile, step: Step) -> str:
         assert step.payload is not None
@@ -632,57 +738,60 @@ class Synco:
 
         return table
 
-    def render(self, reports: list[Report], live: set[Vendor]) -> None:
-        self.console.print(self.summary(reports))
-
-        for report in reports:
-            moving = [s for s in report.steps if s.action is not Action.SAME]
-            if not moving:
-                continue
-            self.console.rule(f"[bold yellow]{report.profile.name}[/]")
-            detail = Table(box=None)
-            detail.add_column("Action", style="bold")
-            detail.add_column("Path")
-            detail.add_column("Why")
-            for step in moving:
-                detail.add_row(
-                    f"[{self.ACTION_STYLES[step.action]}]{step.action}[/]",
-                    step.path,
-                    step.note or str(step.merge),
-                )
-            self.console.print(detail)
-
-        if live:
-            names = ", ".join(sorted(live))
-            # A transcript appended to mid-run lands on the peer truncated,
-            # and the next run sees a strict prefix and repairs it. Worth
-            # saying out loud, not worth refusing the run over.
-            self.console.print(
-                f"[yellow]running:[/] {names} — transfers may be a turn behind"
+    def detail(self, report: Report) -> None:
+        moving = [s for s in report.steps if s.action is not Action.SAME]
+        if not moving:
+            return
+        self.console.rule(f"[bold yellow]{report.profile.name}[/]")
+        table = Table(box=None)
+        table.add_column("Action", style="bold")
+        table.add_column("Path")
+        table.add_column("Why")
+        for step in moving:
+            table.add_row(
+                f"[{self.ACTION_STYLES[step.action]}]{step.action}[/]",
+                step.path,
+                step.note or str(step.merge),
             )
+        self.console.print(table)
+
+    def warn_live(self, live: set[Vendor]) -> None:
+        if not live:
+            return
+        names = ", ".join(sorted(live))
+        # A push whose target the peer has since changed is caught by the
+        # re-check in `unmoved`, and a transfer cut short leaves a strict
+        # prefix the next run repairs. Worth saying, not worth refusing over.
+        self.console.print(
+            f"[yellow]running:[/] {names} — some paths may be held back this run"
+        )
 
     def sync(self, profiles: list[Profile]) -> int:
         live = self.live_vendors()
         staging = self.backup_root / "peer"
         staging.mkdir(parents=True, exist_ok=True)
 
-        reports = [self.plan(p, staging / p.name.replace("/", "-")) for p in profiles]
-        self.render(reports, live)
+        self.warn_live(live)
+        reports: list[Report] = []
+        for profile in profiles:
+            slug = profile.name.replace("/", "-")
+            report = self.plan(profile, staging / slug)
+            reports.append(report)
+            self.detail(report)
+            # Applied here rather than once every profile is planned: the
+            # gap between reading the peer and writing to it is the window
+            # in which the peer can change what is about to be overwritten,
+            # so it is kept to a single profile.
+            if not self.dry_run and not report.skipped:
+                self.apply(profile, report, staging / slug)
 
+        # Printed at the end as well because rclone's progress meter pushes
+        # anything above it off screen on a transfer of any size.
+        self.console.rule("[bold yellow]Done[/]")
+        self.console.print(self.summary(reports))
         if self.dry_run:
             self.console.print("[dim]dry run: nothing written[/]")
             return 0
-
-        for report in reports:
-            if report.skipped:
-                continue
-            slug = report.profile.name.replace("/", "-")
-            self.apply(report.profile, report, staging / slug)
-
-        # Repeated after the run because rclone's progress meter pushes the
-        # planning copy far off screen on a transfer of any size.
-        self.console.rule("[bold yellow]Done[/]")
-        self.console.print(self.summary(reports))
         self.console.print(f"backups: [bold]{self.backup_root}[/]")
 
         return sum(r.count(Action.CONFLICT) for r in reports)
