@@ -404,6 +404,10 @@
   "skipWorkflowUsageWarning": true,
   "theme": "custom:onedarker",
   "editorMode": "normal",
+  "statusLine": {
+    "command": "~/.claude/abtop-statusline.sh",
+    "type": "command"
+  },
   "verbose": false,
   "preferredNotifChannel": "terminal_bell",
   "showTurnDuration": true,
