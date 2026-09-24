@@ -173,9 +173,6 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 [includeIf "gitdir/i:~/development/laravel/"]
   path = ~/development/laravel/.gitconfig
 
-[includeIf "gitdir/i:~/workspaces/"]
-  path = ~/workspaces/.gitconfig
-
 [url "git@gitlab.kilic.dev:"]
   insteadOf = https://gitlab.kilic.dev/
 
@@ -190,3 +187,6 @@ cmd = "nvim -b -d \"$LOCAL\" \"$REMOTE\""
 [hook "hk-prepare-commit-msg"]
 	command = test \"${HK:-1}\" = \"0\" || LC_ALL=C.UTF-8 LANG=C.UTF-8 /usr/bin/mise x hk -- hk run prepare-commit-msg --from-hook
 	event = prepare-commit-msg
+
+[include]
+  path = ~/.gitconfig.local
