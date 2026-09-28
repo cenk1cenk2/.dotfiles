@@ -12,6 +12,7 @@ signal[zoom]=12
 signal[tts]=13
 signal[pacman]=14
 signal[idle]=15
+signal[audio]=16
 
 number=${signal[${1}]-}
 

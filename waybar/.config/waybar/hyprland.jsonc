@@ -134,19 +134,12 @@
   "privacy": {
     "icon-size": 14,
     "icon-spacing": 4,
-    "modules": [
-      {"type": "screenshare"},
-      {"type": "audio-in"},
-    ],
+    "modules": [{ "type": "screenshare" }, { "type": "audio-in" }],
   },
 
   "group/extras": {
     "orientation": "horizontal",
-    "modules": [
-      "custom/pacman",
-      "mpris",
-      "hyprland/language",
-    ],
+    "modules": ["custom/pacman", "mpris", "hyprland/language"],
   },
 
   "group/hardware": {
@@ -163,7 +156,7 @@
     "orientation": "horizontal",
     "modules": [
       "privacy",
-      "pulseaudio#source",
+      "custom/mic",
       "pulseaudio#sink",
       "backlight",
       "battery",
@@ -314,15 +307,30 @@
   // {volume} is the sink's everywhere except inside format-source, where it
   // is the source's. The source level reaches "format" only as
   // {format_source}, or as {source_volume}.
-  "pulseaudio#source": {
-    "format": "{format_source}",
-    "format-source": "󰍬 {volume}%",
-    "format-source-muted": "󰍭",
-    "tooltip-format": "󰍬 {source_volume}%",
+  // "pulseaudio#source": {
+  //   "format": "{format_source}",
+  //   "format-source": "󰍬 {volume}%",
+  //   "format-source-muted": "󰍭",
+  //   "tooltip-format": "󰍬 {source_volume}%",
+  //   "on-click": "~/.config/hypr/scripts/launch-app.py audio_mixer",
+  //   "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+  //   "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%+",
+  //   "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-",
+  // },
+
+  // Hidden unless something captures from the mic, the same condition that
+  // lights privacy's audio-in icon. Modules cannot read each other's state,
+  // so this repeats the check rather than following privacy.
+  "custom/mic": {
+    "interval": 2,
+    "format": "{}",
+    "exec-if": "pactl list short source-outputs | grep -q .",
+    "exec": "wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | awk '{ if ($3 == \"[MUTED]\") print \"󰍭\"; else printf \"󰍬 %d%%\\n\", $2 * 100 }'",
     "on-click": "~/.config/hypr/scripts/launch-app.py audio_mixer",
-    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
-    "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%+",
-    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-",
+    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle; waybar-signal.sh audio",
+    "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%+; waybar-signal.sh audio",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-; waybar-signal.sh audio",
+    "signal": 16,
   },
 
   "clock": {
