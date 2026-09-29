@@ -898,6 +898,22 @@ class Encoder:
             log.warning("%s is built in but not usable here", encoder)
         return None
 
+    @classmethod
+    def resolve_gpu(cls, gpu: str) -> str | None:
+        """Turn the `--gpu` choice into a vendor: explicit name, auto-detect, or none."""
+        match gpu:
+            case "auto":
+                resolved = cls.detect_gpu()
+                if resolved:
+                    log.info("GPU encoder: [green]%s[/]", resolved)
+                else:
+                    log.warning("no GPU encoder found; using software encoding")
+                return resolved
+            case "none":
+                return None
+            case _:
+                return gpu
+
     @staticmethod
     def _ffprobe_stream(
         input_file: Path, stream_type: str, fields: list[str]
@@ -1063,6 +1079,11 @@ class Encoder:
             return []
         if info.pix_fmt:
             args.extend(["-pix_fmt", info.pix_fmt])
+        return args + self._color_args(info)
+
+    @staticmethod
+    def _color_args(info: VideoInfo) -> list[str]:
+        args: list[str] = []
         if info.color_space and info.color_space != "unknown":
             args.extend(["-colorspace", info.color_space])
         if info.color_transfer and info.color_transfer != "unknown":
@@ -2331,6 +2352,118 @@ class SmartCutEncoder(Encoder):
         return self.encode(input_file, output_file, segments, media)
 
 
+class CompressProfile(StrEnum):
+    """Lesser-quality HEVC targets for `compress` and `run --compress`."""
+
+    MEDIUM = "medium"
+    LOW = "low"
+    TINY = "tiny"
+
+    @property
+    def cq(self) -> int:
+        return {self.MEDIUM: 24, self.LOW: 28, self.TINY: 32}[self]
+
+    @property
+    def max_height(self) -> int | None:
+        return {self.MEDIUM: None, self.LOW: None, self.TINY: 1080}[self]
+
+
+class Compressor(Encoder):
+    """Whole-file HEVC re-encode at a `CompressProfile`, no cutting."""
+
+    AUDIO_BITRATE = "160k"
+
+    def __init__(
+        self,
+        gpu: str | None,
+        profile: CompressProfile,
+        cq: int | None = None,
+        force: bool = False,
+    ):
+        super().__init__(gpu, "hevc", force)
+        self.profile = profile
+        self.cq = str(cq if cq is not None else profile.cq)
+
+    def _hevc_args(self, info: VideoInfo) -> list[str]:
+        match self.gpu:
+            case "nvidia":
+                # The OBS `mau5-h265` knobs with the quality target lowered.
+                args = [
+                    "-c:v",
+                    "hevc_nvenc",
+                    "-preset",
+                    "p6",
+                    "-tune",
+                    "hq",
+                    "-rc",
+                    "vbr",
+                    "-cq",
+                    self.cq,
+                    "-b:v",
+                    "0",
+                    "-multipass",
+                    "qres",
+                    "-bf",
+                    "2",
+                ]
+                if info.fps:
+                    args.extend(["-g", str(round(info.fps))])
+            case "amd":
+                args = [
+                    "-c:v",
+                    "hevc_amf",
+                    "-rc",
+                    "cqp",
+                    "-qp_i",
+                    self.cq,
+                    "-qp_p",
+                    self.cq,
+                ]
+            case "vaapi":
+                args = ["-c:v", "hevc_vaapi", "-qp", self.cq]
+            case _:
+                args = ["-c:v", "libx265", "-crf", self.cq]
+        return args
+
+    def compress(self, input_file: Path, output_file: Path) -> bool:
+        media = self.probe(input_file)
+        filters: list[str] = []
+        if (limit := self.profile.max_height) and (media.video.height or 0) > limit:
+            filters.append(f"scale=-2:{limit}")
+        if self.gpu == "vaapi":
+            filters.extend(["format=nv12", "hwupload"])
+
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-stats"]
+        if self.gpu == "vaapi":
+            cmd.extend(["-vaapi_device", "/dev/dri/renderD128"])
+        cmd.extend(["-i", str(input_file), "-map", "0:v:0", "-map", "0:a?"])
+        if filters:
+            cmd.extend(["-vf", ",".join(filters)])
+        cmd.extend(self._hevc_args(media.video))
+        # vaapi uploads to nv12 itself; forcing the source format breaks hwupload.
+        if media.video.pix_fmt and self.gpu != "vaapi":
+            cmd.extend(["-pix_fmt", media.video.pix_fmt])
+        cmd.extend(self._color_args(media.video))
+        cmd.extend(["-c:a", "aac", "-b:a", self.AUDIO_BITRATE])
+        cmd.extend(self._container_args(output_file, media.video))
+        if self.force:
+            cmd.append("-y")
+        cmd.append(str(output_file))
+
+        console.rule(f"[bold yellow]Compress ({self.profile}, cq {self.cq})[/]")
+        if self._run(cmd).returncode != 0:
+            log.error("compress failed: %s", input_file)
+            return False
+
+        before = input_file.stat().st_size
+        after = output_file.stat().st_size
+        console.print(
+            f"{output_file.name}: [yellow]{before / 1e6:.1f}MB[/] to "
+            f"[yellow]{after / 1e6:.1f}MB[/] ([bold]{after / before * 100:.1f}%[/])"
+        )
+        return True
+
+
 # ── CLI orchestrator ─────────────────────────────────────────────────
 
 
@@ -2344,12 +2477,16 @@ class Remsi:
         min_cut: float,
         suffix: str,
         analyze_only: bool = False,
+        compressor: Compressor | None = None,
+        compress_suffix: str = "compressed",
     ):
         self.analyzer = analyzer
         self.encoder = encoder
         self.min_cut = min_cut
         self.suffix = suffix
         self.analyze_only = analyze_only
+        self.compressor = compressor
+        self.compress_suffix = compress_suffix
 
     def process(self, input_file: Path, output_file: Path, workdir: Path) -> None:
         console.rule(f"[bold yellow]{input_file.name}[/]")
@@ -2529,6 +2666,11 @@ class Remsi:
             else:
                 self._claim(workdir, input_file)
                 self._process_in(input_file, output_file, workdir)
+            if self.compressor and not self.analyze_only and output_file.exists():
+                self.compressor.compress(
+                    output_file,
+                    output_file.with_stem(f"{output_file.stem}-{self.compress_suffix}"),
+                )
 
     def _process_in(self, input_file: Path, output_file: Path, workdir: Path) -> None:
         """Run `process` with every scratch file (filter scripts, cut parts)
@@ -2704,6 +2846,20 @@ class Remsi:
         is_flag=True,
         help="Fast low-quality encode for previewing cuts.",
     )
+    @click.option(
+        "--compress",
+        type=click.Choice([p.value for p in CompressProfile]),
+        default=None,
+        help="Also write a copy at this quality profile.",
+    )
+    @click.option(
+        "--compress-cq", type=int, default=None, help="Override the profile's CQ."
+    )
+    @click.option(
+        "--compress-suffix",
+        default="compressed",
+        help="Suffix appended to the compressed copy.",
+    )
     @click.option("-f", "--force", is_flag=True, help="Overwrite existing output.")
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cmd_run(
@@ -2731,6 +2887,9 @@ class Remsi:
         encoder,
         analyze,
         cheap,
+        compress,
+        compress_cq,
+        compress_suffix,
         force,
         verbose,
     ):
@@ -2771,19 +2930,7 @@ class Remsi:
                 max_len=ai_max,
             )
 
-        # GPU resolution — explicit name, auto-detect, or disable.
-        resolved_gpu: str | None
-        match gpu:
-            case "auto":
-                resolved_gpu = Encoder.detect_gpu()
-                if resolved_gpu:
-                    log.info("GPU encoder: [green]%s[/]", resolved_gpu)
-                else:
-                    log.warning("no GPU encoder found; using software encoding")
-            case "none":
-                resolved_gpu = None
-            case _:
-                resolved_gpu = gpu
+        resolved_gpu = Encoder.resolve_gpu(gpu)
 
         pipeline: Encoder
         match EncoderKind(encoder):
@@ -2829,7 +2976,65 @@ class Remsi:
             min_cut=min_cut,
             suffix=f"{suffix}-cheap" if cheap else suffix,
             analyze_only=analyze,
+            compressor=Compressor(
+                gpu=resolved_gpu,
+                profile=CompressProfile(compress),
+                cq=compress_cq,
+                force=force,
+            )
+            if compress
+            else None,
+            compress_suffix=compress_suffix,
         ).run(list(inputs), output, workdir)
+
+    @cli.command("compress")
+    @click.argument(
+        "inputs",
+        nargs=-1,
+        required=True,
+        type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    )
+    @click.option(
+        "-o",
+        "--output",
+        type=click.Path(path_type=Path),
+        help="Output path; single-input only.",
+    )
+    @click.option(
+        "-p",
+        "--profile",
+        type=click.Choice([p.value for p in CompressProfile]),
+        default=CompressProfile.LOW.value,
+        help="Quality profile.",
+    )
+    @click.option("--cq", type=int, default=None, help="Override the profile's CQ.")
+    @click.option(
+        "--gpu",
+        type=click.Choice(["nvidia", "amd", "vaapi", "auto", "none"]),
+        default="auto",
+        help="GPU encoder.",
+    )
+    @click.option("--suffix", default="compressed", help="Output filename suffix.")
+    @click.option("-f", "--force", is_flag=True, help="Overwrite existing output.")
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    def cmd_compress(inputs, output, profile, cq, gpu, suffix, force, verbose):
+        """Re-encode video files at a lesser HEVC quality profile."""
+        create_logger(verbose, name="remsi", markup=True)
+        if output is not None and len(inputs) > 1:
+            raise click.UsageError("-o/--output requires a single input file")
+
+        compressor = Compressor(
+            gpu=Encoder.resolve_gpu(gpu),
+            profile=CompressProfile(profile),
+            cq=cq,
+            force=force,
+        )
+        failed = False
+        for input_file in inputs:
+            output_file = output or input_file.with_stem(f"{input_file.stem}-{suffix}")
+            failed |= not compressor.compress(input_file, output_file)
+        if failed:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
