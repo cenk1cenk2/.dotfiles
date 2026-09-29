@@ -100,7 +100,7 @@
       "context": "Keypad.1.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify save output - | swappy -f -'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt F9'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -120,7 +120,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "screen edit",
+          "text": "prompt",
           "underline": false
         }
       ]
@@ -164,7 +164,7 @@
       "context": "Keypad.2.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify copy output'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt Pause'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -184,7 +184,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "screen",
+          "text": "play",
           "underline": false
         }
       ]
@@ -228,7 +228,7 @@
       "context": "Keypad.3.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify save area - | swappy -f -'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt Up'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -248,7 +248,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "area edit",
+          "text": "slower",
           "underline": false
         }
       ]
@@ -292,7 +292,7 @@
       "context": "Keypad.4.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify copy area'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt Down'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -312,7 +312,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "area",
+          "text": "faster",
           "underline": false
         }
       ]
@@ -621,7 +621,7 @@
       "context": "Keypad.8.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify copy active'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt Page_Up -m CTRL'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -641,7 +641,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "window",
+          "text": "prev mark",
           "underline": false
         }
       ]
@@ -685,7 +685,7 @@
       "context": "Keypad.9.0",
       "current_state": 0,
       "settings": {
-        "down": "sh -c '~/.config/hypr/scripts/grimshot.sh --notify save active - | swappy -f -'",
+        "down": "sh -c '~/.config/hypr/scripts/send-key.py -f class:com.cuperino.qprompt Page_Down -m CTRL'",
         "file": "",
         "rotate": "",
         "show": false,
@@ -705,7 +705,7 @@
           "stroke_colour": "#000000",
           "stroke_size": 3,
           "style": "Regular",
-          "text": "window edit",
+          "text": "next mark",
           "underline": false
         }
       ]

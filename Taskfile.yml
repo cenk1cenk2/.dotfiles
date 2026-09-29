@@ -86,6 +86,7 @@ tasks:
             pacman
             pimsync
             pipewire
+            qprompt
             rofi
             scripts
             spotify
