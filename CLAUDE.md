@@ -620,6 +620,25 @@ not set. Read the active line, never the comment above it.
   that deltas well, and LFS would cost readable diffs, `git blame` and
   three-way merges. Fonts and raster art stay in LFS, where the size is real.
 
+## GTK client-side decorations
+
+- **Hyprland 0.56.2 ignores the x/y offset of `xdg_surface.set_window_geometry`.**
+  A GTK app that insists on its own titlebar (headerbar apps such as
+  `wdisplays`, libhandy apps such as `seahorse`) answers the KDE
+  server-decoration `mode(2)` with `request_mode(1)` forever and keeps
+  drawing its shadow, so the window lands shifted down-right by the shadow
+  inset and clipped at the tile edge. Graphite's `0 0 50px transparent`
+  shadow plus `margin: 10px` makes that inset 141px. Apps that accept
+  server-side decorations (`pavucontrol`) send a zero offset and are fine.
+- `gtk/.config/gtk-3.0/gtk.css` zeroes `decoration` shadow and margin, which
+  makes GTK3 report a `(0, 0, …)` geometry. Verify with `WAYLAND_DEBUG=1
+  <app> 2>&1 | grep set_window_geometry`. Running apps pick it up on restart.
+- **Never stow `gtk-4.0/gtk.css`.** `gtk-config.sh gtk4-theme` copies the
+  theme's whole `gtk.css` / `gtk-dark.css` there with `cp -f`, which writes
+  through a stow symlink into the repo file. A GTK4 shadow override belongs
+  in `_gtk4_theme`, appended after the copy (`window.csd`, not
+  `decoration`).
+
 ## Agent permissions
 
 Claude Code, opencode and codex each carry the same policy in their own
