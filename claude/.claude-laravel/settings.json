@@ -382,6 +382,10 @@
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/abtop-statusline.sh"
+  },
   "enabledPlugins": {
     "claude-md-management@claude-plugins-official": true
   },
@@ -403,11 +407,7 @@
   "autoMemoryEnabled": true,
   "skipWorkflowUsageWarning": true,
   "theme": "custom:onedarker",
-  "editorMode": "normal",
-  "statusLine": {
-    "command": "~/.claude/abtop-statusline.sh",
-    "type": "command"
-  },
+  "editorMode": "vim",
   "verbose": false,
   "preferredNotifChannel": "terminal_bell",
   "showTurnDuration": true,
