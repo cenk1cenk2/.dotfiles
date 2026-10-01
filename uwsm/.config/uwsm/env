@@ -5,7 +5,7 @@ export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
 export LIBSEAT_BACKEND=logind
 
 export QT_QPA_PLATFORM=wayland
-export QT_QPA_PLATFORMTHEME=gtk3
+export QT_QPA_PLATFORMTHEME=xdgdesktopportal
 export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 
 export GTK_USE_PORTAL=1
