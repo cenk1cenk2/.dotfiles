@@ -38,6 +38,7 @@ hl.bind("XF86MonBrightnessUp", d.brightness.up, { repeating = true, locked = tru
 hl.bind("XF86MonBrightnessDown", d.brightness.down, { repeating = true, locked = true })
 hl.bind("XF86AudioPlay", d.media.toggle, { locked = true })
 hl.bind("SHIFT + XF86AudioPlay", d.media.shift, { locked = true })
+hl.bind("SHIFT + XF86AudioPause", d.media.shift, { locked = true })
 hl.bind("XF86AudioNext", d.media.next, { locked = true })
 hl.bind("XF86AudioPrev", d.media.prev, { locked = true })
 hl.bind("XF86Search", hl.dsp.exec_cmd(d.menu))
