@@ -37,6 +37,7 @@ notifications = true
 notification_method = "bel"
 notification_condition = "always"
 show_tooltips = false
+screen_reader_detection_done = true
 
 # Desktop notifications alongside the bell above. `notification_method` is a
 # single-value enum (auto/osc9/bel), so bel and a native notification cannot

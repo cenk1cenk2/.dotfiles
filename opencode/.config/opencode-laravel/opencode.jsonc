@@ -1,6 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "theme": "one-dark",
   "model": "ollama/glm-5.3",
   "small_model": "ollama/gemma4:31b",
   "enabled_providers": ["ollama"],
