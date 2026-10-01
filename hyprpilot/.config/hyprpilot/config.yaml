@@ -2,6 +2,10 @@
 logging:
   level: error
 
+# Leave tmux/zellij window titles to the multiplexer's own automatic-rename.
+multiplexer:
+  set_title: false
+
 # Partial ProfileConfig overlays folded onto the resolved profile.
 # `$match.profile` is a globset and crosses `/`.
 patches:
