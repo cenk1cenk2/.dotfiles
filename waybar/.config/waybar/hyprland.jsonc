@@ -318,14 +318,15 @@
   //   "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-",
   // },
 
-  // Hidden unless something captures from the mic, the same condition that
-  // lights privacy's audio-in icon. Modules cannot read each other's state,
-  // so this repeats the check rather than following privacy.
+  // Hidden unless the mic is muted or something captures from it, the latter
+  // being the same condition that lights privacy's audio-in icon. Modules
+  // cannot read each other's state, so this repeats the check rather than
+  // following privacy.
   "custom/mic": {
     "interval": 2,
     "format": "{}",
-    "exec-if": "pactl list short source-outputs | grep -q .",
-    "exec": "wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | awk '{ if ($3 == \"[MUTED]\") print \"󰍭\"; else printf \"󰍬 %d%%\\n\", $2 * 100 }'",
+    "exec-if": "wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q MUTED || pactl list short source-outputs | grep -q .",
+    "exec": "wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | awk '{ if ($3 == \"[MUTED]\") printf \"󰍭\\nMuted\\nmuted\\n\"; else printf \"󰍬 %d%%\\n\", $2 * 100 }'",
     "on-click": "~/.config/hypr/scripts/launch-app.py audio_mixer",
     "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle; waybar-signal.sh audio",
     "on-scroll-up": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%+; waybar-signal.sh audio",

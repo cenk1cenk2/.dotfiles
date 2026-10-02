@@ -10,32 +10,6 @@
 @import url("theme.css");
 
 /* -----------------------------------------------------------------------------
- * Keyframes
- * -------------------------------------------------------------------------- */
-
-@keyframes blink-warning {
-  75% {
-    color: shade(@warning_color, 0.75);
-  }
-
-  to {
-    color: @bg_color_100;
-    background-color: @warning_color;
-  }
-}
-
-@keyframes blink-critical {
-  75% {
-    color: shade(@error_color, 0.75);
-  }
-
-  to {
-    color: @bg_color_100;
-    background-color: @error_color;
-  }
-}
-
-/* -----------------------------------------------------------------------------
  * Base styles
  * -------------------------------------------------------------------------- */
 
@@ -45,7 +19,9 @@
   min-height: 0;
   margin: 0;
   padding: 0;
-  font-family: "RobotoMono Nerd Font", "Roboto Mono", sans-serif;
+  font-family:
+    "RobotoMono Nerd Font Propo", "RobotoMono Nerd Font", "Roboto Mono",
+    sans-serif;
 }
 
 window#waybar {
@@ -86,8 +62,8 @@ window#waybar .modules-right {
  * -------------------------------------------------------------------------- */
 
 #workspaces button {
-  padding: 0 12px;
-  margin: 0 2px;
+  padding: 0 8px;
+  margin: 0 1px;
   border-radius: 8px;
   color: @theme_unfocused_text_color;
   background-color: @bg_color_200;
@@ -131,36 +107,10 @@ window#waybar .modules-right {
  * Individual modules - default styling
  * -------------------------------------------------------------------------- */
 
-#custom-pacman,
-#custom-menu,
-#custom-help,
-#custom-scratchpad,
-#custom-github,
-#custom-clipboard,
-#custom-dnd,
-#bluetooth,
-#battery,
-#clock,
-#cpu,
-#memory,
-#mode,
-#submap,
-#network,
-#pulseaudio,
-#wireplumber,
-#temperature,
-#idle_inhibitor,
-#backlight,
-#language,
-#custom-adaptive-light,
-#custom-sunset,
-#mpris,
-#privacy,
-#custom-copywriter,
-#custom-gpu,
-#custom-notification,
-#tray {
-  padding: 0 6px;
+/* Every module, top level or inside a group, sits in an eventbox "widget".
+ * Id rules below still win on specificity. */
+widget > * {
+  padding: 0 4px;
   border-radius: 8px;
   background-clip: padding-box;
   color: @theme_unfocused_text_color;
@@ -180,7 +130,6 @@ window#waybar .modules-right {
 #custom-scratchpad {
   background-color: shade(@theme_selected_bg_color, 0.75);
   color: @bg_color_100;
-  border-radius: 8px;
 }
 
 #custom-pacman {
@@ -195,7 +144,6 @@ window#waybar .modules-right {
 #custom-recorder {
   background-color: @error_color;
   color: @bg_color_100;
-  border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
@@ -212,7 +160,6 @@ window#waybar .modules-right {
 
 #custom-stt {
   color: @bg_color_100;
-  border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
@@ -235,7 +182,6 @@ window#waybar .modules-right {
 
 #custom-tts {
   color: @bg_color_100;
-  border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
@@ -254,7 +200,6 @@ window#waybar .modules-right {
 
 #custom-copywriter {
   color: @bg_color_100;
-  border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
@@ -266,7 +211,6 @@ window#waybar .modules-right {
 #custom-zoom {
   background-color: @accent_color;
   color: @bg_color_100;
-  border-radius: 8px;
   padding: 0 8px;
   font-weight: bold;
 }
@@ -305,6 +249,7 @@ window#waybar .modules-right {
  * regardless of which device changed, so a bare .muted matches both. */
 #pulseaudio.sink.sink-muted,
 #pulseaudio.source.source-muted,
+#custom-mic.muted,
 #wireplumber.muted {
   background-color: @error_color;
   color: @bg_color_100;
@@ -337,15 +282,34 @@ window#waybar .modules-right {
  * Island styling for groups
  * -------------------------------------------------------------------------- */
 
-#extras,
-#input,
-#hardware,
-#connection,
-#status,
-#tray {
+/* Groups and the tray are the only modules built as boxes; the rest are
+ * labels. */
+widget > box {
   background-color: @bg_color_200;
-  border-radius: 8px;
   padding: 0 4px;
+}
+
+/* Groups take no spacing option, so modules inside an island abut and
+ * coloured states run together without this. */
+widget widget > * {
+  margin: 0 1px;
+}
+
+#status > widget:last-child > * {
+  margin-right: 0;
+}
+
+/* Tray items and the workspaces box are widgets too, but space themselves. */
+#tray > widget > *,
+#workspaces,
+#workspaces widget > * {
+  padding: 0;
+  margin: 0;
+}
+
+#workspaces,
+#workspaces widget > * {
+  background-color: transparent;
 }
 
 /* Rightmost group - flush with right edge */
@@ -365,7 +329,6 @@ window#waybar .modules-right {
   font-weight: 600;
   color: @theme_text_color;
   background-color: @bg_color_200;
-  border-radius: 8px;
   padding: 0 8px;
 }
 
@@ -374,6 +337,5 @@ window#waybar .modules-right {
 #hyprland-submap {
   color: @accent_color;
   background-color: @bg_color_200;
-  border-radius: 8px;
   padding: 0 4px;
 }
