@@ -56,9 +56,12 @@ these need re-checking.
   (control opens bypass `nv_start_device`). Bare `/dev/dri/renderD*` opens
   take no ref (`nv_drm_open` assigns an id and returns).
 - **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
-  toggle**: GCOFF (full power-off) requires used vidmem <= threshold. RM keeps
-  ~2MiB allocated, so a threshold of 0 forbids power-off permanently. Leave it
-  at the default (200).
+  toggle**: GCOFF (full power-off, video memory dropped) requires used vidmem
+  <= threshold, and RM keeps ~2MiB allocated, so `0` rules GCOFF out and the
+  GPU idles in GC6 (D3cold, video memory in self-refresh). `nvidia-power.conf`
+  sets `0` per the open-gpu-kernel-modules#905 workaround for the GPU waking
+  straight back up after GCOFF. On a notebook the GC6 path is taken anyway
+  (see the blocker below), so it may be inert here.
 - **Any `nvidia-smi` invocation resets the runtime-PM idle timer** as well as
   waking a sleeping GPU — polling it keeps an active GPU active forever.
   `tdp nvidia show` is passive (sysfs only) precisely for this; smi runs only
@@ -79,6 +82,12 @@ these need re-checking.
   refs, the refcount desyncs silently (asserts are compiled out of release
   builds), and the GPU stops attempting suspend until reboot. The signature
   of that state: zero rpm trace events with zero holders.
+  It is not enabled at boot, and neither is `nvidia-powerd` (Dynamic Boost,
+  which shifts power budget from the CPU to the dGPU and also keeps it
+  awake): `80-nvidia-pm.rules` starts both through `SYSTEMD_WANTS` once the
+  driver has bound a GPU, so a dGPU the firmware GPU mode hides never starts
+  them. Drop-ins also condition both units on `/proc/driver/nvidia/gpus`
+  being non-empty, guarding any other start.
 - `NVreg_DynamicPowerManagement=0x02` (FINE) forces fine-grained RTD3 and
   pairs with `80-nvidia-pm.rules` writing `power/control=auto`: the driver's
   own `nv_allow_runtime_suspend()` call (`dynamic-power.c`, gated on the
@@ -87,18 +96,19 @@ these need re-checking.
 - `nvidia-power.conf` may only carry parameters the open kernel module
   actually declares (`kernel-open/nvidia/nv-reg.h`); an unknown one is
   logged as `unknown parameter ... ignored` at module load and does nothing.
-- `env-hybrid` keeps `__EGL_VENDOR_LIBRARY_FILENAMES` and `MANGOHUD=0`
-  commented out. Both do remove `/dev/nvidia0` holders (GLVND EGL vendor
-  enumeration for the compositor, the MangoHud implicit Vulkan layer's NVML
-  load for Chromium/Electron), but that buys nothing while the driver bug
-  below stands, and the Mesa EGL pin actively hides the dGPU from Proton:
+- `env-hybrid` sets `MANGOHUD=0`, overriding the common env: the MangoHud
+  implicit Vulkan layer dlopens NVML into every Vulkan process, so
+  Chromium/Electron GPU processes hold `/dev/nvidia0` and pay its CPU cost.
+  Games opt back in with `MANGOHUD=1 %command%`. `__EGL_VENDOR_LIBRARY_FILENAMES`
+  stays commented out: the Mesa EGL pin hides the dGPU from Proton:
   `winewayland.drv` presents through EGL, so without NVIDIA EGL, Wine offers
   a one-device list and every game lands on the iGPU. Hyprland and hyprpaper
   holding `nvidia0` is the expected, currently free consequence.
 - Proton titles reach the dGPU via `DXVK_FILTER_DEVICE_NAME=NVIDIA` and
   `VKD3D_FILTER_DEVICE_NAME=NVIDIA` in `env-hybrid` — read by DXVK/vkd3d
-  inside the pressure-vessel container. `prime-run` cannot do this job for
-  Steam: the steam-runtime launcher resets `PATH`, so `prime-run %command%`
+  inside the pressure-vessel container. `prime-run` (`rootfs/usr/local/bin`)
+  cannot do this job for Steam: the steam-runtime launcher resets `PATH` to
+  `…/steam-runtime-steamrt/bin:/usr/bin:/bin`, so `prime-run %command%`
   resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
   because pressure-vessel does not import `nvidia_layers.json` into the
   container. Use `MANGOHUD=1 %command%` for the overlay.

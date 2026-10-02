@@ -34,12 +34,15 @@ if [ -n "$_gpu_intel_card" ]; then
   # /dev/nvidia0. The GL renderer skips that probe.
   export GSK_RENDERER=ngl
 
-  # Both keep processes off /dev/nvidia0 for RTD3, at the cost of gaming:
-  # MANGOHUD=0 stops the implicit Vulkan layer dlopening NVML, and the Mesa EGL
-  # pin stops libEGL_nvidia opening the node during vendor enumeration — but
-  # winewayland.drv presents through EGL, so pinning it hides the dGPU from
-  # Proton entirely. Enable only if runtime suspend becomes reachable.
-  # export MANGOHUD=0
+  # Overrides the common env's MANGOHUD=1: the implicit Vulkan layer dlopens
+  # NVML into every Vulkan process, Chromium/Electron GPU processes included,
+  # holding /dev/nvidia0 and costing CPU. Games opt back in per title with
+  # `MANGOHUD=1 %command%`.
+  export MANGOHUD=0
+
+  # The Mesa EGL pin would also stop libEGL_nvidia opening the node during
+  # vendor enumeration, but winewayland.drv presents through EGL, so it hides
+  # the dGPU from Proton entirely.
   # export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 fi
 

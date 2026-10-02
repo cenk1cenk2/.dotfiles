@@ -8,6 +8,13 @@ ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}
 ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"
 ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"
 
+# nvidia-persistenced and nvidia-powerd are not enabled at boot; they start
+# once the driver has bound a GPU. DRIVER is unset on the add event, so
+# neither can start before /proc/driver/nvidia/gpus exists, and a hidden dGPU
+# never starts them.
+ACTION!="remove", SUBSYSTEM=="pci", DRIVER=="nvidia", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nvidia-persistenced.service nvidia-powerd.service"
+ACTION!="remove", SUBSYSTEM=="pci", DRIVER=="nvidia", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nvidia-persistenced.service nvidia-powerd.service"
+
 # The HDMI audio function blocks RTD3 at "on". Runtime PM rather than removal,
 # since the dGPU drives the HDMI port here.
 ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", TEST=="power/control", ATTR{power/control}="auto"

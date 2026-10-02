@@ -18,6 +18,11 @@
   "post": [
     ["systemctl", "daemon-reload"],
     ["udevadm", "control", "--reload"],
-    ["sysctl", "--system"]
+    ["sysctl", "--system"],
+    [
+      "sh",
+      "-c",
+      "systemctl disable --quiet nvidia-persistenced.service nvidia-powerd.service 2>/dev/null || true"
+    ]
   ]
 }
