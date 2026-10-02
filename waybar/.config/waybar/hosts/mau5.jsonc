@@ -17,7 +17,7 @@
   "custom/gpu": {
     "return-type": "json",
     "restart-interval": 5,
-    "format": "󰢮 {}°C",
+    "format": "󰢮 {}°",
     "exec": "nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits -lms 5000 | awk '{c=($1>=72)?\"critical\":(($1>=62)?\"warning\":\"\"); printf \"{\\\"text\\\":\\\"%d\\\",\\\"class\\\":\\\"%s\\\"}\\n\",$1,c; fflush()}'",
     "tooltip": false,
     "on-click": "~/.config/hypr/scripts/launch-app.py gpu_monitor",

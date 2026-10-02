@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shadows /usr/bin/prime-run — ~/.local/bin precedes /usr/bin in PATH.
+# Shadows /usr/bin/prime-run — /usr/local/bin precedes /usr/bin in PATH.
 #
 # The packaged script only flips the GLX vendor selector, which is enough on
 # the NVIDIA-primary sessions. The hybrid profile additionally disables MangoHud
@@ -7,12 +7,10 @@
 # out of RTD3), so it gets handed back here per game. Inert in the other
 # profiles: MangoHud is enabled there anyway.
 #
-# The hybrid EGL pin (__EGL_VENDOR_LIBRARY_FILENAMES=…50_mesa.json) is
-# deliberately NOT handed back: NVIDIA EGL in the Intel-primary session has no
-# working device and crashes titles inside libnvidia-glsi. Vulkan-only titles
-# (DXVK/vkd3d) reach the dGPU regardless — Vulkan enumeration ignores all of
-# this. OpenGL overlays still need the mangohud wrapper for its LD_PRELOAD,
-# chained as `prime-run mangohud <game>`.
+# Steam titles do not reach this: the steam-runtime launcher resets PATH and
+# pressure-vessel drops the Optimus layer, so Proton picks the dGPU through
+# env-hybrid's DXVK/VKD3D device filters instead. OpenGL overlays still need
+# the mangohud wrapper for its LD_PRELOAD, chained as `prime-run mangohud <game>`.
 exec env \
   __NV_PRIME_RENDER_OFFLOAD=1 \
   __VK_LAYER_NV_optimus=NVIDIA_only \
