@@ -170,7 +170,7 @@ profile:
 profiles:
   - id: personal/claude/fable
     agent: claude-code
-    model: "claude-fable-5[1m]"
+    model: "fable"
     mode: auto
 
   - id: personal/claude/opus
@@ -284,7 +284,7 @@ profiles:
 
   - id: work/claude/fable
     agent: claude-code
-    model: "claude-fable-5[1m]"
+    model: "fable"
     mode: auto
 
   - id: work/claude/opus
