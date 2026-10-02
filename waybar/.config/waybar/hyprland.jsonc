@@ -187,7 +187,7 @@
   "custom/notification": {
     // swaync sends the unread count as text; zero is blanked so an idle bell
     // shows no number; the negative spacing pulls the count over the bell.
-    "format": "<span rise='4pt'>{icon}</span><span size='9pt' rise='8pt' weight='bold' foreground='#F28B82'>{text}</span>",
+    "format": "<span rise='4pt'>{icon}</span><span size='9pt' rise='9pt' weight='bold' foreground='#F28B82'>{text}</span>",
     "format-icons": {
       "notification": "",
       "none": "",
@@ -253,7 +253,7 @@
   },
 
   "hyprland/language": {
-    "format": "󰌓 {short}",
+    "format": "<span rise='4pt'>󰌓</span><span size='9pt' rise='9pt'>{short}</span>",
     "tooltip-format": "{long}",
     "on-click": "hyprctl switchxkblayout $(hyprctl devices -j | jq -r '.keyboards[] | select(.main == true) | .name') next",
   },
@@ -284,7 +284,7 @@
 
   "network": {
     "interval": 5,
-    "format-wifi": "<span rise='4pt'>󱚻</span><span size='9pt' rise='8pt'>{signaldBm}</span>",
+    "format-wifi": "<span rise='4pt'>󱚻</span><span size='9pt' rise='9pt'>{signaldBm}</span>",
     "format-ethernet": "󰈀",
     "format-disconnected": "󰤠",
     "tooltip-format": "{ifname} ({essid}): {ipaddr} ({signaldBm})",
@@ -369,7 +369,7 @@
   },
 
   "bluetooth": {
-    "format": "<span rise='4pt'>󰂯</span><span size='9pt' rise='8pt'>{num_connections}</span>",
+    "format": "<span rise='4pt'>󰂯</span><span size='9pt' rise='9pt'>{num_connections}</span>",
     "format-disabled": "󰂲",
     "on-click": "~/.config/hypr/scripts/launch-app.py bluetooth",
     "on-click-right": "rfkill toggle bluetooth",
