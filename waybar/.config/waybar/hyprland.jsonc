@@ -185,17 +185,18 @@
   },
 
   "custom/notification": {
-    "tooltip": false,
-    "format": "{icon}",
+    // swaync sends the unread count as text; zero is blanked so an idle bell
+    // shows no number; the negative spacing pulls the count over the bell.
+    "format": "<span letter_spacing='-512' rise='4pt'>{icon}</span><span size='9pt' rise='8pt' weight='bold' foreground='#F28B82'>{text}</span>",
     "format-icons": {
-      "notification": "<span foreground='red'><sup></sup></span>",
-      "none": "<sup> </sup>",
-      "dnd-notification": "<span foreground='red'><sup></sup></span>",
-      "dnd-none": "<sup> </sup>",
+      "notification": "",
+      "none": "",
+      "dnd-notification": "",
+      "dnd-none": "",
     },
     "return-type": "json",
     "exec-if": "which swaync-client",
-    "exec": "swaync-client -swb",
+    "exec": "swaync-client -swb | sed -u 's/\"text\": \"0\"/\"text\": \"\"/'",
     "on-click": "swaync-client -t -sw",
     "on-click-right": "swaync-client -d -sw",
     "escape": true,
