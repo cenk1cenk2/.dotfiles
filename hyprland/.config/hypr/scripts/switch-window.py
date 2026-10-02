@@ -14,7 +14,7 @@ from pathlib import Path
 import click
 from dotlib.cli import create_logger
 
-from lib import Hyprctl, get_icon_for_class, rofi_with_icons
+from lib import Hyprctl, get_icon_for_class, get_name_for_class, rofi_with_icons
 
 
 class Style(StrEnum):
@@ -206,10 +206,11 @@ class SwitchWindow:
         title = window.get("title", "Untitled")
         if len(title) > 40:
             title = title[:37] + "..."
+        app = get_name_for_class(window.get("class", "Unknown"))
         workspace = window.get("workspace", {}).get("id", "?")
         marker = "● " if focused else ""
 
-        return f"{marker}[{workspace}] {title}"
+        return f"{marker}[{workspace}] {app} - {title}"
 
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})

@@ -4,11 +4,12 @@ from pathlib import Path
 
 # Cache for desktop file lookups
 _desktop_file_cache: dict[str, str] = {}
+_desktop_name_cache: dict[str, str] = {}
 _desktop_files_scanned = False
 
 
 def _scan_desktop_files() -> None:
-    """Scan all desktop files and build a cache of class -> icon mappings."""
+    """Scan all desktop files and build caches of class -> icon and name."""
     global _desktop_file_cache, _desktop_files_scanned
 
     if _desktop_files_scanned:
@@ -44,20 +45,25 @@ def _scan_desktop_files() -> None:
                     if not icon:
                         continue
 
+                    name = name_match.group(1).strip() if name_match else None
+
                     # Try to map by WM class first (most accurate)
                     if wm_class_match:
                         wm_class = wm_class_match.group(1).strip()
                         _desktop_file_cache[wm_class] = icon
                         _desktop_file_cache[wm_class.lower()] = icon
+                        if name:
+                            _desktop_name_cache.setdefault(wm_class.lower(), name)
 
                     # Also map by desktop file basename (common pattern)
                     basename = desktop_file.stem
                     _desktop_file_cache[basename] = icon
                     _desktop_file_cache[basename.lower()] = icon
+                    if name:
+                        _desktop_name_cache.setdefault(basename.lower(), name)
 
                     # Map by application name
-                    if name_match:
-                        name = name_match.group(1).strip()
+                    if name:
                         _desktop_file_cache[name] = icon
                         _desktop_file_cache[name.lower()] = icon
 
@@ -130,6 +136,17 @@ def get_icon_for_class(window_class: str) -> str:
 
     # Last resort: return the class itself (GTK will try to find it)
     return window_class.lower()
+
+
+def get_name_for_class(window_class: str) -> str:
+    """The application's desktop-file Name for a window class, else the class.
+
+    Desktop files earlier on the search path win, so a user override names
+    the app over the system copy.
+    """
+    _scan_desktop_files()
+
+    return _desktop_name_cache.get(window_class.lower(), window_class)
 
 
 if __name__ == "__main__":
