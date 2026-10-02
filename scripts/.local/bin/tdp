@@ -866,9 +866,10 @@ class Tdp:
         )
         if not pci_ids:
             self.console.print("[yellow]No visible NVIDIA GPU PCI devices.[/]")
-            excluded = self.run(["nvidia-smi", "--list-excluded-gpus"], check=False)
-            if excluded.stdout.strip():
-                self.console.print(Text(excluded.stdout.rstrip()))
+            if smi == SmiMode.YES and shutil.which("nvidia-smi"):
+                excluded = self.run(["nvidia-smi", "--list-excluded-gpus"], check=False)
+                if excluded.stdout.strip():
+                    self.console.print(Text(excluded.stdout.rstrip()))
             return
 
         # Snapshot sysfs and holders before any nvidia-smi call: querying smi
