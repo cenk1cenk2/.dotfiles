@@ -254,28 +254,26 @@ profiles:
     model: kilic/kilic.dev/vision
     mode: plan
 
-  # Model ids as `codex debug models` lists them; gpt-6-astra is the whole of
-  # the gpt-6 line and carries the reasoning levels above `high` (xhigh, max,
-  # ultra), which `model_reasoning_effort` in config.toml selects rather than
-  # a profile field.
+  # Model ids as `codex debug models` lists them, per account: the two logins
+  # are offered different sets. One profile per tier on the gpt-6 line
+  # (astra, sol, luna), each on the newest version the work account serves;
+  # personal mirrors it. terra has no gpt-6 release, so it is left out.
+  # gpt-6-astra carries the reasoning levels above `high` (xhigh, max, ultra),
+  # which `model_reasoning_effort` in config.toml selects rather than a
+  # profile field.
   - id: personal/codex/gpt-6-astra
     agent: codex
     model: gpt-6-astra
     # mode: workspace-write
 
-  - id: personal/codex/gpt-5.6-sol
+  - id: personal/codex/gpt-6.1-sol
     agent: codex
-    model: gpt-5.6-sol
+    model: gpt-6.1-sol
     # mode: workspace-write
 
-  - id: personal/codex/gpt-5.6-terra
+  - id: personal/codex/gpt-6-luna
     agent: codex
-    model: gpt-5.6-terra
-    # mode: workspace-write
-
-  - id: personal/codex/gpt-5.6-luna
-    agent: codex
-    model: gpt-5.6-luna
+    model: gpt-6-luna
     # mode: workspace-write
 
   # Rejected by the API on a ChatGPT-account login.
@@ -337,24 +335,19 @@ profiles:
     mcp:
       enabled: false
 
-  # Same models as the personal side; the `work/codex/*` patch points them at
-  # ~/.codex-laravel, so the two accounts stay logged in side by side.
+  # The `work/codex/*` patch points these at ~/.codex-laravel, so the two
+  # accounts stay logged in side by side.
   - id: work/codex/gpt-6-astra
     agent: codex
     model: gpt-6-astra
     # mode: workspace-write
 
-  - id: work/codex/gpt-5.6-sol
+  - id: work/codex/gpt-6.1-sol
     agent: codex
-    model: gpt-5.6-sol
+    model: gpt-6.1-sol
     # mode: workspace-write
 
-  - id: work/codex/gpt-5.6-terra
+  - id: work/codex/gpt-6-luna
     agent: codex
-    model: gpt-5.6-terra
-    # mode: workspace-write
-
-  - id: work/codex/gpt-5.6-luna
-    agent: codex
-    model: gpt-5.6-luna
+    model: gpt-6-luna
     # mode: workspace-write
