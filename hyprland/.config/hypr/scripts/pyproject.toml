@@ -11,6 +11,9 @@ dependencies = [
 
 [tool.uv]
 python-preference = "only-system"
+# Precompiled into the deployed .venv, which git ignores; saves the first
+# run after every sync compiling each dependency on import.
+compile-bytecode = true
 
 [tool.uv.sources]
 # Relative to this file's DEPLOYED location, not the repo: uv resolves a path

@@ -16,10 +16,9 @@ import threading
 from dataclasses import dataclass
 from typing import IO
 
-from rich.console import Console
-from rich.logging import RichHandler
-
-_console: Console | None = None
+# The handler create_logger installed on the root logger, so a second call
+# retunes it instead of stacking another.
+_stderr_handler: logging.Handler | None = None
 
 
 # Where a run leaves its trace. A compositor keybind has nowhere to put
@@ -63,7 +62,12 @@ def create_logger(
     log_file: str | None = None,
     quiet: set[str] | frozenset[str] = frozenset(),
 ) -> logging.Logger:
-    """Install a rich handler on the root logger, bound to stderr.
+    """Install a stderr handler on the root logger: rich on a terminal, plain
+    otherwise.
+
+    A run launched from a keybind or a status bar has no terminal to colour,
+    and rich costs ~15ms of import on every such launch, so it only loads
+    when stderr is a tty.
 
     `markup` opts into rich markup inside log messages, for per-item results
     like `log.info("gpu: [green]%s[/]", name)`. Off by default so a message
@@ -77,26 +81,35 @@ def create_logger(
     bar polls: left in, they fill the cap before a run worth reading reaches
     it.
     """
-    global _console
+    global _stderr_handler
     root = logging.getLogger()
     level = logging.DEBUG if verbose else logging.INFO
     root.setLevel(level)
 
-    if not any(isinstance(h, RichHandler) for h in root.handlers):
-        if _console is None:
-            _console = Console(file=sys.stderr, stderr=True, force_terminal=None)
+    if _stderr_handler not in root.handlers:
         for h in list(root.handlers):
             root.removeHandler(h)
-        handler = RichHandler(
-            console=_console,
-            show_path=False,
-            show_time=True,
-            rich_tracebacks=True,
-            markup=markup,
-            log_time_format="[%H:%M:%S]",
-        )
-        handler.setLevel(level)
-        root.addHandler(handler)
+        if sys.stderr.isatty():
+            from rich.console import Console
+            from rich.logging import RichHandler
+
+            _stderr_handler = RichHandler(
+                console=Console(file=sys.stderr, stderr=True, force_terminal=None),
+                show_path=False,
+                show_time=True,
+                rich_tracebacks=True,
+                markup=markup,
+                log_time_format="[%H:%M:%S]",
+            )
+        else:
+            _stderr_handler = logging.StreamHandler(sys.stderr)
+            _stderr_handler.setFormatter(
+                logging.Formatter(
+                    "[%(asctime)s] %(levelname)-7s %(message)s", "%H:%M:%S"
+                )
+            )
+        _stderr_handler.setLevel(level)
+        root.addHandler(_stderr_handler)
     else:
         for h in root.handlers:
             h.setLevel(level)

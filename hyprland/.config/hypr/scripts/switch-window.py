@@ -32,8 +32,9 @@ class SwitchWindow:
         "-theme-str",
         "listview { lines: 15; }",
     )
-    # rofi sees Tab with the held modifier, hence the Super+ variants, and
-    # accepts on Super's release like Windows' Alt-Tab.
+    # rofi sees Tab with the held modifier, hence the Super+ variants. Custom
+    # key 1 closes the selected window instead, which rofi reports as exit
+    # code 10.
     SCREENSHOT_ROFI = (
         "-theme-str",
         "window { width: 70%; }",
@@ -50,15 +51,19 @@ class SwitchWindow:
         "-kb-element-prev",
         "ISO_Left_Tab,Super+ISO_Left_Tab",
         "-kb-accept-entry",
-        "!Super+Tab,!Super_L,Return,KP_Enter",
+        "Return,KP_Enter",
+        "-kb-custom-1",
+        "Control+x",
         "-selected-row",
         "1",
     )
+    ROFI_CLOSE = 10
 
     def __init__(self, hypr: Hyprctl):
         self._hypr = hypr
 
     def run(self, style: Style) -> None:
+        close = False
         windows = self._hypr.clients()
         if not windows:
             self.log.info("No windows available")
@@ -83,18 +88,25 @@ class SwitchWindow:
                 # Most recently focused first, with the previous window
                 # preselected, as Windows orders Alt-Tab.
                 windows.sort(key=lambda w: w.get("focusHistoryID", 999))
-                selected = self._pick_streamed(windows)
+                selected, close = self._pick_streamed(windows)
 
         if selected is None or selected >= len(windows):
             return
 
         window = windows[selected]
+        if close:
+            self._hypr.dispatch(
+                f'hl.dsp.window.close({{ window = "address:{window["address"]}" }})'
+            )
+            self.log.info("Closed window: %s", window.get("title", "Untitled"))
+            return
+
         self._hypr.dispatch(
             f'hl.dsp.focus({{ window = "address:{window["address"]}" }})'
         )
         self.log.info("Switched to window: %s", window.get("title", "Untitled"))
 
-    def _pick_streamed(self, windows: list[dict]) -> int | None:
+    def _pick_streamed(self, windows: list[dict]) -> tuple[int | None, bool]:
         """Open rofi at once and feed it each tile as its capture lands.
 
         rofi cannot swap an image once drawn, so tiles are written in focus
@@ -138,13 +150,13 @@ class SwitchWindow:
                 pass
             out = rofi.stdout.read()
             rofi.wait()
-        if rofi.returncode != 0:
-            return None
+        if rofi.returncode not in (0, self.ROFI_CLOSE):
+            return None, False
 
         try:
-            return int(out.strip())
+            return int(out.strip()), rofi.returncode == self.ROFI_CLOSE
         except ValueError:
-            return None
+            return None, False
 
     def _thumbnail(self, window: dict, directory: Path) -> str:
         """Capture the window by its toplevel id, falling back to its app icon.
