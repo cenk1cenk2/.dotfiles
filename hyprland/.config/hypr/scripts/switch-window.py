@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import tempfile
@@ -14,11 +15,11 @@ from pathlib import Path
 import click
 from dotlib.cli import create_logger
 
-from lib import Hyprctl, get_icon_for_class, get_name_for_class, rofi_with_icons
+from lib import Hyprctl, get_icon_for_class, get_name_for_class
 
 
 class Style(StrEnum):
-    TEXT = "text"
+    ICON = "icon"
     SCREENSHOT = "screenshot"
 
 
@@ -26,26 +27,25 @@ class SwitchWindow:
     log = logging.getLogger("switch-window")
     RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 
-    TEXT_ROFI = (
-        "-theme-str",
-        "window { width: 60%; }",
-        "-theme-str",
-        "listview { lines: 15; }",
-    )
+    WIDTH = 0.75
+    HEIGHT = 0.85
+    COLUMNS = 3
+    MAX_ROWS = 3
+    # Logical px rofi spends outside the icons: per row the label, element
+    # padding and spacing; per window the prompt and mainbox padding.
+    ROW_CHROME = 70
+    WINDOW_CHROME = 110
+
     # rofi sees Tab with the held modifier, hence the Super+ variants. Custom
     # key 1 closes the selected window instead, which rofi reports as exit
     # code 10.
-    SCREENSHOT_ROFI = (
+    ROFI_ARGS = (
         "-theme-str",
-        "window { width: 70%; }",
-        "-theme-str",
-        "listview { columns: 4; lines: 3; flow: horizontal; }",
+        "mainbox { padding: 1em; }",
         "-theme-str",
         "element { orientation: vertical; }",
         "-theme-str",
-        "element-icon { size: 10em; }",
-        "-theme-str",
-        "element-text { horizontal-align: 0.5; }",
+        "element-text { horizontal-align: 0.5; expand: false; }",
         "-kb-element-next",
         "Tab,Super+Tab",
         "-kb-element-prev",
@@ -63,33 +63,15 @@ class SwitchWindow:
         self._hypr = hypr
 
     def run(self, style: Style) -> None:
-        close = False
         windows = self._hypr.clients()
         if not windows:
             self.log.info("No windows available")
             return
 
-        match style:
-            case Style.TEXT:
-                focused = (self._hypr.active_window() or {}).get("address", "")
-                current_ws = (self._hypr.active_workspace() or {}).get("id", 0)
-                windows.sort(key=lambda w: self._sort_key(w, current_ws, focused))
-                entries = [
-                    (
-                        self._format_text(w, w.get("address") == focused),
-                        get_icon_for_class(w.get("class", "Unknown")),
-                    )
-                    for w in windows
-                ]
-                selected = rofi_with_icons(
-                    "Switch window", entries, extra_args=list(self.TEXT_ROFI)
-                )
-            case Style.SCREENSHOT:
-                # Most recently focused first, with the previous window
-                # preselected, as Windows orders Alt-Tab.
-                windows.sort(key=lambda w: w.get("focusHistoryID", 999))
-                selected, close = self._pick_streamed(windows)
-
+        # Most recently focused first, with the previous window preselected,
+        # as Windows orders Alt-Tab.
+        windows.sort(key=lambda w: w.get("focusHistoryID", 999))
+        selected, close = self._pick(windows, style)
         if selected is None or selected >= len(windows):
             return
 
@@ -106,8 +88,41 @@ class SwitchWindow:
         )
         self.log.info("Switched to window: %s", window.get("title", "Untitled"))
 
-    def _pick_streamed(self, windows: list[dict]) -> tuple[int | None, bool]:
-        """Open rofi at once and feed it each tile as its capture lands.
+    def _grid_theme(self, count: int) -> list[str]:
+        """Size the grid to the focused monitor so tiles fill the window width.
+
+        rofi sizes icons only in absolute units and derives row height from
+        that size, so the fit is computed here: each tile is as wide as its
+        column, shrunk until every row fits the screen height, and the window
+        collapses to the rows actually used.
+        """
+        monitor = self._hypr.focused_monitor() or {}
+        scale = monitor.get("scale", 1) or 1
+        width = monitor.get("width", 1920) / scale
+        height = monitor.get("height", 1080) / scale
+        if monitor.get("transform", 0) % 2:
+            width, height = height, width
+
+        rows = min(self.MAX_ROWS, math.ceil(count / self.COLUMNS))
+        column = (width * self.WIDTH - 2 * self.ROW_CHROME) / self.COLUMNS
+        per_row = (height * self.HEIGHT - self.WINDOW_CHROME) / rows - self.ROW_CHROME
+        size = int(min(column, per_row))
+        window_height = int(rows * (size + self.ROW_CHROME) + self.WINDOW_CHROME)
+
+        return [
+            "-theme-str",
+            f"window {{ width: {int(width * self.WIDTH)}px; height: {window_height}px; }}",
+            "-theme-str",
+            (
+                f"listview {{ columns: {self.COLUMNS}; lines: {rows}; flow: horizontal; "
+                "fixed-height: true; }"
+            ),
+            "-theme-str",
+            f"element-icon {{ size: {size}px; expand: true; }}",
+        ]
+
+    def _pick(self, windows: list[dict], style: Style) -> tuple[int | None, bool]:
+        """Open rofi at once and feed it each tile as its image is ready.
 
         rofi cannot swap an image once drawn, so tiles are written in focus
         order rather than updated; a pick made before the rest arrive closes
@@ -125,7 +140,8 @@ class SwitchWindow:
             "-show-icons",
             "-async-pre-read",
             "0",
-            *self.SCREENSHOT_ROFI,
+            *self.ROFI_ARGS,
+            *self._grid_theme(len(windows)),
         ]
         self.log.debug("spawn: %s", " ".join(cmd))
         rofi = subprocess.Popen(
@@ -137,13 +153,21 @@ class SwitchWindow:
             ) as directory,
             ThreadPoolExecutor(max_workers=len(windows)) as pool,
         ):
-            captures = [
-                pool.submit(self._thumbnail, w, Path(directory)) for w in windows
-            ]
+            match style:
+                case Style.SCREENSHOT:
+                    images = [
+                        pool.submit(self._thumbnail, w, Path(directory))
+                        for w in windows
+                    ]
+                case Style.ICON:
+                    images = [
+                        pool.submit(get_icon_for_class, w.get("class", "Unknown"))
+                        for w in windows
+                    ]
             try:
-                for window, capture in zip(windows, captures):
+                for window, image in zip(windows, images):
                     label = self._format_tile(window, window.get("focusHistoryID") == 0)
-                    rofi.stdin.write(f"{label}\x00icon\x1f{capture.result()}\n")
+                    rofi.stdin.write(f"{label}\x00icon\x1f{image.result()}\n")
                     rofi.stdin.flush()
                 rofi.stdin.close()
             except BrokenPipeError:
@@ -170,7 +194,7 @@ class SwitchWindow:
             return icon
 
         path = directory / f"{stable_id}.jpg"
-        cmd = ["grim", "-T", stable_id, "-s", "0.15", "-t", "jpeg", str(path)]
+        cmd = ["grim", "-T", stable_id, "-s", "0.25", "-t", "jpeg", str(path)]
         self.log.debug("spawn: %s", " ".join(cmd))
         try:
             proc = subprocess.run(cmd, capture_output=True, timeout=2, check=False)
@@ -179,27 +203,6 @@ class SwitchWindow:
         self.log.debug("grim stderr: %s", proc.stderr.decode(errors="replace"))
 
         return str(path) if proc.returncode == 0 else icon
-
-    @staticmethod
-    def _sort_key(window: dict, current_ws: int, focused_addr: str):
-        ws_id = window.get("workspace", {}).get("id", 999)
-
-        return (
-            0 if ws_id == current_ws else 1,
-            0 if window.get("address") == focused_addr else 1,
-            ws_id,
-        )
-
-    @staticmethod
-    def _format_text(window: dict, focused: bool) -> str:
-        title = window.get("title", "Untitled")
-        if len(title) > 60:
-            title = title[:57] + "..."
-        class_name = window.get("class", "Unknown")
-        workspace = window.get("workspace", {}).get("id", "?")
-        marker = "● " if focused else "  "
-
-        return f"{marker}[WS {workspace}] {title} - {class_name}"
 
     @staticmethod
     def _format_tile(window: dict, focused: bool) -> str:
@@ -218,9 +221,9 @@ class SwitchWindow:
     "-s",
     "--style",
     type=click.Choice([s.value for s in Style]),
-    default=Style.SCREENSHOT.value,
+    default=Style.ICON.value,
     show_default=True,
-    help="Switcher layout.",
+    help="Tile content: app icons or window captures.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Show capture traces.")
 def cmd_main(style: str, verbose: bool) -> None:
