@@ -649,6 +649,32 @@ not set. Read the active line, never the comment above it.
   in `_gtk4_theme`, appended after the copy (`window.csd`, not
   `decoration`).
 
+## Intel xe eDP self-refresh (bat)
+
+- **`bat`'s OLED panel (`desc:Samsung Display Corp. ATNA60KA04-0`, Panther
+  Lake, `xe` driver) runs PSR1**, which is on by default because nothing in
+  `/etc/kernel/cmdline` turns it off. The panel supports PSR1 only, with no
+  Panel Replay, so `xe.enable_psr=0` alone disables it; the
+  `xe.enable_panel_replay=0` other reports pair with it does nothing here.
+- **A PSR state change can leave the panel black until the next frame**, and
+  Hyprland's `debug:vfr = true` sends no frame while nothing changes, so the
+  screen stays dark until input. Any key or mouse move fixes it. It shows on
+  the first new workspace after login, and on every live PSR toggle. Other
+  hosts have no PSR panel and never do this. It is not hypridle: its listeners
+  fire only after an idle timeout, and its journal shows no run at the moment
+  the screen goes dark.
+- **Toggle it live, with no reboot**, through debugfs:
+  `echo 0x1 | sudo tee /sys/kernel/debug/dri/0/i915_edp_psr_debug` turns it
+  off, `0x0` restores the default, and
+  `/sys/kernel/debug/dri/0/eDP-1/i915_psr_status` reports the mode. The write
+  blanks the panel once and does not survive a reboot.
+- **PSR stays on deliberately.** Turning it off costs roughly 0.5–1.5 W on a
+  static screen, and it can keep the CPU out of PC10, which outweighs a
+  blackout that one keypress clears. The fix if that changes is
+  `xe.enable_psr=0` in `/etc/kernel/cmdline` plus a UKI rebuild; boot-menu
+  cmdline edits are ignored under Secure Boot. Turning off `vfr` on `bat`
+  only hides the symptom, at the cost of rendering every frame at 120 Hz.
+
 ## Agent permissions
 
 Claude Code, opencode and codex each carry the same policy in their own
