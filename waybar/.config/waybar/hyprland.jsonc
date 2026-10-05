@@ -187,7 +187,7 @@
   "custom/notification": {
     // swaync sends the unread count as text; zero is blanked so an idle bell
     // shows no number; the negative spacing pulls the count over the bell.
-    "format": "<span rise='4pt'>{icon}</span><span size='9pt' rise='9pt' weight='bold' foreground='#F28B82'>{text}</span>",
+    "format": "<span rise='4pt'>{icon}</span><span size='6pt' rise='12pt' weight='bold' foreground='#F28B82'>{text}</span>",
     "format-icons": {
       "notification": "",
       "none": "",
