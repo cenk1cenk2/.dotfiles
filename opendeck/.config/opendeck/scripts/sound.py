@@ -281,26 +281,28 @@ class SoundPlugin(Plugin):
         if key.action != Action.MEDIA or key.verb != "toggle":
             return None
 
-        width = round(144 * self.progress())
+        # A dark track with the elapsed part filled inside it, the same on the
+        # cover and on the plain icon.
+        bar = (
+            '<rect y="124" width="144" height="20" fill="#17191e"/>'
+            f'<rect x="4" y="128" width="{round(136 * self.progress())}" height="12"'
+            f' rx="3" fill="{self.PROGRESS}"/>'
+            if self.length
+            else ""
+        )
         if self.art is None:
             icon = (
                 self.ICONS / ("pause.svg" if self.playing else "play.svg")
             ).read_text()
-            bar = (
-                f'<rect y="138" width="{width}" height="6" fill="#17191e"/>'
-                if width
-                else ""
-            )
             return self.uri(icon.replace("</svg>", bar + "</svg>"))
 
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             f'<image href="{self.art}" width="144" height="144" preserveAspectRatio="xMidYMid slice"/>'
             '<rect width="144" height="36" fill="#17191e" fill-opacity="0.85"/>'
-            '<rect y="138" width="144" height="6" fill="#17191e" fill-opacity="0.6"/>'
-            f'<rect y="138" width="{width}" height="6" fill="{self.PROGRESS}"/>'
-            '<circle cx="118" cy="114" r="20" fill="#98c379"/>'
-            '<g transform="translate(105 101) scale(1.625)" fill="#17191e">'
+            f"{bar}"
+            '<circle cx="118" cy="98" r="20" fill="#98c379"/>'
+            '<g transform="translate(105 85) scale(1.625)" fill="#17191e">'
             f'<path d="{self.PAUSE if self.playing else self.PLAY}"/></g></svg>'
         )
 
