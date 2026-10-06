@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import fcntl
+import html
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ import time
 from collections import deque
 from enum import IntEnum, StrEnum
 from pathlib import Path
+from typing import ClassVar
 
 from deck import Key, Plugin, command
 
@@ -84,6 +86,12 @@ class SystemPlugin(Plugin):
     # An entry with no tmux pane can be neither checked nor focused.
     PANELESS_SECONDS = 30 * 60
     URGENT = "#e06c75"
+    # Simple Icons marks (CC0) in the plugin's icons/agents/, by hook vendor.
+    VENDORS: ClassVar[dict[str, str]] = {
+        "Claude Code": "claude",
+        "Codex": "openai",
+        "OpenCode": "opencode",
+    }
     WAITING_TILE = "#d19a66"
     TERMINAL = Path(
         "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
@@ -310,21 +318,56 @@ class SystemPlugin(Plugin):
         return self.waiting[index] if index < len(self.waiting) else None
 
     def agent_image(self, key: SystemKey) -> str:
+        """The waiting agent's mark over its project name, in big type.
+
+        A dark key with a faint terminal while nothing waits in this slot."""
         entry = self.agent(key)
-        colour = None
-        if entry:
-            colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
-        tile = (
-            f'<rect y="36" width="144" height="108" fill="{colour}"/>' if colour else ""
+        if entry is None:
+            icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
+            return self.uri(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+                '<rect width="144" height="144" fill="#17191e"/>'
+                f'<image href="data:image/svg+xml;base64,{icon}" x="40" y="52" width="64" height="64"'
+                ' opacity="0.3"/></svg>'
+            )
+
+        colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
+        vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
+        mark = re.search(
+            r' d="([^"]+)"', (self.ICONS / f"agents/{vendor}.svg").read_text()
         )
-        icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
-        opacity = "1" if entry else "0.3"
+        project = entry.get("directory") or "?"
+        if len(project) > 12:
+            project = project[:11] + "…"
+        size = min(26, round(230 / max(len(project), 1)))
+        extra = len(self.waiting) - 2 if key.settings["slot"] == 1 else 0
+        who = " · ".join(
+            part
+            for part in (
+                vendor if vendor != "openai" else "codex",
+                entry.get("profile"),
+            )
+            if part
+        )
 
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-            f'<rect width="144" height="144" fill="#17191e"/>{tile}'
-            f'<image href="data:image/svg+xml;base64,{icon}" x="40" y="52" width="64" height="64"'
-            f' opacity="{opacity}"/></svg>'
+            '<rect width="144" height="144" fill="#17191e"/>'
+            f'<rect y="36" width="144" height="108" fill="{colour}"/>'
+            f'<text x="8" y="25" font-family="Liberation Sans" font-size="17" fill="#c8ccd4">{who}</text>'
+            + (
+                f'<text x="136" y="25" font-family="Liberation Sans" font-size="17" font-weight="bold"'
+                f' fill="{colour}" text-anchor="end">+{extra}</text>'
+                if extra > 0
+                else ""
+            )
+            + (
+                f'<g transform="translate(50 44) scale(1.8333)" fill="#17191e"><path d="{mark[1]}"/></g>'
+                if mark
+                else ""
+            )
+            + f'<text x="72" y="130" font-family="Liberation Sans" font-size="{size}" font-weight="bold"'
+            f' fill="#17191e" text-anchor="middle">{html.escape(project)}</text></svg>'
         )
 
     def timer_elapsed(self) -> float:
@@ -446,13 +489,7 @@ class SystemPlugin(Plugin):
             case Action.TIMER:
                 return 0, ""
             case Action.AGENT:
-                entry = self.agent(key)
-                if entry is None:
-                    return 0, "agents" if key.settings["slot"] == 0 else ""
-                vendor = "codex" if entry["vendor"] == "Codex" else "claude"
-                extra = len(self.waiting) - 2
-                more = f" +{extra}" if key.settings["slot"] == 1 and extra > 0 else ""
-                return 0, f"{vendor}{more}\n{entry['directory']}"
+                return 0, ""
             case Action.UPTIME:
                 minutes = int(float(Path("/proc/uptime").read_text().split()[0])) // 60
                 days, hours = divmod(minutes // 60, 24)
