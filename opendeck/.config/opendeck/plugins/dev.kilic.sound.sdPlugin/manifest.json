@@ -1,0 +1,83 @@
+{
+  "Name": "Sound",
+  "Author": "Cenk Kılıç",
+  "Version": "0.1.0",
+  "Description": "Live volume, mute, player and push-to-talk keys.",
+  "Icon": "icons/plugin",
+  "Category": "Sound",
+  "CodePathLin": "bin/sound",
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Sound Volume",
+      "UUID": "dev.kilic.sound.volume",
+      "Icon": "icons/volume",
+      "Tooltip": "Volume down, mute or up, with the live level.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/volume",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/volume",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Sound Media",
+      "UUID": "dev.kilic.sound.media",
+      "Icon": "icons/media",
+      "Tooltip": "Player control with live play state and player name.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/media",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/media",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Push to Talk",
+      "UUID": "dev.kilic.sound.talk",
+      "Icon": "icons/talk",
+      "Tooltip": "Hold to unmute the default input.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/talk",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/talk",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    }
+  ]
+}
