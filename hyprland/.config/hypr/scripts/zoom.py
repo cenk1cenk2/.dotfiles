@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+#!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
 """Toggle the compositor's own cursor zoom.
 
 Hyprland animates `cursor:zoom_factor` itself through the `zoomFactor`

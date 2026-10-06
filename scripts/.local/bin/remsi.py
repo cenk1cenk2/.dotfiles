@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+#!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
 """Remove silent + filler regions from video via ffmpeg.
 
 Same shebang pattern as the wayland scripts — `sh -c` trampoline
