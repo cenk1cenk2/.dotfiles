@@ -68,6 +68,23 @@
           "FontSize": 13
         }
       ]
+    },
+    {
+      "Name": "Timer",
+      "UUID": "dev.kilic.system.timer",
+      "Icon": "icons/uptime",
+      "Tooltip": "Stopwatch: tap to start or pause, hold to reset.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/uptime",
+          "TitleAlignment": "bottom",
+          "FontSize": 13
+        }
+      ]
     }
   ]
 }

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -18,6 +20,7 @@ class Action(StrEnum):
     NOTIFY = "dev.kilic.system.notify"
     GAUGE = "dev.kilic.system.gauge"
     UPTIME = "dev.kilic.system.uptime"
+    TIMER = "dev.kilic.system.timer"
 
 
 class Metric(StrEnum):
@@ -65,6 +68,13 @@ class SystemPlugin(Plugin):
     TILE = re.compile(r'<rect y="36" width="144" height="108" fill="(#[0-9a-f]{6})"/>')
     # The package sensor of each CPU vendor's hwmon driver.
     CPU_SENSORS = (("k10temp", "Tctl"), ("coretemp", "Package id 0"))
+    # Persisted so a redeploy or an OpenDeck restart keeps the count.
+    TIMER_STATE = (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+        / "opendeck/timer.json"
+    )
+    RUNNING = "#98c379"
+    PAUSED = "#e5c07b"
     KEY = SystemKey
 
     log = logging.getLogger("system-deck")
@@ -80,6 +90,15 @@ class SystemPlugin(Plugin):
         self.cpu_times: tuple[int, int] | None = None
         self.cpu_sensor = self.find_cpu_sensor()
         self.gpu = self.find_gpu()
+        # Wall-clock start of the running stretch, and the seconds banked
+        # before it.
+        self.timer_started: float | None = None
+        self.timer_banked = 0.0
+        try:
+            saved = json.loads(self.TIMER_STATE.read_text())
+            self.timer_started, self.timer_banked = saved["started"], saved["banked"]
+        except OSError, ValueError, KeyError:
+            pass
 
     def query(self, cmd: list[str]) -> subprocess.CompletedProcess:
         """A status read, traced at DEBUG since it runs every second."""
@@ -209,6 +228,58 @@ class SystemPlugin(Plugin):
         if any(key.action == Action.NOTIFY for key in self.keys.values()):
             self.sample_notifications()
 
+    def timer_elapsed(self) -> float:
+        running = time.time() - self.timer_started if self.timer_started else 0.0
+
+        return self.timer_banked + running
+
+    def timer_save(self) -> None:
+        self.TIMER_STATE.parent.mkdir(parents=True, exist_ok=True)
+        self.TIMER_STATE.write_text(
+            json.dumps({"started": self.timer_started, "banked": self.timer_banked})
+        )
+
+    def timer_toggle(self) -> None:
+        if self.timer_started:
+            self.timer_banked, self.timer_started = self.timer_elapsed(), None
+        else:
+            self.timer_started = time.time()
+        self.timer_save()
+        self.render()
+
+    def timer_reset(self) -> None:
+        self.timer_started, self.timer_banked = None, 0.0
+        self.timer_save()
+        self.render()
+
+    def timer(self) -> str:
+        """Elapsed time in large digits, ringed by a sweep that laps each minute."""
+        elapsed = self.timer_elapsed()
+        if not elapsed and not self.timer_started:
+            return self.uri((self.ICONS / "uptime.svg").read_text())
+
+        whole = int(elapsed)
+        hours, rest = divmod(whole, 3600)
+        digits = (
+            f"{hours}:{rest // 60:02d}:{rest % 60:02d}"
+            if hours
+            else f"{rest // 60}:{rest % 60:02d}"
+        )
+        colour = self.RUNNING if self.timer_started else self.PAUSED
+        circumference = 2 * 3.14159 * 60
+        sweep = circumference * (elapsed % 60) / 60
+
+        return self.uri(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+            '<rect width="144" height="144" fill="#17191e"/>'
+            '<circle cx="72" cy="72" r="60" fill="none" stroke="#3e4451" stroke-width="10"/>'
+            f'<circle cx="72" cy="72" r="60" fill="none" stroke="{colour}" stroke-width="10"'
+            f' stroke-dasharray="{sweep:.1f} {circumference:.1f}" transform="rotate(-90 72 72)"/>'
+            f'<text x="72" y="84" font-family="Liberation Sans" font-weight="bold"'
+            f' font-size="{30 if hours else 36}" fill="{colour}" text-anchor="middle">{digits}</text>'
+            "</svg>"
+        )
+
     @staticmethod
     def uri(svg: str) -> str:
         return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
@@ -246,6 +317,8 @@ class SystemPlugin(Plugin):
         )
 
     def image(self, context: str, key: SystemKey) -> str | None:
+        if key.action == Action.TIMER:
+            return self.timer()
         if key.action != Action.GAUGE:
             return None
 
@@ -269,6 +342,8 @@ class SystemPlugin(Plugin):
                 )
             case Action.GAUGE:
                 return 0, self.readout.get(key.metric, "")
+            case Action.TIMER:
+                return 0, ""
             case Action.UPTIME:
                 minutes = int(float(Path("/proc/uptime").read_text().split()[0])) // 60
                 days, hours = divmod(minutes // 60, 24)
@@ -282,11 +357,19 @@ class SystemPlugin(Plugin):
                 self.spawn(["swaync-client", "--toggle-panel", "--skip-wait"])
             case Action.GAUGE:
                 self.spawn([str(self.LAUNCH), key.launch])
+            case Action.TIMER:
+                self.timer_toggle()
 
     def holds(self, key: SystemKey) -> bool:
-        return key.action == Action.NOTIFY
+        return key.action in (Action.NOTIFY, Action.TIMER)
+
+    def hold_status(self, key: SystemKey) -> str | None:
+        return "reset" if key.action == Action.TIMER else None
 
     def hold(self, context: str, key: SystemKey) -> None:
+        if key.action == Action.TIMER:
+            return self.timer_reset()
+
         self.spawn(["swaync-client", "--toggle-dnd", "--skip-wait"])
         self.next_sample = 0.0
 
