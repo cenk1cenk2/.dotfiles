@@ -341,22 +341,16 @@ class SystemPlugin(Plugin):
             project = project[:11] + "…"
         size = min(26, round(230 / max(len(project), 1)))
         extra = len(self.waiting) - 2 if key.settings["slot"] == 1 else 0
-        who = " · ".join(
-            part
-            for part in (
-                vendor if vendor != "openai" else "codex",
-                entry.get("profile"),
-            )
-            if part
-        )
+        profile = html.escape(entry.get("profile") or "")
 
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             '<rect width="144" height="144" fill="#17191e"/>'
             f'<rect y="36" width="144" height="108" fill="{colour}"/>'
-            f'<text x="8" y="25" font-family="Liberation Sans" font-size="17" fill="#c8ccd4">{who}</text>'
+            f'<text x="{60 if extra > 0 else 72}" y="28" font-family="Liberation Sans" font-size="24"'
+            f' font-weight="bold" fill="#e5e5e5" text-anchor="middle">{profile}</text>'
             + (
-                f'<text x="136" y="25" font-family="Liberation Sans" font-size="17" font-weight="bold"'
+                f'<text x="138" y="28" font-family="Liberation Sans" font-size="24" font-weight="bold"'
                 f' fill="{colour}" text-anchor="end">+{extra}</text>'
                 if extra > 0
                 else ""
