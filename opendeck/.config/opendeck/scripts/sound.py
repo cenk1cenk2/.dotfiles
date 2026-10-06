@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import ClassVar
 
 import pulsectl
-from dotlib.cli import run
 
 from deck import Key, Plugin, command
 
@@ -145,9 +144,20 @@ class SoundPlugin(Plugin):
             self.pulse = None
             self.levels = {}
 
+    def query(self, cmd: list[str]) -> subprocess.CompletedProcess:
+        """A status read, traced at DEBUG since it runs every second."""
+        self.log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=1, check=False
+        )
+        if proc.stderr:
+            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+
+        return proc
+
     def poll_player(self) -> None:
         try:
-            names = run(
+            names = self.query(
                 [
                     "busctl",
                     "--user",
@@ -156,11 +166,9 @@ class SoundPlugin(Plugin):
                     "/org/mpris/MediaPlayer2",
                     "com.github.altdesktop.playerctld",
                     "PlayerNames",
-                ],
-                log=self.log,
-                timeout=1,
+                ]
             )
-            metadata = run(
+            metadata = self.query(
                 [
                     "playerctl",
                     "-p",
@@ -168,9 +176,7 @@ class SoundPlugin(Plugin):
                     "metadata",
                     "--format",
                     "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}",
-                ],
-                log=self.log,
-                timeout=1,
+                ]
             )
         except subprocess.TimeoutExpired:
             return
