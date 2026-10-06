@@ -114,9 +114,11 @@ swappy-git
 swayimg
 swaync
 swayosd
+systemd-ukify
 tailscale
 tcpdump
 tmux
+tpm2-tools
 ttf-ms-win11-auto
 ttf-nerd-fonts-symbols
 ttf-nerd-fonts-symbols-common
