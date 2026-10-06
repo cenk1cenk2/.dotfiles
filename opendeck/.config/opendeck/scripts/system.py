@@ -116,6 +116,9 @@ class SystemPlugin(Plugin):
         # Wall-clock start of the running stretch, and the seconds banked
         # before it.
         self.waiting: list[dict] = []
+        # The waiting agent the left key shows, by pane and alarm time; the
+        # right key moves it along the queue.
+        self.selected: tuple | None = None
         self.timer_started: float | None = None
         self.timer_banked = 0.0
         try:
@@ -313,14 +316,76 @@ class SystemPlugin(Plugin):
 
         self.edit_waiting(keep)
 
+    @staticmethod
+    def identity(entry: dict) -> tuple:
+        return entry.get("pane"), entry.get("at")
+
     def agent(self, key: SystemKey) -> dict | None:
-        index = int(key.settings["slot"])
-        return self.waiting[index] if index < len(self.waiting) else None
+        """The selected agent for the left key; the right key shows the queue."""
+        if key.settings["slot"] != 0 or not self.waiting:
+            return None
+
+        return next(
+            (w for w in self.waiting if self.identity(w) == self.selected),
+            self.waiting[0],
+        )
+
+    def others(self) -> list[dict]:
+        chosen = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
+
+        return [w for w in self.waiting if w is not chosen]
+
+    def mark(self, entry: dict) -> str | None:
+        vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
+        found = re.search(
+            r' d="([^"]+)"', (self.ICONS / f"agents/{vendor}.svg").read_text()
+        )
+
+        return found[1] if found else None
+
+    def queue_image(self) -> str:
+        """The rest of the queue in brief: a count, then a mark and project per row."""
+        others = self.others()
+        if not others:
+            return self.uri(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+                '<rect width="144" height="144" fill="#17191e"/></svg>'
+            )
+
+        colour = (
+            self.URGENT if any(w.get("urgent") for w in others) else self.WAITING_TILE
+        )
+        rows = ""
+        for i, entry in enumerate(others[:3]):
+            y = 44 + i * 33
+            project = entry.get("directory") or "?"
+            if len(project) > 8:
+                project = project[:7] + "…"
+            if mark := self.mark(entry):
+                rows += (
+                    f'<g transform="translate(8 {y}) scale(1.1667)" fill="#17191e">'
+                    f'<path d="{mark}"/></g>'
+                )
+            rows += (
+                f'<text x="40" y="{y + 22}" font-family="Liberation Sans" font-size="22"'
+                f' font-weight="bold" fill="#17191e">{html.escape(project)}</text>'
+            )
+
+        return self.uri(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+            '<rect width="144" height="144" fill="#17191e"/>'
+            f'<rect y="36" width="144" height="108" fill="{colour}"/>'
+            '<text x="72" y="28" font-family="Liberation Sans" font-size="24" font-weight="bold"'
+            f' fill="#e5e5e5" text-anchor="middle">{len(others)} more</text>{rows}</svg>'
+        )
 
     def agent_image(self, key: SystemKey) -> str:
         """The waiting agent's mark over its project name, in big type.
 
         A dark key with a faint terminal while nothing waits in this slot."""
+        if key.settings["slot"] == 1:
+            return self.queue_image()
+
         entry = self.agent(key)
         if entry is None:
             icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
@@ -332,31 +397,21 @@ class SystemPlugin(Plugin):
             )
 
         colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
-        vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
-        mark = re.search(
-            r' d="([^"]+)"', (self.ICONS / f"agents/{vendor}.svg").read_text()
-        )
+        mark = self.mark(entry)
         project = entry.get("directory") or "?"
         if len(project) > 12:
             project = project[:11] + "…"
         size = min(26, round(230 / max(len(project), 1)))
-        extra = len(self.waiting) - 2 if key.settings["slot"] == 1 else 0
         profile = html.escape(entry.get("profile") or "")
 
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             '<rect width="144" height="144" fill="#17191e"/>'
             f'<rect y="36" width="144" height="108" fill="{colour}"/>'
-            f'<text x="{60 if extra > 0 else 72}" y="28" font-family="Liberation Sans" font-size="24"'
+            '<text x="72" y="28" font-family="Liberation Sans" font-size="24"'
             f' font-weight="bold" fill="#e5e5e5" text-anchor="middle">{profile}</text>'
             + (
-                f'<text x="138" y="28" font-family="Liberation Sans" font-size="24" font-weight="bold"'
-                f' fill="{colour}" text-anchor="end">+{extra}</text>'
-                if extra > 0
-                else ""
-            )
-            + (
-                f'<g transform="translate(50 44) scale(1.8333)" fill="#17191e"><path d="{mark[1]}"/></g>'
+                f'<g transform="translate(50 44) scale(1.8333)" fill="#17191e"><path d="{mark}"/></g>'
                 if mark
                 else ""
             )
@@ -499,10 +554,21 @@ class SystemPlugin(Plugin):
                 self.spawn([str(self.LAUNCH), key.launch])
             case Action.TIMER:
                 self.timer_toggle()
+            case Action.AGENT if key.settings["slot"] == 1:
+                self.cycle()
             case Action.AGENT if (entry := self.agent(key)) is not None:
                 if entry.get("pane"):
                     self.spawn([str(self.NOTIFY), "focus", "--pane", entry["pane"]])
                 self.dismiss(entry)
+
+    def cycle(self) -> None:
+        """Select the next waiting agent after the current one, wrapping."""
+        if not self.waiting:
+            return
+        current = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
+        index = self.waiting.index(current) if current in self.waiting else -1
+        self.selected = self.identity(self.waiting[(index + 1) % len(self.waiting)])
+        self.render()
 
     def dismiss(self, entry: dict) -> None:
         self.edit_waiting(lambda w: w != entry)
@@ -516,7 +582,7 @@ class SystemPlugin(Plugin):
             case Action.TIMER:
                 return "reset"
             case Action.AGENT:
-                return "dismiss"
+                return "dismiss all" if key.settings["slot"] == 1 else "dismiss"
 
         return None
 
@@ -524,7 +590,10 @@ class SystemPlugin(Plugin):
         if key.action == Action.TIMER:
             return self.timer_reset()
         if key.action == Action.AGENT:
-            if (entry := self.agent(key)) is not None:
+            if key.settings["slot"] == 1:
+                self.edit_waiting(lambda w: False)
+                self.render()
+            elif (entry := self.agent(key)) is not None:
                 self.dismiss(entry)
             return
 
