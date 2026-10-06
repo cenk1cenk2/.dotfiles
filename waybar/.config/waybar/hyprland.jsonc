@@ -85,35 +85,35 @@
   "custom/recorder": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/recorder.py status --watch",
+    "exec": "~/.config/wayland/scripts/.venv/bin/python ~/.config/wayland/scripts/recorder.py status --watch",
     "on-click": "~/.config/wayland/scripts/recorder.py toggle",
   },
 
   "custom/stt": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py stt status --watch",
+    "exec": "~/.config/wayland/scripts/.venv/bin/python ~/.config/wayland/scripts/speech.py stt status --watch",
     "on-click": "~/.config/wayland/scripts/speech.py stt toggle --output clipboard",
   },
 
   "custom/tts": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py tts status --watch",
+    "exec": "~/.config/wayland/scripts/.venv/bin/python ~/.config/wayland/scripts/speech.py tts status --watch",
     "on-click": "~/.config/wayland/scripts/speech.py tts toggle",
   },
 
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
+    "exec": "~/.config/wayland/scripts/.venv/bin/python ~/.config/wayland/scripts/copywriter.py status --watch",
   },
 
   // Hidden while unzoomed: the watcher prints an empty text at 1x.
   "custom/zoom": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/hypr/scripts/zoom.py status --watch",
+    "exec": "~/.config/hypr/scripts/.venv/bin/python ~/.config/hypr/scripts/zoom.py status --watch",
     "on-click": "~/.config/hypr/scripts/zoom.py toggle",
   },
 

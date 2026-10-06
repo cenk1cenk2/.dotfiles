@@ -67,7 +67,7 @@
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
+    "exec": "~/.config/wayland/scripts/.venv/bin/python ~/.config/wayland/scripts/copywriter.py status --watch",
   },
 
   "group/extras": {
