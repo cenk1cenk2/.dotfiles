@@ -10,8 +10,10 @@ pimsync/.config/pimsync/urls/*
 # layout is tracked; per-plugin settings are re-entered in the OpenDeck UI.
 opendeck/.config/opendeck/settings/
 # 39M of downloaded plugin bundles and their binaries. Reinstalled from the
-# OpenDeck UI, not carried here.
-opendeck/.config/opendeck/plugins/
+# OpenDeck UI, not carried here. Our own plugins are the exception: their code
+# lives in opendeck/.config/opendeck/scripts.
+opendeck/.config/opendeck/plugins/*
+!opendeck/.config/opendeck/plugins/dev.kilic.*.sdPlugin/
 # The deck-level profile file holds only "selected_profile" -- which page the
 # deck is showing right now. Pure live state, rewritten on every profile
 # switch; the profiles themselves are one directory deeper and are tracked.

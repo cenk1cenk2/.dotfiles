@@ -1,0 +1,36 @@
+# Dependency manifest for the OpenDeck scripts: the deck's own plugins.
+#
+# Same runtime model as the wayland scripts: each executable shebangs to
+# `uv run --project "$(dirname "$0")"`, so OpenDeck can launch it from the
+# plugin directory it sets as the working directory.
+#
+# This package is copied by `./install.py opendeck`, not stowed, so the
+# deployed `.venv/` and `uv.lock` are created next to the deployed copy.
+
+[project]
+name = "opendeck-scripts"
+version = "0.1.0"
+description = "Stream Deck plugins for the OpenDeck dotfiles."
+requires-python = ">=3.14"
+dependencies = [
+  "dotlib",
+  "click>=8.1",
+  # OpenDeck talks to its plugins over a WebSocket, which the stdlib has no
+  # client for.
+  "websocket-client>=1.8",
+  # Live sink/source levels for the sound plugin.
+  "pulsectl>=24.12",
+]
+
+[tool.ty.environment]
+extra-paths = [".", "../../wayland/lib/src"]
+
+[tool.pyright]
+extraPaths = [".", "../../wayland/lib/src"]
+
+[tool.uv]
+compile-bytecode = true
+
+[tool.uv.sources]
+# Relative to this file's DEPLOYED location, `~/.config/opendeck/scripts`.
+dotlib = { path = "../../wayland/lib", editable = true }

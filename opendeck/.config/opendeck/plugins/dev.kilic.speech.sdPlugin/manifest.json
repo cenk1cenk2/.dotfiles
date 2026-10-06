@@ -1,0 +1,98 @@
+{
+  "Name": "Speech",
+  "Author": "Cenk Kılıç",
+  "Version": "0.1.0",
+  "Description": "Live speech.py STT and TTS keys.",
+  "Icon": "icons/plugin",
+  "Category": "Speech",
+  "CodePathLin": "bin/speech",
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Speech Toggle",
+      "UUID": "dev.kilic.speech.toggle",
+      "Icon": "icons/stt",
+      "Tooltip": "Toggle an STT or TTS session; hold to kill it.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/stt",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/stt",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/stt",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/stt",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Speech Pause",
+      "UUID": "dev.kilic.speech.pause",
+      "Icon": "icons/pause",
+      "Tooltip": "Pause or resume an STT or TTS session.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/pause",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/pause",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/pause",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Speech Kill",
+      "UUID": "dev.kilic.speech.kill",
+      "Icon": "icons/kill",
+      "Tooltip": "Kill an STT or TTS session.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/kill",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/kill",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    }
+  ]
+}
