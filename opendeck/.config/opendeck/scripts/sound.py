@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
+import re
 import subprocess
 import time
 import urllib.error
@@ -14,6 +16,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pulsectl
+from PIL import Image, ImageOps
 
 from deck import Key, Plugin, command
 
@@ -99,6 +102,10 @@ class SoundPlugin(Plugin):
     # scrolls through that window.
     MARQUEE_WIDTH = 11
     MARQUEE_SECONDS = 0.4
+    MUTED = "#e06c75"
+    PROGRESS = "#98c379"
+    # The tile every icon here draws its glyph on.
+    TILE = re.compile(r'<rect y="36" width="144" height="108" fill="(#[0-9a-f]{6})"/>')
     KEY = SoundKey
 
     log = logging.getLogger("sound-deck")
@@ -112,6 +119,9 @@ class SoundPlugin(Plugin):
         self.track = ""
         self.art_url: str | None = None
         self.art: str | None = None
+        self.position = 0.0
+        self.length = 0.0
+        self.position_at = 0.0
         self.next_player = 0.0
         # The input's mute state before a push-to-talk press, restored on
         # release so the press never fights the mute key.
@@ -175,7 +185,10 @@ class SoundPlugin(Plugin):
                     "playerctld",
                     "metadata",
                     "--format",
-                    "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}",
+                    (
+                        "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}"
+                        "\t{{position}}\t{{mpris:length}}"
+                    ),
                 ]
             )
         except subprocess.TimeoutExpired:
@@ -188,31 +201,69 @@ class SoundPlugin(Plugin):
             if names.returncode == 0 and len(words) > 1
             else None
         )
-        status, artist, title, art_url = (
+        status, artist, title, art_url, position, length = (
             metadata.stdout.rstrip("\n").split("\t")
-            if metadata.returncode == 0 and metadata.stdout.count("\t") == 3
-            else ("", "", "", "")
+            if metadata.returncode == 0 and metadata.stdout.count("\t") == 5
+            else ("", "", "", "", "", "")
         )
         self.playing = status == "Playing"
+        # MPRIS counts both in microseconds.
+        self.position = int(position or 0) / 1e6
+        self.length = int(length or 0) / 1e6
+        self.position_at = time.monotonic()
         self.track = " - ".join(part for part in (artist, title) if part)
         if (art_url or None) != self.art_url:
             self.art_url = art_url or None
             self.art = self.fetch_art(self.art_url) if self.art_url else None
 
     def fetch_art(self, url: str) -> str | None:
-        """The cover at `url` as a data URI; None when it cannot be read."""
+        """The cover at `url` as a key-sized JPEG data URI; None when unreadable.
+
+        Downscaled once per track, since the key is redrawn every time the
+        progress bar moves and a player's cover is often 640px."""
         self.log.debug("art: %s", url)
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
-                mime = response.headers.get_content_type()
-                if mime == "application/octet-stream":
-                    mime = "image/jpeg"
-                data = response.read()
+                cover = Image.open(io.BytesIO(response.read())).convert("RGB")
         except (urllib.error.URLError, OSError, ValueError) as e:
             self.log.debug("art unavailable: %s", e)
             return None
 
-        return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+        out = io.BytesIO()
+        ImageOps.fit(cover, (144, 144)).save(out, "JPEG", quality=85)
+
+        return f"data:image/jpeg;base64,{base64.b64encode(out.getvalue()).decode()}"
+
+    @staticmethod
+    def uri(svg: str) -> str:
+        return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
+
+    def progress(self) -> float:
+        if not self.length:
+            return 0.0
+        elapsed = time.monotonic() - self.position_at if self.playing else 0.0
+
+        return min(1.0, (self.position + elapsed) / self.length)
+
+    def gauge(self, key: SoundKey, level: Level) -> str:
+        """The key's icon with its tile filled up to the level, or red when muted."""
+        svg = (self.ICONS / f"{key.device}-{key.verb}.svg").read_text()
+        if level.muted:
+            return self.uri(
+                self.TILE.sub(
+                    f'<rect y="36" width="144" height="108" fill="{self.MUTED}"/>', svg
+                )
+            )
+
+        height = round(108 * min(level.volume, 100) / 100)
+
+        return self.uri(
+            self.TILE.sub(
+                rf'<rect y="36" width="144" height="108" fill="\1" fill-opacity="0.35"/>'
+                rf'<rect y="{144 - height}" width="144" height="{height}" fill="\1"/>',
+                svg,
+            )
+        )
 
     def marquee(self, text: str) -> str:
         if len(text) <= self.MARQUEE_WIDTH:
@@ -224,22 +275,34 @@ class SoundPlugin(Plugin):
         return (loop + loop)[start : start + self.MARQUEE_WIDTH]
 
     def image(self, context: str, key: SoundKey) -> str | None:
+        if key.action == Action.VOLUME:
+            level = self.levels.get(key.device)
+            return self.gauge(key, level) if level else None
         if key.action != Action.MEDIA or key.verb != "toggle":
             return None
-        if self.art is None:
-            icon = self.ICONS / ("pause.svg" if self.playing else "play.svg")
-            return f"data:image/svg+xml;base64,{base64.b64encode(icon.read_bytes()).decode()}"
 
-        svg = (
+        width = round(144 * self.progress())
+        if self.art is None:
+            icon = (
+                self.ICONS / ("pause.svg" if self.playing else "play.svg")
+            ).read_text()
+            bar = (
+                f'<rect y="138" width="{width}" height="6" fill="#17191e"/>'
+                if width
+                else ""
+            )
+            return self.uri(icon.replace("</svg>", bar + "</svg>"))
+
+        return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             f'<image href="{self.art}" width="144" height="144" preserveAspectRatio="xMidYMid slice"/>'
             '<rect width="144" height="36" fill="#17191e" fill-opacity="0.85"/>'
-            '<circle cx="118" cy="118" r="22" fill="#98c379"/>'
-            '<g transform="translate(104 104) scale(1.75)" fill="#17191e">'
+            '<rect y="138" width="144" height="6" fill="#17191e" fill-opacity="0.6"/>'
+            f'<rect y="138" width="{width}" height="6" fill="{self.PROGRESS}"/>'
+            '<circle cx="118" cy="114" r="20" fill="#98c379"/>'
+            '<g transform="translate(105 101) scale(1.625)" fill="#17191e">'
             f'<path d="{self.PAUSE if self.playing else self.PLAY}"/></g></svg>'
         )
-
-        return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
 
     def poll(self) -> None:
         self.poll_levels()

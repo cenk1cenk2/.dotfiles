@@ -20,6 +20,8 @@ dependencies = [
   "websocket-client>=1.8",
   # Live sink/source levels for the sound plugin.
   "pulsectl>=24.12",
+  # Downscales cover art to key size; the key is redrawn as the track plays.
+  "pillow>=11.0",
 ]
 
 [tool.ty.environment]
