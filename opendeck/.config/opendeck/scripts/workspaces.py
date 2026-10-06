@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import glob
+import itertools
 import json
 import logging
 import math
@@ -30,7 +31,8 @@ class Workspace:
     id: int
     windows: int
     monitor: str
-    app: str | None
+    # Window classes, most recently focused first.
+    apps: list[str]
 
 
 class Hyprland:
@@ -222,27 +224,22 @@ class WorkspacesPlugin(Plugin):
         monitors = self.hypr.query("monitors") or []
         clients = self.hypr.query("clients") or []
         spaces = self.hypr.query("workspaces") or []
-        on_monitor = {m["activeWorkspace"]["id"]: m["name"] for m in monitors}
-        main: dict[int, dict] = {}
-        for client in clients:
-            wid = client["workspace"]["id"]
-            if (
-                wid not in main
-                or client["focusHistoryID"] < main[wid]["focusHistoryID"]
-            ):
-                main[wid] = client
+        places = self.places(monitors)
+        apps: dict[int, list[str]] = {}
+        for client in sorted(clients, key=lambda c: c["focusHistoryID"]):
+            apps.setdefault(client["workspace"]["id"], []).append(client["class"])
 
         self.workspaces = [
             Workspace(
                 w["id"],
                 w["windows"],
-                on_monitor.get(w["id"], ""),
-                main[w["id"]]["class"] if w["id"] in main else None,
+                places.get(w["monitor"], ""),
+                apps.get(w["id"], []),
             )
             for w in sorted(spaces, key=lambda w: w["id"])
             if w["id"] > 0
         ]
-        self.visible = set(on_monitor)
+        self.visible = {m["activeWorkspace"]["id"] for m in monitors}
         focused = next(
             (m["activeWorkspace"]["id"] for m in monitors if m["focused"]), None
         )
@@ -250,6 +247,38 @@ class WorkspacesPlugin(Plugin):
             self.focused = focused
             self.page = self.page_of(focused)
         self.page = min(self.page, self.pages() - 1)
+
+    @staticmethod
+    def places(monitors: list[dict]) -> dict[str, str]:
+        """Each monitor named by where it sits, which reads better than DP-1.
+
+        A stack reads top to bottom and a row left to right; a layout that is
+        neither keeps the connector names."""
+        if len(monitors) < 2:
+            return {m["name"]: "" for m in monitors}
+
+        def spread(axis: str, size: str) -> bool:
+            edges = sorted((m[axis], m[axis] + m[size]) for m in monitors)
+            return all(a[1] <= b[0] for a, b in itertools.pairwise(edges))
+
+        for axis, size, names in (
+            ("y", "height", ("top", "middle", "bottom")),
+            ("x", "width", ("left", "center", "right")),
+        ):
+            if spread(axis, size):
+                ordered = sorted(monitors, key=lambda m: m[axis])
+                labels = (
+                    names[::2]
+                    if len(ordered) == 2
+                    else names
+                    if len(ordered) == 3
+                    else [f"{names[0]} {i + 1}" for i in range(len(ordered))]
+                )
+                return {
+                    m["name"]: label for m, label in zip(ordered, labels, strict=True)
+                }
+
+        return {m["name"]: m["name"] for m in monitors}
 
     def pages(self) -> int:
         return max(1, math.ceil(len(self.workspaces) / self.PER_PAGE))
@@ -281,6 +310,29 @@ class WorkspacesPlugin(Plugin):
             f'<rect width="144" height="144" fill="{self.DARK}"/>{tile}{inner}</svg>'
         )
 
+    def app_icons(self, space: Workspace) -> str:
+        """One large icon, or up to four in a grid with a count of the rest."""
+        icons = [
+            uri for app in dict.fromkeys(space.apps) if (uri := self.icons.uri(app))
+        ]
+        if len(icons) == 1:
+            return f'<image href="{icons[0]}" x="36" y="48" width="72" height="72"/>'
+
+        cells = ((24, 44), (76, 44), (24, 94), (76, 94))
+        extra = len(icons) - 4
+        shown = icons[:3] if extra > 0 else icons[:4]
+        out = "".join(
+            f'<image href="{uri}" x="{x}" y="{y}" width="44" height="44"/>'
+            for uri, (x, y) in zip(shown, cells, strict=False)
+        )
+        if extra > 0:
+            out += (
+                '<text x="98" y="126" font-family="Liberation Sans" font-size="26"'
+                f' font-weight="bold" fill="#e5e5e5" text-anchor="middle">+{extra + 1}</text>'
+            )
+
+        return out
+
     def glyph(self, path: str, colour: str) -> str:
         return (
             f'<g transform="translate(30.000 46.000) scale(5.2500)" fill="{colour}">'
@@ -300,13 +352,7 @@ class WorkspacesPlugin(Plugin):
                     if space.id in self.visible
                     else None
                 )
-                icon = self.icons.uri(space.app) if space.app else None
-                inner = (
-                    f'<image href="{icon}" x="36" y="50" width="72" height="72"/>'
-                    if icon
-                    else ""
-                )
-                return self.tile(colour, inner)
+                return self.tile(colour, self.app_icons(space))
             case Action.PAGE if key.settings["direction"] == "current":
                 return self.tile(None, "")
             case Action.PAGE:
@@ -329,10 +375,7 @@ class WorkspacesPlugin(Plugin):
                 space = self.slot(key)
                 if space is None:
                     return 0, ""
-                detail = space.monitor or (
-                    f"{space.windows} win" if space.windows > 1 else ""
-                )
-                return 0, f"{space.id}\n{detail}" if detail else str(space.id)
+                return 0, f"{space.id} {space.monitor}".strip()
             case Action.PAGE:
                 match key.settings["direction"]:
                     case "current":
