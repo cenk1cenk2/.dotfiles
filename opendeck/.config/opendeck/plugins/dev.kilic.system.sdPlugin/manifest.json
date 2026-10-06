@@ -81,7 +81,7 @@
       "States": [
         {
           "Image": "icons/uptime",
-          "TitleAlignment": "bottom",
+          "TitleAlignment": "top",
           "FontSize": 13
         }
       ]

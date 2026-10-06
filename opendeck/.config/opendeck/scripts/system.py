@@ -266,17 +266,17 @@ class SystemPlugin(Plugin):
             else f"{rest // 60}:{rest % 60:02d}"
         )
         colour = self.RUNNING if self.timer_started else self.PAUSED
-        circumference = 2 * 3.14159 * 60
+        circumference = 2 * 3.14159 * 48
         sweep = circumference * (elapsed % 60) / 60
 
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             '<rect width="144" height="144" fill="#17191e"/>'
-            '<circle cx="72" cy="72" r="60" fill="none" stroke="#3e4451" stroke-width="10"/>'
-            f'<circle cx="72" cy="72" r="60" fill="none" stroke="{colour}" stroke-width="10"'
-            f' stroke-dasharray="{sweep:.1f} {circumference:.1f}" transform="rotate(-90 72 72)"/>'
-            f'<text x="72" y="84" font-family="Liberation Sans" font-weight="bold"'
-            f' font-size="{30 if hours else 36}" fill="{colour}" text-anchor="middle">{digits}</text>'
+            '<circle cx="72" cy="88" r="48" fill="none" stroke="#3e4451" stroke-width="8"/>'
+            f'<circle cx="72" cy="88" r="48" fill="none" stroke="{colour}" stroke-width="8"'
+            f' stroke-dasharray="{sweep:.1f} {circumference:.1f}" transform="rotate(-90 72 88)"/>'
+            f'<text x="72" y="99" font-family="Liberation Sans" font-weight="bold"'
+            f' font-size="{22 if hours else 30}" fill="{colour}" text-anchor="middle">{digits}</text>'
             "</svg>"
         )
 
