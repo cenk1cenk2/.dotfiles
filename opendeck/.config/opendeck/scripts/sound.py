@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
@@ -89,6 +92,14 @@ class SoundPlugin(Plugin):
     # The player is asked through two processes a round, so it is polled less
     # often than the levels.
     PLAYER_SECONDS = 1.0
+    # Glyphs of the play key, drawn over the cover art as a corner badge.
+    PLAY = "M 3,2 V 14 L 14,8 Z"
+    PAUSE = "M 2 2 L 2 14 L 6 14 L 6 2 L 2 2 z M 10 2 L 10 14 L 14 14 L 14 2 L 10 2 z"
+    ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.sound.sdPlugin/icons"
+    # Characters of track that fit across a key, and how fast a longer one
+    # scrolls through that window.
+    MARQUEE_WIDTH = 11
+    MARQUEE_SECONDS = 0.4
     KEY = SoundKey
 
     log = logging.getLogger("sound-deck")
@@ -99,6 +110,9 @@ class SoundPlugin(Plugin):
         self.levels: dict[Device, Level] = {}
         self.player: str | None = None
         self.playing = False
+        self.track = ""
+        self.art_url: str | None = None
+        self.art: str | None = None
         self.next_player = 0.0
         # The input's mute state before a push-to-talk press, restored on
         # release so the press never fights the mute key.
@@ -146,8 +160,17 @@ class SoundPlugin(Plugin):
                 log=self.log,
                 timeout=1,
             )
-            status = run(
-                ["playerctl", "-p", "playerctld", "status"], log=self.log, timeout=1
+            metadata = run(
+                [
+                    "playerctl",
+                    "-p",
+                    "playerctld",
+                    "metadata",
+                    "--format",
+                    "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}",
+                ],
+                log=self.log,
+                timeout=1,
             )
         except subprocess.TimeoutExpired:
             return
@@ -159,7 +182,58 @@ class SoundPlugin(Plugin):
             if names.returncode == 0 and len(words) > 1
             else None
         )
-        self.playing = status.returncode == 0 and status.stdout.strip() == "Playing"
+        status, artist, title, art_url = (
+            metadata.stdout.rstrip("\n").split("\t")
+            if metadata.returncode == 0 and metadata.stdout.count("\t") == 3
+            else ("", "", "", "")
+        )
+        self.playing = status == "Playing"
+        self.track = " - ".join(part for part in (artist, title) if part)
+        if (art_url or None) != self.art_url:
+            self.art_url = art_url or None
+            self.art = self.fetch_art(self.art_url) if self.art_url else None
+
+    def fetch_art(self, url: str) -> str | None:
+        """The cover at `url` as a data URI; None when it cannot be read."""
+        self.log.debug("art: %s", url)
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                mime = response.headers.get_content_type()
+                if mime == "application/octet-stream":
+                    mime = "image/jpeg"
+                data = response.read()
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            self.log.debug("art unavailable: %s", e)
+            return None
+
+        return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+    def marquee(self, text: str) -> str:
+        if len(text) <= self.MARQUEE_WIDTH:
+            return text
+
+        loop = text + "   "
+        start = int(time.monotonic() / self.MARQUEE_SECONDS) % len(loop)
+
+        return (loop + loop)[start : start + self.MARQUEE_WIDTH]
+
+    def image(self, context: str, key: SoundKey) -> str | None:
+        if key.action != Action.MEDIA or key.verb != "toggle":
+            return None
+        if self.art is None:
+            icon = self.ICONS / ("pause.svg" if self.playing else "play.svg")
+            return f"data:image/svg+xml;base64,{base64.b64encode(icon.read_bytes()).decode()}"
+
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+            f'<image href="{self.art}" width="144" height="144" preserveAspectRatio="xMidYMid slice"/>'
+            '<rect width="144" height="36" fill="#17191e" fill-opacity="0.85"/>'
+            '<circle cx="118" cy="118" r="22" fill="#98c379"/>'
+            '<g transform="translate(104 104) scale(1.75)" fill="#17191e">'
+            f'<path d="{self.PAUSE if self.playing else self.PLAY}"/></g></svg>'
+        )
+
+        return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
 
     def poll(self) -> None:
         self.poll_levels()
@@ -182,11 +256,11 @@ class SoundPlugin(Plugin):
                 return VolumeLook.IDLE, f"{level.volume}%"
 
             case Action.MEDIA if key.verb == "toggle":
-                return (
-                    (MediaLook.PLAYING, "pause")
-                    if self.playing
-                    else (MediaLook.IDLE, "play")
-                )
+                look = MediaLook.PLAYING if self.playing else MediaLook.IDLE
+                if self.track:
+                    return look, self.marquee(self.track)
+
+                return look, "pause" if self.playing else "play"
             case Action.MEDIA if key.verb == "shift":
                 return MediaLook.IDLE, self.player or "none"
             case Action.MEDIA:

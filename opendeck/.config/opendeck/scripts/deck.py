@@ -26,6 +26,7 @@ class Key:
     action: str
     settings: dict
     shown: tuple[int, str] | None = None
+    drawn: str | None = None
     pressed_at: float | None = None
     held: bool = False
 
@@ -54,6 +55,10 @@ class Plugin:
     def look(self, context: str, key: Key) -> tuple[int, str]:
         """The state index and status line a key should show."""
         raise NotImplementedError
+
+    def image(self, context: str, key: Key) -> str | None:
+        """A data URI the key should draw instead of its state images."""
+        return None
 
     def press(self, context: str, key: Key) -> None:
         raise NotImplementedError
@@ -93,6 +98,10 @@ class Plugin:
 
     def render(self) -> None:
         for context, key in self.keys.items():
+            if (image := self.image(context, key)) is not None and image != key.drawn:
+                self.send("setImage", context, {"image": image})
+                key.drawn = image
+
             look, status = self.look(context, key)
             shown = (look, "\n".join(part for part in (key.label, status) if part))
             if shown == key.shown:
