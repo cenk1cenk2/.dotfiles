@@ -93,7 +93,7 @@
       "Name": "Paste",
       "UUID": "dev.kilic.speech.paste",
       "Icon": "icons/paste",
-      "Tooltip": "Paste into the focused window; hold to paste and press Enter.",
+      "Tooltip": "Paste into the focused window; hold to press Enter.",
       "DisableAutomaticStates": true,
       "Controllers": [
         "Keypad"
