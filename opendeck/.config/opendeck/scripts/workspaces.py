@@ -172,7 +172,7 @@ class WorkspacesPlugin(Plugin):
     key. Hyprland's event socket marks the view stale; the next poll redraws."""
 
     PER_PAGE = 10
-    FOCUSED = "#c678dd"
+    FOCUSED = "#98c379"
     VISIBLE = "#61afef"
     DARK = "#17191e"
     ARROW: ClassVar[dict[str, str]] = {
