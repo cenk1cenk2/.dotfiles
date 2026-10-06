@@ -365,12 +365,18 @@ class SoundPlugin(Plugin):
                 self.next_player = time.monotonic() + 0.2
 
     def holds(self, key: SoundKey) -> bool:
+        if key.action == Action.VOLUME:
+            return key.verb in ("down", "up")
+
         return key.action == Action.MEDIA and key.verb in self.SEEK
 
     def repeats(self, key: SoundKey) -> bool:
         return self.holds(key)
 
     def hold(self, context: str, key: SoundKey) -> None:
+        if key.action == Action.VOLUME:
+            return self.press(context, key)
+
         self.spawn(["playerctl", "-p", "playerctld", "position", self.SEEK[key.verb]])
         self.next_player = time.monotonic() + 0.2
 

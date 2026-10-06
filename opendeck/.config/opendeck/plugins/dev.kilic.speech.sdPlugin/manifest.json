@@ -93,6 +93,23 @@
           "FontSize": 13
         }
       ]
+    },
+    {
+      "Name": "Speech Seek",
+      "UUID": "dev.kilic.speech.seek",
+      "Icon": "icons/seek",
+      "Tooltip": "Seek TTS playback; hold to keep seeking.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/seek",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
     }
   ]
 }

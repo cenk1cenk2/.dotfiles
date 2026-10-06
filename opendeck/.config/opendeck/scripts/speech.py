@@ -21,6 +21,7 @@ class Action(StrEnum):
     TOGGLE = "dev.kilic.speech.toggle"
     PAUSE = "dev.kilic.speech.pause"
     KILL = "dev.kilic.speech.kill"
+    SEEK = "dev.kilic.speech.seek"
 
 
 class ToggleLook(IntEnum):
@@ -163,6 +164,8 @@ class SpeechPlugin(Plugin):
                 return KillLook.IDLE, ""
             case Action.KILL:
                 return KillLook.ACTIVE, ""
+            case Action.SEEK:
+                return 0, ""
 
         raise ValueError(f"unknown action {key.action}")
 
@@ -187,11 +190,19 @@ class SpeechPlugin(Plugin):
                 self.speech(key.session, "pause")
             case Action.KILL:
                 self.speech(key.session, "kill")
+            case Action.SEEK:
+                self.speech(key.session, "seek", key.settings["seconds"])
 
     def holds(self, key: SpeechKey) -> bool:
-        return key.action == Action.TOGGLE
+        return key.action in (Action.TOGGLE, Action.SEEK)
+
+    def repeats(self, key: SpeechKey) -> bool:
+        return key.action == Action.SEEK
 
     def hold(self, context: str, key: SpeechKey) -> None:
+        if key.action == Action.SEEK:
+            return self.press(context, key)
+
         self.speech(key.session, "kill")
 
 
