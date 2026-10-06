@@ -1,0 +1,56 @@
+{
+  "Name": "System",
+  "Author": "Cenk Kılıç",
+  "Version": "0.1.0",
+  "Description": "Notification count and live CPU, temperature and GPU charts.",
+  "Icon": "icons/plugin",
+  "Category": "System",
+  "CodePathLin": "bin/system",
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Notifications",
+      "UUID": "dev.kilic.system.notify",
+      "Icon": "icons/notify",
+      "Tooltip": "Open the notification panel; hold to toggle do-not-disturb.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/notify",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        },
+        {
+          "Image": "icons/notify",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "System Gauge",
+      "UUID": "dev.kilic.system.gauge",
+      "Icon": "icons/sensors",
+      "Tooltip": "Live CPU, temperature or GPU chart; opens its monitor.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/sensors",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    }
+  ]
+}
