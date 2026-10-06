@@ -51,6 +51,23 @@
           "FontSize": 13
         }
       ]
+    },
+    {
+      "Name": "Uptime",
+      "UUID": "dev.kilic.system.uptime",
+      "Icon": "icons/uptime",
+      "Tooltip": "How long the system has been up.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/uptime",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
     }
   ]
 }

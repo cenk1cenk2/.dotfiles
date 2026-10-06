@@ -17,6 +17,7 @@ from deck import Key, Plugin, command
 class Action(StrEnum):
     NOTIFY = "dev.kilic.system.notify"
     GAUGE = "dev.kilic.system.gauge"
+    UPTIME = "dev.kilic.system.uptime"
 
 
 class Metric(StrEnum):
@@ -268,6 +269,10 @@ class SystemPlugin(Plugin):
                 )
             case Action.GAUGE:
                 return 0, self.readout.get(key.metric, "")
+            case Action.UPTIME:
+                minutes = int(float(Path("/proc/uptime").read_text().split()[0])) // 60
+                days, hours = divmod(minutes // 60, 24)
+                return 0, f"{days}d {hours}h" if days else f"{hours}h {minutes % 60}m"
 
         raise ValueError(f"unknown action {key.action}")
 

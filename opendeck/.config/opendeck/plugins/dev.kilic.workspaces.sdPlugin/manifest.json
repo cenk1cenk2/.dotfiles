@@ -1,0 +1,68 @@
+{
+  "Name": "Workspaces",
+  "Author": "Cenk Kılıç",
+  "Version": "0.1.0",
+  "Description": "Hyprland workspaces, paged, with live app icons.",
+  "Icon": "icons/plugin",
+  "Category": "Workspaces",
+  "CodePathLin": "bin/workspaces",
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Workspace",
+      "UUID": "dev.kilic.workspaces.slot",
+      "Icon": "icons/slot",
+      "Tooltip": "Go to the workspace in this slot; hold to move the active window there.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/slot",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Workspace Page",
+      "UUID": "dev.kilic.workspaces.page",
+      "Icon": "icons/page",
+      "Tooltip": "Page through workspaces; hold for first or last.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/page",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "New Workspace",
+      "UUID": "dev.kilic.workspaces.new",
+      "Icon": "icons/new",
+      "Tooltip": "Go to the lowest unused workspace; hold to move the active window there.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/new",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    }
+  ]
+}
