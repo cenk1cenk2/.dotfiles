@@ -102,6 +102,8 @@ class SoundPlugin(Plugin):
     # scrolls through that window.
     MARQUEE_WIDTH = 11
     MARQUEE_SECONDS = 0.4
+    # Holding prev or next seeks the active player by this much instead.
+    SEEK: ClassVar[dict[str, str]] = {"prev": "5-", "next": "5+"}
     MUTED = "#e06c75"
     PLAYING = "#98c379"
     PAUSED = "#e5c07b"
@@ -361,6 +363,16 @@ class SoundPlugin(Plugin):
             case Action.MEDIA:
                 self.spawn([str(self.LAUNCH), self.MEDIA[key.verb]])
                 self.next_player = time.monotonic() + 0.2
+
+    def holds(self, key: SoundKey) -> bool:
+        return key.action == Action.MEDIA and key.verb in self.SEEK
+
+    def repeats(self, key: SoundKey) -> bool:
+        return self.holds(key)
+
+    def hold(self, context: str, key: SoundKey) -> None:
+        self.spawn(["playerctl", "-p", "playerctld", "position", self.SEEK[key.verb]])
+        self.next_player = time.monotonic() + 0.2
 
     def talk(self, live: bool) -> None:
         source = self.default(Device.INPUT)

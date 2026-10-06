@@ -39,7 +39,7 @@
       "Name": "Sound Media",
       "UUID": "dev.kilic.sound.media",
       "Icon": "icons/media",
-      "Tooltip": "Player control with live play state and player name.",
+      "Tooltip": "Player control with live play state and player name; hold prev/next to seek 5s.",
       "DisableAutomaticStates": true,
       "Controllers": [
         "Keypad"

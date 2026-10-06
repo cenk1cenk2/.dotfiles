@@ -29,6 +29,7 @@ class Key:
     drawn: str | None = None
     pressed_at: float | None = None
     held: bool = False
+    fired_at: float = 0.0
 
     @property
     def label(self) -> str:
@@ -38,6 +39,8 @@ class Key:
 class Plugin:
     POLL_SECONDS = 0.3
     HOLD_SECONDS = 0.3
+    # How often a held key that repeats fires its hold again.
+    REPEAT_SECONDS = 0.4
     # Every key is re-sent this often, so an update OpenDeck dropped heals.
     REFRESH_SECONDS = 5.0
     KEY: type[Key] = Key
@@ -68,6 +71,9 @@ class Plugin:
 
     def hold(self, context: str, key: Key) -> None:
         raise NotImplementedError
+
+    def repeats(self, key: Key) -> bool:
+        return False
 
     def key_down(self, context: str, key: Key) -> None:
         key.pressed_at, key.held = time.monotonic(), False
@@ -137,10 +143,17 @@ class Plugin:
     def check_holds(self) -> None:
         now = time.monotonic()
         for context, key in self.keys.items():
-            if key.pressed_at is None or key.held or not self.holds(key):
+            if key.pressed_at is None or not self.holds(key):
                 continue
-            if now - key.pressed_at >= self.HOLD_SECONDS:
-                key.held = True
+            if not key.held and now - key.pressed_at >= self.HOLD_SECONDS:
+                key.held, key.fired_at = True, now
+                self.hold(context, key)
+            elif (
+                key.held
+                and self.repeats(key)
+                and now - key.fired_at >= self.REPEAT_SECONDS
+            ):
+                key.fired_at = now
                 self.hold(context, key)
 
     def serve(self) -> None:
