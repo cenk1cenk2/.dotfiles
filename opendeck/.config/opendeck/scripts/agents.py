@@ -74,6 +74,7 @@ class AgentsPlugin(Plugin):
         # right key moves it along the queue.
         self.selected: tuple | None = None
         self.agents: list[dict] = []
+        self.last_seen: str | None = None
         self.next_sample = 0.0
         self.next_agents = 0.0
 
@@ -232,13 +233,22 @@ class AgentsPlugin(Plugin):
         self.spawn([str(self.NOTIFY), "focus", "--pane", target["pane"]])
         self.next_agents = time.monotonic() + 0.3
 
-    def next_agent(self) -> tuple[dict, int] | None:
+    def current_agent(self) -> tuple[dict, int] | None:
+        """The agent on screen, else the one last on screen, else the first.
+
+        Remembering the last one keeps the key steady while another app has
+        focus, instead of falling back to tmux's order."""
         if not self.agents:
             return None
-        current = next((i for i, a in enumerate(self.agents) if a["seen"]), -1)
-        index = (current + 1) % len(self.agents)
+        for index, agent in enumerate(self.agents):
+            if agent["seen"]:
+                self.last_seen = agent["pane"]
+                return agent, index
+        for index, agent in enumerate(self.agents):
+            if agent["pane"] == self.last_seen:
+                return agent, index
 
-        return self.agents[index], index
+        return self.agents[0], 0
 
     def panes_seen(self) -> dict[str, bool] | None:
         """Every tmux pane, mapped to whether it is on screen; None without tmux.
@@ -418,7 +428,7 @@ class AgentsPlugin(Plugin):
         )
 
     def sessions_image(self) -> str:
-        found = self.next_agent()
+        found = self.current_agent()
         if found is None:
             terminal = base64.b64encode(self.TERMINAL.read_bytes()).decode()
             svg = (
