@@ -103,7 +103,8 @@ class SoundPlugin(Plugin):
     MARQUEE_WIDTH = 11
     MARQUEE_SECONDS = 0.4
     MUTED = "#e06c75"
-    PROGRESS = "#98c379"
+    PLAYING = "#98c379"
+    PAUSED = "#e5c07b"
     # The tile every icon here draws its glyph on.
     TILE = re.compile(r'<rect y="36" width="144" height="108" fill="(#[0-9a-f]{6})"/>')
     KEY = SoundKey
@@ -281,12 +282,13 @@ class SoundPlugin(Plugin):
         if key.action != Action.MEDIA or key.verb != "toggle":
             return None
 
+        colour = self.PLAYING if self.playing else self.PAUSED
         # A dark track with the elapsed part filled inside it, the same on the
         # cover and on the plain icon.
         bar = (
             '<rect y="124" width="144" height="20" fill="#17191e"/>'
             f'<rect x="4" y="128" width="{round(136 * self.progress())}" height="12"'
-            f' rx="3" fill="{self.PROGRESS}"/>'
+            f' rx="3" fill="{colour}"/>'
             if self.length
             else ""
         )
@@ -299,9 +301,15 @@ class SoundPlugin(Plugin):
         return self.uri(
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
             f'<image href="{self.art}" width="144" height="144" preserveAspectRatio="xMidYMid slice"/>'
-            '<rect width="144" height="36" fill="#17191e" fill-opacity="0.85"/>'
+            + (
+                ""
+                if self.playing
+                else '<rect width="144" height="144" fill="#17191e" fill-opacity="0.55"/>'
+            )
+            + '<rect width="144" height="36" fill="#17191e" fill-opacity="0.85"/>'
             f"{bar}"
-            '<circle cx="118" cy="98" r="20" fill="#98c379"/>'
+            f'<rect x="3" y="3" width="138" height="138" fill="none" stroke="{colour}" stroke-width="6"/>'
+            f'<circle cx="118" cy="98" r="20" fill="{colour}"/>'
             '<g transform="translate(105 85) scale(1.625)" fill="#17191e">'
             f'<path d="{self.PAUSE if self.playing else self.PLAY}"/></g></svg>'
         )
