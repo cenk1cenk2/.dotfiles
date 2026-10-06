@@ -32,6 +32,7 @@ from dotlib.notify import (
 )
 from dotlib.waybar import (
     signal_waybar,
+    watch,
 )
 
 from lib import (
@@ -47,9 +48,7 @@ from lib import (
 
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
-    ICON = (
-        "accessories-text-editor"
-    )
+    ICON = "accessories-text-editor"
     NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.WRITING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
@@ -267,8 +266,13 @@ class Copywriter:
         Copywriter().kill()
 
     @cli.command("status")
-    def cmd_status():
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(Copywriter().status_json, 0.5)
         sys.stdout.write(Copywriter().status_json() + "\n")
 
     @cli.command("is-running")

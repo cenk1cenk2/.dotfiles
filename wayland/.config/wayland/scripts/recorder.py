@@ -20,6 +20,7 @@ from dotlib.notify import (
 )
 from dotlib.waybar import (
     signal_waybar,
+    watch,
 )
 
 # obsws-python + websocket-client log full tracebacks via `logger.exception()`
@@ -235,8 +236,13 @@ class Recorder:
         Recorder().open()
 
     @cli.command("status")
-    def cmd_status():
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(Recorder().status_json, 2.0)
         sys.stdout.write(Recorder().status_json() + "\n")
 
     @cli.command("is-recording")

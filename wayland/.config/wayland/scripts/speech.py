@@ -50,6 +50,7 @@ from dotlib.notify import (
 )
 from dotlib.waybar import (
     signal_waybar,
+    watch,
 )
 
 from lib import (
@@ -1241,8 +1242,13 @@ class Stt:
         Stt().kill()
 
     @cli.command("status")
-    def cmd_status():
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(Stt().status_json, 0.5)
         sys.stdout.write(Stt().status_json() + "\n")
 
     @cli.command("is-recording")
@@ -2034,8 +2040,13 @@ class Tts:
         Tts().kill()
 
     @cli.command("status")
-    def cmd_status():
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(Tts().status_json, 0.5)
         sys.stdout.write(Tts().status_json() + "\n")
 
     @cli.command("is-speaking")

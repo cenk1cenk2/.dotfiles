@@ -65,12 +65,9 @@
   },
 
   "custom/copywriter": {
-    "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status",
-    "exec-if": "~/.config/wayland/scripts/copywriter.py is-running",
-    "signal": 11,
+    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
   },
 
   "group/extras": {

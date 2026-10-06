@@ -83,54 +83,38 @@
   },
 
   "custom/recorder": {
-    "interval": 5,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/recorder.py status",
-    "exec-if": "~/.config/wayland/scripts/recorder.py is-recording",
+    "exec": "~/.config/wayland/scripts/recorder.py status --watch",
     "on-click": "~/.config/wayland/scripts/recorder.py toggle",
-    "signal": 8,
   },
 
   "custom/stt": {
-    "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py stt status",
-    "exec-if": "~/.config/wayland/scripts/speech.py stt is-recording",
+    "exec": "~/.config/wayland/scripts/speech.py stt status --watch",
     "on-click": "~/.config/wayland/scripts/speech.py stt toggle --output clipboard",
-    "signal": 10,
   },
 
   "custom/tts": {
-    "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py tts status",
-    "exec-if": "~/.config/wayland/scripts/speech.py tts is-speaking",
+    "exec": "~/.config/wayland/scripts/speech.py tts status --watch",
     "on-click": "~/.config/wayland/scripts/speech.py tts toggle",
-    "signal": 13,
   },
 
   "custom/copywriter": {
-    "interval": 3,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status",
-    "exec-if": "~/.config/wayland/scripts/copywriter.py is-running",
-    "signal": 11,
+    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
   },
 
-  // Hidden while unzoomed: exec-if fails at 1x, and waybar hides a module
-  // whose exec-if fails rather than rendering an empty one.
+  // Hidden while unzoomed: the watcher prints an empty text at 1x.
   "custom/zoom": {
-    "interval": 5,
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/hypr/scripts/zoom.py status",
-    "exec-if": "~/.config/hypr/scripts/zoom.py is-zoomed",
+    "exec": "~/.config/hypr/scripts/zoom.py status --watch",
     "on-click": "~/.config/hypr/scripts/zoom.py toggle",
-    "signal": 12,
   },
 
   "privacy": {

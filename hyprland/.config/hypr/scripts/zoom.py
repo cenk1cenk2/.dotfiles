@@ -17,6 +17,7 @@ from dotlib.cli import (
 )
 from dotlib.waybar import (
     signal_waybar,
+    watch,
 )
 from lib import Hyprctl
 
@@ -62,8 +63,7 @@ class Zoom:
 
     def status_json(self) -> str:
         factor = self.factor()
-        # Only reachable with the module's exec-if dropped: waybar hides the
-        # module entirely while `is-zoomed` fails.
+        # The empty text hides the waybar module while unzoomed.
         if factor <= self.MIN_FACTOR + self.EPSILON:
             return json.dumps(
                 {"class": "idle", "text": "", "tooltip": "Cursor zoom off"}
@@ -109,8 +109,13 @@ class Zoom:
         Zoom(Hyprctl()).apply(Zoom.MIN_FACTOR)
 
     @cli.command("status")
-    def cmd_status():
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(Zoom(Hyprctl()).status_json, 0.5)
         sys.stdout.write(Zoom(Hyprctl()).status_json() + "\n")
 
     @cli.command("is-zoomed")
