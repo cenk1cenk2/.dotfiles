@@ -30,9 +30,6 @@ extra-paths = [".", "../../wayland/lib/src"]
 [tool.pyright]
 extraPaths = [".", "../../wayland/lib/src"]
 
-[tool.uv]
-compile-bytecode = true
-
 [tool.uv.sources]
 # Relative to this file's DEPLOYED location, `~/.config/opendeck/scripts`.
 dotlib = { path = "../../wayland/lib", editable = true }
