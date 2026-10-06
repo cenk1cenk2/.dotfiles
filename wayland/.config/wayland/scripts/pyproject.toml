@@ -1,23 +1,23 @@
 # Dependency manifest for the wayland/scripts package.
 #
 # Runtime model: each executable script (copywriter.py, recorder.py,
-# speech.py) shebangs to `uv run` via a small `sh -c` trampoline so
-# invocation works from any CWD (compositor keybinds don't cd into the
-# scripts dir before spawning):
+# speech.py) shebangs to a small `sh -c` trampoline so invocation works
+# from any CWD (compositor keybinds don't cd into the scripts dir before
+# spawning):
 #
-#     #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+#     #!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
 #
 # `$0` is the script path the kernel hands us at shebang-time, so
 # `$(dirname "$0")` resolves to whichever directory the script is
 # actually sitting in (stow destination when invoked through the
-# symlink, dotfiles repo when running directly). `uv run --project`
-# walks UP the tree from there to locate this pyproject.toml. No
-# hardcoded `$HOME` — the path travels with the script.
+# symlink, dotfiles repo when running directly). No hardcoded `$HOME` —
+# the path travels with the script.
 #
-# `uv run` resolves the dependency set below, ensures `.venv/` matches,
-# and executes the requested script inside that env. No `.venv/` commits
-# go into git: the first invocation of any script creates it, because
-# `uv run` locks and syncs on its own. There is no bootstrap task.
+# `uv sync` locks and creates or updates `.venv/` against the dependency
+# set below, then `exec` replaces the shell with the venv's Python, so no
+# uv process stays resident behind a long-running script. No `.venv/`
+# commits go into git: the first invocation of any script creates it.
+# There is no bootstrap task.
 #
 # PEP 723 inline metadata was ruled out: `uv run --script` deliberately
 # ignores the project's dependency set (see

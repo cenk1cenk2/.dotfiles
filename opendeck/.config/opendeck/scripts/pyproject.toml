@@ -1,7 +1,7 @@
 # Dependency manifest for the OpenDeck scripts: the deck's own plugins.
 #
 # Same runtime model as the wayland scripts: each executable shebangs to
-# `uv run --project "$(dirname "$0")"`, so OpenDeck can launch it from the
+# the `uv sync` + `exec` trampoline, so OpenDeck can launch it from the
 # plugin directory it sets as the working directory.
 #
 # This package is copied by `./install.py opendeck`, not stowed, so the

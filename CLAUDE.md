@@ -229,14 +229,29 @@ these need re-checking.
 - `pyproject.toml` + uv shebang trampoline:
 
   ```
-  #!/usr/bin/env -S sh -c 'exec uv run --project "$(dirname "$0")" "$0" "$@"'
+  #!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
   ```
 
-  Lets `uv run` resolve the project regardless of the shell's cwd
-  (compositor keybinds hand us whatever working dir they have). The
-  `sh -c` indirection is the supported pattern — PEP 723 inline
-  metadata explicitly ignores project deps, so we stay with
-  project-mode.
+  Resolves the project from the script's own directory regardless of
+  the shell's cwd (compositor keybinds hand us whatever working dir they
+  have). `uv sync` bootstraps or updates `.venv` and exits, then `exec`
+  replaces the shell with the venv's Python, so nothing of uv stays
+  resident. `uv run` would: it stays the parent of every script it
+  starts, ~20 MB each, which adds up across waybar's per-bar watchers
+  and the deck plugins. PEP 723 inline metadata explicitly ignores
+  project deps, so we stay with project-mode.
+
+- **Never set `compile-bytecode = true` under `[tool.uv]`.** With it,
+  every sync re-runs a full compile pass over the venv, ~100 worker
+  processes even when nothing changed, enough to keep several cores busy
+  under waybar's modules alone. Python caches `.pyc` on first import by
+  itself.
+
+- **Waybar status modules are watchers, not polls.** `status --watch`
+  (`dotlib.waybar.watch`) stays up, reads state in-process and prints a
+  line only on change; an empty `text` hides the module, so these
+  modules carry no `interval`, `exec-if` or `signal`. A polled module
+  starts the whole script, imports and all, on every tick of every bar.
 
 - Single-script tools get their own `pyproject.toml` next to the
   script when they deserve pinned deps. Shared helpers live under a
@@ -587,16 +602,41 @@ not set. Read the active line, never the comment above it.
 - **`settings/` is gitignored and must stay that way.** It holds live
   credentials: a Home Assistant long-lived token and a Spotify refresh token,
   access token and client secret. `plugins/` is gitignored too, 39M of
-  downloaded bundles and binaries that are reinstalled from the OpenDeck UI.
+  downloaded bundles and binaries that are reinstalled from the OpenDeck UI,
+  except our own `dev.kilic.*.sdPlugin` folders.
+- **Our plugins' code lives in `opendeck/.config/opendeck/scripts/`**, one uv
+  project: `deck.py` is the shared runtime (WebSocket loop, press/hold
+  timing, state/title/image updates sent only on change), and `speech.py`,
+  `sound.py`, `system.py` are the plugins. A `plugins/dev.kilic.<name>.sdPlugin/`
+  folder holds only `manifest.json`, a `bin/` launcher that execs the script,
+  and `icons/`. Being copied, the deployed `uv.lock` is regenerated next to the
+  deployed copy; copy it back into the repo when dependencies change.
+- **A profile key's `action.plugin` is the plugin folder name, `.sdPlugin`
+  included.** A key naming a plugin that is not loaded is dropped from the
+  profile on load, with no error.
+- **OpenDeck's environment has no `.zshenv` exports**, so anything needing the
+  AI API keys runs as `zsh -c '<script> "$@"' zsh <args>`; through plain `sh`
+  it fails with a 401.
+- **The Home Assistant plugin renders `serviceData` twice**: nunjucks in the
+  plugin with an empty context, then HA itself, because a press is sent as an
+  `execute_script` sequence. An HA template there (relative steps like
+  `states(...) + 5`) must be wrapped in `{% raw %}…{% endraw %}`.
+- **The system plugin only queries a GPU driving a connected display.** Every
+  NVML call restarts the driver's runtime-PM idle timer, so a hybrid laptop's
+  sleeping dGPU is never asked; see the NVIDIA section.
 - **Plugins write into the images tree**, so those files are theirs, not ours:
   the twelve multiobs Record / Pause / Scene icons on `Capture` (regenerated as
   a set on OBS connect), `Sound/Keypad.0.0` (pipewire, encodes the device name),
   and `HA/Keypad.13.0` (the sensor value rendered into the artwork). Replacing
   one is overwritten on the next event. A key whose `states[].image` points into
-  `plugins/` has no file at all and is the plugin's to draw.
-- **Two profile files are permanently dirty** and that is expected:
-  `Default.json` carries the stopwatch's running text and `Music.json` the
-  current track and position. The deck-level `profiles/sd-*.json` holds only
+  `plugins/` has no file at all and is the plugin's to draw. Our own plugins
+  draw the same way: the volume gauges, the play key (cover art, progress) and
+  the System charts send data URIs that OpenDeck saves over the key's image
+  files, so their source icons live in the plugin's `icons/` instead.
+- **Several profile files are permanently dirty** and that is expected:
+  `Default.json` carries the stopwatch's running text, `Music.json` the
+  current track and position, and `Speech.json`, `Sound.json` and
+  `System.json` the live titles and states our plugins set. The deck-level `profiles/sd-*.json` holds only
   `selected_profile`, so it is gitignored outright.
 - Icons are 144x144 SVGs whose glyphs are Tela's own path data, recoloured to
   `#17191e` and knocked out of a coloured tile, with a dark plate across the top
