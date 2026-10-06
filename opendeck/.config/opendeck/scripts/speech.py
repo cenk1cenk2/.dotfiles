@@ -69,11 +69,10 @@ class SpeechPlugin(Plugin):
     CLAIM_SECONDS = 10.0
     # Into the window that had focus: a deck press does not move it. Ctrl+Shift+V
     # rather than Ctrl+V, which is what pastes in kitty.
-    PASTE_KEYS = (
+    FOCUSED = (
         "a=$(hyprctl -j activewindow | jq -r .address)"
-        ' && ~/.config/hypr/scripts/send-key.py "address:$a" V -m CTRL+SHIFT'
+        ' && ~/.config/hypr/scripts/send-key.py "address:$a"'
     )
-    SEND_KEYS = ' && ~/.config/hypr/scripts/send-key.py "address:$a" Return'
     KEY = SpeechKey
 
     log = logging.getLogger("speech-deck")
@@ -193,7 +192,7 @@ class SpeechPlugin(Plugin):
             case Action.SEEK:
                 self.speech(key.session, "seek", key.settings["seconds"])
             case Action.PASTE:
-                self.spawn(["sh", "-c", self.PASTE_KEYS])
+                self.spawn(["sh", "-c", f"{self.FOCUSED} V -m CTRL+SHIFT"])
 
     def holds(self, key: SpeechKey) -> bool:
         return key.action in (Action.TOGGLE, Action.PAUSE, Action.SEEK, Action.PASTE)
@@ -214,7 +213,7 @@ class SpeechPlugin(Plugin):
         if key.action == Action.SEEK:
             return self.press(context, key)
         if key.action == Action.PASTE:
-            return self.spawn(["sh", "-c", self.PASTE_KEYS + self.SEND_KEYS])
+            return self.spawn(["sh", "-c", f"{self.FOCUSED} Return"])
 
         self.speech(key.session, "kill")
 
