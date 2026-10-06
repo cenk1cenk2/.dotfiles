@@ -199,6 +199,13 @@ class SpeechPlugin(Plugin):
     def repeats(self, key: SpeechKey) -> bool:
         return key.action == Action.SEEK
 
+    def hold_status(self, key: SpeechKey) -> str | None:
+        if key.action == Action.SEEK:
+            seconds = float(key.settings["seconds"])
+            return f"◀ {-seconds:g}s" if seconds < 0 else f"{seconds:g}s ▶"
+
+        return "kill"
+
     def hold(self, context: str, key: SpeechKey) -> None:
         if key.action == Action.SEEK:
             return self.press(context, key)

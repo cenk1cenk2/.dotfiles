@@ -75,13 +75,18 @@ class Plugin:
     def repeats(self, key: Key) -> bool:
         return False
 
+    def hold_status(self, key: Key) -> str | None:
+        """What a key shows in place of its status while its hold is active."""
+        return None
+
     def key_down(self, context: str, key: Key) -> None:
         key.pressed_at, key.held = time.monotonic(), False
 
     def key_up(self, context: str, key: Key) -> None:
         if key.pressed_at is not None and not key.held:
             self.press(context, key)
-        key.pressed_at = None
+        key.pressed_at, key.held = None, False
+        self.render()
 
     def send(self, event: str, context: str, payload: dict) -> None:
         self.ws.send(
@@ -109,6 +114,8 @@ class Plugin:
                 key.drawn = image
 
             look, status = self.look(context, key)
+            if key.held and (held := self.hold_status(key)) is not None:
+                status = held
             shown = (look, "\n".join(part for part in (key.label, status) if part))
             if shown == key.shown:
                 continue
@@ -148,6 +155,7 @@ class Plugin:
             if not key.held and now - key.pressed_at >= self.HOLD_SECONDS:
                 key.held, key.fired_at = True, now
                 self.hold(context, key)
+                self.render()
             elif (
                 key.held
                 and self.repeats(key)

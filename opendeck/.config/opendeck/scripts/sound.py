@@ -373,6 +373,13 @@ class SoundPlugin(Plugin):
     def repeats(self, key: SoundKey) -> bool:
         return self.holds(key)
 
+    def hold_status(self, key: SoundKey) -> str | None:
+        if key.action != Action.MEDIA:
+            return None
+        amount = self.SEEK[key.verb].rstrip("+-")
+
+        return f"◀ {amount}s" if key.verb == "prev" else f"{amount}s ▶"
+
     def hold(self, context: str, key: SoundKey) -> None:
         if key.action == Action.VOLUME:
             return self.press(context, key)
