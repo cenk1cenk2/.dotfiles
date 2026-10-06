@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import base64
-import fcntl
-import html
 import json
 import logging
 import os
@@ -14,7 +12,6 @@ import time
 from collections import deque
 from enum import IntEnum, StrEnum
 from pathlib import Path
-from typing import ClassVar
 
 from deck import Key, Plugin, command
 
@@ -24,7 +21,6 @@ class Action(StrEnum):
     GAUGE = "dev.kilic.system.gauge"
     UPTIME = "dev.kilic.system.uptime"
     TIMER = "dev.kilic.system.timer"
-    AGENT = "dev.kilic.system.agent"
 
 
 class Metric(StrEnum):
@@ -77,25 +73,6 @@ class SystemPlugin(Plugin):
         Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
         / "opendeck/timer.json"
     )
-    # Written by the agents' notify hook, one entry per tmux pane.
-    WAITING = (
-        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-        / "agents-waiting.json"
-    )
-    NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
-    # An entry with no tmux pane can be neither checked nor focused.
-    PANELESS_SECONDS = 30 * 60
-    URGENT = "#e06c75"
-    # Simple Icons marks (CC0) in the plugin's icons/agents/, by hook vendor.
-    VENDORS: ClassVar[dict[str, str]] = {
-        "Claude Code": "claude",
-        "Codex": "openai",
-        "OpenCode": "opencode",
-    }
-    WAITING_TILE = "#d19a66"
-    TERMINAL = Path(
-        "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
-    )
     RUNNING = "#98c379"
     PAUSED = "#e5c07b"
     KEY = SystemKey
@@ -115,10 +92,6 @@ class SystemPlugin(Plugin):
         self.gpu = self.find_gpu()
         # Wall-clock start of the running stretch, and the seconds banked
         # before it.
-        self.waiting: list[dict] = []
-        # The waiting agent the left key shows, by pane and alarm time; the
-        # right key moves it along the queue.
-        self.selected: tuple | None = None
         self.timer_started: float | None = None
         self.timer_banked = 0.0
         try:
@@ -254,185 +227,6 @@ class SystemPlugin(Plugin):
             self.sample_gpu()
         if any(key.action == Action.NOTIFY for key in self.keys.values()):
             self.sample_notifications()
-        if any(key.action == Action.AGENT for key in self.keys.values()):
-            self.sample_waiting()
-
-    def panes_seen(self) -> dict[str, bool] | None:
-        """Every tmux pane, mapped to whether it is on screen; None without tmux.
-
-        On screen means the active pane of its session's active window, in a
-        session some client is attached to. Kitty's own focus is not asked,
-        which would cost a `kitty @ ls` every second."""
-        try:
-            proc = self.query(
-                [
-                    "tmux",
-                    "list-panes",
-                    "-a",
-                    "-F",
-                    "#{pane_id} #{pane_active}#{window_active}#{session_attached}",
-                ]
-            )
-        except subprocess.TimeoutExpired:
-            return None
-        if proc.returncode != 0:
-            return None
-        panes = {}
-        for line in proc.stdout.splitlines():
-            pane, _, flags = line.partition(" ")
-            panes[pane] = flags[:2] == "11" and flags[2:] not in ("", "0")
-
-        return panes
-
-    def edit_waiting(self, keep) -> None:
-        """Rewrite the waiting list under the hook's lock, keeping what `keep` says."""
-        with open(self.WAITING.with_suffix(".lock"), "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            try:
-                waiting = json.loads(self.WAITING.read_text())
-            except OSError, ValueError:
-                waiting = []
-            kept = [w for w in waiting if keep(w)]
-            if kept != waiting:
-                tmp = self.WAITING.with_suffix(".tmp")
-                tmp.write_text(json.dumps(kept))
-                tmp.replace(self.WAITING)
-        self.waiting = sorted(kept, key=lambda w: (not w.get("urgent"), w.get("at", 0)))
-
-    def sample_waiting(self) -> None:
-        if not self.WAITING.exists():
-            self.waiting = []
-            return
-
-        panes = self.panes_seen()
-
-        def keep(entry: dict) -> bool:
-            if not entry.get("pane"):
-                return time.time() - entry.get("at", 0) < self.PANELESS_SECONDS
-            if panes is None:
-                return True
-
-            return panes.get(entry["pane"]) is False
-
-        self.edit_waiting(keep)
-
-    @staticmethod
-    def identity(entry: dict) -> tuple:
-        return entry.get("pane"), entry.get("at")
-
-    def agent(self, key: SystemKey) -> dict | None:
-        """The selected agent for the left key; the right key shows the queue."""
-        if key.settings["slot"] != 0 or not self.waiting:
-            return None
-
-        return next(
-            (w for w in self.waiting if self.identity(w) == self.selected),
-            self.waiting[0],
-        )
-
-    def terminal(self) -> str:
-        return base64.b64encode(self.TERMINAL.read_bytes()).decode()
-
-    def mark(self, entry: dict) -> str | None:
-        vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
-        found = re.search(
-            r' d="([^"]+)"', (self.ICONS / f"agents/{vendor}.svg").read_text()
-        )
-
-        return found[1] if found else None
-
-    def queue_image(self) -> str:
-        """The whole queue in brief: a count, then a mark and project per row.
-
-        The row the left key shows is banded, and the three rows drawn always
-        include it, so cycling past the third agent scrolls the list."""
-        waiting = self.waiting
-        if not waiting:
-            return self.uri(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-                '<rect width="144" height="144" fill="#17191e"/>'
-                # Each card blanks the key behind it before drawing, so the
-                # stack reads as solid cards rather than overlapping ghosts.
-                + "".join(
-                    f'<rect x="{x + 4}" y="{y + 6}" width="48" height="44" rx="6" fill="#17191e"/>'
-                    f'<image href="data:image/svg+xml;base64,{self.terminal()}"'
-                    f' x="{x}" y="{y}" width="56" height="56" opacity="{opacity}"/>'
-                    for x, y, opacity in ((60, 38, 0.12), (50, 50, 0.2), (40, 62, 0.3))
-                )
-                + "</svg>"
-            )
-
-        colour = (
-            self.URGENT if any(w.get("urgent") for w in waiting) else self.WAITING_TILE
-        )
-        selected = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
-        index = waiting.index(selected) if selected in waiting else 0
-        start = max(0, min(index - 1, len(waiting) - 3))
-        rows = ""
-        for i, entry in enumerate(waiting[start : start + 3]):
-            y = 44 + i * 33
-            if entry is selected:
-                rows += f'<rect y="{y - 4}" width="144" height="33" fill="#17191e" fill-opacity="0.22"/>'
-            project = entry.get("directory") or "?"
-            if len(project) > 8:
-                project = project[:7] + "…"
-            if mark := self.mark(entry):
-                rows += (
-                    f'<g transform="translate(8 {y}) scale(1.1667)" fill="#17191e">'
-                    f'<path d="{mark}"/></g>'
-                )
-            rows += (
-                f'<text x="40" y="{y + 22}" font-family="Liberation Sans" font-size="22"'
-                f' font-weight="bold" fill="#17191e">{html.escape(project)}</text>'
-            )
-
-        return self.uri(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-            '<rect width="144" height="144" fill="#17191e"/>'
-            f'<rect y="36" width="144" height="108" fill="{colour}"/>'
-            '<text x="72" y="28" font-family="Liberation Sans" font-size="24" font-weight="bold"'
-            f' fill="#e5e5e5" text-anchor="middle">{len(waiting)} waiting</text>{rows}</svg>'
-        )
-
-    def agent_image(self, key: SystemKey) -> str:
-        """The waiting agent's mark over its project name, in big type.
-
-        A dark key with a faint terminal while nothing waits in this slot."""
-        if key.settings["slot"] == 1:
-            return self.queue_image()
-
-        entry = self.agent(key)
-        if entry is None:
-            icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
-            return self.uri(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-                '<rect width="144" height="144" fill="#17191e"/>'
-                f'<image href="data:image/svg+xml;base64,{icon}" x="40" y="52" width="64" height="64"'
-                ' opacity="0.3"/></svg>'
-            )
-
-        colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
-        mark = self.mark(entry)
-        project = entry.get("directory") or "?"
-        if len(project) > 12:
-            project = project[:11] + "…"
-        size = min(26, round(230 / max(len(project), 1)))
-        profile = html.escape(entry.get("profile") or "")
-
-        return self.uri(
-            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-            '<rect width="144" height="144" fill="#17191e"/>'
-            f'<rect y="36" width="144" height="108" fill="{colour}"/>'
-            '<text x="72" y="28" font-family="Liberation Sans" font-size="24"'
-            f' font-weight="bold" fill="#e5e5e5" text-anchor="middle">{profile}</text>'
-            + (
-                f'<g transform="translate(50 44) scale(1.8333)" fill="#17191e"><path d="{mark}"/></g>'
-                if mark
-                else ""
-            )
-            + f'<text x="72" y="130" font-family="Liberation Sans" font-size="{size}" font-weight="bold"'
-            f' fill="#17191e" text-anchor="middle">{html.escape(project)}</text></svg>'
-        )
 
     def timer_elapsed(self) -> float:
         running = time.time() - self.timer_started if self.timer_started else 0.0
@@ -525,8 +319,6 @@ class SystemPlugin(Plugin):
     def image(self, context: str, key: SystemKey) -> str | None:
         if key.action == Action.TIMER:
             return self.timer()
-        if key.action == Action.AGENT:
-            return self.agent_image(key)
         if key.action != Action.GAUGE:
             return None
 
@@ -552,8 +344,6 @@ class SystemPlugin(Plugin):
                 return 0, self.readout.get(key.metric, "")
             case Action.TIMER:
                 return 0, ""
-            case Action.AGENT:
-                return 0, ""
             case Action.UPTIME:
                 minutes = int(float(Path("/proc/uptime").read_text().split()[0])) // 60
                 days, hours = divmod(minutes // 60, 24)
@@ -569,48 +359,16 @@ class SystemPlugin(Plugin):
                 self.spawn([str(self.LAUNCH), key.launch])
             case Action.TIMER:
                 self.timer_toggle()
-            case Action.AGENT if key.settings["slot"] == 1:
-                self.cycle()
-            case Action.AGENT if (entry := self.agent(key)) is not None:
-                if entry.get("pane"):
-                    self.spawn([str(self.NOTIFY), "focus", "--pane", entry["pane"]])
-                self.dismiss(entry)
-
-    def cycle(self) -> None:
-        """Select the next waiting agent after the current one, wrapping."""
-        if not self.waiting:
-            return
-        current = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
-        index = self.waiting.index(current) if current in self.waiting else -1
-        self.selected = self.identity(self.waiting[(index + 1) % len(self.waiting)])
-        self.render()
-
-    def dismiss(self, entry: dict) -> None:
-        self.edit_waiting(lambda w: w != entry)
-        self.render()
 
     def holds(self, key: SystemKey) -> bool:
-        return key.action in (Action.NOTIFY, Action.TIMER, Action.AGENT)
+        return key.action in (Action.NOTIFY, Action.TIMER)
 
     def hold_status(self, key: SystemKey) -> str | None:
-        match key.action:
-            case Action.TIMER:
-                return "reset"
-            case Action.AGENT:
-                return "dismiss all" if key.settings["slot"] == 1 else "dismiss"
-
-        return None
+        return "reset" if key.action == Action.TIMER else None
 
     def hold(self, context: str, key: SystemKey) -> None:
         if key.action == Action.TIMER:
             return self.timer_reset()
-        if key.action == Action.AGENT:
-            if key.settings["slot"] == 1:
-                self.edit_waiting(lambda w: False)
-                self.render()
-            elif (entry := self.agent(key)) is not None:
-                self.dismiss(entry)
-            return
 
         self.spawn(["swaync-client", "--toggle-dnd", "--skip-wait"])
         self.next_sample = 0.0

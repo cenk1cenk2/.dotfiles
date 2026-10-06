@@ -90,17 +90,17 @@
       ]
     },
     {
-      "Name": "Agent Sessions",
-      "UUID": "dev.kilic.speech.sessions",
-      "Icon": "icons/sessions",
-      "Tooltip": "Jump to the next agent session in tmux; hold for the previous.",
+      "Name": "Paste",
+      "UUID": "dev.kilic.speech.paste",
+      "Icon": "icons/paste",
+      "Tooltip": "Paste into the focused window; hold to paste and press Enter.",
       "DisableAutomaticStates": true,
       "Controllers": [
         "Keypad"
       ],
       "States": [
         {
-          "Image": "icons/sessions",
+          "Image": "icons/paste",
           "TitleAlignment": "top",
           "FontSize": 13
         }

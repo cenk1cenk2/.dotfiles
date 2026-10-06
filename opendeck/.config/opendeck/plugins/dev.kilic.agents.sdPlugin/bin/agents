@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$HOME/.config/opendeck/scripts/agents.py" "$@"

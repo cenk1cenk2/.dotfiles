@@ -1,0 +1,51 @@
+{
+  "Name": "Agents",
+  "Author": "Cenk Kılıç",
+  "Version": "0.1.0",
+  "Description": "Coding agents in tmux: who is waiting, and every running session.",
+  "Icon": "icons/plugin",
+  "Category": "Agents",
+  "CodePathLin": "bin/agents",
+  "OS": [
+    {
+      "Platform": "linux"
+    }
+  ],
+  "SDKVersion": 2,
+  "Actions": [
+    {
+      "Name": "Agents Waiting",
+      "UUID": "dev.kilic.agents.waiting",
+      "Icon": "icons/terminal",
+      "Tooltip": "Slot 0: the selected waiting agent, press to jump, hold to dismiss. Slot 1: the queue, press to select the next, hold to dismiss all.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/terminal",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    },
+    {
+      "Name": "Agent Sessions",
+      "UUID": "dev.kilic.agents.sessions",
+      "Icon": "icons/terminal",
+      "Tooltip": "Jump to the next agent session in tmux; hold for the previous.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/terminal",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
+    }
+  ]
+}
