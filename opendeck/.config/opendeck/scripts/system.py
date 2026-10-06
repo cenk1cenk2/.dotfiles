@@ -21,6 +21,7 @@ class Action(StrEnum):
 
 class Metric(StrEnum):
     CPU = "cpu"
+    MEM = "mem"
     TEMP = "temp"
     GPU = "gpu"
 
@@ -34,6 +35,11 @@ class SystemKey(Key):
     @property
     def metric(self) -> Metric:
         return Metric(self.settings["metric"])
+
+    @property
+    def overlay(self) -> Metric | None:
+        """A second metric, drawn as a line over the first one's area."""
+        return Metric(self.settings["overlay"]) if "overlay" in self.settings else None
 
     @property
     def icon(self) -> str:
@@ -54,6 +60,7 @@ class SystemPlugin(Plugin):
     ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.system.sdPlugin/icons"
     SAMPLE_SECONDS = 1.0
     SAMPLES = 60
+    LINE = "#e5c07b"
     TILE = re.compile(r'<rect y="36" width="144" height="108" fill="(#[0-9a-f]{6})"/>')
     # The package sensor of each CPU vendor's hwmon driver.
     CPU_SENSORS = (("k10temp", "Tctl"), ("coretemp", "Package id 0"))
@@ -123,6 +130,17 @@ class SystemPlugin(Plugin):
             self.readout[Metric.CPU] = f"{busy * 100:.0f}%"
         self.cpu_times = (idle, total)
 
+    def sample_mem(self) -> None:
+        info = dict(
+            line.split(":", 1)
+            for line in Path("/proc/meminfo").read_text().splitlines()
+        )
+        used = 1 - int(info["MemAvailable"].split()[0]) / int(
+            info["MemTotal"].split()[0]
+        )
+        self.history[Metric.MEM].append(used)
+        self.readout[Metric.MEM] = f"{used * 100:.0f}%"
+
     def sample_temp(self) -> None:
         if self.cpu_sensor is None:
             return
@@ -174,10 +192,15 @@ class SystemPlugin(Plugin):
         self.next_sample = time.monotonic() + self.SAMPLE_SECONDS
 
         metrics = {
-            key.metric for key in self.keys.values() if key.action == Action.GAUGE
+            metric
+            for key in self.keys.values()
+            if key.action == Action.GAUGE
+            for metric in (key.metric, key.overlay)
         }
         if Metric.CPU in metrics:
             self.sample_cpu()
+        if Metric.MEM in metrics:
+            self.sample_mem()
         if Metric.TEMP in metrics:
             self.sample_temp()
         if Metric.GPU in metrics:
@@ -192,18 +215,27 @@ class SystemPlugin(Plugin):
     def chart(self, key: SystemKey) -> str:
         """The key's icon over a faded tile, with the history as a filled area."""
         svg = (self.ICONS / f"{key.icon}.svg").read_text()
-        samples = list(self.history[key.metric])
         step = 144 / (self.SAMPLES - 1)
-        offset = 144 - step * (len(samples) - 1)
-        points = " ".join(
-            f"{offset + i * step:.1f},{144 - 108 * value:.1f}"
-            for i, value in enumerate(samples)
-        )
-        area = (
-            rf'<polygon points="{offset:.1f},144 {points} 144,144" fill="\1"/>'
-            if len(samples) > 1
-            else ""
-        )
+
+        def points(metric: Metric) -> tuple[float, str] | None:
+            samples = list(self.history[metric])
+            if len(samples) < 2:
+                return None
+            offset = 144 - step * (len(samples) - 1)
+
+            return offset, " ".join(
+                f"{offset + i * step:.1f},{144 - 108 * value:.1f}"
+                for i, value in enumerate(samples)
+            )
+
+        area = ""
+        if series := points(key.metric):
+            area = rf'<polygon points="{series[0]:.1f},144 {series[1]} 144,144" fill="\1"/>'
+        if key.overlay and (series := points(key.overlay)):
+            area += (
+                f'<polyline points="{series[1]}" fill="none" stroke="{self.LINE}"'
+                ' stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>'
+            )
 
         return self.uri(
             self.TILE.sub(
@@ -228,6 +260,12 @@ class SystemPlugin(Plugin):
                     return NotifyLook.DND, f"dnd {state['count']}"
 
                 return NotifyLook.IDLE, str(state["count"]) if state["count"] else ""
+            case Action.GAUGE if key.overlay:
+                return 0, " ".join(
+                    f"{metric.value[0]}{self.readout[metric]}"
+                    for metric in (key.metric, key.overlay)
+                    if metric in self.readout
+                )
             case Action.GAUGE:
                 return 0, self.readout.get(key.metric, "")
 
