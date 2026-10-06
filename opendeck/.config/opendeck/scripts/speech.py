@@ -183,10 +183,27 @@ class SpeechPlugin(Plugin):
     def press(self, context: str, key: SpeechKey) -> None:
         match key.action:
             case Action.TOGGLE:
-                if key.session is Session.TTS and self.states.get(Session.TTS) is None:
+                starting = self.states.get(key.session) is None
+                if key.session is Session.TTS and starting:
                     self.tts_owner, self.tts_seen = context, False
                     self.tts_claimed_at = time.monotonic()
-                self.speech(key.session, "toggle", *key.args)
+                if key.settings.get("copy") and starting:
+                    # Claude's `/copy` puts its last reply on the clipboard,
+                    # which is where a TTS run reads from by default.
+                    self.spawn(
+                        [
+                            "zsh",
+                            "-c",
+                            'wtype "/copy" && wtype -k Return && sleep 1'
+                            ' && exec ~/.config/wayland/scripts/speech.py "$@"',
+                            "zsh",
+                            key.session.value,
+                            "toggle",
+                            *key.args,
+                        ]
+                    )
+                else:
+                    self.speech(key.session, "toggle", *key.args)
             case Action.PAUSE:
                 self.speech(key.session, "pause")
             case Action.SEEK:
