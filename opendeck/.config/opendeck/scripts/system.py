@@ -330,10 +330,8 @@ class SystemPlugin(Plugin):
             self.waiting[0],
         )
 
-    def others(self) -> list[dict]:
-        chosen = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
-
-        return [w for w in self.waiting if w is not chosen]
+    def terminal(self) -> str:
+        return base64.b64encode(self.TERMINAL.read_bytes()).decode()
 
     def mark(self, entry: dict) -> str | None:
         vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
@@ -344,20 +342,37 @@ class SystemPlugin(Plugin):
         return found[1] if found else None
 
     def queue_image(self) -> str:
-        """The rest of the queue in brief: a count, then a mark and project per row."""
-        others = self.others()
-        if not others:
+        """The whole queue in brief: a count, then a mark and project per row.
+
+        The row the left key shows is banded, and the three rows drawn always
+        include it, so cycling past the third agent scrolls the list."""
+        waiting = self.waiting
+        if not waiting:
             return self.uri(
                 '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
-                '<rect width="144" height="144" fill="#17191e"/></svg>'
+                '<rect width="144" height="144" fill="#17191e"/>'
+                # Each card blanks the key behind it before drawing, so the
+                # stack reads as solid cards rather than overlapping ghosts.
+                + "".join(
+                    f'<rect x="{x + 4}" y="{y + 6}" width="48" height="44" rx="6" fill="#17191e"/>'
+                    f'<image href="data:image/svg+xml;base64,{self.terminal()}"'
+                    f' x="{x}" y="{y}" width="56" height="56" opacity="{opacity}"/>'
+                    for x, y, opacity in ((60, 38, 0.12), (50, 50, 0.2), (40, 62, 0.3))
+                )
+                + "</svg>"
             )
 
         colour = (
-            self.URGENT if any(w.get("urgent") for w in others) else self.WAITING_TILE
+            self.URGENT if any(w.get("urgent") for w in waiting) else self.WAITING_TILE
         )
+        selected = self.agent(SystemKey(Action.AGENT, {"slot": 0}))
+        index = waiting.index(selected) if selected in waiting else 0
+        start = max(0, min(index - 1, len(waiting) - 3))
         rows = ""
-        for i, entry in enumerate(others[:3]):
+        for i, entry in enumerate(waiting[start : start + 3]):
             y = 44 + i * 33
+            if entry is selected:
+                rows += f'<rect y="{y - 4}" width="144" height="33" fill="#17191e" fill-opacity="0.22"/>'
             project = entry.get("directory") or "?"
             if len(project) > 8:
                 project = project[:7] + "…"
@@ -376,7 +391,7 @@ class SystemPlugin(Plugin):
             '<rect width="144" height="144" fill="#17191e"/>'
             f'<rect y="36" width="144" height="108" fill="{colour}"/>'
             '<text x="72" y="28" font-family="Liberation Sans" font-size="24" font-weight="bold"'
-            f' fill="#e5e5e5" text-anchor="middle">{len(others)} more</text>{rows}</svg>'
+            f' fill="#e5e5e5" text-anchor="middle">{len(waiting)} waiting</text>{rows}</svg>'
         )
 
     def agent_image(self, key: SystemKey) -> str:
