@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import glob
 import json
 import logging
 import os
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import click
@@ -44,6 +46,12 @@ class Notify:
     # per-urgency defaults, so this script decides how long its own popups live.
     SHOW_MS = 5000
     RUN_TIMEOUT = 3.0
+    # Agents waiting on the user, one entry per tmux pane; the Stream Deck
+    # reads it, and both sides take the lock beside it to rewrite it.
+    WAITING = (
+        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        / "agents-waiting.json"
+    )
 
     log = logging.getLogger("notify")
 
@@ -111,11 +119,12 @@ class Notify:
 
     @staticmethod
     @cli.command("focus")
+    @click.option("--pane", help="Tmux pane to focus; defaults to this one.")
     @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
-    def cmd_focus(verbose: bool) -> None:
-        """Jump to this pane without a popup, for testing the chain."""
+    def cmd_focus(pane: str | None, verbose: bool) -> None:
+        """Jump to a pane without a popup."""
         create_logger(verbose)
-        Notify.focus()
+        Notify.focus(pane)
 
     @classmethod
     def payload(cls) -> dict | None:
@@ -152,6 +161,8 @@ class Notify:
 
         body = f"{message}\n\n{context}" if context else message
 
+        cls.record(vendor, profile, directory, message, urgency == Urgency.CRITICAL)
+
         label = f" ({profile})" if profile else ""
         # Before the popup rather than after: the popup call blocks for its
         # lifetime waiting on a click, and the sound belongs to its appearance
@@ -172,6 +183,38 @@ class Notify:
         )
         if clicked:
             cls.focus()
+
+    @classmethod
+    def record(
+        cls,
+        vendor: str,
+        profile: str | None,
+        directory: str,
+        message: str,
+        urgent: bool,
+    ) -> None:
+        """List this pane as waiting, replacing its previous entry."""
+        pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
+        entry = {
+            "pane": pane,
+            "vendor": vendor,
+            "profile": profile,
+            "directory": directory,
+            "message": message,
+            "urgent": urgent,
+            "at": time.time(),
+        }
+        with open(cls.WAITING.with_suffix(".lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                waiting = json.loads(cls.WAITING.read_text())
+            except OSError, ValueError:
+                waiting = []
+            waiting = [w for w in waiting if pane is None or w.get("pane") != pane]
+            waiting.append(entry)
+            tmp = cls.WAITING.with_suffix(".tmp")
+            tmp.write_text(json.dumps(waiting))
+            tmp.replace(cls.WAITING)
 
     @classmethod
     def transcript(cls, transcript: str | None) -> str:
@@ -281,10 +324,12 @@ class Notify:
         )
 
     @classmethod
-    def focus(cls) -> None:
-        """Land the user on this hook's pane, best effort at every step."""
-        pane = os.environ.get("TMUX_PANE")
-        if not pane or not os.environ.get("TMUX"):
+    def focus(cls, pane: str | None = None) -> None:
+        """Land the user on a pane, this hook's own by default, best effort at
+        every step."""
+        if pane is None:
+            pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
+        if not pane:
             cls.log.debug("not inside tmux; nothing to focus")
             return
 

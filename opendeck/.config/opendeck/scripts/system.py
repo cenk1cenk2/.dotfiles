@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ class Action(StrEnum):
     GAUGE = "dev.kilic.system.gauge"
     UPTIME = "dev.kilic.system.uptime"
     TIMER = "dev.kilic.system.timer"
+    AGENT = "dev.kilic.system.agent"
 
 
 class Metric(StrEnum):
@@ -73,6 +75,19 @@ class SystemPlugin(Plugin):
         Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
         / "opendeck/timer.json"
     )
+    # Written by the agents' notify hook, one entry per tmux pane.
+    WAITING = (
+        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        / "agents-waiting.json"
+    )
+    NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
+    # An entry with no tmux pane can be neither checked nor focused.
+    PANELESS_SECONDS = 30 * 60
+    URGENT = "#e06c75"
+    WAITING_TILE = "#d19a66"
+    TERMINAL = Path(
+        "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
+    )
     RUNNING = "#98c379"
     PAUSED = "#e5c07b"
     KEY = SystemKey
@@ -92,6 +107,7 @@ class SystemPlugin(Plugin):
         self.gpu = self.find_gpu()
         # Wall-clock start of the running stretch, and the seconds banked
         # before it.
+        self.waiting: list[dict] = []
         self.timer_started: float | None = None
         self.timer_banked = 0.0
         try:
@@ -227,6 +243,89 @@ class SystemPlugin(Plugin):
             self.sample_gpu()
         if any(key.action == Action.NOTIFY for key in self.keys.values()):
             self.sample_notifications()
+        if any(key.action == Action.AGENT for key in self.keys.values()):
+            self.sample_waiting()
+
+    def panes_seen(self) -> dict[str, bool] | None:
+        """Every tmux pane, mapped to whether it is on screen; None without tmux.
+
+        On screen means the active pane of its session's active window, in a
+        session some client is attached to. Kitty's own focus is not asked,
+        which would cost a `kitty @ ls` every second."""
+        try:
+            proc = self.query(
+                [
+                    "tmux",
+                    "list-panes",
+                    "-a",
+                    "-F",
+                    "#{pane_id} #{pane_active}#{window_active}#{session_attached}",
+                ]
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if proc.returncode != 0:
+            return None
+        panes = {}
+        for line in proc.stdout.splitlines():
+            pane, _, flags = line.partition(" ")
+            panes[pane] = flags[:2] == "11" and flags[2:] not in ("", "0")
+
+        return panes
+
+    def edit_waiting(self, keep) -> None:
+        """Rewrite the waiting list under the hook's lock, keeping what `keep` says."""
+        with open(self.WAITING.with_suffix(".lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                waiting = json.loads(self.WAITING.read_text())
+            except OSError, ValueError:
+                waiting = []
+            kept = [w for w in waiting if keep(w)]
+            if kept != waiting:
+                tmp = self.WAITING.with_suffix(".tmp")
+                tmp.write_text(json.dumps(kept))
+                tmp.replace(self.WAITING)
+        self.waiting = sorted(kept, key=lambda w: (not w.get("urgent"), w.get("at", 0)))
+
+    def sample_waiting(self) -> None:
+        if not self.WAITING.exists():
+            self.waiting = []
+            return
+
+        panes = self.panes_seen()
+
+        def keep(entry: dict) -> bool:
+            if not entry.get("pane"):
+                return time.time() - entry.get("at", 0) < self.PANELESS_SECONDS
+            if panes is None:
+                return True
+
+            return panes.get(entry["pane"]) is False
+
+        self.edit_waiting(keep)
+
+    def agent(self, key: SystemKey) -> dict | None:
+        index = int(key.settings["slot"])
+        return self.waiting[index] if index < len(self.waiting) else None
+
+    def agent_image(self, key: SystemKey) -> str:
+        entry = self.agent(key)
+        colour = None
+        if entry:
+            colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
+        tile = (
+            f'<rect y="36" width="144" height="108" fill="{colour}"/>' if colour else ""
+        )
+        icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
+        opacity = "1" if entry else "0.3"
+
+        return self.uri(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
+            f'<rect width="144" height="144" fill="#17191e"/>{tile}'
+            f'<image href="data:image/svg+xml;base64,{icon}" x="40" y="52" width="64" height="64"'
+            f' opacity="{opacity}"/></svg>'
+        )
 
     def timer_elapsed(self) -> float:
         running = time.time() - self.timer_started if self.timer_started else 0.0
@@ -319,6 +418,8 @@ class SystemPlugin(Plugin):
     def image(self, context: str, key: SystemKey) -> str | None:
         if key.action == Action.TIMER:
             return self.timer()
+        if key.action == Action.AGENT:
+            return self.agent_image(key)
         if key.action != Action.GAUGE:
             return None
 
@@ -344,6 +445,14 @@ class SystemPlugin(Plugin):
                 return 0, self.readout.get(key.metric, "")
             case Action.TIMER:
                 return 0, ""
+            case Action.AGENT:
+                entry = self.agent(key)
+                if entry is None:
+                    return 0, "agents" if key.settings["slot"] == 0 else ""
+                vendor = "codex" if entry["vendor"] == "Codex" else "claude"
+                extra = len(self.waiting) - 2
+                more = f" +{extra}" if key.settings["slot"] == 1 and extra > 0 else ""
+                return 0, f"{vendor}{more}\n{entry['directory']}"
             case Action.UPTIME:
                 minutes = int(float(Path("/proc/uptime").read_text().split()[0])) // 60
                 days, hours = divmod(minutes // 60, 24)
@@ -359,16 +468,34 @@ class SystemPlugin(Plugin):
                 self.spawn([str(self.LAUNCH), key.launch])
             case Action.TIMER:
                 self.timer_toggle()
+            case Action.AGENT if (entry := self.agent(key)) is not None:
+                if entry.get("pane"):
+                    self.spawn([str(self.NOTIFY), "focus", "--pane", entry["pane"]])
+                self.dismiss(entry)
+
+    def dismiss(self, entry: dict) -> None:
+        self.edit_waiting(lambda w: w != entry)
+        self.render()
 
     def holds(self, key: SystemKey) -> bool:
-        return key.action in (Action.NOTIFY, Action.TIMER)
+        return key.action in (Action.NOTIFY, Action.TIMER, Action.AGENT)
 
     def hold_status(self, key: SystemKey) -> str | None:
-        return "reset" if key.action == Action.TIMER else None
+        match key.action:
+            case Action.TIMER:
+                return "reset"
+            case Action.AGENT:
+                return "dismiss"
+
+        return None
 
     def hold(self, context: str, key: SystemKey) -> None:
         if key.action == Action.TIMER:
             return self.timer_reset()
+        if key.action == Action.AGENT:
+            if (entry := self.agent(key)) is not None:
+                self.dismiss(entry)
+            return
 
         self.spawn(["swaync-client", "--toggle-dnd", "--skip-wait"])
         self.next_sample = 0.0

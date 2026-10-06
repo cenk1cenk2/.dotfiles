@@ -85,6 +85,23 @@
           "FontSize": 13
         }
       ]
+    },
+    {
+      "Name": "Agent Waiting",
+      "UUID": "dev.kilic.system.agent",
+      "Icon": "icons/agent",
+      "Tooltip": "An agent waiting on you: press to jump to its pane, hold to dismiss.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/agent",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
     }
   ]
 }
