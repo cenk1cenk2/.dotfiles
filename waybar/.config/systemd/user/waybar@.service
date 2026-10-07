@@ -5,6 +5,10 @@ PartOf=graphical-session.target
 After=graphical-session.target
 Before=xdg-desktop-autostart.target
 Requires=dbus.socket
+# Starting the bar starts the watchers feeding it; waybar-watch@ orders itself
+# Before= the bar, so they come up first. Wants=, so a failed watcher leaves
+# the bar running with that module hidden.
+Wants=waybar-watch@stt.service waybar-watch@tts.service waybar-watch@copywriter.service waybar-watch@recorder.service waybar-watch@zoom.service
 
 [Service]
 Type=simple
