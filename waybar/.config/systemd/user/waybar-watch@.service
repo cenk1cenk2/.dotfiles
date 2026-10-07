@@ -1,0 +1,20 @@
+[Unit]
+Description=Waybar status watcher for %i
+# One watcher feeds every bar: each bar's module tails the file this writes.
+PartOf=graphical-session.target
+After=graphical-session.target
+Before=waybar@hyprland.service
+
+[Service]
+Type=simple
+# tail -F only follows a file that exists when it starts; a missing one drops
+# it into slow polling that misses updates. An empty text hides the module.
+ExecStartPre=/bin/sh -c 'mkdir -p %t/waybar && [ -e %t/waybar/%i.json ] || echo "{\"text\": \"\"}" > %t/waybar/%i.json'
+ExecStart=%h/.config/waybar/watch.sh %i
+# A stopped watcher leaves no stale icon behind on the bars.
+ExecStopPost=/bin/sh -c 'echo "{\"text\": \"\"}" > %t/waybar/%i.json.tmp && mv -f %t/waybar/%i.json.tmp %t/waybar/%i.json'
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

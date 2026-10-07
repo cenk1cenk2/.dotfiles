@@ -111,7 +111,7 @@ tasks:
             zathura
       - ./install.py obs opendeck
       - systemctl --user daemon-reload
-      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
+      - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service waybar-watch@stt.service waybar-watch@tts.service waybar-watch@copywriter.service waybar-watch@recorder.service waybar-watch@zoom.service
 
   deploy:linux:system:
     desc: Deploy to target.

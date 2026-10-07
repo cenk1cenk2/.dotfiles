@@ -67,7 +67,8 @@
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/copywriter.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
   },
 
   "group/extras": {

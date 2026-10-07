@@ -85,35 +85,40 @@
   "custom/recorder": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/recorder.py status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/recorder.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/recorder.py toggle",
   },
 
   "custom/stt": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py stt status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/stt.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/speech.py stt toggle --output clipboard",
   },
 
   "custom/tts": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/speech.py tts status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/tts.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/speech.py tts toggle",
   },
 
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/wayland/scripts/copywriter.py status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/copywriter.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
   },
 
   // Hidden while unzoomed: the watcher prints an empty text at 1x.
   "custom/zoom": {
     "return-type": "json",
     "format": "{}",
-    "exec": "~/.config/hypr/scripts/zoom.py status --watch",
+    "exec": "f=$XDG_RUNTIME_DIR/waybar/zoom.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "restart-interval": 2,
     "on-click": "~/.config/hypr/scripts/zoom.py toggle",
   },
 
