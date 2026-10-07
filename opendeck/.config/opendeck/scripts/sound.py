@@ -6,7 +6,6 @@ import base64
 import io
 import logging
 import re
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -18,7 +17,7 @@ from typing import ClassVar
 import pulsectl
 from PIL import Image, ImageOps
 
-from deck import Key, Plugin, command
+from deck import Key, Plugin, Stream, command
 
 
 class Action(StrEnum):
@@ -91,9 +90,6 @@ class SoundPlugin(Plugin):
         "next": "media.next",
         "shift": "media.shift",
     }
-    # The player is asked through two processes a round, so it is polled less
-    # often than the levels.
-    PLAYER_SECONDS = 1.0
     # Glyphs of the play key, drawn over the cover art as a corner badge.
     PLAY = "M 3,2 V 14 L 14,8 Z"
     PAUSE = "M 2 2 L 2 14 L 6 14 L 6 2 L 2 2 z M 10 2 L 10 14 L 14 14 L 14 2 L 10 2 z"
@@ -125,7 +121,19 @@ class SoundPlugin(Plugin):
         self.position = 0.0
         self.length = 0.0
         self.position_at = 0.0
-        self.next_player = 0.0
+        self.player_stream = Stream(
+            [
+                "playerctl",
+                "--follow",
+                "metadata",
+                "--format",
+                (
+                    "{{playerName}}\t{{status}}\t{{artist}}\t{{title}}"
+                    "\t{{mpris:artUrl}}\t{{position}}\t{{mpris:length}}"
+                ),
+            ],
+            self.on_player,
+        )
         # The input's mute state before a push-to-talk press, restored on
         # release so the press never fights the mute key.
         self.talk_restore: bool | None = None
@@ -157,58 +165,16 @@ class SoundPlugin(Plugin):
             self.pulse = None
             self.levels = {}
 
-    def query(self, cmd: list[str]) -> subprocess.CompletedProcess:
-        """A status read, traced at DEBUG since it runs every second."""
-        self.log.debug("spawn: %s", " ".join(cmd))
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1, check=False
-        )
-        if proc.stderr:
-            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+    def on_player(self, line: str) -> None:
+        """One `playerctl --follow` line: the active player changed state.
 
-        return proc
-
-    def poll_player(self) -> None:
-        try:
-            names = self.query(
-                [
-                    "busctl",
-                    "--user",
-                    "get-property",
-                    "org.mpris.MediaPlayer2.playerctld",
-                    "/org/mpris/MediaPlayer2",
-                    "com.github.altdesktop.playerctld",
-                    "PlayerNames",
-                ]
-            )
-            metadata = self.query(
-                [
-                    "playerctl",
-                    "-p",
-                    "playerctld",
-                    "metadata",
-                    "--format",
-                    (
-                        "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}"
-                        "\t{{position}}\t{{mpris:length}}"
-                    ),
-                ]
-            )
-        except subprocess.TimeoutExpired:
-            return
-
-        # `as 2 "org.mpris.MediaPlayer2.spotify" "…"`: the active player first.
-        words = names.stdout.split('"')
-        self.player = (
-            words[1].removeprefix("org.mpris.MediaPlayer2.").split(".")[0]
-            if names.returncode == 0 and len(words) > 1
-            else None
+        playerctl follows playerctld's active player, so a switch of player
+        arrives as a line like any other; a blank line means none is left."""
+        fields = line.split("\t")
+        player, status, artist, title, art_url, position, length = (
+            fields if len(fields) == 7 else ("", "", "", "", "", "", "")
         )
-        status, artist, title, art_url, position, length = (
-            metadata.stdout.rstrip("\n").split("\t")
-            if metadata.returncode == 0 and metadata.stdout.count("\t") == 5
-            else ("", "", "", "", "", "")
-        )
+        self.player = player.split(".")[0] or None
         self.playing = status == "Playing"
         # MPRIS counts both in microseconds.
         self.position = int(position or 0) / 1e6
@@ -318,9 +284,10 @@ class SoundPlugin(Plugin):
 
     def poll(self) -> None:
         self.poll_levels()
-        if time.monotonic() >= self.next_player:
-            self.poll_player()
-            self.next_player = time.monotonic() + self.PLAYER_SECONDS
+        if any(key.action == Action.MEDIA for key in self.keys.values()):
+            self.player_stream.run()
+        else:
+            self.player_stream.stop()
 
     def look(self, context: str, key: SoundKey) -> tuple[int, str]:
         match key.action:
@@ -362,7 +329,6 @@ class SoundPlugin(Plugin):
                 self.spawn([str(self.LAUNCH), self.VOLUME[key.device][key.verb]])
             case Action.MEDIA:
                 self.spawn([str(self.LAUNCH), self.MEDIA[key.verb]])
-                self.next_player = time.monotonic() + 0.2
 
     def holds(self, key: SoundKey) -> bool:
         if key.action == Action.VOLUME:
@@ -385,7 +351,6 @@ class SoundPlugin(Plugin):
             return self.press(context, key)
 
         self.spawn(["playerctl", "-p", "playerctld", "position", self.SEEK[key.verb]])
-        self.next_player = time.monotonic() + 0.2
 
     def talk(self, live: bool) -> None:
         source = self.default(Device.INPUT)

@@ -9,9 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import click
@@ -34,6 +37,63 @@ class Key:
     @property
     def label(self) -> str:
         return self.settings.get("label", "")
+
+
+class Stream:
+    """A long-lived command whose every stdout line is handed to `on_line`.
+
+    For state a tool can push (`playerctl --follow`, `swaync-client
+    --subscribe`, `nvidia-smi -l`), which costs one process for the plugin's
+    life instead of one per poll. `run` starts it, or restarts it once it has
+    exited, no more often than every RETRY_SECONDS; `stop` ends it, for when
+    no key on screen needs it."""
+
+    RETRY_SECONDS = 5.0
+
+    log = logging.getLogger("deck.stream")
+
+    def __init__(self, cmd: list[str], on_line: Callable[[str], None]):
+        self.cmd = cmd
+        self.on_line = on_line
+        self.proc: subprocess.Popen | None = None
+        self.started_at = 0.0
+
+    def run(self) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            return
+        if time.monotonic() - self.started_at < self.RETRY_SECONDS:
+            return
+        self.started_at = time.monotonic()
+        self.log.debug("stream: %s", " ".join(self.cmd))
+        try:
+            self.proc = subprocess.Popen(
+                # The kernel ends the stream when the plugin exits, however it
+                # exits: OpenDeck kills a plugin without letting it clean up.
+                ["setpriv", "--pdeathsig", "TERM", "--", *self.cmd],
+                env={k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                start_new_session=True,
+            )
+        except OSError as e:
+            self.log.warning("stream %s failed to start: %s", self.cmd[0], e)
+            self.proc = None
+            return
+        threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
+
+    def read(self, proc: subprocess.Popen) -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            self.on_line(line.rstrip("\n"))
+        proc.wait()
+
+    def stop(self) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        self.proc = None
+        self.started_at = 0.0
 
 
 class Plugin:

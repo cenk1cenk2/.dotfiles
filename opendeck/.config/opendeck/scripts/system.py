@@ -7,13 +7,12 @@ import json
 import logging
 import os
 import re
-import subprocess
 import time
 from collections import deque
 from enum import IntEnum, StrEnum
 from pathlib import Path
 
-from deck import Key, Plugin, command
+from deck import Key, Plugin, Stream, command
 
 
 class Action(StrEnum):
@@ -90,6 +89,18 @@ class SystemPlugin(Plugin):
         self.cpu_times: tuple[int, int] | None = None
         self.cpu_sensor = self.find_cpu_sensor()
         self.gpu = self.find_gpu()
+        self.gpu_stream = Stream(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+                f"--loop={self.SAMPLE_SECONDS:g}",
+            ],
+            self.on_gpu,
+        )
+        self.notify_stream = Stream(
+            ["swaync-client", "--subscribe"], self.on_notifications
+        )
         # Wall-clock start of the running stretch, and the seconds banked
         # before it.
         self.timer_started: float | None = None
@@ -99,17 +110,6 @@ class SystemPlugin(Plugin):
             self.timer_started, self.timer_banked = saved["started"], saved["banked"]
         except OSError, ValueError, KeyError:
             pass
-
-    def query(self, cmd: list[str]) -> subprocess.CompletedProcess:
-        """A status read, traced at DEBUG since it runs every second."""
-        self.log.debug("spawn: %s", " ".join(cmd))
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=2, check=False
-        )
-        if proc.stderr:
-            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
-
-        return proc
 
     def find_cpu_sensor(self) -> Path | None:
         for hwmon in Path("/sys/class/hwmon").iterdir():
@@ -168,42 +168,22 @@ class SystemPlugin(Plugin):
         self.history[Metric.TEMP].append(min(1.0, max(0.0, (celsius - 30) / 70)))
         self.readout[Metric.TEMP] = f"{celsius:.0f}°"
 
-    def sample_gpu(self) -> None:
-        if self.gpu is None:
-            return
-        if (self.gpu / "device/power/runtime_status").read_text().strip() != "active":
-            self.readout[Metric.GPU] = "asleep"
-            return
+    def on_gpu(self, line: str) -> None:
         try:
-            proc = self.query(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=utilization.gpu,temperature.gpu",
-                    "--format=csv,noheader,nounits",
-                ]
-            )
-        except subprocess.TimeoutExpired:
+            busy, celsius = (int(x) for x in line.split(",")[:2])
+        except ValueError:
             return
-        if proc.returncode != 0:
-            return
-
-        busy, celsius = (int(x) for x in proc.stdout.split(",")[:2])
         self.history[Metric.GPU].append(busy / 100)
         self.readout[Metric.GPU] = f"{busy}% {celsius}°"
 
-    def sample_notifications(self) -> None:
+    def on_notifications(self, line: str) -> None:
         try:
-            count = self.query(["swaync-client", "--count", "--skip-wait"])
-            dnd = self.query(["swaync-client", "--get-dnd", "--skip-wait"])
-        except subprocess.TimeoutExpired:
+            state = json.loads(line)
+        except ValueError:
             return
-        if count.returncode != 0 or dnd.returncode != 0:
-            self.notifications = None
-            return
-
         self.notifications = {
-            "count": int(count.stdout.strip() or 0),
-            "dnd": dnd.stdout.strip() == "true",
+            "count": int(state.get("count", 0)),
+            "dnd": bool(state.get("dnd")),
         }
 
     def poll(self) -> None:
@@ -223,10 +203,23 @@ class SystemPlugin(Plugin):
             self.sample_mem()
         if Metric.TEMP in metrics:
             self.sample_temp()
-        if Metric.GPU in metrics:
-            self.sample_gpu()
+        # GPU and notifications push their own updates; each stream runs only
+        # while a key on screen shows it.
+        gpu_awake = (
+            self.gpu is not None
+            and (self.gpu / "device/power/runtime_status").read_text().strip()
+            == "active"
+        )
+        if Metric.GPU in metrics and gpu_awake:
+            self.gpu_stream.run()
+        else:
+            self.gpu_stream.stop()
+            if Metric.GPU in metrics and self.gpu is not None:
+                self.readout[Metric.GPU] = "asleep"
         if any(key.action == Action.NOTIFY for key in self.keys.values()):
-            self.sample_notifications()
+            self.notify_stream.run()
+        else:
+            self.notify_stream.stop()
 
     def timer_elapsed(self) -> float:
         running = time.time() - self.timer_started if self.timer_started else 0.0
