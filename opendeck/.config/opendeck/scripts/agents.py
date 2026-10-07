@@ -48,6 +48,7 @@ class AgentsPlugin(Plugin):
     PANELESS_SECONDS = 30 * 60
     SAMPLE_SECONDS = 1.0
     AGENTS_SECONDS = 2.0
+    WALK_SECONDS = 15.0
     URGENT = "#e06c75"
     WAITING_TILE = "#d19a66"
     SESSIONS_TILE = "#56b6c2"
@@ -74,6 +75,12 @@ class AgentsPlugin(Plugin):
         # right key moves it along the queue.
         self.selected: tuple | None = None
         self.agents: list[dict] = []
+        self.panes: dict[str, dict] | None = None
+        self.panes_at = 0.0
+        self.found: dict[str, dict] = {}
+        self.walked_pids: set[int] = set()
+        self.walked_at = 0.0
+        self.waiting_changed: int | None = None
         self.last_seen: str | None = None
         self.next_sample = 0.0
         self.next_agents = 0.0
@@ -148,29 +155,38 @@ class AgentsPlugin(Plugin):
         """Every tmux pane with an agent anywhere in its process tree.
 
         Agents run under wrappers (a profile launcher, a shell, node), so the
-        pane's own process is rarely the agent; the whole tree is searched."""
-        try:
-            listed = subprocess.run(
-                [
-                    "tmux",
-                    "list-panes",
-                    "-a",
-                    "-F",
-                    (
-                        "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
-                        "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
-                    ),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
+        pane's own process is rarely the agent and the whole tree is searched.
+        That walk reads all of /proc, so it runs only when the panes change or
+        every WALK_SECONDS, to catch an agent started in an existing pane; in
+        between, the agents already found are only checked to be alive."""
+        panes = self.tmux_panes()
+        if panes is None:
             return self.agents
-        if listed.returncode != 0:
-            return []
 
+        pids = {pane["pid"] for pane in panes.values()}
+        now = time.monotonic()
+        if pids != self.walked_pids or now - self.walked_at >= self.WALK_SECONDS:
+            self.found = self.walk(panes)
+            self.walked_pids, self.walked_at = pids, now
+        else:
+            self.found = {
+                pane: agent
+                for pane, agent in self.found.items()
+                if pane in panes and self.alive(agent["pid"], agent["name"])
+            }
+
+        return [
+            {
+                **agent,
+                "where": panes[pane]["where"],
+                "project": Path(panes[pane]["path"]).name or "/",
+                "seen": panes[pane]["seen"],
+            }
+            for pane, agent in self.found.items()
+            if pane in panes
+        ]
+
+    def walk(self, panes: dict[str, dict]) -> dict[str, dict]:
         children: dict[int, list[int]] = {}
         names: dict[int, str] = {}
         for entry in Path("/proc").iterdir():
@@ -186,27 +202,33 @@ class AgentsPlugin(Plugin):
                 int(entry.name)
             )
 
-        agents = []
-        for line in listed.stdout.splitlines():
-            pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
-            stack = [int(pid)] if pid.isdigit() else []
+        found = {}
+        for pane, info in panes.items():
+            stack = [info["pid"]]
             while stack:
                 current = stack.pop()
-                if (vendor := self.AGENT_NAMES.get(names.get(current, ""))) is not None:
-                    agents.append(
-                        {
-                            "pane": pane,
-                            "where": where,
-                            "project": Path(path).name or "/",
-                            "vendor": vendor,
-                            "profile": self.profile(current, vendor),
-                            "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
-                        }
-                    )
+                name = names.get(current, "")
+                if (vendor := self.AGENT_NAMES.get(name)) is not None:
+                    found[pane] = {
+                        "pane": pane,
+                        "pid": current,
+                        "name": name,
+                        "vendor": vendor,
+                        "profile": self.profile(current, vendor),
+                    }
                     break
                 stack.extend(children.get(current, []))
 
-        return agents
+        return found
+
+    @staticmethod
+    def alive(pid: int, name: str) -> bool:
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return False
+
+        return stat[stat.find("(") + 1 : stat.rfind(")")] == name
 
     def profile(self, pid: int, vendor: str) -> str | None:
         """The account an agent runs as, from the config dir its launcher set."""
@@ -250,12 +272,15 @@ class AgentsPlugin(Plugin):
 
         return self.agents[0], 0
 
-    def panes_seen(self) -> dict[str, bool] | None:
-        """Every tmux pane, mapped to whether it is on screen; None without tmux.
+    def tmux_panes(self) -> dict[str, dict] | None:
+        """Every tmux pane, from one `list-panes` shared by both key kinds
+        within a poll; None without tmux.
 
         On screen means the active pane of its session's active window, in a
         session some client is attached to. Kitty's own focus is not asked,
-        which would cost a `kitty @ ls` every second."""
+        which would cost a `kitty @ ls` every poll."""
+        if time.monotonic() - self.panes_at < self.SAMPLE_SECONDS / 2:
+            return self.panes
         try:
             proc = self.query(
                 [
@@ -263,19 +288,31 @@ class AgentsPlugin(Plugin):
                     "list-panes",
                     "-a",
                     "-F",
-                    "#{pane_id} #{pane_active}#{window_active}#{session_attached}",
+                    (
+                        "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
+                        "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
+                    ),
                 ]
             )
         except subprocess.TimeoutExpired:
             return None
+        self.panes_at = time.monotonic()
         if proc.returncode != 0:
+            self.panes = None
             return None
-        panes = {}
-        for line in proc.stdout.splitlines():
-            pane, _, flags = line.partition(" ")
-            panes[pane] = flags[:2] == "11" and flags[2:] not in ("", "0")
 
-        return panes
+        self.panes = {}
+        for line in proc.stdout.splitlines():
+            pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
+            if pid.isdigit():
+                self.panes[pane] = {
+                    "pid": int(pid),
+                    "where": where,
+                    "path": path,
+                    "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
+                }
+
+        return self.panes
 
     def edit_waiting(self, keep) -> None:
         """Rewrite the waiting list under the hook's lock, keeping what `keep` says."""
@@ -293,21 +330,36 @@ class AgentsPlugin(Plugin):
         self.waiting = sorted(kept, key=lambda w: (not w.get("urgent"), w.get("at", 0)))
 
     def sample_waiting(self) -> None:
-        if not self.WAITING.exists():
+        """Re-read the hook's list when it changed, and prune it while it has
+        entries; with nothing waiting this costs one stat and no process."""
+        try:
+            changed = self.WAITING.stat().st_mtime_ns
+        except OSError:
             self.waiting = []
             return
+        if changed == self.waiting_changed and not self.waiting:
+            return
 
-        panes = self.panes_seen()
+        panes = (
+            self.tmux_panes()
+            if self.waiting or changed != self.waiting_changed
+            else None
+        )
 
         def keep(entry: dict) -> bool:
             if not entry.get("pane"):
                 return time.time() - entry.get("at", 0) < self.PANELESS_SECONDS
             if panes is None:
                 return True
+            info = panes.get(entry["pane"])
 
-            return panes.get(entry["pane"]) is False
+            return info is not None and not info["seen"]
 
         self.edit_waiting(keep)
+        try:
+            self.waiting_changed = self.WAITING.stat().st_mtime_ns
+        except OSError:
+            self.waiting_changed = None
 
     @staticmethod
     def identity(entry: dict) -> tuple:
