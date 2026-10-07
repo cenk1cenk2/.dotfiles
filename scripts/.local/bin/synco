@@ -9,12 +9,15 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from difflib import SequenceMatcher
 from enum import StrEnum
+from itertools import takewhile
 from pathlib import Path
 from typing import ClassVar, Protocol
 
@@ -72,15 +75,9 @@ class Profile:
 @dataclass(frozen=True)
 class Entry:
     size: int
-    digest: str | None = None
-
-    def same_as(self, other: Entry | None) -> bool:
-        return (
-            other is not None
-            and self.size == other.size
-            and self.digest is not None
-            and self.digest == other.digest
-        )
+    # Whole seconds: sftp carries no finer, so a fraction only the local side
+    # holds would make every pair look different.
+    mtime: int
 
 
 @dataclass
@@ -235,8 +232,8 @@ class Synco:
     ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
     # All the sftp backend probes for on its own. Anything else has to name
     # its remote command too (--sftp-hashes sha256 --sftp-sha256sum-command
-    # sha256sum); asking without that silently drops the hash from the
-    # listing and sends every file through a body fetch instead. A hash only
+    # sha256sum); asking without that silently drops the hash from hashsum
+    # and sends every doubtful file through a body fetch instead. A hash only
     # decides whether two copies are identical — the byte comparison is what
     # rules on which one to keep.
     HASH = "md5"
@@ -339,9 +336,10 @@ class Synco:
 
         return selected
 
-    def __init__(self, transport: Transport, dry_run: bool) -> None:
+    def __init__(self, transport: Transport, dry_run: bool, checksum: bool) -> None:
         self.transport = transport
         self.dry_run = dry_run
+        self.checksum = checksum
         self.stamp = time.strftime("%Y%m%d-%H%M%S")
         self.backup_root = self.STATE_DIR / self.stamp
         self.manifest: list[dict[str, object]] = []
@@ -406,30 +404,72 @@ class Synco:
 
         return result.stdout
 
-    def scan_local(self, profile: Profile) -> dict[str, Entry]:
-        entries: dict[str, Entry] = {}
-        if not profile.root.is_dir():
-            return entries
+    def write_list(self, name: str, paths: list[str]) -> Path:
+        # Under the state dir, never beside a transfer's target: apply fetches
+        # straight into the profile root, which would drop the list in $HOME.
+        listing = self.backup_root / name
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        listing.write_text("".join(f"{p}\n" for p in paths))
 
-        for path in profile.root.rglob("*"):
-            if path.is_symlink() or not path.is_file():
-                continue
-            relative = str(path.relative_to(profile.root))
-            if not self.wanted(profile, relative):
-                continue
-            entries[relative] = Entry(path.stat().st_size)
+        return listing
+
+    def scan_local(self, profile: Profile) -> dict[str, Entry]:
+        """Wanted files, walking only the literal head of each include.
+
+        The caches, plugins and file history beside the includes are never
+        listed, so their size costs nothing here.
+        """
+        entries: dict[str, Entry] = {}
+        for pattern in self.INCLUDES[profile.vendor]:
+            top = profile.root.joinpath(
+                *takewhile(
+                    lambda part: not any(c in part for c in "*?["),
+                    Path(pattern).parts,
+                )
+            )
+            if top.is_dir():
+                found = (Path(d, n) for d, _, names in os.walk(top) for n in names)
+            else:
+                found = iter((top,))
+            for path in found:
+                try:
+                    info = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                relative = str(path.relative_to(profile.root))
+                if self.wanted(profile, relative):
+                    entries[relative] = Entry(info.st_size, int(info.st_mtime))
 
         return entries
 
-    def scan_remote(self, profile: Profile) -> dict[str, Entry]:
+    def scan_remote(
+        self, profile: Profile, paths: list[str] | None = None
+    ) -> dict[str, Entry]:
+        """Size and mtime of the far side, all of it or just `paths`.
+
+        No hashes: asking lsjson for one runs md5sum over every file, which
+        reads the whole tree on each run. `remote_digests` hashes the few
+        paths the listing cannot settle.
+        """
+        selection = (
+            self.filters(profile)
+            if paths is None
+            else [
+                "--files-from",
+                str(
+                    self.write_list(
+                        f"recheck-{profile.name.replace('/', '-')}.txt", paths
+                    )
+                ),
+            ]
+        )
         try:
             listing = self.rclone(
                 "lsjson",
                 "-R",
-                "--hash",
-                "--hash-type",
-                self.HASH,
-                *self.filters(profile),
+                *selection,
                 self.transport.remote(profile),
             )
         except subprocess.CalledProcessError as error:
@@ -449,10 +489,29 @@ class Synco:
                 continue
             entries[path] = Entry(
                 item["Size"],
-                (item.get("Hashes") or {}).get(self.HASH),
+                int(datetime.fromisoformat(item["ModTime"]).timestamp()),
             )
 
         return entries
+
+    def remote_digests(self, profile: Profile, paths: list[str]) -> dict[str, str]:
+        if not paths:
+            return {}
+        listing = self.write_list(f"hash-{profile.name.replace('/', '-')}.txt", paths)
+        output = self.rclone(
+            "hashsum",
+            self.HASH,
+            "--files-from",
+            str(listing),
+            self.transport.remote(profile),
+        )
+
+        return {
+            path: digest
+            for digest, _, path in (
+                line.partition("  ") for line in output.splitlines()
+            )
+        }
 
     @classmethod
     def digest(cls, path: Path) -> str:
@@ -463,11 +522,7 @@ class Synco:
         """Copy `paths` off the peer into a staging tree."""
         if not paths:
             return
-        # Under the state dir, never beside `into`: apply fetches straight
-        # into the profile root, which would drop the list in $HOME.
-        listing = self.backup_root / f"fetch-{profile.name.replace('/', '-')}.txt"
-        listing.parent.mkdir(parents=True, exist_ok=True)
-        listing.write_text("".join(f"{p}\n" for p in paths))
+        listing = self.write_list(f"fetch-{profile.name.replace('/', '-')}.txt", paths)
         self.transfer(
             "copy",
             "--files-from",
@@ -479,9 +534,7 @@ class Synco:
     def send(self, profile: Profile, paths: list[str], source: Path) -> None:
         if not paths:
             return
-        listing = self.backup_root / f"send-{profile.vendor}-{source.name}.txt"
-        listing.parent.mkdir(parents=True, exist_ok=True)
-        listing.write_text("".join(f"{p}\n" for p in paths))
+        listing = self.write_list(f"send-{profile.vendor}-{source.name}.txt", paths)
         self.transfer(
             "copy",
             "--files-from",
@@ -566,41 +619,43 @@ class Synco:
 
         undecided: list[str] = []
         mergeable: list[str] = []
+        doubtful: list[str] = []
         for path in sorted(set(local) | set(remote)):
             kind = self.merge_kind(profile, path)
             if path not in remote:
                 report.steps.append(Step(path, Action.PUSH, kind))
             elif path not in local:
                 report.steps.append(Step(path, Action.PULL, kind))
+            # Every copy rclone makes carries its mtime across, so a synced
+            # pair keeps matching on both until one side writes again.
+            elif local[path] == remote[path] and not self.checksum:
+                report.steps.append(Step(path, Action.SAME, kind))
             elif kind is not Merge.APPEND:
                 mergeable.append(path)
-            elif self.unchanged(profile, path, local[path], remote[path]):
-                report.steps.append(Step(path, Action.SAME, kind))
+            elif local[path].size == remote[path].size:
+                doubtful.append(path)
+            else:
+                undecided.append(path)
+
+        # A hash settles an equal size without moving the body. A false
+        # answer only costs a fetch: every path it rejects is decided on its
+        # bytes, so a backend that reports no hash stays correct.
+        digests = self.remote_digests(profile, doubtful)
+        for path in doubtful:
+            if digests.get(path) == self.digest(profile.root / path):
+                report.steps.append(Step(path, Action.SAME, Merge.APPEND))
             else:
                 undecided.append(path)
 
         # Bodies are only pulled where the listing could not settle it, so
         # an unchanged tree costs one listing and no transfer.
         self.fetch(profile, undecided + mergeable, staging)
-        for path in undecided:
+        for path in sorted(undecided):
             report.steps.append(self.decide(profile, path, staging))
         for path in mergeable:
             report.steps.append(self.combine(profile, path, staging))
 
         return report
-
-    def unchanged(
-        self, profile: Profile, path: str, ours: Entry, theirs: Entry
-    ) -> bool:
-        """Whether the listing alone proves the two copies identical.
-
-        A false answer only costs a fetch: every path this rejects is settled
-        on its bytes, so a backend that reports no hash stays correct.
-        """
-        if ours.size != theirs.size or theirs.digest is None:
-            return False
-
-        return theirs.digest == self.digest(profile.root / path)
 
     def combine(self, profile: Profile, path: str, staging: Path) -> Step:
         kind = self.merge_kind(profile, path)
@@ -723,12 +778,12 @@ class Synco:
         """
         if not push:
             return []
-        current = self.scan_remote(profile)
+        current = self.scan_remote(profile, push)
         safe: list[str] = []
         for path in push:
             before = report.remote.get(path)
             now = current.get(path)
-            if now is None or before is None or now.same_as(before):
+            if now is None or before is None or now == before:
                 safe.append(path)
                 continue
             self.log.warning(
@@ -899,6 +954,9 @@ class Synco:
         help="Vendor to sync.",
     )
     @click.option("-n", "--dry-run", is_flag=True, help="Plan only, write nothing.")
+    @click.option(
+        "--checksum", is_flag=True, help="Hash files whose size and mtime match."
+    )
     @click.pass_context
     def cmd_agents(
         ctx: click.Context,
@@ -908,6 +966,7 @@ class Synco:
         profiles: tuple[str, ...],
         vendor: tuple[str, ...],
         dry_run: bool,
+        checksum: bool,
     ) -> None:
         """Sync agent sessions and memories with a peer machine or an archive."""
         ctx.obj = Synco.select(profiles, vendor)
@@ -928,7 +987,7 @@ class Synco:
         else:
             raise click.UsageError("--peer or --archive is required to sync", ctx)
 
-        synco = Synco(transport, dry_run)
+        synco = Synco(transport, dry_run, checksum)
         conflicts = synco.sync(ctx.obj)
         if conflicts:
             synco.console.print(
