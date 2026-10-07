@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause | (t/T/g) tts read/raw/gist | (f/F/←→) tts pause/stop/scrub | (v/V) paste/copy | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause | (t/T/g) tts read/raw/gist | (f/F/←→) tts pause/stop/scrub | (v/V) paste/copy | (a) agents | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -75,6 +75,9 @@ hl.define_submap(submap, function()
       [[a=$(hyprctl -j activewindow | jq -r .address) && ~/.config/hypr/scripts/send-key.py "address:$a" V -m CTRL+SHIFT]]
     )
   )
+
+  -- Pick an agent to jump to, waiting ones first
+  hl.bind("a", exec_then_reset(d.agents))
 
   -- Copywriter: refine clipboard through AI
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))
