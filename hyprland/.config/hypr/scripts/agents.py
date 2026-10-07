@@ -54,6 +54,8 @@ class AgentMenu:
         SEPARATOR,
         "-eh",
         str(2 + REPLY_LINES),
+        "-theme",
+        "hints",
         "-theme-str",
         "window { width: 60%; }",
         "-mesg",

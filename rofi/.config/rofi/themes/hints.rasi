@@ -1,0 +1,34 @@
+/**
+ * The shared theme for a menu that pages and names its keys: `-theme hints`.
+ *
+ * The key hints passed as `-mesg` sit small on a thin strip under the list
+ * instead of in the padded banner the base theme gives a textbox, and the search bar
+ * counts matches against all rows, since a paged list hides the rest.
+ **/
+
+@import "rofi"
+
+mainbox {
+    children:                    [ "inputbar", "listview", "message" ];
+}
+
+inputbar {
+    children:                    [ "textbox-prompt-colon", "entry", "num-filtered-rows", "textbox-num-sep", "num-rows" ];
+}
+num-filtered-rows, textbox-num-sep, num-rows {
+    expand:                      false;
+    background-color:            transparent;
+    text-color:                  inherit;
+}
+textbox-num-sep {
+    str:                         "/";
+}
+
+textbox {
+    padding:                     6px 12px;
+    border-radius:               8px;
+    background-color:            @alternate-background;
+    text-color:                  @border-colour;
+    horizontal-align:            0.5;
+    font:                        "Segoe UI 11";
+}
