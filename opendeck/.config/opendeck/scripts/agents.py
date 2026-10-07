@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import base64
-import fcntl
 import html
-import json
 import logging
-import os
 import re
-import subprocess
 import time
 from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
 from deck import Key, Plugin, command
+from dotlib import agents
 
 
 class Action(StrEnum):
@@ -34,18 +31,11 @@ class AgentsPlugin(Plugin):
     selected agent, the right one the whole queue. `sessions` finds every
     agent running in a tmux pane, flagged or not, and cycles through them."""
 
-    # Written by the agents' notify hook, one entry per tmux pane.
-    WAITING = (
-        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-        / "agents-waiting.json"
-    )
     NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
     ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.agents.sdPlugin/icons"
     TERMINAL = Path(
         "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
     )
-    # An entry with no tmux pane can be neither checked nor focused.
-    PANELESS_SECONDS = 30 * 60
     SAMPLE_SECONDS = 1.0
     AGENTS_SECONDS = 2.0
     WALK_SECONDS = 15.0
@@ -57,12 +47,6 @@ class AgentsPlugin(Plugin):
         "Claude Code": "claude",
         "Codex": "openai",
         "OpenCode": "opencode",
-    }
-    # Process names, as /proc reports them, of the agents `sessions` finds.
-    AGENT_NAMES: ClassVar[dict[str, str]] = {
-        "claude": "claude",
-        "codex": "openai",
-        "opencode": "opencode",
     }
     KEY = AgentKey
 
@@ -84,17 +68,6 @@ class AgentsPlugin(Plugin):
         self.last_seen: str | None = None
         self.next_sample = 0.0
         self.next_agents = 0.0
-
-    def query(self, cmd: list[str]) -> subprocess.CompletedProcess:
-        """A status read, traced at DEBUG since it runs every second."""
-        self.log.debug("spawn: %s", " ".join(cmd))
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=2, check=False
-        )
-        if proc.stderr:
-            self.log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
-
-        return proc
 
     def poll(self) -> None:
         actions = {key.action for key in self.keys.values()}
@@ -154,9 +127,7 @@ class AgentsPlugin(Plugin):
     def find_agents(self) -> list[dict]:
         """Every tmux pane with an agent anywhere in its process tree.
 
-        Agents run under wrappers (a profile launcher, a shell, node), so the
-        pane's own process is rarely the agent and the whole tree is searched.
-        That walk reads all of /proc, so it runs only when the panes change or
+        The walk reads all of /proc, so it runs only when the panes change or
         every WALK_SECONDS, to catch an agent started in an existing pane; in
         between, the agents already found are only checked to be alive."""
         panes = self.tmux_panes()
@@ -166,13 +137,13 @@ class AgentsPlugin(Plugin):
         pids = {pane["pid"] for pane in panes.values()}
         now = time.monotonic()
         if pids != self.walked_pids or now - self.walked_at >= self.WALK_SECONDS:
-            self.found = self.walk(panes)
+            self.found = agents.walk(panes)
             self.walked_pids, self.walked_at = pids, now
         else:
             self.found = {
                 pane: agent
                 for pane, agent in self.found.items()
-                if pane in panes and self.alive(agent["pid"], agent["name"])
+                if pane in panes and agents.alive(agent["pid"], agent["name"])
             }
 
         return [
@@ -185,66 +156,6 @@ class AgentsPlugin(Plugin):
             for pane, agent in self.found.items()
             if pane in panes
         ]
-
-    def walk(self, panes: dict[str, dict]) -> dict[str, dict]:
-        children: dict[int, list[int]] = {}
-        names: dict[int, str] = {}
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                stat = (entry / "stat").read_text()
-            except OSError:
-                continue
-            close = stat.rfind(")")
-            names[int(entry.name)] = stat[stat.find("(") + 1 : close]
-            children.setdefault(int(stat[close + 2 :].split()[1]), []).append(
-                int(entry.name)
-            )
-
-        found = {}
-        for pane, info in panes.items():
-            stack = [info["pid"]]
-            while stack:
-                current = stack.pop()
-                name = names.get(current, "")
-                if (vendor := self.AGENT_NAMES.get(name)) is not None:
-                    found[pane] = {
-                        "pane": pane,
-                        "pid": current,
-                        "name": name,
-                        "vendor": vendor,
-                        "profile": self.profile(current, vendor),
-                    }
-                    break
-                stack.extend(children.get(current, []))
-
-        return found
-
-    @staticmethod
-    def alive(pid: int, name: str) -> bool:
-        try:
-            stat = Path(f"/proc/{pid}/stat").read_text()
-        except OSError:
-            return False
-
-        return stat[stat.find("(") + 1 : stat.rfind(")")] == name
-
-    def profile(self, pid: int, vendor: str) -> str | None:
-        """The account an agent runs as, from the config dir its launcher set."""
-        try:
-            environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-        except OSError:
-            return None
-        variable = {"claude": b"CLAUDE_CONFIG_DIR=", "openai": b"CODEX_HOME="}.get(
-            vendor
-        )
-        for item in environ:
-            if variable and item.startswith(variable):
-                name = Path(item[len(variable) :].decode(errors="replace")).name
-                return name.split("-", 1)[1] if "-" in name else name
-
-        return None
 
     def switch(self, step: int) -> None:
         """Focus the next (or previous) agent after the one on screen."""
@@ -273,67 +184,24 @@ class AgentsPlugin(Plugin):
         return self.agents[0], 0
 
     def tmux_panes(self) -> dict[str, dict] | None:
-        """Every tmux pane, from one `list-panes` shared by both key kinds
-        within a poll; None without tmux.
-
-        On screen means the active pane of its session's active window, in a
-        session some client is attached to. Kitty's own focus is not asked,
-        which would cost a `kitty @ ls` every poll."""
+        """One `list-panes` shared by both key kinds within a poll."""
         if time.monotonic() - self.panes_at < self.SAMPLE_SECONDS / 2:
             return self.panes
-        try:
-            proc = self.query(
-                [
-                    "tmux",
-                    "list-panes",
-                    "-a",
-                    "-F",
-                    (
-                        "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
-                        "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
-                    ),
-                ]
-            )
-        except subprocess.TimeoutExpired:
-            return None
+        self.panes = agents.tmux_panes()
         self.panes_at = time.monotonic()
-        if proc.returncode != 0:
-            self.panes = None
-            return None
-
-        self.panes = {}
-        for line in proc.stdout.splitlines():
-            pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
-            if pid.isdigit():
-                self.panes[pane] = {
-                    "pid": int(pid),
-                    "where": where,
-                    "path": path,
-                    "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
-                }
 
         return self.panes
 
     def edit_waiting(self, keep) -> None:
-        """Rewrite the waiting list under the hook's lock, keeping what `keep` says."""
-        with open(self.WAITING.with_suffix(".lock"), "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            try:
-                waiting = json.loads(self.WAITING.read_text())
-            except OSError, ValueError:
-                waiting = []
-            kept = [w for w in waiting if keep(w)]
-            if kept != waiting:
-                tmp = self.WAITING.with_suffix(".tmp")
-                tmp.write_text(json.dumps(kept))
-                tmp.replace(self.WAITING)
+        """Rewrite the waiting list, keeping what `keep` says."""
+        kept = agents.edit_waiting(lambda waiting: [w for w in waiting if keep(w)])
         self.waiting = sorted(kept, key=lambda w: (not w.get("urgent"), w.get("at", 0)))
 
     def sample_waiting(self) -> None:
         """Re-read the hook's list when it changed, and prune it while it has
         entries; with nothing waiting this costs one stat and no process."""
         try:
-            changed = self.WAITING.stat().st_mtime_ns
+            changed = agents.WAITING.stat().st_mtime_ns
         except OSError:
             self.waiting = []
             return
@@ -346,18 +214,9 @@ class AgentsPlugin(Plugin):
             else None
         )
 
-        def keep(entry: dict) -> bool:
-            if not entry.get("pane"):
-                return time.time() - entry.get("at", 0) < self.PANELESS_SECONDS
-            if panes is None:
-                return True
-            info = panes.get(entry["pane"])
-
-            return info is not None and not info["seen"]
-
-        self.edit_waiting(keep)
+        self.edit_waiting(lambda entry: not agents.stale(entry, panes))
         try:
-            self.waiting_changed = self.WAITING.stat().st_mtime_ns
+            self.waiting_changed = agents.WAITING.stat().st_mtime_ns
         except OSError:
             self.waiting_changed = None
 

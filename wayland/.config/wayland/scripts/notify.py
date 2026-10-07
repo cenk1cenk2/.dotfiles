@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import glob
 import json
 import logging
@@ -13,6 +12,7 @@ import time
 from pathlib import Path
 
 import click
+from dotlib.agents import edit_waiting, last_reply
 from dotlib.cli import create_logger, run
 from dotlib.notify import (
     Chime,
@@ -36,9 +36,6 @@ class Notify:
     Clicking the popup focuses the pane this hook was spawned in: the right
     tmux window on the right client, and the kitty window hosting it."""
 
-    # The transcript is JSONL and can run to megabytes; the last assistant
-    # message is always inside the final few entries.
-    TAIL_BYTES = 64 << 10
     CONTEXT_CHARS = 300
     # Notification messages that must not be missed while glancing away.
     URGENT_WORDS = ("permission", "approval", "waiting for your input")
@@ -46,12 +43,6 @@ class Notify:
     # per-urgency defaults, so this script decides how long its own popups live.
     SHOW_MS = 5000
     RUN_TIMEOUT = 3.0
-    # Agents waiting on the user, one entry per tmux pane; the Stream Deck
-    # reads it, and both sides take the lock beside it to rewrite it.
-    WAITING = (
-        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-        / "agents-waiting.json"
-    )
 
     log = logging.getLogger("notify")
 
@@ -189,7 +180,9 @@ class Notify:
 
         body = f"{message}\n\n{context}" if context else message
 
-        cls.record(vendor, profile, directory, message, urgency == Urgency.CRITICAL)
+        cls.record(
+            vendor, profile, directory, message, context, urgency == Urgency.CRITICAL
+        )
 
         label = f" ({profile})" if profile else ""
         # Before the popup rather than after: the popup call blocks for its
@@ -219,6 +212,7 @@ class Notify:
         profile: str | None,
         directory: str,
         message: str,
+        context: str,
         urgent: bool,
     ) -> None:
         """List this pane as waiting, replacing its previous entry."""
@@ -229,52 +223,22 @@ class Notify:
             "profile": profile,
             "directory": directory,
             "message": message,
+            "context": context,
             "urgent": urgent,
             "at": time.time(),
         }
-        with open(cls.WAITING.with_suffix(".lock"), "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            try:
-                waiting = json.loads(cls.WAITING.read_text())
-            except OSError, ValueError:
-                waiting = []
-            waiting = [w for w in waiting if pane is None or w.get("pane") != pane]
-            waiting.append(entry)
-            tmp = cls.WAITING.with_suffix(".tmp")
-            tmp.write_text(json.dumps(waiting))
-            tmp.replace(cls.WAITING)
+        edit_waiting(
+            lambda waiting: [
+                *(w for w in waiting if pane is None or w.get("pane") != pane),
+                entry,
+            ]
+        )
 
     @classmethod
     def transcript(cls, transcript: str | None) -> str:
-        """The last assistant text in a Claude Code transcript.
-
-        Claude-only: codex hands the same text inline on Stop, so nothing
+        """Claude-only: codex hands the same text inline on Stop, so nothing
         reads its transcript and its JSONL shape stays unparsed here."""
-        if not transcript:
-            return ""
-
-        try:
-            with open(transcript, "rb") as f:
-                f.seek(0, 2)
-                f.seek(max(f.tell() - cls.TAIL_BYTES, 0))
-                tail = f.read().decode(errors="replace")
-        except OSError as e:
-            cls.log.debug("transcript unreadable: %s", e)
-            return ""
-
-        text = ""
-        for line in tail.splitlines():
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("type") != "assistant":
-                continue
-            for block in entry.get("message", {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block["text"]
-
-        return cls.shorten(text)
+        return cls.shorten(last_reply(Path(transcript))) if transcript else ""
 
     @classmethod
     def shorten(cls, text: str | None) -> str:
