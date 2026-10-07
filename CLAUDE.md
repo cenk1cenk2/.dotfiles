@@ -851,3 +851,29 @@ vendor owns.
   this repo. Set it by hand with that profile's sessions closed, and
   expect a new profile or a rebuilt machine to start at the 60 s
   default until someone does.
+
+## synco (agent state sync)
+
+- `synco agents --peer <host> | --archive` syncs Claude/codex transcripts, memories, plans and
+  pastes. The archive is a **mirror**: anything a machine's Claude cleanup expires leaves every
+  side; it is not a long-term transcript backup.
+- **Receipts** (`~/.local/state/synco/base/<transport>/<profile>.json`) record what both sides
+  were last observed to agree on. A missing file is a delete only against a receipt; without
+  one the path is new. Each profile root and its far side carry a `.synco-id`; a missing or
+  changed marker discards the receipt and the run re-bootstraps with no deletes. After
+  restoring a profile dir from a backup, delete its `.synco-id`, or the stale receipt reads
+  every newer file as deleted.
+- **Policies** (`POLICIES`, first match, default RETAIN): memories, conflict sidecars and codex
+  sessions/memories propagate; Claude transcripts (with their `<sid>/` dir), plans and pastes
+  expire by age; `history.jsonl` is retained.
+- **Age bands** come from `cleanupPeriodDays` (below 7 disables banding) with one day of
+  slack: past N−1 days a file is never transferred and a far-side absence is a no-op; past
+  N+1 an archive-only file is purged. Every machine must share the stowed value, since the
+  shortest one wins. `Profile.sweeps` is true only where Claude actually runs:
+  `~/.claude` is never swept, so its plans never expire.
+- **Guards:** refuse when the local clock is >1 day ahead of a peer (the archive relies on NTP
+  sync, else no banding); a mass-delete gate (`--force-deletes`); `--max-delete 25`;
+  `--max-expire 200`; `--no-deletes`. A pairing's first sync holds local-only propagate files
+  as `unclaimed` until `--adopt`.
+- Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
+- rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.

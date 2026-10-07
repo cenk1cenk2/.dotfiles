@@ -4,20 +4,24 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import stat
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
 from enum import StrEnum
+from functools import cached_property
 from itertools import takewhile
 from pathlib import Path
 from typing import ClassVar, Protocol
@@ -54,13 +58,50 @@ class Merge(StrEnum):
     NEWER = "newer"
 
 
+class Policy(StrEnum):
+    """What a deletion on one side means for the other.
+
+    The archive is a mirror: a deliberate delete and an expired file both
+    leave every side. EXPIRES differs from PROPAGATE only on a profile the
+    agent sweeps by age, where an absence can be the sweep rather than a
+    decision, so it is judged by age bands instead of counted as a delete.
+    RETAIN keeps the far copy and never copies it back.
+    """
+
+    PROPAGATE = "propagate"
+    EXPIRES = "expires"
+    RETAIN = "retain"
+
+
+class Band(StrEnum):
+    """Where an EXPIRES path sits against the agent's own cleanup cutoff."""
+
+    YOUNG = "young"
+    # Past the cutoff less the slack: Claude may already have swept it, so it
+    # is neither transferred nor counted as a delete when it goes missing.
+    EXPIRING = "expiring"
+    # Past the cutoff plus the slack: every machine has swept it by now, so
+    # the archive, which nothing sweeps, drops it too.
+    EXPIRED = "expired"
+
+
 class Action(StrEnum):
     SAME = "same"
     PULL = "pull"
     PUSH = "push"
     MERGE = "merge"
-    # A side wrote to the path between planning and applying. Nothing is
-    # lost and nothing is parked: the next run sees both bodies again.
+    DROP_LOCAL = "drop-here"
+    DROP_REMOTE = "drop-there"
+    # A RETAIN path deleted on one side: the other keeps its copy, and the
+    # tombstone stops it from being copied back.
+    KEEP = "keep"
+    # Local-only on a first sync, where a deletion made elsewhere and a file
+    # new here look the same. Pushed only by `--adopt`.
+    UNCLAIMED = "unclaimed"
+    # An expiring path left alone: the agent's own sweep settles it.
+    SKIP = "skip"
+    # A side wrote to the path between planning and applying, or a delete
+    # was capped. Nothing is lost: the next run decides again.
     HELD = "held"
     CONFLICT = "conflict"
 
@@ -70,6 +111,8 @@ class Profile:
     name: str
     vendor: Vendor
     root: Path
+    # Whether the agent deletes old files here on its own schedule.
+    sweeps: bool = False
 
     @property
     def relative_root(self) -> Path:
@@ -95,6 +138,75 @@ class Step:
     merge: Merge
     note: str = ""
     payload: str | None = None
+    # Drops the mass-delete gate and `--max-delete` ignore: an expiry is
+    # capped by `--max-expire`, a codex compression or archive move not at all.
+    expiry: bool = False
+    renamed: bool = False
+
+
+@dataclass
+class Base:
+    """Each side's entry when both were last seen to agree, per path.
+
+    A side's entry is None when that side deliberately lacks the path — a
+    retained deletion. Pairs are kept per side because a pair can be the
+    same file with different mtimes (settled by hash or by content).
+    """
+
+    VERSION: ClassVar[int] = 1
+
+    file: Path
+    local_id: str | None = None
+    remote_id: str | None = None
+    cleanup_days: int | None = None
+    paths: dict[str, tuple[Entry | None, Entry | None]] = field(default_factory=dict)
+    unclaimed: set[str] = field(default_factory=set)
+
+    @classmethod
+    def load(cls, file: Path) -> Base:
+        if not file.is_file():
+            return cls(file)
+        data = json.loads(file.read_text())
+        if data.get("version") != cls.VERSION:
+            raise click.ClickException(f"{file}: unknown base version")
+
+        def entry(raw: list[int] | None) -> Entry | None:
+            return Entry(*raw) if raw is not None else None
+
+        return cls(
+            file,
+            data["local_id"],
+            data["remote_id"],
+            data.get("cleanup_days"),
+            {
+                p: (entry(local), entry(remote))
+                for p, (local, remote) in data["paths"].items()
+            },
+            set(data.get("unclaimed", [])),
+        )
+
+    def save(self) -> None:
+        def raw(entry: Entry | None) -> list[int] | None:
+            return [entry.size, entry.mtime] if entry is not None else None
+
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.file.with_name(f".{self.file.name}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "version": self.VERSION,
+                    "local_id": self.local_id,
+                    "remote_id": self.remote_id,
+                    "cleanup_days": self.cleanup_days,
+                    "paths": {
+                        p: [raw(local), raw(remote)]
+                        for p, (local, remote) in sorted(self.paths.items())
+                    },
+                    "unclaimed": sorted(self.unclaimed),
+                }
+            )
+        )
+        temporary.replace(self.file)
 
 
 @dataclass
@@ -102,10 +214,16 @@ class Report:
     profile: Profile
     steps: list[Step] = field(default_factory=list)
     skipped: str | None = None
+    # Why the mass-delete gate refused the profile, or a delete cap fired.
+    refused: str | None = None
+    capped: bool = False
     # Both sides as the plan saw them, so a write can tell whether the copy
     # it is about to overwrite is still the one it decided about.
     local: dict[str, Entry] = field(default_factory=dict)
     remote: dict[str, Entry] = field(default_factory=dict)
+    base: Base | None = None
+    # Markers to create on apply, for a side that had none.
+    new_ids: dict[str, str] = field(default_factory=dict)
 
     def hold(self, path: str, note: str) -> None:
         for step in self.steps:
@@ -113,8 +231,8 @@ class Report:
                 step.action = Action.HELD
                 step.note = note
 
-    def count(self, action: Action) -> int:
-        return sum(1 for s in self.steps if s.action is action)
+    def count(self, *actions: Action) -> int:
+        return sum(1 for s in self.steps if s.action in actions)
 
 
 class Transport(Protocol):
@@ -122,6 +240,14 @@ class Transport(Protocol):
 
     @property
     def name(self) -> str: ...
+
+    @property
+    def key(self) -> str:
+        """Stable name for this far side, keying its receipts."""
+
+    @property
+    def sweeps(self) -> bool:
+        """Whether an agent runs on the far side and expires files there."""
 
     def check(self) -> None: ...
 
@@ -147,6 +273,25 @@ class Peer:
     @property
     def name(self) -> str:
         return self.host
+
+    @cached_property
+    def key(self) -> str:
+        # Resolved through ssh's own config, so `host`, `user@host` and an
+        # alias for the same machine share one set of receipts.
+        argv = ["ssh", "-G", *(["-l", self.user] if self.user else []), self.host]
+        resolved = dict(
+            line.split(" ", 1)
+            for line in subprocess.run(
+                argv, capture_output=True, text=True, timeout=30.0, check=True
+            ).stdout.splitlines()
+            if " " in line
+        )
+
+        return f"peer-{resolved['user']}@{resolved['hostname']}:{resolved['port']}"
+
+    @property
+    def sweeps(self) -> bool:
+        return True
 
     @property
     def command(self) -> str:
@@ -206,6 +351,14 @@ class Archive:
     def name(self) -> str:
         return "archive"
 
+    @property
+    def key(self) -> str:
+        return "archive-" + str(self.base).strip("/").replace("/", "-")
+
+    @property
+    def sweeps(self) -> bool:
+        return False
+
     def check(self) -> None:
         # Reading the path is also what fires the automount. An unmounted
         # mount point is an empty directory that plans as a far side holding
@@ -243,6 +396,9 @@ class Synco:
     STATE_DIR = (
         Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "synco"
     )
+    STAMP = "%Y%m%d-%H%M%S"
+    STAMP_PATTERN = re.compile(r"\d{8}-\d{6}")
+    BACKUP_DAYS = 14
     RCLONE_TIMEOUT = 900.0
     ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
     # All the sftp backend probes for on its own. Anything else has to name
@@ -252,17 +408,43 @@ class Synco:
     # decides whether two copies are identical — the byte comparison is what
     # rules on which one to keep.
     HASH = "md5"
+    MARKER = ".synco-id"
+    # rclone's exit codes for a directory and for a file that is not there.
+    # Anything else reading a marker is an error, never "missing": minting a
+    # new id on a transient failure would reset every paired machine's base.
+    NOT_FOUND = (3, 4)
+
+    # Claude's sweep deletes a file as soon as its age passes the cutoff on
+    # its own clock, at most once a day. One day of slack on each band edge
+    # absorbs clock skew between machines, and each edge leans the safe way.
+    EXPIRY_SLACK = 86400
+    # Below this the setting is taken for a mistake rather than a policy: a
+    # cutoff of a day or two would band nearly everything as expired.
+    MIN_CLEANUP_DAYS = 7
+    SESSION_ID = re.compile(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    )
+
+    # Mass-delete gate: unexplained absences on one side above both of these
+    # refuse the profile, as does a whole directory of at least SUBTREE gone.
+    GATE_COUNT = 10
+    GATE_RATIO = 0.5
+    GATE_SUBTREE = 5
 
     # Mirrors the env patches in ~/.config/hyprpilot/config.yaml, which is the
     # source of truth for which profile writes where. The two share no parser,
     # so a state directory moved there has to be moved here in the same commit.
     # `~/.claude` is no hyprpilot profile: it is where claude writes when run
     # without CLAUDE_CONFIG_DIR, and where skills that name a fixed path for
-    # plans put them.
+    # plans put them. Claude never runs there, so nothing there is swept.
     PROFILES: ClassVar[tuple[Profile, ...]] = (
         Profile("default/claude", Vendor.CLAUDE, Path.home() / ".claude"),
-        Profile("personal/claude", Vendor.CLAUDE, Path.home() / ".claude-kilic"),
-        Profile("work/claude", Vendor.CLAUDE, Path.home() / ".claude-laravel"),
+        Profile(
+            "personal/claude", Vendor.CLAUDE, Path.home() / ".claude-kilic", sweeps=True
+        ),
+        Profile(
+            "work/claude", Vendor.CLAUDE, Path.home() / ".claude-laravel", sweeps=True
+        ),
         Profile("personal/codex", Vendor.CODEX, Path.home() / ".codex-kilic"),
         Profile("work/codex", Vendor.CODEX, Path.home() / ".codex-laravel"),
         Profile(
@@ -290,6 +472,9 @@ class Synco:
         ),
         Vendor.CODEX: (
             "sessions/**",
+            # Archiving a thread moves its rollout here, so without it an
+            # archive reads as a deletion.
+            "archived_sessions/**",
             "memories/**",
             "history.jsonl",
             "session_index.jsonl",
@@ -307,6 +492,7 @@ class Synco:
             ".claude.json",
             ".claude.json.backup",
             "settings.json",
+            "**/.*.synco",
         ),
         Vendor.CODEX: (
             "auth.json",
@@ -315,6 +501,14 @@ class Synco:
             "**/*.sqlite",
             "**/*.sqlite-shm",
             "**/*.sqlite-wal",
+            "**/.*.synco",
+            # Derived from codex's sqlite and rewritten wholesale on every
+            # consolidation, so each machine rebuilds its own; `.git` is the
+            # baseline repo that consolidation diffs against.
+            "memories/.git/**",
+            "memories/raw_memories.md",
+            "memories/rollout_summaries/**",
+            "memories/phase2_workspace_diff.md",
         ),
         Vendor.OPENCODE: (),
     }
@@ -326,14 +520,43 @@ class Synco:
             # covers the individual memories beside it.
             ("projects/*/memory/MEMORY.md", Merge.INDEX),
             ("projects/*/memory/**", Merge.NEWER),
+            # Session metadata such as `custom-title.json`, rewritten in place.
+            ("projects/**/*.json", Merge.NEWER),
             ("plans/**", Merge.NEWER),
         ),
         Vendor.CODEX: (
             ("history.jsonl", Merge.LINES),
             ("session_index.jsonl", Merge.LINES),
-            ("memories/raw_memories.md", Merge.LINES),
             ("memories/MEMORY.md", Merge.INDEX),
             ("memories/**", Merge.NEWER),
+            # Two machines compressing one rollout need not produce the same
+            # bytes; either decompresses to the same session.
+            ("sessions/**/*.zst", Merge.NEWER),
+            ("archived_sessions/**/*.zst", Merge.NEWER),
+        ),
+        Vendor.OPENCODE: (),
+    }
+
+    # First match wins; anything unlisted is RETAIN, so a kind nobody thought
+    # about is never deleted on the far side. Session directories are matched
+    # before these by `anchor`.
+    POLICIES: ClassVar[dict[Vendor, tuple[tuple[str, Policy], ...]]] = {
+        Vendor.CLAUDE: (
+            ("**/*.conflict-*", Policy.PROPAGATE),
+            ("projects/*/memory/proposals/**", Policy.EXPIRES),
+            # Never swept: a memory gone is a memory deleted.
+            ("projects/*/memory/**", Policy.PROPAGATE),
+            ("projects/**", Policy.EXPIRES),
+            ("plans/**", Policy.EXPIRES),
+            ("paste-cache/**", Policy.EXPIRES),
+        ),
+        Vendor.CODEX: (
+            ("**/*.conflict-*", Policy.PROPAGATE),
+            # codex deletes and archives rollouts only when asked, and its
+            # `.jsonl` to `.jsonl.zst` compression is a delete plus a create.
+            ("sessions/**", Policy.PROPAGATE),
+            ("archived_sessions/**", Policy.PROPAGATE),
+            ("memories/**", Policy.PROPAGATE),
         ),
         Vendor.OPENCODE: (),
     }
@@ -343,6 +566,11 @@ class Synco:
         Action.PULL: "cyan",
         Action.PUSH: "green",
         Action.MERGE: "yellow",
+        Action.DROP_LOCAL: "red",
+        Action.DROP_REMOTE: "red",
+        Action.KEEP: "blue",
+        Action.UNCLAIMED: "magenta",
+        Action.SKIP: "dim",
         Action.HELD: "magenta",
         Action.CONFLICT: "red",
     }
@@ -359,13 +587,32 @@ class Synco:
 
         return selected
 
-    def __init__(self, transport: Transport, dry_run: bool, checksum: bool) -> None:
+    def __init__(
+        self,
+        transport: Transport,
+        dry_run: bool,
+        checksum: bool,
+        adopt: bool = False,
+        no_deletes: bool = False,
+        force_deletes: bool = False,
+        max_delete: int = 25,
+        max_expire: int = 200,
+    ) -> None:
         self.transport = transport
         self.dry_run = dry_run
         self.checksum = checksum
-        self.stamp = time.strftime("%Y%m%d-%H%M%S")
+        self.adopt = adopt
+        self.no_deletes = no_deletes
+        self.force_deletes = force_deletes
+        self.max_delete = max_delete
+        self.max_expire = max_expire
+        self.stamp = time.strftime(self.STAMP)
         self.backup_root = self.STATE_DIR / self.stamp
         self.manifest: list[dict[str, object]] = []
+        self.now = time.time()
+        # Set by `check_clock`; False drops every profile to the non-sweeping
+        # view, where nothing is banded and every absence counts.
+        self.bands = True
 
     @property
     def hostname(self) -> str:
@@ -377,15 +624,17 @@ class Synco:
         Without these the listing walks and hashes the whole state directory
         — caches, plugins, file history — to have most of it dropped here
         afterwards. rclone anchors a pattern at the root with a leading
-        slash, which is what `full_match` does.
+        slash, which is what `full_match` does. `--filter` rules apply in the
+        order given, which separate `--include` and `--exclude` flags do not
+        promise; the closing `- **` is what `--include` would add implicitly.
         """
         args: list[str] = []
         for pattern in self.EXCLUDES[profile.vendor]:
-            args += ["--exclude", f"/{pattern}"]
+            args += ["--filter", f"- /{pattern}"]
         for pattern in self.INCLUDES[profile.vendor]:
-            args += ["--include", f"/{pattern}"]
+            args += ["--filter", f"+ /{pattern}"]
 
-        return args
+        return [*args, "--filter", "- **"]
 
     def merge_kind(self, profile: Profile, path: str) -> Merge:
         for pattern, kind in self.MERGES[profile.vendor]:
@@ -394,12 +643,63 @@ class Synco:
 
         return Merge.APPEND
 
+    def anchor(self, profile: Profile, path: str) -> str | None:
+        """The transcript a session-directory path lives and dies with.
+
+        Claude's sweep removes `<sid>/` whole together with `<sid>.jsonl`,
+        whatever the ages inside, so its files take the transcript's age and
+        count as one session in the gate and the caps.
+        """
+        parts = path.split("/")
+        if (
+            profile.vendor is Vendor.CLAUDE
+            and len(parts) >= 4
+            and parts[0] == "projects"
+            and self.SESSION_ID.fullmatch(parts[2])
+        ):
+            return f"projects/{parts[1]}/{parts[2]}.jsonl"
+
+        return None
+
+    def policy(self, profile: Profile, path: str) -> Policy:
+        if self.anchor(profile, path) is not None:
+            return Policy.EXPIRES
+        for pattern, policy in self.POLICIES[profile.vendor]:
+            if Path(path).full_match(pattern):
+                return policy
+
+        return Policy.RETAIN
+
     def wanted(self, profile: Profile, path: str) -> bool:
         target = Path(path)
         if any(target.full_match(p) for p in self.EXCLUDES[profile.vendor]):
             return False
 
         return any(target.full_match(p) for p in self.INCLUDES[profile.vendor])
+
+    def cleanup_days(self, profile: Profile) -> int | None:
+        """The profile's sweep cutoff in days, or None when it does not sweep."""
+        if not (profile.sweeps and self.bands):
+            return None
+        try:
+            days = json.loads((profile.root / "settings.json").read_text())[
+                "cleanupPeriodDays"
+            ]
+        except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
+            self.log.warning(
+                "%s: no cleanupPeriodDays (%s), not banding", profile.name, error
+            )
+            return None
+        if not isinstance(days, int) or days < self.MIN_CLEANUP_DAYS:
+            self.log.warning(
+                "%s: cleanupPeriodDays %r is below %d, not banding",
+                profile.name,
+                days,
+                self.MIN_CLEANUP_DAYS,
+            )
+            return None
+
+        return days
 
     def rclone_command(self, *args: str) -> list[str]:
         return ["rclone", "--skip-links", *self.transport.flags(), *args]
@@ -430,16 +730,24 @@ class Synco:
         if returncode != 0:
             raise subprocess.CalledProcessError(returncode, cmd)
 
-    def rclone(self, *args: str) -> str:
+    def rclone(self, *args: str, input: str | None = None) -> str:
         cmd = self.rclone_command(*args)
-        result = run(cmd, log=self.log, timeout=self.RCLONE_TIMEOUT, check=True)
+        result = run(
+            cmd, log=self.log, timeout=self.RCLONE_TIMEOUT, check=True, input=input
+        )
 
         return result.stdout
 
     def write_list(self, name: str, paths: list[str]) -> Path:
+        # rclone resolves each line against the remote root and would follow
+        # `..` out of it; every path here comes from a listing, so one that
+        # is not plainly relative is a bug, not input to tolerate.
+        for path in paths:
+            if path.startswith("/") or ".." in path.split("/"):
+                raise ValueError(f"refusing list entry {path!r}")
         # Under the state dir, never beside a transfer's target: apply fetches
         # straight into the profile root, which would drop the list in $HOME.
-        listing = self.backup_root / name
+        listing = self.backup_root / "lists" / name
         listing.parent.mkdir(parents=True, exist_ok=True)
         listing.write_text("".join(f"{p}\n" for p in paths))
 
@@ -571,6 +879,63 @@ class Synco:
             self.transport.remote(profile),
         )
 
+    def read_id(self, profile: Profile) -> str | None:
+        """The far side's marker, or None only when it is genuinely absent."""
+        try:
+            return (
+                self.rclone(
+                    "cat", f"{self.transport.remote(profile)}/{self.MARKER}"
+                ).strip()
+                or None
+            )
+        except subprocess.CalledProcessError as error:
+            if error.returncode in self.NOT_FOUND:
+                return None
+            raise
+
+    def write_id(self, profile: Profile, value: str) -> str:
+        """Write the far side's marker, returning whatever it holds afterwards.
+
+        Two machines bootstrapping one archive at once both write; the one
+        read back is the one that stuck, and the loser re-bootstraps once.
+        """
+        self.rclone(
+            "rcat", f"{self.transport.remote(profile)}/{self.MARKER}", input=value
+        )
+        written = self.read_id(profile)
+        if written is None:
+            raise click.ClickException(f"{profile.name}: far marker did not stick")
+
+        return written
+
+    def check_clock(self) -> None:
+        """Refuse a clock running ahead of the far side; distrust an unknown one.
+
+        Every band is measured on this clock, and a fast one makes every file
+        look expired — the one failure the delete caps cannot tell from a
+        week without syncing. A slow clock only bands fewer files.
+        """
+        command = self.transport.shell("date +%s")
+        if command is not None:
+            result = run(command, log=self.log, timeout=30.0)
+            if result.returncode == 0:
+                ahead = self.now - float(result.stdout.strip())
+                if ahead > self.EXPIRY_SLACK:
+                    raise click.ClickException(
+                        f"local clock is {ahead / 3600:.1f}h ahead of {self.transport.name}"
+                    )
+                return
+        # The archive is a CIFS mount whose server-side timestamps are not
+        # confirmed, so the only evidence left is this machine's own sync.
+        result = run(
+            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
+            log=self.log,
+            timeout=30.0,
+        )
+        if result.stdout.strip() != "yes":
+            self.log.warning("clock not NTP-synchronised; no expiry banding this run")
+            self.bands = False
+
     @staticmethod
     def is_prefix(shorter: bytes, longer: bytes) -> bool:
         return longer.startswith(shorter)
@@ -632,6 +997,249 @@ class Synco:
 
         return "\n".join(merged)
 
+    def identify(self, profile: Profile, report: Report) -> Base:
+        """Load the receipts for this pairing, or start over when a side changed.
+
+        Each side carries a marker. A side whose marker is missing or no
+        longer the recorded one was wiped, reinstalled or recreated, and its
+        empty tree would read as every file deleted; starting from no base
+        turns that into copying back instead.
+        """
+        base = Base.load(
+            self.STATE_DIR / "base" / self.transport.key / f"{profile.slug}.json"
+        )
+        marker = profile.root / self.MARKER
+        local_id = marker.read_text().strip() if marker.is_file() else None
+        remote_id = self.read_id(profile)
+        if base.paths and (
+            local_id is None
+            or remote_id is None
+            or (local_id, remote_id) != (base.local_id, base.remote_id)
+        ):
+            self.log.warning("%s: a side's marker changed, starting over", profile.name)
+            base = Base(base.file)
+        if local_id is None:
+            report.new_ids["local"] = local_id = str(uuid.uuid4())
+        if remote_id is None:
+            report.new_ids["remote"] = remote_id = str(uuid.uuid4())
+        base.local_id, base.remote_id = local_id, remote_id
+
+        return base
+
+    def band(
+        self,
+        profile: Profile,
+        path: str,
+        days: int | None,
+        local: dict[str, Entry],
+        remote: dict[str, Entry],
+        base: Base,
+    ) -> Band:
+        """Age band of an EXPIRES path, from the newest mtime any side knows.
+
+        The newest, so a session resumed anywhere reads young again. A
+        session-directory file takes its transcript's, unless the transcript
+        is unknown everywhere, when it falls back to its own — the age
+        Claude's sweep itself uses for orphaned sidecars.
+        """
+        if days is None or self.policy(profile, path) is not Policy.EXPIRES:
+            return Band.YOUNG
+
+        def mtimes(target: str) -> list[int]:
+            pair = base.paths.get(target, (None, None))
+            return [
+                e.mtime
+                for e in (local.get(target), remote.get(target), *pair)
+                if e is not None
+            ]
+
+        anchor = self.anchor(profile, path)
+        known = (mtimes(anchor) if anchor is not None else []) or mtimes(path)
+        if not known:
+            return Band.YOUNG
+        age = self.now - max(known)
+        cutoff = days * 86400
+        if age > cutoff + self.EXPIRY_SLACK:
+            return Band.EXPIRED
+        if age > cutoff - self.EXPIRY_SLACK:
+            return Band.EXPIRING
+
+        return Band.YOUNG
+
+    def renamed(self, profile: Profile, path: str, side: dict[str, Entry]) -> bool:
+        """Whether a codex rollout missing from `side` reappears there renamed."""
+        if profile.vendor is not Vendor.CODEX:
+            return False
+        moved = (
+            "archived_sessions/" + path.removeprefix("sessions/")
+            if path.startswith("sessions/")
+            else None
+        )
+
+        return (
+            f"{path}.zst" in side
+            or (path.endswith(".zst") and path.removesuffix(".zst") in side)
+            or (moved is not None and moved in side)
+        )
+
+    def classify(
+        self,
+        profile: Profile,
+        path: str,
+        report: Report,
+        days: int | None,
+        first: bool,
+    ) -> Step | None:
+        """Decide a path against its receipt; None hands it to the plain logic.
+
+        The receipt is what tells a deletion from a file the other side has
+        never had. An edit on one side always beats a delete on the other.
+        """
+        base = report.base
+        assert base is not None
+        local = report.local.get(path)
+        remote = report.remote.get(path)
+        kind = self.merge_kind(profile, path)
+        pair = base.paths.get(path)
+        policy = self.policy(profile, path)
+        if policy is Policy.EXPIRES and days is None:
+            policy = Policy.PROPAGATE
+
+        band = self.band(profile, path, days, report.local, report.remote, base)
+        if band is not Band.YOUNG:
+            # An absence on the far side of an expiring path is that side's
+            # own sweep, or will be ours shortly: left alone and never
+            # counted, so routine expiry elsewhere costs nothing here.
+            if local is None and pair is not None:
+                return Step(path, Action.DROP_REMOTE, kind, "expired here", expiry=True)
+            if local is None and band is Band.EXPIRED and not self.transport.sweeps:
+                return Step(path, Action.DROP_REMOTE, kind, "expired", expiry=True)
+
+            return Step(path, Action.SKIP, kind, f"{band}")
+
+        if pair is None:
+            if (
+                remote is None
+                and policy is Policy.PROPAGATE
+                and (first or path in base.unclaimed)
+            ):
+                if self.adopt:
+                    return Step(path, Action.PUSH, kind, "adopted")
+                return Step(path, Action.UNCLAIMED, kind, "first sync: --adopt")
+            return None
+
+        base_local, base_remote = pair
+        if local is not None and remote is not None:
+            if not self.checksum and (local, remote) == pair:
+                return Step(path, Action.SAME, kind)
+            return None
+        if local is None:
+            if base_local is None:
+                if remote == base_remote:
+                    return Step(path, Action.SAME, kind, "retained here")
+                return Step(path, Action.PULL, kind, "changed there")
+            if remote != base_remote:
+                return Step(path, Action.PULL, kind, "edited there, deleted here")
+            if policy is Policy.RETAIN:
+                return Step(path, Action.KEEP, kind, "deleted here, kept there")
+            return Step(
+                path,
+                Action.DROP_REMOTE,
+                kind,
+                "deleted here",
+                renamed=self.renamed(profile, path, report.local),
+            )
+        if base_remote is None:
+            if local == base_local:
+                return Step(path, Action.SAME, kind, "retained there")
+            return Step(path, Action.PUSH, kind, "changed here")
+        if local != base_local:
+            return Step(path, Action.PUSH, kind, "edited here, deleted there")
+        if policy is Policy.RETAIN:
+            return Step(path, Action.KEEP, kind, "deleted there, kept here")
+
+        return Step(
+            path,
+            Action.DROP_LOCAL,
+            kind,
+            "deleted there",
+            renamed=self.renamed(profile, path, report.remote),
+        )
+
+    def gate(self, profile: Profile, report: Report) -> None:
+        """Refuse a profile whose absences look like damage, then cap drops.
+
+        An absence is unexplained when no age band, codex rename or session
+        grouping accounts for it. A wiped root, an empty listing or a broken
+        mount all produce many at once, and so does a single wiped directory.
+        """
+        base = report.base
+        assert base is not None
+        steps = {s.path: s for s in report.steps}
+
+        def unit(path: str) -> str:
+            return self.anchor(profile, path) or path
+
+        for side, entries, index in (
+            ("local", report.local, 0),
+            ("remote", report.remote, 1),
+        ):
+            held = {
+                unit(p) for p, pair in base.paths.items() if pair[index] is not None
+            }
+            missing: set[str] = set()
+            for path, pair in base.paths.items():
+                step = steps.get(path)
+                if pair[index] is None or path in entries:
+                    continue
+                # Gone on both sides is settled, whoever removed it first.
+                if path not in report.local and path not in report.remote:
+                    continue
+                if step is not None and (
+                    step.expiry or step.renamed or step.action is Action.SKIP
+                ):
+                    continue
+                missing.add(unit(path))
+            reason = None
+            if len(missing) > self.GATE_COUNT and len(missing) > self.GATE_RATIO * len(
+                held
+            ):
+                reason = f"{len(missing)} of {len(held)} {side} paths gone"
+            elif missing and not entries:
+                reason = f"{side} side lists nothing"
+            else:
+                dirs: dict[str, list[str]] = {}
+                for path in held:
+                    dirs.setdefault(str(Path(path).parent), []).append(path)
+                for directory, members in dirs.items():
+                    if len(members) >= self.GATE_SUBTREE and all(
+                        m in missing for m in members
+                    ):
+                        reason = f"{side} {directory}/ gone entirely"
+                        break
+            if reason is not None and not self.force_deletes:
+                report.refused = reason
+                return
+
+        drops = [
+            s
+            for s in report.steps
+            if s.action in (Action.DROP_LOCAL, Action.DROP_REMOTE) and not s.renamed
+        ]
+        if self.no_deletes:
+            for step in drops:
+                report.hold(step.path, "deletes disabled")
+            return
+        for expiry, limit, flag in (
+            (False, self.max_delete, "--max-delete"),
+            (True, self.max_expire, "--max-expire"),
+        ):
+            chosen = [s for s in drops if s.expiry is expiry]
+            if len({unit(s.path) for s in chosen}) > limit:
+                report.capped = True
+                for step in chosen:
+                    report.hold(step.path, f"over {flag} {limit}")
+
     def plan(self, profile: Profile, staging: Path) -> Report:
         report = Report(profile)
         if not self.INCLUDES[profile.vendor]:
@@ -641,15 +1249,32 @@ class Synco:
             report.skipped = f"{profile.root} absent"
             return report
 
-        local = self.scan_local(profile)
-        remote = self.scan_remote(profile)
-        report.local = local
-        report.remote = remote
+        try:
+            report.base = base = self.identify(profile, report)
+        except subprocess.CalledProcessError as error:
+            report.refused = f"far marker unreadable (rclone exit {error.returncode})"
+            return report
+        days = self.cleanup_days(profile)
+        if days is not None and base.cleanup_days not in (None, days):
+            self.log.warning(
+                "%s: cleanupPeriodDays is %d here but %d when last synced",
+                profile.name,
+                days,
+                base.cleanup_days,
+            )
+        base.cleanup_days = days
+        first = not base.paths
+
+        report.local = local = self.scan_local(profile)
+        report.remote = remote = self.scan_remote(profile)
 
         undecided: list[str] = []
         mergeable: list[str] = []
         doubtful: list[str] = []
         for path in sorted(set(local) | set(remote)):
+            if (step := self.classify(profile, path, report, days, first)) is not None:
+                report.steps.append(step)
+                continue
             kind = self.merge_kind(profile, path)
             if path not in remote:
                 report.steps.append(Step(path, Action.PUSH, kind))
@@ -666,6 +1291,11 @@ class Synco:
             else:
                 undecided.append(path)
 
+        # Before anything is fetched, so a refused profile downloads nothing.
+        self.gate(profile, report)
+        if report.refused:
+            return report
+
         # A hash settles an equal size without moving the body. A false
         # answer only costs a fetch: every path it rejects is decided on its
         # bytes, so a backend that reports no hash stays correct.
@@ -677,8 +1307,10 @@ class Synco:
                 undecided.append(path)
 
         # Bodies are only pulled where the listing could not settle it, so
-        # an unchanged tree costs one listing and no transfer.
-        self.fetch(profile, undecided + mergeable, staging)
+        # an unchanged tree costs one listing and no transfer. A body about
+        # to be dropped there is fetched too: it is the backup.
+        dropping = [s.path for s in report.steps if s.action is Action.DROP_REMOTE]
+        self.fetch(profile, undecided + mergeable + dropping, staging)
         for path in sorted(undecided):
             report.steps.append(self.decide(profile, path, staging))
         for path in mergeable:
@@ -730,21 +1362,8 @@ class Synco:
 
         return Step(path, Action.CONFLICT, Merge.APPEND, "resumed on both")
 
-    def backup(self, profile: Profile, path: str) -> None:
-        source = profile.root / path
-        if not source.is_file():
-            return
-        target = self.backup_root / profile.slug / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        self.manifest.append(
-            {
-                "profile": profile.name,
-                "path": path,
-                "size": source.stat().st_size,
-                "backup": str(target),
-            }
-        )
+    def record(self, entry: dict[str, object]) -> None:
+        self.manifest.append(entry)
         # Rewritten on every backup, not once at the end: a run that dies
         # partway would otherwise leave a directory of copies with nothing
         # saying what any of them was.
@@ -752,9 +1371,62 @@ class Synco:
             json.dumps(self.manifest, indent=2)
         )
 
-    def apply(self, profile: Profile, report: Report, staging: Path) -> None:
+    def backup(self, profile: Profile, path: str, required: bool = False) -> None:
+        source = profile.root / path
+        if not source.is_file():
+            if required:
+                raise FileNotFoundError(f"no body to back up for {path}")
+            return
+        target = self.backup_root / profile.slug / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        self.record(
+            {
+                "profile": profile.name,
+                "path": path,
+                "size": source.stat().st_size,
+                "backup": str(target),
+            }
+        )
+
+    def backup_peer(
+        self, profile: Profile, path: str, staging: Path, required: bool = False
+    ) -> None:
+        """Keep the peer's body before a push or a drop removes it.
+
+        Planning already fetched every path whose copies disagreed and every
+        path about to be dropped, so the bytes are here; a path the peer
+        never had has nothing to keep.
+        """
+        source = staging / path
+        if not source.is_file():
+            if required:
+                raise FileNotFoundError(f"no peer body to back up for {path}")
+            return
+        target = self.backup_root / f"{profile.slug}-peer" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        self.record(
+            {
+                "profile": profile.name,
+                "side": self.transport.name,
+                "path": path,
+                "size": source.stat().st_size,
+                "backup": str(target),
+            }
+        )
+
+    def apply(self, profile: Profile, report: Report, staging: Path) -> list[str]:
+        """Carry out the plan; returns every path sent, conflict sidecars included."""
         for path in self.moved_here(profile, report):
             report.hold(path, "changed here mid-run")
+        for side, value in report.new_ids.items():
+            if side == "local":
+                (profile.root / self.MARKER).write_text(value)
+            else:
+                assert report.base is not None
+                report.base.remote_id = self.write_id(profile, value)
+
         pull = [s.path for s in report.steps if s.action is Action.PULL]
         push = [s.path for s in report.steps if s.action is Action.PUSH]
 
@@ -775,43 +1447,92 @@ class Synco:
         self.fetch(profile, unstaged, profile.root)
 
         for step in report.steps:
+            if step.action is Action.DROP_LOCAL:
+                self.backup(profile, step.path, required=True)
+                (profile.root / step.path).unlink()
+            elif (
+                step.action is Action.DROP_REMOTE
+                and not (staging / step.path).is_file()
+            ):
+                report.hold(step.path, "no backup body")
+
+        for step in report.steps:
             if step.action is Action.MERGE:
                 push.append(self.write_merge(profile, step))
             elif step.action is Action.CONFLICT:
                 push.extend(self.write_conflict(profile, step, staging))
 
+        drop = [s.path for s in report.steps if s.action is Action.DROP_REMOTE]
         for path in push:
             self.backup_peer(profile, path, staging)
-        self.send(profile, self.unmoved(profile, report, push), profile.root)
+        for path in drop:
+            self.backup_peer(profile, path, staging, required=True)
+        safe = set(self.unmoved(profile, report, push + drop))
+        drop = [p for p in drop if p in safe]
+        if drop:
+            listing = self.write_list(f"delete-{profile.slug}.txt", drop)
+            self.rclone(
+                "delete", "--files-from", str(listing), self.transport.remote(profile)
+            )
+        sent = [p for p in push if p in safe]
+        self.send(profile, sent, profile.root)
 
-    def backup_peer(self, profile: Profile, path: str, staging: Path) -> None:
-        """Keep the peer's body before a push overwrites it.
+        return sent
 
-        Planning already fetched every path whose copies disagreed, so the
-        bytes are usually here for free; a path the peer never had has
-        nothing to keep.
+    def settle(self, profile: Profile, report: Report, sent: list[str]) -> None:
+        """Record what both sides were observed to agree on, never what was meant.
+
+        rclone skips a vanished source and a missing delete target without a
+        word, so every written path is listed again rather than trusted.
         """
-        source = staging / path
-        if not source.is_file():
-            return
-        target = self.backup_root / f"{profile.slug}-peer" / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        self.manifest.append(
-            {
-                "profile": profile.name,
-                "side": self.transport.name,
-                "path": path,
-                "size": source.stat().st_size,
-                "backup": str(target),
-            }
-        )
-        (self.backup_root / "manifest.json").write_text(
-            json.dumps(self.manifest, indent=2)
-        )
+        base = report.base
+        assert base is not None
+        dropped = [s.path for s in report.steps if s.action is Action.DROP_REMOTE]
+        after = self.scan_remote(profile, sent + dropped) if sent or dropped else {}
+
+        def now(path: str) -> Entry | None:
+            try:
+                info = (profile.root / path).lstat()
+            except FileNotFoundError:
+                return None
+            return Entry(info.st_size, int(info.st_mtime))
+
+        for path in list(base.paths):
+            if path not in report.local and path not in report.remote:
+                del base.paths[path]
+        for step in report.steps:
+            path = step.path
+            local = report.local.get(path)
+            remote = report.remote.get(path)
+            match step.action:
+                case Action.SAME:
+                    if now(path) == local:
+                        base.paths[path] = (local, remote)
+                case Action.PULL:
+                    if (current := now(path)) is not None and current == remote:
+                        base.paths[path] = (current, remote)
+                case Action.DROP_LOCAL | Action.DROP_REMOTE:
+                    if now(path) is None and path not in after:
+                        base.paths.pop(path, None)
+                case Action.KEEP:
+                    if local is None:
+                        base.paths[path] = (None, remote)
+                    else:
+                        base.paths[path] = (local, None)
+                case Action.UNCLAIMED:
+                    base.unclaimed.add(path)
+                case _:
+                    pass
+        for path in sent:
+            current = now(path)
+            if current is not None and current == after.get(path):
+                base.paths[path] = (current, current)
+                base.unclaimed.discard(path)
+        base.unclaimed &= set(report.local)
+        base.save()
 
     def unmoved(self, profile: Profile, report: Report, push: list[str]) -> list[str]:
-        """Drop pushes whose far copy changed since the plan decided on it.
+        """Drop pushes and drops whose far copy changed since the plan.
 
         Between reading the other side and writing to it, an agent on the
         peer — or another machine syncing to the same archive — can append
@@ -839,15 +1560,15 @@ class Synco:
         return safe
 
     def moved_here(self, profile: Profile, report: Report) -> list[str]:
-        """Pulls and merges whose local copy changed since the plan.
+        """Pulls, merges and drops whose local copy changed since the plan.
 
-        Both replace our body with one decided against the old one, so the
-        lines an agent here appended in between would survive only in the
-        backup tree.
+        Each replaces or removes our body on a decision taken against the old
+        one, so the lines an agent here appended in between would survive
+        only in the backup tree.
         """
         moved: list[str] = []
         for step in report.steps:
-            if step.action not in (Action.PULL, Action.MERGE):
+            if step.action not in (Action.PULL, Action.MERGE, Action.DROP_LOCAL):
                 continue
             try:
                 info = (profile.root / step.path).lstat()
@@ -926,25 +1647,33 @@ class Synco:
         table.add_column("Pull", justify="right", style="cyan")
         table.add_column("Push", justify="right", style="green")
         table.add_column("Merge", justify="right", style="yellow")
+        table.add_column("Drop", justify="right", style="red")
+        table.add_column("Keep", justify="right", style="blue")
+        table.add_column("Unclaimed", justify="right", style="magenta")
         table.add_column("Held", justify="right", style="magenta")
         table.add_column("Conflict", justify="right", style="red")
         table.add_column("Note")
         for report in reports:
             table.add_row(
                 report.profile.name,
-                str(report.count(Action.SAME)),
+                str(report.count(Action.SAME, Action.SKIP)),
                 str(report.count(Action.PULL)),
                 str(report.count(Action.PUSH)),
                 str(report.count(Action.MERGE)),
+                str(report.count(Action.DROP_LOCAL, Action.DROP_REMOTE)),
+                str(report.count(Action.KEEP)),
+                str(report.count(Action.UNCLAIMED)),
                 str(report.count(Action.HELD)),
                 str(report.count(Action.CONFLICT)),
-                report.skipped or "",
+                report.skipped
+                or (f"refused: {report.refused}" if report.refused else "")
+                or ("capped" if report.capped else ""),
             )
 
         return table
 
     def detail(self, report: Report) -> None:
-        moving = [s for s in report.steps if s.action is not Action.SAME]
+        moving = [s for s in report.steps if s.action not in (Action.SAME, Action.SKIP)]
         if not moving:
             return
         self.console.rule(f"[bold yellow]{report.profile.name}[/]")
@@ -971,8 +1700,47 @@ class Synco:
             f"[yellow]running:[/] {names} — some paths may be held back this run"
         )
 
+    def tidy(self) -> None:
+        """Drop scratch state; keep backup bodies for BACKUP_DAYS.
+
+        Staging and file lists are scratch. A run that backed nothing up
+        leaves nothing worth keeping. Only stamp-named directories are ever
+        removed, so the receipts beside them are out of reach.
+        """
+        if self.dry_run:
+            shutil.rmtree(self.backup_root, ignore_errors=True)
+            return
+        cutoff = self.now - self.BACKUP_DAYS * 86400
+        for entry in self.STATE_DIR.iterdir():
+            if not (entry.is_dir() and self.STAMP_PATTERN.fullmatch(entry.name)):
+                continue
+            # Runs from before this layout kept their lists at the top.
+            for scratch in (entry / "peer", entry / "lists"):
+                shutil.rmtree(scratch, ignore_errors=True)
+            for listing in entry.glob("*.txt"):
+                listing.unlink()
+            if (
+                not (entry / "manifest.json").exists()
+                or time.mktime(time.strptime(entry.name, self.STAMP)) < cutoff
+            ):
+                shutil.rmtree(entry)
+
     def sync(self, profiles: list[Profile]) -> int:
         self.transport.check()
+        self.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with (self.STATE_DIR / "lock").open("w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise click.ClickException("another synco run holds the lock")
+            try:
+                return self.run_locked(profiles)
+            finally:
+                self.tidy()
+
+    def run_locked(self, profiles: list[Profile]) -> int:
+        if any(p.sweeps for p in profiles):
+            self.check_clock()
         live = self.live_vendors()
         staging = self.backup_root / "peer"
         staging.mkdir(parents=True, exist_ok=True)
@@ -987,19 +1755,30 @@ class Synco:
             # gap between reading the peer and writing to it is the window
             # in which the peer can change what is about to be overwritten,
             # so it is kept to a single profile.
-            if not self.dry_run and not report.skipped:
-                self.apply(profile, report, staging / profile.slug)
+            if not self.dry_run and not report.skipped and not report.refused:
+                sent = self.apply(profile, report, staging / profile.slug)
+                self.settle(profile, report, sent)
 
         # Printed at the end as well because rclone's progress meter pushes
         # anything above it off screen on a transfer of any size.
         self.console.rule("[bold yellow]Done[/]")
         self.console.print(self.summary(reports))
+        unclaimed = sum(r.count(Action.UNCLAIMED) for r in reports)
+        if unclaimed:
+            self.console.print(
+                f"[magenta]{unclaimed} unclaimed[/] local-only path(s) held on a first"
+                " sync; review them and rerun with --adopt to push"
+            )
+        failures = sum(
+            r.count(Action.CONFLICT) + bool(r.refused) + r.capped for r in reports
+        )
         if self.dry_run:
             self.console.print("[dim]dry run: nothing written[/]")
-            return 0
-        self.console.print(f"backups: [bold]{self.backup_root}[/]")
+            return failures
+        if (self.backup_root / "manifest.json").exists():
+            self.console.print(f"backups: [bold]{self.backup_root}[/]")
 
-        return sum(r.count(Action.CONFLICT) for r in reports)
+        return failures
 
     @cli.group("agents", invoke_without_command=True)
     @click.option("--peer", default=None, help="Host to sync against, over ssh.")
@@ -1022,6 +1801,15 @@ class Synco:
     @click.option(
         "--checksum", is_flag=True, help="Hash files whose size and mtime match."
     )
+    @click.option("--adopt", is_flag=True, help="Push unclaimed local-only paths.")
+    @click.option("--no-deletes", is_flag=True, help="Hold every drop.")
+    @click.option(
+        "--force-deletes", is_flag=True, help="Override the mass-delete gate."
+    )
+    @click.option("--max-delete", default=25, show_default=True, help="Drop cap.")
+    @click.option(
+        "--max-expire", default=200, show_default=True, help="Expiry drop cap."
+    )
     @click.pass_context
     def cmd_agents(
         ctx: click.Context,
@@ -1032,6 +1820,11 @@ class Synco:
         vendor: tuple[str, ...],
         dry_run: bool,
         checksum: bool,
+        adopt: bool,
+        no_deletes: bool,
+        force_deletes: bool,
+        max_delete: int,
+        max_expire: int,
     ) -> None:
         """Sync agent sessions and memories with a peer machine or an archive."""
         ctx.obj = Synco.select(profiles, vendor)
@@ -1052,11 +1845,21 @@ class Synco:
         else:
             raise click.UsageError("--peer or --archive is required to sync", ctx)
 
-        synco = Synco(transport, dry_run, checksum)
-        conflicts = synco.sync(ctx.obj)
-        if conflicts:
+        synco = Synco(
+            transport,
+            dry_run,
+            checksum,
+            adopt=adopt,
+            no_deletes=no_deletes,
+            force_deletes=force_deletes,
+            max_delete=max_delete,
+            max_expire=max_expire,
+        )
+        failures = synco.sync(ctx.obj)
+        if failures:
             synco.console.print(
-                f"[red]{conflicts} conflict(s)[/] parked beside their originals"
+                f"[red]{failures} problem(s)[/]: conflicts parked beside their"
+                " originals, refused or capped profiles held back"
             )
             sys.exit(1)
 
@@ -1069,6 +1872,7 @@ class Synco:
         table.add_column("Vendor")
         table.add_column("Root")
         table.add_column("State")
+        table.add_column("Sweeps")
         table.add_column("Present")
         for profile in selected:
             table.add_row(
@@ -1076,6 +1880,7 @@ class Synco:
                 profile.vendor,
                 str(profile.root),
                 "sqlite" if not Synco.INCLUDES[profile.vendor] else "files",
+                "yes" if profile.sweeps else "no",
                 "yes" if profile.root.is_dir() else "no",
             )
         Synco.console.print(table)
