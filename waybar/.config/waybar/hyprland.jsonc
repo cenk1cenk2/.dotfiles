@@ -299,6 +299,11 @@
   // {volume} is the sink's everywhere except inside format-source, where it
   // is the source's. The source level reaches "format" only as
   // {format_source}, or as {source_volume}.
+  //
+  // The event-driven alternative to custom/mic: it starts no process, but it
+  // is always shown, since the built-in module cannot hide itself while the
+  // mic is idle. To switch, uncomment it and replace "custom/mic" with
+  // "pulseaudio#source" in group/status; style.css already colours it muted.
   // "pulseaudio#source": {
   //   "format": "{format_source}",
   //   "format-source": "󰍬 {volume}%",
