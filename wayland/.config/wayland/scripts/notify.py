@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import click
-from dotlib.agents import edit_waiting, last_reply
+from dotlib.agents import NAMES, ancestor, config_dir, edit_waiting, last_reply
 from dotlib.cli import create_logger, run
 from dotlib.notify import (
     Chime,
@@ -181,7 +181,13 @@ class Notify:
         body = f"{message}\n\n{context}" if context else message
 
         cls.record(
-            vendor, profile, directory, message, context, urgency == Urgency.CRITICAL
+            vendor,
+            profile,
+            payload.get("session_id"),
+            directory,
+            message,
+            context,
+            urgency == Urgency.CRITICAL,
         )
 
         label = f" ({profile})" if profile else ""
@@ -210,15 +216,23 @@ class Notify:
         cls,
         vendor: str,
         profile: str | None,
+        session: str | None,
         directory: str,
         message: str,
         context: str,
         urgent: bool,
     ) -> None:
-        """List this pane as waiting, replacing its previous entry."""
+        """List this agent as waiting, replacing its previous entry by pane or,
+        outside tmux, by session."""
         pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
+        found = ancestor(os.getppid())
+        home = found and config_dir(found[0], NAMES[found[1]])
         entry = {
             "pane": pane,
+            "session": session,
+            "pid": found and found[0],
+            "name": found and found[1],
+            "home": home and str(home),
             "vendor": vendor,
             "profile": profile,
             "directory": directory,
@@ -229,7 +243,12 @@ class Notify:
         }
         edit_waiting(
             lambda waiting: [
-                *(w for w in waiting if pane is None or w.get("pane") != pane),
+                *(
+                    w
+                    for w in waiting
+                    if not (pane and w.get("pane") == pane)
+                    and not (pane is None and session and w.get("session") == session)
+                ),
                 entry,
             ]
         )

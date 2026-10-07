@@ -49,11 +49,23 @@ def edit_waiting(change: Callable[[list[dict]], list[dict]]) -> list[dict]:
 
 
 def stale(entry: dict, panes: dict[str, dict] | None) -> bool:
-    """Whether a waiting entry no longer waits: its pane is gone or on screen.
+    """Whether a waiting entry no longer waits: its agent exited or got back
+    to work, or its pane is gone or on screen.
 
-    With no pane listing to check against, only a paneless entry can age out."""
+    With no pane listing to check against, only the agent itself is checked,
+    and a paneless entry from a hook that found no agent ages out."""
+    if (pid := entry.get("pid")) is not None:
+        if not alive(pid, entry["name"]):
+            return True
+        session = entry.get("home") and claude_session(Path(entry["home"]), pid)
+        if (
+            session
+            and session.get("status") == "busy"
+            and session.get("statusUpdatedAt", 0) / 1000 > entry.get("at", 0)
+        ):
+            return True
     if not entry.get("pane"):
-        return time.time() - entry.get("at", 0) >= PANELESS_SECONDS
+        return pid is None and time.time() - entry.get("at", 0) >= PANELESS_SECONDS
     if panes is None:
         return False
     info = panes.get(entry["pane"])
@@ -146,6 +158,24 @@ def walk(panes: dict[str, dict]) -> dict[str, dict]:
             stack.extend(children.get(current, []))
 
     return found
+
+
+def ancestor(pid: int) -> tuple[int, str] | None:
+    """The nearest agent process at or above `pid`, as its pid and name.
+
+    A hook runs as a descendant of its agent, which is the only way to name
+    the agent when it runs outside tmux, like a parked background session."""
+    while pid > 1:
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except OSError:
+            return None
+        close = stat.rfind(")")
+        if (name := stat[stat.find("(") + 1 : close]) in NAMES:
+            return pid, name
+        pid = int(stat[close + 2 :].split()[1])
+
+    return None
 
 
 def alive(pid: int, name: str) -> bool:
