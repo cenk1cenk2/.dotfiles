@@ -31,14 +31,16 @@ class Row:
 class AgentMenu:
     log = logging.getLogger("agents")
     NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
-    # The deck's tile colours, so a state reads the same on both.
+    # Onedarker, the waiting pair shared with the deck's tiles.
     URGENT = "#e06c75"
     WAITING = "#d19a66"
-    RUNNING = "#56b6c2"
-    IDLE = "#abb2bf"
+    WORKING = "#98c379"
+    RUNNING = "#7c8a9d"
+    IDLE = "#5c6370"
+    BADGE_TEXT = "#17191e"
     # Claude Code's session status, as the row names and colours it.
     STATES: ClassVar[dict[str | None, tuple[str, str]]] = {
-        "busy": ("working", RUNNING),
+        "busy": ("working", WORKING),
         "idle": ("idle", IDLE),
     }
     REPLY_LINES = 4
@@ -292,8 +294,9 @@ class AgentMenu:
 
         return "\n".join(f"<i>{html.escape(line, quote=False)}</i>" for line in shown)
 
-    @staticmethod
+    @classmethod
     def headline(
+        cls,
         state: str,
         colour: str,
         name: str | None,
@@ -307,7 +310,8 @@ class AgentMenu:
         )
 
         return (
-            f'<span foreground="{colour}"><b>{state}</b></span>  <b>{title}</b>  '
+            f'<span background="{colour}" foreground="{cls.BADGE_TEXT}">'
+            f"<b> {state} </b></span>  <b>{title}</b>  "
             f"{account}  "
             f'<span alpha="60%">{html.escape(note, quote=False)}</span>'
         )
