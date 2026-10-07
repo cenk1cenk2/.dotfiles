@@ -43,7 +43,6 @@ class AgentMenu:
     }
     REPLY_LINES = 4
     LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
-    REPLY_WIDTH = 120
     # Cards span several lines, so rows are split on a character no card holds
     # rather than on newlines. Custom key 1 dismisses the selected agent and
     # custom key 2 every waiting one; rofi reports them as exit codes 10 and 11.
@@ -76,6 +75,21 @@ class AgentMenu:
     LINE_PX = 30
     CARD_CHROME = 34
     WINDOW_CHROME = 190
+    # rofi cuts a row line short with an ellipsis rather than wrapping it, so
+    # replies are wrapped here to the card's width: the theme's window is
+    # fullscreen, which makes that the monitor's width less the padding around
+    # the text, at an average italic character width.
+    TEXT_INSET = 160
+    CHAR_PX = 10.5
+
+    def __init__(self) -> None:
+        monitor = Hyprctl().focused_monitor() or {}
+        scale = monitor.get("scale", 1) or 1
+        self.width = monitor.get("width", 1920) / scale
+        self.height = monitor.get("height", 1080) / scale
+        if monitor.get("transform", 0) % 2:
+            self.width, self.height = self.height, self.width
+        self.reply_width = int((self.width - self.TEXT_INSET) / self.CHAR_PX)
 
     def run(self) -> None:
         # Dismissing reopens the list, so a queue can be cleared in one go.
@@ -150,20 +164,13 @@ class AgentMenu:
     def size(self) -> list[str]:
         """Fit the window to the focused monitor as Super+Tab does, holding as
         many whole cards as its height allows."""
-        monitor = Hyprctl().focused_monitor() or {}
-        scale = monitor.get("scale", 1) or 1
-        width = monitor.get("width", 1920) / scale
-        height = monitor.get("height", 1080) / scale
-        if monitor.get("transform", 0) % 2:
-            width, height = height, width
-
         card = (2 + self.REPLY_LINES) * self.LINE_PX + self.CARD_CHROME
-        lines = max(1, int((height * self.HEIGHT - self.WINDOW_CHROME) // card))
+        lines = max(1, int((self.height * self.HEIGHT - self.WINDOW_CHROME) // card))
 
         return [
             "-theme-str",
             (
-                f"window {{ width: {int(width * self.WIDTH)}px;"
+                f"window {{ width: {int(self.width * self.WIDTH)}px;"
                 f" height: {lines * card + self.WINDOW_CHROME}px; }}"
             ),
             "-theme-str",
@@ -273,14 +280,14 @@ class AgentMenu:
         lines = [
             line
             for paragraph in plain.splitlines()
-            for line in textwrap.wrap(paragraph, self.REPLY_WIDTH)
+            for line in textwrap.wrap(paragraph, self.reply_width)
         ]
         if not lines:
             return '<span alpha="60%">no reply yet</span>'
         shown = lines[: self.REPLY_LINES]
         if len(lines) > self.REPLY_LINES:
             shown[-1] = textwrap.shorten(
-                shown[-1] + " …", self.REPLY_WIDTH - 2, placeholder=" …"
+                shown[-1] + " …", self.reply_width - 2, placeholder=" …"
             )
 
         return "\n".join(f"<i>{html.escape(line, quote=False)}</i>" for line in shown)
