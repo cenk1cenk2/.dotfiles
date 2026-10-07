@@ -27,8 +27,8 @@ from dotlib.notify import (
 class Notify:
     """Agent hook: desktop popup with context, plus a chime.
 
-    Serves Claude Code's Notification hook and codex's PermissionRequest /
-    Stop hooks. Both hand the same shape on stdin — `cwd` and
+    Serves Claude Code's Notification hook, codex's PermissionRequest /
+    Stop hooks and opencode's notify plugin. Both hand the same shape on stdin — `cwd` and
     `transcript_path` — and differ only in what names the event: Claude
     sends a ready-made `message`, codex sends `hook_event_name` plus the
     fields that event carries.
@@ -115,6 +115,34 @@ class Notify:
             payload=payload,
             message=message,
             context=context,
+        )
+
+    @staticmethod
+    @cli.command("opencode")
+    @click.argument("profile", required=False)
+    @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
+    def cmd_opencode(profile: str | None, verbose: bool) -> None:
+        """Read an opencode plugin event from stdin and raise the alarm."""
+        create_logger(verbose)
+
+        payload = Notify.payload()
+        if payload is None:
+            return
+
+        # opencode has no hooks; its notify plugin forwards `session.idle` and
+        # `permission.asked` in codex's shape, naming the event the same way.
+        match payload.get("hook_event_name"):
+            case "PermissionRequest":
+                message = "Waiting for your approval"
+            case _:
+                message = "Turn finished"
+
+        Notify.alarm(
+            vendor="OpenCode",
+            profile=profile,
+            payload=payload,
+            message=message,
+            context="",
         )
 
     @staticmethod
