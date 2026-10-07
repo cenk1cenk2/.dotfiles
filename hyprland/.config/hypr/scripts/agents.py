@@ -17,6 +17,8 @@ import click
 from dotlib import agents
 from dotlib.cli import create_logger, run
 
+from lib import Hyprctl
+
 
 @dataclass(frozen=True)
 class Row:
@@ -56,8 +58,6 @@ class AgentMenu:
         str(2 + REPLY_LINES),
         "-theme",
         "hints",
-        "-theme-str",
-        "window { width: 60%; }",
         "-mesg",
         "Enter focus  ·  Ctrl+x dismiss  ·  Ctrl+Shift+x dismiss all",
         "-kb-custom-1",
@@ -67,6 +67,15 @@ class AgentMenu:
     )
     ROFI_DISMISS = 10
     ROFI_DISMISS_ALL = 11
+    # Super+Tab's share of the focused monitor, so both pickers open alike.
+    WIDTH = 0.75
+    HEIGHT = 0.85
+    # Logical px of one card line at the theme's font, what a card spends on
+    # padding and spacing beyond its lines, and what the window spends on the
+    # search bar, the hint strip and its own padding.
+    LINE_PX = 30
+    CARD_CHROME = 34
+    WINDOW_CHROME = 190
 
     def run(self) -> None:
         # Dismissing reopens the list, so a queue can be cleared in one go.
@@ -118,7 +127,7 @@ class AgentMenu:
         ]
 
     def pick(self, rows: list[Row]) -> tuple[int | None, int]:
-        cmd = ["rofi", "-dmenu", "-i", "-p", "Agents", *self.ROFI_ARGS]
+        cmd = ["rofi", "-dmenu", "-i", "-p", "Agents", *self.ROFI_ARGS, *self.size()]
         self.log.debug("spawn: %s", " ".join(cmd))
         proc = subprocess.run(
             cmd,
@@ -137,6 +146,31 @@ class AgentMenu:
             return int(proc.stdout.strip()), proc.returncode
         except ValueError:
             return None, proc.returncode
+
+    def size(self) -> list[str]:
+        """Fit the window to the focused monitor as Super+Tab does, holding as
+        many whole cards as its height allows."""
+        monitor = Hyprctl().focused_monitor() or {}
+        scale = monitor.get("scale", 1) or 1
+        width = monitor.get("width", 1920) / scale
+        height = monitor.get("height", 1080) / scale
+        if monitor.get("transform", 0) % 2:
+            width, height = height, width
+
+        card = (2 + self.REPLY_LINES) * self.LINE_PX + self.CARD_CHROME
+        lines = max(1, int((height * self.HEIGHT - self.WINDOW_CHROME) // card))
+
+        return [
+            "-theme-str",
+            (
+                f"window {{ width: {int(width * self.WIDTH)}px;"
+                f" height: {lines * card + self.WINDOW_CHROME}px; }}"
+            ),
+            "-theme-str",
+            f"listview {{ lines: {lines}; }}",
+            "-theme-str",
+            "mainbox { padding: 1em; }",
+        ]
 
     def waiting_row(self, entry: dict, pane: dict | None, agent: dict | None) -> Row:
         session = self.session(agent)
