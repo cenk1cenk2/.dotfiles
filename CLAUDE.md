@@ -861,8 +861,10 @@ vendor owns.
   were last observed to agree on. A missing file is a delete only against a receipt; without
   one the path is new. Each profile root and its far side carry a `.synco-id`; a missing or
   changed marker discards the receipt and the run re-bootstraps with no deletes. After
-  restoring a profile dir from a backup, delete its `.synco-id`, or the stale receipt reads
-  every newer file as deleted.
+  restoring a profile dir or the archive from a backup or snapshot, delete that side's
+  `.synco-id`, or the stale receipt reads every newer file as deleted.
+- A path that exists locally but is not a regular file (a symlink, a dir where a file was, an
+  unreadable subtree) is `held`, never read as deleted and never written through.
 - **Policies** (`POLICIES`, first match, default RETAIN): memories, conflict sidecars and codex
   sessions/memories propagate; Claude transcripts (with their `<sid>/` dir), plans and pastes
   expire by age; `history.jsonl` is retained.
@@ -874,6 +876,11 @@ vendor owns.
 - **Guards:** refuse when the local clock is >1 day ahead of a peer (the archive relies on NTP
   sync, else no banding); a mass-delete gate (`--force-deletes`); `--max-delete 25`;
   `--max-expire 200`; `--no-deletes`. A pairing's first sync holds local-only propagate files
-  as `unclaimed` until `--adopt`.
+  as `unclaimed` until `--adopt`; remote-only ones are still pulled, so a first `--peer`
+  pairing with a stale machine can bring its deleted memories back here.
+- `cleanupPeriodDays` defaults to Claude's own 30 when settings.json omits it. It counts days
+  since the file was last written: a resumed session or an edited plan starts over. Without
+  NTP sync an archive run refuses the sweeping profiles, since no absence can then be told
+  from Claude's sweep.
 - Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
 - rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.

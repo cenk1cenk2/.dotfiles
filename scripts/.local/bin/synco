@@ -224,6 +224,13 @@ class Report:
     base: Base | None = None
     # Markers to create on apply, for a side that had none.
     new_ids: dict[str, str] = field(default_factory=dict)
+    # Local paths, files or whole directories, that exist but could not be
+    # listed as regular files: a symlink, a dir where a file was, an
+    # unreadable subtree. Absent from the listing, yet not deleted.
+    unknown: set[str] = field(default_factory=set)
+
+    def obscured(self, path: str) -> bool:
+        return any(path == u or path.startswith(f"{u}/") for u in self.unknown)
 
     def hold(self, path: str, note: str) -> None:
         for step in self.steps:
@@ -371,7 +378,6 @@ class Archive:
         )
         if not mounted:
             raise click.ClickException(f"{self.base} is not on a mounted share")
-        self.base.mkdir(parents=True, exist_ok=True)
 
     def remote(self, profile: Profile) -> str:
         return str(self.base / profile.relative_root)
@@ -397,7 +403,9 @@ class Synco:
         Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "synco"
     )
     STAMP = "%Y%m%d-%H%M%S"
-    STAMP_PATTERN = re.compile(r"\d{8}-\d{6}")
+    # The pid keeps two runs started in the same second, a dry run beside a
+    # real one included, out of each other's backup tree.
+    STAMP_PATTERN = re.compile(r"\d{8}-\d{6}(-\d+)?")
     BACKUP_DAYS = 14
     RCLONE_TIMEOUT = 900.0
     ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
@@ -421,6 +429,8 @@ class Synco:
     # Below this the setting is taken for a mistake rather than a policy: a
     # cutoff of a day or two would band nearly everything as expired.
     MIN_CLEANUP_DAYS = 7
+    # Claude's own default when settings.json does not set one.
+    DEFAULT_CLEANUP_DAYS = 30
     SESSION_ID = re.compile(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     )
@@ -606,7 +616,7 @@ class Synco:
         self.force_deletes = force_deletes
         self.max_delete = max_delete
         self.max_expire = max_expire
-        self.stamp = time.strftime(self.STAMP)
+        self.stamp = f"{time.strftime(self.STAMP)}-{os.getpid()}"
         self.backup_root = self.STATE_DIR / self.stamp
         self.manifest: list[dict[str, object]] = []
         self.now = time.time()
@@ -679,17 +689,20 @@ class Synco:
 
     def cleanup_days(self, profile: Profile) -> int | None:
         """The profile's sweep cutoff in days, or None when it does not sweep."""
-        if not (profile.sweeps and self.bands):
+        if not profile.sweeps:
             return None
         try:
-            days = json.loads((profile.root / "settings.json").read_text())[
-                "cleanupPeriodDays"
-            ]
-        except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
-            self.log.warning(
-                "%s: no cleanupPeriodDays (%s), not banding", profile.name, error
-            )
-            return None
+            settings = json.loads((profile.root / "settings.json").read_text())
+        except FileNotFoundError:
+            settings = {}
+        except json.JSONDecodeError as error:
+            self.log.warning("%s: settings.json unreadable (%s)", profile.name, error)
+            settings = {}
+        days = (
+            settings.get("cleanupPeriodDays", self.DEFAULT_CLEANUP_DAYS)
+            if isinstance(settings, dict)
+            else self.DEFAULT_CLEANUP_DAYS
+        )
         if not isinstance(days, int) or days < self.MIN_CLEANUP_DAYS:
             self.log.warning(
                 "%s: cleanupPeriodDays %r is below %d, not banding",
@@ -753,13 +766,24 @@ class Synco:
 
         return listing
 
-    def scan_local(self, profile: Profile) -> dict[str, Entry]:
+    def scan_local(
+        self, profile: Profile, unknown: set[str] | None = None
+    ) -> dict[str, Entry]:
         """Wanted files, walking only the literal head of each include.
 
         The caches, plugins and file history beside the includes are never
-        listed, so their size costs nothing here.
+        listed, so their size costs nothing here. Whatever exists but is not
+        a regular file — a symlink, a directory os.walk will not enter, one
+        it cannot read — lands in `unknown`, so it is held rather than read
+        as deleted.
         """
         entries: dict[str, Entry] = {}
+
+        def note(path: Path) -> None:
+            relative = str(path.relative_to(profile.root))
+            if unknown is not None and self.wanted(profile, f"{relative}/x"):
+                unknown.add(relative)
+
         for pattern in self.INCLUDES[profile.vendor]:
             top = profile.root.joinpath(
                 *takewhile(
@@ -767,18 +791,28 @@ class Synco:
                     Path(pattern).parts,
                 )
             )
+            found: list[Path] = []
             if top.is_dir():
-                found = (Path(d, n) for d, _, names in os.walk(top) for n in names)
+                for d, dirs, names in os.walk(
+                    top, onerror=lambda error: note(Path(error.filename))
+                ):
+                    found += (Path(d, n) for n in names)
+                    found += (Path(d, n) for n in dirs if Path(d, n).is_symlink())
             else:
-                found = iter((top,))
+                found.append(top)
             for path in found:
                 try:
                     info = path.lstat()
                 except FileNotFoundError:
                     continue
-                if not stat.S_ISREG(info.st_mode):
-                    continue
                 relative = str(path.relative_to(profile.root))
+                if not stat.S_ISREG(info.st_mode):
+                    if unknown is not None and (
+                        self.wanted(profile, relative)
+                        or self.wanted(profile, f"{relative}/x")
+                    ):
+                        unknown.add(relative)
+                    continue
                 if self.wanted(profile, relative):
                     entries[relative] = Entry(info.st_size, int(info.st_mtime))
 
@@ -933,7 +967,7 @@ class Synco:
             timeout=30.0,
         )
         if result.stdout.strip() != "yes":
-            self.log.warning("clock not NTP-synchronised; no expiry banding this run")
+            self.log.warning("clock not NTP-synchronised; sweeping profiles refused")
             self.bands = False
 
     @staticmethod
@@ -1009,7 +1043,7 @@ class Synco:
             self.STATE_DIR / "base" / self.transport.key / f"{profile.slug}.json"
         )
         marker = profile.root / self.MARKER
-        local_id = marker.read_text().strip() if marker.is_file() else None
+        local_id = (marker.read_text().strip() or None) if marker.is_file() else None
         remote_id = self.read_id(profile)
         if base.paths and (
             local_id is None
@@ -1067,20 +1101,29 @@ class Synco:
         return Band.YOUNG
 
     def renamed(self, profile: Profile, path: str, side: dict[str, Entry]) -> bool:
-        """Whether a codex rollout missing from `side` reappears there renamed."""
+        """Whether a codex rollout missing from `side` reappears there renamed.
+
+        Compression swaps `x.jsonl` for `x.jsonl.zst` in place; archiving
+        moves `sessions/Y/M/D/x` to a flat `archived_sessions/x`, and
+        unarchiving moves it back — either possibly compressed on the way.
+        """
         if profile.vendor is not Vendor.CODEX:
             return False
-        moved = (
-            "archived_sessions/" + path.removeprefix("sessions/")
-            if path.startswith("sessions/")
-            else None
-        )
+        name = path.rsplit("/", 1)[-1]
+        names = {name.removesuffix(".zst"), name.removesuffix(".zst") + ".zst"}
+        if f"{path}.zst" in side or (
+            path.endswith(".zst") and path.removesuffix(".zst") in side
+        ):
+            return True
+        if path.startswith("sessions/"):
+            return any(f"archived_sessions/{n}" in side for n in names)
+        if path.startswith("archived_sessions/"):
+            return any(
+                p.startswith("sessions/") and p.rsplit("/", 1)[-1] in names
+                for p in side
+            )
 
-        return (
-            f"{path}.zst" in side
-            or (path.endswith(".zst") and path.removesuffix(".zst") in side)
-            or (moved is not None and moved in side)
-        )
+        return False
 
     def classify(
         self,
@@ -1101,6 +1144,8 @@ class Synco:
         remote = report.remote.get(path)
         kind = self.merge_kind(profile, path)
         pair = base.paths.get(path)
+        if report.obscured(path):
+            return Step(path, Action.HELD, kind, "not a regular file here")
         policy = self.policy(profile, path)
         if policy is Policy.EXPIRES and days is None:
             policy = Policy.PROPAGATE
@@ -1184,19 +1229,24 @@ class Synco:
             ("local", report.local, 0),
             ("remote", report.remote, 1),
         ):
+            # Gone on both sides is settled, whoever removed it first, so it
+            # is in neither the population nor the absences.
             held = {
-                unit(p) for p, pair in base.paths.items() if pair[index] is not None
+                unit(p)
+                for p, pair in base.paths.items()
+                if pair[index] is not None and (p in report.local or p in report.remote)
             }
             missing: set[str] = set()
             for path, pair in base.paths.items():
                 step = steps.get(path)
                 if pair[index] is None or path in entries:
                     continue
-                # Gone on both sides is settled, whoever removed it first.
                 if path not in report.local and path not in report.remote:
                     continue
                 if step is not None and (
-                    step.expiry or step.renamed or step.action is Action.SKIP
+                    step.expiry
+                    or step.renamed
+                    or step.action in (Action.SKIP, Action.HELD)
                 ):
                     continue
                 missing.add(unit(path))
@@ -1224,12 +1274,13 @@ class Synco:
         drops = [
             s
             for s in report.steps
-            if s.action in (Action.DROP_LOCAL, Action.DROP_REMOTE) and not s.renamed
+            if s.action in (Action.DROP_LOCAL, Action.DROP_REMOTE)
         ]
         if self.no_deletes:
             for step in drops:
                 report.hold(step.path, "deletes disabled")
             return
+        drops = [s for s in drops if not s.renamed]
         for expiry, limit, flag in (
             (False, self.max_delete, "--max-delete"),
             (True, self.max_expire, "--max-expire"),
@@ -1249,10 +1300,15 @@ class Synco:
             report.skipped = f"{profile.root} absent"
             return report
 
+        if profile.sweeps and not self.bands:
+            # Without a trusted clock no absence can be told from Claude's own
+            # sweep, and counting those as deletes caps or refuses anyway.
+            report.refused = "clock not NTP-synchronised"
+            return report
         try:
             report.base = base = self.identify(profile, report)
-        except subprocess.CalledProcessError as error:
-            report.refused = f"far marker unreadable (rclone exit {error.returncode})"
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            report.refused = f"far side unreadable: {error}"
             return report
         days = self.cleanup_days(profile)
         if days is not None and base.cleanup_days not in (None, days):
@@ -1265,7 +1321,7 @@ class Synco:
         base.cleanup_days = days
         first = not base.paths
 
-        report.local = local = self.scan_local(profile)
+        report.local = local = self.scan_local(profile, report.unknown)
         report.remote = remote = self.scan_remote(profile)
 
         undecided: list[str] = []
@@ -1529,6 +1585,7 @@ class Synco:
                 base.paths[path] = (current, current)
                 base.unclaimed.discard(path)
         base.unclaimed &= set(report.local)
+        base.unclaimed -= set(base.paths)
         base.save()
 
     def unmoved(self, profile: Profile, report: Report, push: list[str]) -> list[str]:
@@ -1721,7 +1778,7 @@ class Synco:
                 listing.unlink()
             if (
                 not (entry / "manifest.json").exists()
-                or time.mktime(time.strptime(entry.name, self.STAMP)) < cutoff
+                or time.mktime(time.strptime(entry.name[:15], self.STAMP)) < cutoff
             ):
                 shutil.rmtree(entry)
 
@@ -1756,7 +1813,18 @@ class Synco:
             # in which the peer can change what is about to be overwritten,
             # so it is kept to a single profile.
             if not self.dry_run and not report.skipped and not report.refused:
-                sent = self.apply(profile, report, staging / profile.slug)
+                # A failed write leaves the old receipts, from which the next
+                # run re-plans safely; the remaining profiles still sync.
+                try:
+                    sent = self.apply(profile, report, staging / profile.slug)
+                except (
+                    subprocess.CalledProcessError,
+                    subprocess.TimeoutExpired,
+                    click.ClickException,
+                ) as error:
+                    self.log.error("%s: %s", profile.name, error)
+                    report.refused = f"apply failed: {error}"
+                    continue
                 self.settle(profile, report, sent)
 
         # Printed at the end as well because rclone's progress meter pushes
