@@ -3,7 +3,7 @@
 local d = require("definitions")
 
 local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause |(t/T/g) tts read/raw/gist | (b/f/←→) pause/tempo/scrub | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause | (t/T/g) tts read/raw/gist | (f/F/←→) tts pause/stop/scrub | (v/V) paste/copy | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
 
 hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
 
@@ -55,11 +55,26 @@ hl.define_submap(submap, function()
   -- Pause/resume the utterance being spoken
   hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
 
+  -- Stop reading aloud
+  hl.bind("SHIFT + f", exec_then_reset(("%s tts kill"):format(d.speech)))
+
   -- Scrub the utterance. Deliberately without the reset every other bind
   -- here carries: scrubbing is held down, and leaving the submap after the
   -- first step would cost a Super+R for every three seconds.
   hl.bind("right", hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)), { repeating = true })
   hl.bind("left", hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)), { repeating = true })
+
+  -- Copy the agent's last reply through its /copy command
+  hl.bind("SHIFT + v", exec_then_reset([[wtype "/copy" && wtype -k Return]]))
+
+  -- Paste into the focused window. Ctrl+Shift+V rather than Ctrl+V, which is
+  -- what pastes in kitty.
+  hl.bind(
+    "v",
+    exec_then_reset(
+      [[a=$(hyprctl -j activewindow | jq -r .address) && ~/.config/hypr/scripts/send-key.py "address:$a" V -m CTRL+SHIFT]]
+    )
+  )
 
   -- Copywriter: refine clipboard through AI
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))
