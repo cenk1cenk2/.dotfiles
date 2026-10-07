@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -58,6 +59,9 @@ class Action(StrEnum):
     PULL = "pull"
     PUSH = "push"
     MERGE = "merge"
+    # A side wrote to the path between planning and applying. Nothing is
+    # lost and nothing is parked: the next run sees both bodies again.
+    HELD = "held"
     CONFLICT = "conflict"
 
 
@@ -70,6 +74,10 @@ class Profile:
     @property
     def relative_root(self) -> Path:
         return self.root.relative_to(Path.home())
+
+    @property
+    def slug(self) -> str:
+        return self.name.replace("/", "-")
 
 
 @dataclass(frozen=True)
@@ -94,9 +102,16 @@ class Report:
     profile: Profile
     steps: list[Step] = field(default_factory=list)
     skipped: str | None = None
-    # The peer as the plan saw it, so a push can tell whether the copy it is
-    # about to overwrite is still the one it decided about.
+    # Both sides as the plan saw them, so a write can tell whether the copy
+    # it is about to overwrite is still the one it decided about.
+    local: dict[str, Entry] = field(default_factory=dict)
     remote: dict[str, Entry] = field(default_factory=dict)
+
+    def hold(self, path: str, note: str) -> None:
+        for step in self.steps:
+            if step.path == path:
+                step.action = Action.HELD
+                step.note = note
 
     def count(self, action: Action) -> int:
         return sum(1 for s in self.steps if s.action is action)
@@ -241,7 +256,11 @@ class Synco:
     # Mirrors the env patches in ~/.config/hyprpilot/config.yaml, which is the
     # source of truth for which profile writes where. The two share no parser,
     # so a state directory moved there has to be moved here in the same commit.
+    # `~/.claude` is no hyprpilot profile: it is where claude writes when run
+    # without CLAUDE_CONFIG_DIR, and where skills that name a fixed path for
+    # plans put them.
     PROFILES: ClassVar[tuple[Profile, ...]] = (
+        Profile("default/claude", Vendor.CLAUDE, Path.home() / ".claude"),
         Profile("personal/claude", Vendor.CLAUDE, Path.home() / ".claude-kilic"),
         Profile("work/claude", Vendor.CLAUDE, Path.home() / ".claude-laravel"),
         Profile("personal/codex", Vendor.CODEX, Path.home() / ".codex-kilic"),
@@ -265,6 +284,9 @@ class Synco:
             "projects/**",
             "plans/**",
             "history.jsonl",
+            # history.jsonl stores a large paste as a hash into this
+            # directory, so the history alone recalls an empty prompt.
+            "paste-cache/**",
         ),
         Vendor.CODEX: (
             "sessions/**",
@@ -321,6 +343,7 @@ class Synco:
         Action.PULL: "cyan",
         Action.PUSH: "green",
         Action.MERGE: "yellow",
+        Action.HELD: "magenta",
         Action.CONFLICT: "red",
     }
 
@@ -390,13 +413,22 @@ class Synco:
         """
         cmd = self.rclone_command("--progress", "--stats", "1s", *args)
         self.log.info("spawn: %s", " ".join(cmd))
-        subprocess.run(
+        # Its own process group, as `dotlib.cli.run` does, so a timeout or an
+        # interrupt also takes down the ssh sessions rclone forked.
+        proc = subprocess.Popen(
             cmd,
             stdout=sys.stderr,
             stderr=sys.stderr,
-            timeout=self.RCLONE_TIMEOUT,
-            check=True,
+            start_new_session=True,
         )
+        try:
+            returncode = proc.wait(timeout=self.RCLONE_TIMEOUT)
+        except BaseException:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            raise
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, cmd)
 
     def rclone(self, *args: str) -> str:
         cmd = self.rclone_command(*args)
@@ -458,11 +490,7 @@ class Synco:
             if paths is None
             else [
                 "--files-from",
-                str(
-                    self.write_list(
-                        f"recheck-{profile.name.replace('/', '-')}.txt", paths
-                    )
-                ),
+                str(self.write_list(f"recheck-{profile.slug}.txt", paths)),
             ]
         )
         try:
@@ -497,7 +525,7 @@ class Synco:
     def remote_digests(self, profile: Profile, paths: list[str]) -> dict[str, str]:
         if not paths:
             return {}
-        listing = self.write_list(f"hash-{profile.name.replace('/', '-')}.txt", paths)
+        listing = self.write_list(f"hash-{profile.slug}.txt", paths)
         output = self.rclone(
             "hashsum",
             self.HASH,
@@ -522,7 +550,7 @@ class Synco:
         """Copy `paths` off the peer into a staging tree."""
         if not paths:
             return
-        listing = self.write_list(f"fetch-{profile.name.replace('/', '-')}.txt", paths)
+        listing = self.write_list(f"fetch-{profile.slug}.txt", paths)
         self.transfer(
             "copy",
             "--files-from",
@@ -534,7 +562,7 @@ class Synco:
     def send(self, profile: Profile, paths: list[str], source: Path) -> None:
         if not paths:
             return
-        listing = self.write_list(f"send-{profile.vendor}-{source.name}.txt", paths)
+        listing = self.write_list(f"send-{profile.slug}.txt", paths)
         self.transfer(
             "copy",
             "--files-from",
@@ -615,6 +643,7 @@ class Synco:
 
         local = self.scan_local(profile)
         remote = self.scan_remote(profile)
+        report.local = local
         report.remote = remote
 
         undecided: list[str] = []
@@ -705,7 +734,7 @@ class Synco:
         source = profile.root / path
         if not source.is_file():
             return
-        target = self.backup_root / profile.name.replace("/", "-") / path
+        target = self.backup_root / profile.slug / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         self.manifest.append(
@@ -724,12 +753,26 @@ class Synco:
         )
 
     def apply(self, profile: Profile, report: Report, staging: Path) -> None:
+        for path in self.moved_here(profile, report):
+            report.hold(path, "changed here mid-run")
         pull = [s.path for s in report.steps if s.action is Action.PULL]
         push = [s.path for s in report.steps if s.action is Action.PUSH]
 
+        unstaged: list[str] = []
         for path in pull:
             self.backup(profile, path)
-        self.fetch(profile, pull, profile.root)
+            # Planning already fetched every pair that disagreed, so only a
+            # path this side never had still has to cross the wire.
+            staged = staging / path
+            if not staged.is_file():
+                unstaged.append(path)
+                continue
+            target = profile.root / path
+            # Renamed into place, so an agent reading it never sees half.
+            temporary = target.with_name(f".{target.name}.synco")
+            shutil.copy2(staged, temporary)
+            temporary.replace(target)
+        self.fetch(profile, unstaged, profile.root)
 
         for step in report.steps:
             if step.action is Action.MERGE:
@@ -751,7 +794,7 @@ class Synco:
         source = staging / path
         if not source.is_file():
             return
-        target = self.backup_root / f"{profile.name.replace('/', '-')}-peer" / path
+        target = self.backup_root / f"{profile.slug}-peer" / path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         self.manifest.append(
@@ -783,18 +826,39 @@ class Synco:
         for path in push:
             before = report.remote.get(path)
             now = current.get(path)
-            if now is None or before is None or now == before:
+            # Appearing or vanishing counts as moving: a path the peer
+            # created mid-run holds bytes that exist nowhere else either.
+            if now == before:
                 safe.append(path)
                 continue
             self.log.warning(
                 "%s changed on %s since planning", path, self.transport.name
             )
-            for step in report.steps:
-                if step.path == path:
-                    step.action = Action.CONFLICT
-                    step.note = f"changed on {self.transport.name} mid-run"
+            report.hold(path, f"changed on {self.transport.name} mid-run")
 
         return safe
+
+    def moved_here(self, profile: Profile, report: Report) -> list[str]:
+        """Pulls and merges whose local copy changed since the plan.
+
+        Both replace our body with one decided against the old one, so the
+        lines an agent here appended in between would survive only in the
+        backup tree.
+        """
+        moved: list[str] = []
+        for step in report.steps:
+            if step.action not in (Action.PULL, Action.MERGE):
+                continue
+            try:
+                info = (profile.root / step.path).lstat()
+                now: Entry | None = Entry(info.st_size, int(info.st_mtime))
+            except FileNotFoundError:
+                now = None
+            if now != report.local.get(step.path):
+                self.log.warning("%s changed here since planning", step.path)
+                moved.append(step.path)
+
+        return moved
 
     def write_merge(self, profile: Profile, step: Step) -> str:
         assert step.payload is not None
@@ -862,6 +926,7 @@ class Synco:
         table.add_column("Pull", justify="right", style="cyan")
         table.add_column("Push", justify="right", style="green")
         table.add_column("Merge", justify="right", style="yellow")
+        table.add_column("Held", justify="right", style="magenta")
         table.add_column("Conflict", justify="right", style="red")
         table.add_column("Note")
         for report in reports:
@@ -871,6 +936,7 @@ class Synco:
                 str(report.count(Action.PULL)),
                 str(report.count(Action.PUSH)),
                 str(report.count(Action.MERGE)),
+                str(report.count(Action.HELD)),
                 str(report.count(Action.CONFLICT)),
                 report.skipped or "",
             )
@@ -914,8 +980,7 @@ class Synco:
         self.warn_live(live)
         reports: list[Report] = []
         for profile in profiles:
-            slug = profile.name.replace("/", "-")
-            report = self.plan(profile, staging / slug)
+            report = self.plan(profile, staging / profile.slug)
             reports.append(report)
             self.detail(report)
             # Applied here rather than once every profile is planned: the
@@ -923,7 +988,7 @@ class Synco:
             # in which the peer can change what is about to be overwritten,
             # so it is kept to a single profile.
             if not self.dry_run and not report.skipped:
-                self.apply(profile, report, staging / slug)
+                self.apply(profile, report, staging / profile.slug)
 
         # Printed at the end as well because rclone's progress meter pushes
         # anything above it off screen on a transfer of any size.
