@@ -874,7 +874,7 @@ vendor owns.
   shortest one wins. `Profile.sweeps` is true only where Claude actually runs:
   `~/.claude` is never swept, so its plans never expire.
 - **Guards:** refuse when the local clock is >1 day ahead of a peer (the archive relies on NTP
-  sync, else no banding); a mass-delete gate (`--force-deletes`); `--max-delete 25`;
+  sync, see below); a mass-delete gate (`--force-deletes`); `--max-delete 25`;
   `--max-expire 200`; `--no-deletes`. A pairing's first sync holds local-only propagate files
   as `unclaimed` until `--adopt`; remote-only ones are still pulled, so a first `--peer`
   pairing with a stale machine can bring its deleted memories back here.

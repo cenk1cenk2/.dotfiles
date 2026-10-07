@@ -407,6 +407,9 @@ class Synco:
     # real one included, out of each other's backup tree.
     STAMP_PATTERN = re.compile(r"\d{8}-\d{6}(-\d+)?")
     BACKUP_DAYS = 14
+    DRY_RUN_BANNER = (
+        "[bold magenta]DRY RUN — planned actions only, nothing is written[/]"
+    )
     RCLONE_TIMEOUT = 900.0
     ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
     # All the sftp backend probes for on its own. Anything else has to name
@@ -1796,6 +1799,10 @@ class Synco:
                 self.tidy()
 
     def run_locked(self, profiles: list[Profile]) -> int:
+        # The plan tables and rclone's planning fetch read exactly as a real
+        # run does, so the mode is stated before and after them.
+        if self.dry_run:
+            self.console.rule(self.DRY_RUN_BANNER)
         if any(p.sweeps for p in profiles):
             self.check_clock()
         live = self.live_vendors()
@@ -1841,7 +1848,7 @@ class Synco:
             r.count(Action.CONFLICT) + bool(r.refused) + r.capped for r in reports
         )
         if self.dry_run:
-            self.console.print("[dim]dry run: nothing written[/]")
+            self.console.rule(self.DRY_RUN_BANNER)
             return failures
         if (self.backup_root / "manifest.json").exists():
             self.console.print(f"backups: [bold]{self.backup_root}[/]")
