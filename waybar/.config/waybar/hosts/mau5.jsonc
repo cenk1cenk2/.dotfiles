@@ -16,9 +16,11 @@
   // undefined get the slot hidden.
   "custom/gpu": {
     "return-type": "json",
-    "restart-interval": 5,
+    "restart-interval": 2,
     "format": "󰢮 {}°",
-    "exec": "nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits -lms 5000 | awk '{c=($1>=72)?\"critical\":(($1>=62)?\"warning\":\"\"); printf \"{\\\"text\\\":\\\"%d\\\",\\\"class\\\":\\\"%s\\\"}\\n\",$1,c; fflush()}'",
+    // Only this host shows the GPU, so its module starts the shared watcher
+    // itself rather than every host enabling one; a second start is a no-op.
+    "exec": "systemctl --user start waybar-watch@gpu.service; f=$XDG_RUNTIME_DIR/waybar/gpu.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
     "tooltip": false,
     "on-click": "~/.config/hypr/scripts/launch-app.py gpu_monitor",
   },
