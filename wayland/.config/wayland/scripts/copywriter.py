@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -48,6 +49,13 @@ from lib import (
 
 class Copywriter:
     WAYBAR_MODULE = "copywriter"
+    # Held exclusively by a running worker for its lifetime, so "is one
+    # running" is a lock probe rather than a walk of the process table, which
+    # the waybar watcher would otherwise repeat every half second.
+    LOCK = (
+        Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        / "copywriter.lock"
+    )
     ICON = "accessories-text-editor"
     NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.WRITING)
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
@@ -100,7 +108,15 @@ class Copywriter:
         return workers
 
     def is_running(self) -> bool:
-        return bool(self._find_workers())
+        fd = os.open(self.LOCK, os.O_RDONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        finally:
+            os.close(fd)
+
+        return False
 
     def run_once(self) -> None:
         assert self._input is not None, "run requires an input adapter"
@@ -140,6 +156,9 @@ class Copywriter:
             and self._enricher is not None
             and self._output is not None
         )
+        # Never closed: the lock lives exactly as long as this worker process.
+        lock = os.open(self.LOCK, os.O_RDONLY | os.O_CREAT, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
         text = self._input.read()
         if not text or not text.strip():
             self.log.warning("%s was empty", self._input.mode.value)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import logging
 import subprocess
 import sys
@@ -48,12 +49,21 @@ class Recorder:
     def _is_obs_running(self) -> bool:
         return any(p.info["name"] == "obs" for p in psutil.process_iter(["name"]))
 
+    def _is_obs_listening(self) -> bool:
+        """Whether obs-websocket answers: a connect, not a process-table walk,
+        for the waybar watcher that asks every two seconds."""
+        try:
+            with socket.create_connection(("localhost", 4455), timeout=0.2):
+                return True
+        except OSError:
+            return False
+
     def _connection(self, *, retry=3, wait=1, silent=False):
         """Open an obs-websocket client.
 
         `silent=True` drops retries + notifications for waybar's status
         tick path, where OBS being down is the expected state."""
-        if not self._is_obs_running():
+        if not (self._is_obs_listening() if silent else self._is_obs_running()):
             if not silent:
                 self._notify("OBS is not running")
             return None
@@ -159,7 +169,7 @@ class Recorder:
         self._signal_waybar()
 
     def status_json(self) -> str:
-        if not self._is_obs_running():
+        if not self._is_obs_listening():
             return json.dumps({"class": "idle", "text": "", "tooltip": "Not recording"})
         status = self._record_status(silent=True)
         if status and status.output_active:
