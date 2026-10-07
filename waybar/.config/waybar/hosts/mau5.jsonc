@@ -20,7 +20,7 @@
     "format": "󰢮 {}°",
     // Only this host shows the GPU, so its module starts the shared watcher
     // itself rather than every host enabling one; a second start is a no-op.
-    "exec": "systemctl --user start waybar-watch@gpu.service; f=$XDG_RUNTIME_DIR/waybar/gpu.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "systemctl --user start waybar-watch@gpu.service; ~/.config/waybar/tail.sh gpu",
     "tooltip": false,
     "on-click": "~/.config/hypr/scripts/launch-app.py gpu_monitor",
   },

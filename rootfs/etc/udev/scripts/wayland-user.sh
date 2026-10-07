@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/bin/sh
 
 # Get all active user sessions
 for user_dir in /run/user/*/; do

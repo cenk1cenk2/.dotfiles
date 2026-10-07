@@ -67,7 +67,7 @@
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/copywriter.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh copywriter",
     "restart-interval": 2,
   },
 

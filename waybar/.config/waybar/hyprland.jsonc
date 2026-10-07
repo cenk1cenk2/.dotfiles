@@ -85,7 +85,7 @@
   "custom/recorder": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/recorder.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh recorder",
     "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/recorder.py toggle",
   },
@@ -93,7 +93,7 @@
   "custom/stt": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/stt.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh stt",
     "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/speech.py stt toggle --output clipboard",
   },
@@ -101,7 +101,7 @@
   "custom/tts": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/tts.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh tts",
     "restart-interval": 2,
     "on-click": "~/.config/wayland/scripts/speech.py tts toggle",
   },
@@ -109,7 +109,7 @@
   "custom/copywriter": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/copywriter.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh copywriter",
     "restart-interval": 2,
   },
 
@@ -117,7 +117,7 @@
   "custom/zoom": {
     "return-type": "json",
     "format": "{}",
-    "exec": "f=$XDG_RUNTIME_DIR/waybar/zoom.json; [ -e $f ] || echo '{\"text\": \"\"}' > $f; exec tail -F -n1 $f 2>/dev/null",
+    "exec": "~/.config/waybar/tail.sh zoom",
     "restart-interval": 2,
     "on-click": "~/.config/hypr/scripts/zoom.py toggle",
   },
