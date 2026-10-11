@@ -1,3 +1,13 @@
 __pycache__
 .ruff_cache
 .venv
+# Python venv internals, so a venv under any name (UV_PROJECT_ENVIRONMENT) cannot abort stow
+pyvenv\.cfg
+CACHEDIR\.TAG
+\.lock
+lib64
+python[0-9.]*
+site-packages
+activate.*
+deactivate\.bat
+pydoc\.bat
