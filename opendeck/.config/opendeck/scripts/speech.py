@@ -192,7 +192,14 @@ class SpeechPlugin(Plugin):
             case Action.SEEK:
                 self.speech(key.session, "seek", key.settings["seconds"])
             case Action.PASTE:
-                self.spawn(["sh", "-c", f"{self.FOCUSED} V -m CTRL+SHIFT"])
+                self.spawn(
+                    [
+                        "sh",
+                        "-c",
+                        f"{self.FOCUSED} V -m CTRL+SHIFT"
+                        ' && ~/.config/hypr/scripts/send-key.py "address:$a" Return',
+                    ]
+                )
 
     def holds(self, key: SpeechKey) -> bool:
         return key.action in (Action.TOGGLE, Action.PAUSE, Action.SEEK, Action.PASTE)
