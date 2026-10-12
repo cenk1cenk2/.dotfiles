@@ -18,6 +18,7 @@ from dotlib import agents
 class Action(StrEnum):
     WAITING = "dev.kilic.agents.waiting"
     SESSIONS = "dev.kilic.agents.sessions"
+    PICKER = "dev.kilic.agents.picker"
 
 
 class AgentKey(Key):
@@ -29,9 +30,11 @@ class AgentsPlugin(Plugin):
 
     `waiting` keys show the agents the notify hook flagged: the left one the
     selected agent, the right one the whole queue. `sessions` finds every
-    agent running in a tmux pane, flagged or not, and cycles through them."""
+    agent running in a tmux pane, flagged or not, and cycles through them.
+    `picker` opens the rofi picker over the same agents."""
 
     NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
+    PICKER = Path.home() / ".config/hypr/scripts/agents.py"
     ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.agents.sdPlugin/icons"
     TERMINAL = Path(
         "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
@@ -99,6 +102,8 @@ class AgentsPlugin(Plugin):
         match key.action:
             case Action.SESSIONS:
                 self.switch(1)
+            case Action.PICKER:
+                self.spawn([str(self.PICKER)])
             case Action.WAITING if key.settings["slot"] == 1:
                 self.cycle()
             case Action.WAITING if (entry := self.agent(key)) is not None:
@@ -107,7 +112,7 @@ class AgentsPlugin(Plugin):
                 self.dismiss(entry)
 
     def holds(self, key: AgentKey) -> bool:
-        return True
+        return key.action != Action.PICKER
 
     def hold_status(self, key: AgentKey) -> str | None:
         if key.action == Action.SESSIONS:

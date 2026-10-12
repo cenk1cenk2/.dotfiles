@@ -205,7 +205,7 @@ class SpeechPlugin(Plugin):
             seconds = float(key.settings["seconds"])
             return f"◀ {-seconds:g}s" if seconds < 0 else f"{seconds:g}s ▶"
         if key.action == Action.PASTE:
-            return "send"
+            return "copy"
 
         return "kill"
 
@@ -213,7 +213,7 @@ class SpeechPlugin(Plugin):
         if key.action == Action.SEEK:
             return self.press(context, key)
         if key.action == Action.PASTE:
-            return self.spawn(["sh", "-c", f"{self.FOCUSED} Return"])
+            return self.spawn(["wtype", "/copy", "-k", "Return"])
 
         self.speech(key.session, "kill")
 

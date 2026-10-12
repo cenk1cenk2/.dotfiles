@@ -46,6 +46,23 @@
           "FontSize": 13
         }
       ]
+    },
+    {
+      "Name": "Agent Picker",
+      "UUID": "dev.kilic.agents.picker",
+      "Icon": "icons/picker",
+      "Tooltip": "Open the rofi picker over every agent, waiting ones first.",
+      "DisableAutomaticStates": true,
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "icons/picker",
+          "TitleAlignment": "top",
+          "FontSize": 13
+        }
+      ]
     }
   ]
 }
