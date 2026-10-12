@@ -411,7 +411,7 @@ class Synco:
         "[bold magenta]DRY RUN — planned actions only, nothing is written[/]"
     )
     RCLONE_TIMEOUT = 900.0
-    ARCHIVE = Path("/mnt/norsu/rock/backup/raw/synco/agents")
+    ARCHIVE = Path("/mnt/norsu/rock/backup/synco/agents")
     # All the sftp backend probes for on its own. Anything else has to name
     # its remote command too (--sftp-hashes sha256 --sftp-sha256sum-command
     # sha256sum); asking without that silently drops the hash from hashsum
