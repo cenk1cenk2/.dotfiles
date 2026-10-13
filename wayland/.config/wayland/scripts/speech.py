@@ -2064,6 +2064,10 @@ def cli(verbose: bool, headless: bool):
         verbose, log_file="speech.log", quiet={"status", "is-recording", "is-speaking"}
     )
     set_headless(headless)
+    # Both end the process without unwinding, so the `finally` that hands the
+    # room back - ducked streams, paused players - would never run.
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, lambda received, _: sys.exit(128 + received))
 
 
 cli.add_command(Stt.cli, "stt")
