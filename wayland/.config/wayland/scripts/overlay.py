@@ -27,11 +27,12 @@ if PRELOAD not in os.environ.get("LD_PRELOAD", ""):
 
 import gi
 
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
 gi.require_version("Pango", "1.0")
 
-from gi.repository import Gio, GLib, Gtk, Pango
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 from gi.repository import Gtk4LayerShell as LayerShell
 
 
@@ -260,11 +261,14 @@ class Submaps:
 
     def accelerator(self, bind: dict[str, Any]) -> str:
         """The bind as a GTK accelerator, for `Gtk.ShortcutLabel` to draw as
-        theme keycaps. Hyprland keeps the key as written in the config, and
-        GDK's names for the named keys are capitalised."""
+        theme keycaps. Hyprland keeps the key as written in the config, while
+        GDK's key names are case-sensitive and mixed (`Left`, but `space`), so
+        the spelling GDK knows is the one used."""
         key = bind["key"]
-        if len(key) > 1:
-            key = key[0].upper() + key[1:]
+        for spelling in (key, key[:1].upper() + key[1:], key.lower()):
+            if Gdk.keyval_from_name(spelling) != Gdk.KEY_VoidSymbol:
+                key = spelling
+                break
 
         return "".join(name for bit, name in self.MODS if bind["modmask"] & bit) + key
 
