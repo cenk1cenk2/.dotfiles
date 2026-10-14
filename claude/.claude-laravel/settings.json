@@ -390,6 +390,13 @@
     "claude-md-management@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {},
+  "pluginConfigs": {
+    "rollout-watch@cloud-infrastructure": {
+      "options": {
+        "grafanaServer": "grafana-laravel"
+      }
+    }
+  },
   "outputStyle": "Concise",
   "viewMode": "default",
   "spinnerTipsEnabled": false,
