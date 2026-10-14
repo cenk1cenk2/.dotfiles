@@ -99,7 +99,8 @@ hl.bind(("%s + Tab"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/swit
 -- Layout controls (matching Sway)
 hl.bind(("%s + x"):format(d.mod), hl.dsp.layout("preselect l")) -- preselect horizontal split
 hl.bind(("%s + v"):format(d.mod), hl.dsp.layout("preselect t")) -- preselect vertical split
-hl.bind(("%s + e"):format(d.mod), hl.dsp.group.toggle()) -- toggle tabbed grouping
+hl.bind(("%s + SHIFT + e"):format(d.mod), hl.dsp.group.next()) -- cycle through group windows
+hl.bind(("%s + o"):format(d.mod), hl.dsp.group.toggle()) -- toggle tabbed grouping
 hl.bind(("%s + z"):format(d.mod), hl.dsp.layout("swapsplit")) -- swap split halves
 hl.bind(("%s + SHIFT + z"):format(d.mod), hl.dsp.layout("togglesplit")) -- toggle split orientation
 
@@ -250,9 +251,9 @@ hl.bind(("%s + SHIFT + F"):format(d.mod), hl.dsp.window.fullscreen({ mode = "ful
 hl.bind(("%s + W"):format(d.mod), hl.dsp.window.float({ action = "toggle" }))
 hl.bind(("%s + SHIFT + W"):format(d.mod), hl.dsp.window.pin()) -- pin = sticky in Hyprland
 
--- Focus toggle (matches Sway mod+a = focus mode_toggle): cycle to the
--- next window of the opposite floating-ness.
-hl.bind(("%s + A"):format(d.mod), function()
+-- Focus toggle (Sway's focus mode_toggle): cycle to the next window of the
+-- opposite floating-ness.
+hl.bind(("%s + E"):format(d.mod), function()
   local active = hl.get_active_window()
   if not active then
     hl.dispatch(hl.dsp.window.cycle_next())
@@ -264,7 +265,6 @@ hl.bind(("%s + A"):format(d.mod), function()
     hl.dispatch(hl.dsp.window.cycle_next({ floating = true }))
   end
 end)
-hl.bind(("%s + SHIFT + A"):format(d.mod), hl.dsp.group.next()) -- cycle through group windows
 
 -- Monitor profiles (using kanshi)
 hl.bind(("%s + F1"):format(d.mod), hl.dsp.exec_cmd("jumpy display main"))
