@@ -1712,6 +1712,47 @@ class Tts:
         notifications."""
         spec = self._spec
         buffer = io.BytesIO() if self._copy else None
+        # One card from the request to the end of the utterance: a
+        # clock and a pulsing bar while the backend synthesises, then
+        # how much has been heard once the first byte can be. A sink
+        # that cannot say how far it is gets a single card at onset,
+        # and the waybar module carries the state that outlives it.
+        ticking = threading.Event()
+        heard = threading.Event()
+
+        def tick() -> None:
+            while not ticking.wait(Notification.TICK_SECONDS):
+                if not heard.is_set():
+                    self.NOTIFICATION.elapsed("synthesizing", extract=session.card())
+                    continue
+                progress = self._player.progress()
+                if progress is None:
+                    return
+                if session.paused:
+                    self.NOTIFICATION.hide()
+                    continue
+                position, total, done = progress
+                self.NOTIFICATION.playback(
+                    position,
+                    total,
+                    done=done,
+                    status="speaking",
+                    text=session.card(),
+                )
+
+        ticker = threading.Thread(target=tick, daemon=True)
+
+        def onset() -> None:
+            heard.set()
+            if self._player.progress() is None:
+                self._notify(session.card(), timeout=3000)
+
+        def stop() -> None:
+            ticking.set()
+            ticker.join(timeout=Notification.TIMEOUT)
+
+        self.NOTIFICATION.start()
+        ticker.start()
         # A dead backend and a dead player are different faults with
         # different fixes, so the notification has to tell them apart.
         # Backend first: URLError and TimeoutError are OSError subclasses
@@ -1731,39 +1772,6 @@ class Tts:
                     source = PrefixReader(
                         Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
-                # The card starts at the first byte that can be heard: at the
-                # open response it would advertise silence, since synthesis
-                # takes seconds to hand a byte over. A sink that can say how far
-                # it is gets a progress card for the whole utterance; one that
-                # cannot gets a single card, and the waybar module carries the
-                # state that outlives it.
-                ticking = threading.Event()
-
-                def tick() -> None:
-                    while not ticking.wait(Notification.TICK_SECONDS):
-                        progress = self._player.progress()
-                        if progress is None:
-                            return
-                        if session.paused:
-                            self.NOTIFICATION.hide()
-                            continue
-                        heard, total, done = progress
-                        self.NOTIFICATION.playback(
-                            heard,
-                            total,
-                            done=done,
-                            status="speaking",
-                            text=session.card(),
-                        )
-
-                ticker = threading.Thread(target=tick, daemon=True)
-
-                def onset() -> None:
-                    if self._player.progress() is None:
-                        self._notify(session.card(), timeout=3000)
-                    else:
-                        ticker.start()
-
                 source = OnsetReader(source, onset)
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
@@ -1772,23 +1780,26 @@ class Tts:
                     # next item before playing it, and holding the room quiet
                     # across that gap quiets it for nothing.
                     self._suppressor.restore()
-                    if ticker.is_alive():
-                        ticking.set()
-                        ticker.join(timeout=Notification.TIMEOUT)
-                        self.NOTIFICATION.dismiss()
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
             http.client.IncompleteRead,
             TimeoutError,
         ) as e:
+            stop()
             self.log.error("synthesis failed: %s", e)
             self._notify("Synthesis failed")
             return False
         except (FileNotFoundError, BrokenPipeError, OSError) as e:
+            stop()
             self.log.error("playback failed: %s", e)
             self._notify("Playback failed")
             return False
+        finally:
+            stop()
+
+        if self._player.progress() is not None:
+            self.NOTIFICATION.dismiss()
 
         if code != 0:
             self.log.error("%s exit=%d", self._player.mode.value, code)

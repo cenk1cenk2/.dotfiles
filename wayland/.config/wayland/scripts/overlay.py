@@ -158,8 +158,13 @@ class Card(Surface):
         self.status.set_visible(bool(status))
         self.clock.set_label(clock or "")
         self.clock.set_visible(clock is not None)
-        self.level.set_fraction(level or 0.0)
-        self.level.set_visible(level is not None)
+        # A running clock always has its bar, so the card does not grow one
+        # when the first level arrives; with no level to show, it pulses.
+        if level is None:
+            self.level.pulse()
+        else:
+            self.level.set_fraction(level)
+        self.level.set_visible(clock is not None or level is not None)
         self.meter.set_visible(clock is not None or level is not None)
         self.text.set_label(text)
         self.text.set_visible(bool(text))
