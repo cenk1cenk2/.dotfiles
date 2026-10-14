@@ -931,14 +931,16 @@ owns.
 ## synco (agent state sync)
 
 - `synco agents --peer <host> | --archive` syncs Claude/codex transcripts, memories, plans and
-  pastes. The archive is a **mirror**: anything a machine's Claude cleanup expires leaves every
-  side; it is not a long-term transcript backup.
+  pastes, and opencode sessions as exports (below). The archive is a **mirror**: anything a
+  machine's Claude cleanup expires leaves every side; it is not a long-term transcript backup.
 - **Receipts** (`~/.local/state/synco/base/<transport>/<profile>.json`) record what both sides
   were last observed to agree on. A missing file is a delete only against a receipt; without
   one the path is new. Each profile root and its far side carry a `.synco-id`; a missing or
   changed marker discards the receipt and the run re-bootstraps with no deletes. After
   restoring a profile dir or the archive from a backup or snapshot, delete that side's
-  `.synco-id`, or the stale receipt reads every newer file as deleted.
+  `.synco-id`, or the stale receipt reads every newer file as deleted. After restoring an
+  `opencode.db`, move that profile's opencode ledger aside too (below), a conscious bootstrap,
+  or the restored rows read as edits made here.
 - A path that exists locally but is not a regular file (a symlink, a dir where a file was, an
   unreadable subtree) is `held`, never read as deleted and never written through.
 - **Policies** (`POLICIES`, first match, default RETAIN): memories, conflict sidecars and codex
@@ -960,3 +962,67 @@ owns.
   from Claude's sweep.
 - Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
 - rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.
+
+### codex sessions
+
+- **Rollouts are canonical; codex's sqlite files are derived views.** `state_5.sqlite` and
+  `thread_history_1.sqlite` are rebuilt from the rollouts, so they are deliberately unsynced.
+  Never run `codex migrate-rollouts --apply` on a synced home. It renames a rewritten copy over
+  each rollout, and a rewrite that does not extend the old bytes is an APPEND conflict against
+  every other side's copy. Its staged
+  `.<name>.paginated.tmp` files are excluded, and its `rollout-migrations/` journal is outside the
+  includes.
+- **A pulled rollout gets reindexed so the resume picker shows it.** The picker lists threads from
+  `state_5.sqlite` only, and `codex resume <id>` finds a rollout without a row there anyway. When
+  a run pulls under `sessions/` or `archived_sessions/`, synco starts `codex app-server` with that
+  profile's `CODEX_HOME` and pages `thread/list` with `useStateDbOnly: false` and every source
+  kind, archived and not. That scan writes the missing rows. It needs no login. app-server drops
+  a request still pending when stdin closes, so the client keeps stdin open and reads each
+  answer, under a 300 s deadline that kills the process group. A failure is only a warning.
+
+### opencode sessions
+
+- **The database never leaves the machine.** `opencode.db` holds sessions *and* credentials, so
+  `reconcile` exports each session to `<root>/sessions/<id>.json` and the normal file machinery
+  carries those. It runs before planning and, if anything was pulled, again after. It starts
+  one `opencode serve --stdio --port 0` per profile, the way opencode's own `--standalone` does
+  (password in the environment, URL on the first stdout line, stdin held open as the lease), with
+  the profile's `OPENCODE_CONFIG_DIR` and `OPENCODE_DB`, and drives it over HTTP. The background
+  service is never asked. `--dry-run` starts no server and exports nothing.
+- **Import keeps every id and never merges.** An id already present is a 409, so a session that
+  changed elsewhere is deleted here and imported again. A delete takes the children with it, so
+  their exports are levelled first, every member's database body is written to the backup tree
+  as `<id>.json.db`, and the session is read again just before the delete; if it moved, the
+  replace waits a run. A replace is held under `--no-deletes` and while any `opencode` process
+  runs on this machine. Import stamps `time.updated` with the import time, so imported sessions
+  sort as just used, and two machines' exports of one session differ in bytes while carrying
+  equal message ids.
+- **The side that moved wins, shorter or not.** A revert deletes messages, so message ids do
+  not only grow. The ledger (`~/.local/state/synco/opencode/<slug>.json`) records each session's
+  `time.updated` and export size and mtime when the two last agreed. If only the database moved,
+  it is exported again; if only the export moved, it replaces the database row; if both moved,
+  the database's body becomes the export and the other is parked as
+  `<id>.json.conflict-incoming-<stamp>`. `Merge.SESSION` applies the same rule against the
+  receipt. Without a ledger entry or a receipt the longer message-id list wins, so a lost ledger
+  can undo a revert that has not landed yet; the overwritten export is backed up first. Equal
+  ids are `same`, so a title rename alone never propagates. Sidecars are never imported.
+- **`sessions/**` is RETAIN, and an edit beats a delete.** A session deleted here has its export
+  removed (with a backup, counted against `--max-delete`, held under `--no-deletes`) unless the
+  export changed since, in which case it is imported again. The far side keeps its copy, and an
+  absence elsewhere never deletes from a database. The ledger is keyed to the database file's
+  inode, so a recreated database starts over rather than reading every session as deleted. An
+  unreadable ledger refuses the profile instead: moving it aside is a conscious bootstrap, after
+  which the longer list wins and a revert whose replace is still pending can be undone. A
+  missing ledger bootstraps the same way, backing up every export it overwrites. During a
+  replace the members' entries
+  read `REPLACING`, so a kill at any point leaves exports to import, never deletions.
+- **Listing all sessions needs the API.** `opencode session list` lists one project's root
+  sessions; `GET /api/session` with neither `directory` nor `project` lists every session,
+  children included, paged by `cursor.next`.
+- **An import needs the session's directory to exist here**, as `GET /api/location` resolves it.
+  Without it the export is held and retried on every run, which `-v` explains. Sessions from old
+  `/tmp` scratchpads or deleted worktrees stay held for good, and so do their children.
+- **A database still mid V1→V2 migration is refused.** Each server start resumes that migration
+  in the background, so a listing is partial until it finishes. Leave opencode running on that
+  profile until `GET /api/experimental/migration/v1` says `completed`.
+- `--sanitize` is never used: it redacts every text, tool input and output and the directory.

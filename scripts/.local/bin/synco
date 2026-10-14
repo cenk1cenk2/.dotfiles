@@ -4,18 +4,24 @@
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import fcntl
 import hashlib
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,7 +30,8 @@ from enum import StrEnum
 from functools import cached_property
 from itertools import takewhile
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, Self
+from urllib.parse import urlencode
 
 import click
 from dotlib.cli import create_logger, run
@@ -50,12 +57,19 @@ class Merge(StrEnum):
     other side having extended it, and the deleted text comes back. The
     later mtime wins and the other body is kept in the backup tree; two
     edits the transport cannot order become a CONFLICT like any other.
+
+    SESSION is an opencode export: one JSON document, so a resumed session
+    never extends the old bytes. The side that changed since the receipt
+    wins, shorter or not, as a revert drops messages. Without a receipt the
+    longer message-id list wins; two lists neither of which extends the
+    other are a CONFLICT.
     """
 
     APPEND = "append"
     LINES = "lines"
     INDEX = "index"
     NEWER = "newer"
+    SESSION = "session"
 
 
 class Policy(StrEnum):
@@ -113,6 +127,8 @@ class Profile:
     root: Path
     # Whether the agent deletes old files here on its own schedule.
     sweeps: bool = False
+    # OPENCODE_CONFIG_DIR, for the vendor whose sessions live in sqlite.
+    config: Path | None = None
 
     @property
     def relative_root(self) -> Path:
@@ -210,6 +226,256 @@ class Base:
 
 
 @dataclass
+class Ledger:
+    """Per opencode session, the database's `time.updated` and the export's
+    size and mtime when the two last agreed.
+
+    Whichever moved since is the side that changed, which is what tells a
+    revert from a copy that merely runs shorter. Keyed to the database
+    file's inode, so a recreated database starts over rather than reading
+    as every session deleted.
+    """
+
+    VERSION: ClassVar[int] = 1
+    # In place of `time.updated` while a replace is under way: the export is
+    # the copy to keep, whether or not the database row is still there.
+    REPLACING: ClassVar[int] = -1
+
+    file: Path
+    database: int | None = None
+    sessions: dict[str, tuple[int, Entry]] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, file: Path, database: int) -> Ledger:
+        if not file.is_file():
+            return cls(file, database)
+        try:
+            data = json.loads(file.read_text())
+            if data.get("version") != cls.VERSION:
+                raise ValueError("unknown version")
+            if data["database"] != database:
+                return cls(file, database)
+            sessions = {
+                i: (int(updated), Entry(*raw))
+                for i, (updated, raw) in data["sessions"].items()
+            }
+        except (ValueError, KeyError, TypeError) as error:
+            # Not started over: with no ledger the longer message-id list
+            # wins, which undoes a revert whose replace is still pending.
+            raise click.ClickException(
+                f"ledger {file} unreadable ({error}); inspect it, or move it"
+                " aside to bootstrap again, accepting that a revert whose"
+                " replace is still pending can be undone"
+            ) from error
+
+        return cls(file, database, sessions)
+
+    def save(self) -> None:
+        self.file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.file.with_name(f".{self.file.name}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "version": self.VERSION,
+                    "database": self.database,
+                    "sessions": {
+                        i: [updated, [entry.size, entry.mtime]]
+                        for i, (updated, entry) in sorted(self.sessions.items())
+                    },
+                }
+            )
+        )
+        temporary.replace(self.file)
+
+
+class Opencode:
+    """A profile's sqlite store, behind one private `opencode serve --stdio`.
+
+    Started the way opencode's own `--standalone` starts it
+    (`cli/src/services/standalone.ts`): a password in the environment, the
+    URL on the first stdout line, and stdin held open as the lease, whose
+    EOF ends the server. One server per profile, not one per call.
+    """
+
+    TIMEOUT: ClassVar[float] = 120.0
+    PAGE: ClassVar[int] = 500
+
+    def __init__(self, profile: Profile, log: logging.Logger) -> None:
+        self.profile = profile
+        self.log = log
+        self.password = secrets.token_urlsafe(32)
+        self.url = ""
+        self.proc: subprocess.Popen[str] | None = None
+
+    @property
+    def database(self) -> Path:
+        return self.profile.root / "opencode.db"
+
+    def __enter__(self) -> Self:
+        assert self.profile.config is not None
+        cmd = ["opencode", "serve", "--stdio", "--port", "0"]
+        self.log.info("spawn: %s", " ".join(cmd))
+        self.proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            # As standalone.ts does: its logs only go to stderr with
+            # OPENCODE_PRINT_LOGS, and nothing else is written there.
+            stderr=subprocess.DEVNULL,
+            env={
+                **os.environ,
+                "OPENCODE_PASSWORD": self.password,
+                "OPENCODE_CONFIG_DIR": str(self.profile.config),
+                "OPENCODE_DB": str(self.database),
+            },
+            cwd=self.profile.root,
+            text=True,
+            start_new_session=True,
+        )
+        assert self.proc.stdout is not None
+        # A blocked readline cannot time out, so the deadline kills the
+        # group and the read then sees EOF.
+        timer = threading.Timer(self.TIMEOUT, self.kill)
+        timer.start()
+        try:
+            line = self.proc.stdout.readline()
+        finally:
+            timer.cancel()
+        try:
+            self.url = json.loads(line)["url"]
+        except (ValueError, KeyError, TypeError) as error:
+            self.close()
+            raise click.ClickException(f"opencode serve not ready: {line!r}") from error
+        # Drained so a later write by the server never fills the pipe.
+        threading.Thread(target=self.proc.stdout.read, daemon=True).start()
+
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def kill(self) -> None:
+        assert self.proc is not None
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.proc.pid, signal.SIGKILL)
+
+    def close(self) -> None:
+        assert self.proc is not None and self.proc.stdin is not None
+        with contextlib.suppress(BrokenPipeError):
+            self.proc.stdin.close()
+        try:
+            self.proc.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            self.kill()
+            self.proc.wait()
+
+    def request(
+        self, method: str, path: str, body: object = None
+    ) -> tuple[int, object]:
+        # Path only: bodies are whole transcripts.
+        self.log.debug("opencode: %s %s", method, path)
+        credentials = base64.b64encode(f"opencode:{self.password}".encode()).decode()
+        request = urllib.request.Request(
+            self.url + path,
+            method=method,
+            data=None if body is None else json.dumps(body).encode(),
+            headers={
+                "authorization": f"Basic {credentials}",
+                "content-type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.TIMEOUT) as response:
+                status, raw = response.status, response.read()
+        except urllib.error.HTTPError as error:
+            status, raw = error.code, error.read()
+
+        return status, json.loads(raw) if raw else None
+
+    def get(self, path: str) -> dict:
+        status, data = self.request("GET", path)
+        if status != 200 or not isinstance(data, dict):
+            raise click.ClickException(f"GET {path}: HTTP {status}")
+
+        return data
+
+    def migrating(self) -> str | None:
+        """The V1 history migration's state, or None once it is done.
+
+        Every server start resumes it in the background, so until it
+        completes a listing is partial and an import can take an id the
+        migration has yet to write.
+        """
+        status = self.get("/api/experimental/migration/v1")
+        if status["status"] == "completed":
+            return None
+        progress = status.get("progress") or {}
+        if "denominator" in progress:
+            return f"at {progress['numerator']}/{progress['denominator']}"
+
+        return f"{status['status']}: {status.get('error', '')}".rstrip(": ")
+
+    def sessions(self) -> dict[str, dict]:
+        """Every session, children included, across every project.
+
+        `opencode session list` is scoped to the cwd's project and lists
+        roots only; the route with neither filter lists all.
+        """
+        found: dict[str, dict] = {}
+        query = {"limit": str(self.PAGE), "order": "asc"}
+        while True:
+            page = self.get(f"/api/session?{urlencode(query)}")
+            found |= {s["id"]: s for s in page["data"]}
+            if len(page["data"]) < self.PAGE:
+                return found
+            query = {"limit": str(self.PAGE), "cursor": page["cursor"]["next"]}
+
+    def info(self, session: str) -> dict | None:
+        status, data = self.request("GET", f"/api/session/{session}")
+        if status == 404:
+            return None
+        if status != 200 or not isinstance(data, dict):
+            raise click.ClickException(f"session {session}: HTTP {status}")
+
+        return data["data"]
+
+    def export(self, session: str) -> dict:
+        # Unsanitised: sanitize redacts every text, tool input and output
+        # and the directory, leaving nothing worth carrying.
+        return self.get(f"/api/experimental/session/{session}/export")["data"]
+
+    def directory(self, directory: str) -> str | None:
+        """The directory as opencode resolves it, or None when it is not here."""
+        status, data = self.request(
+            "GET", f"/api/location?{urlencode({'location[directory]': directory})}"
+        )
+        if status != 200 or not isinstance(data, dict):
+            return None
+
+        return data["directory"]
+
+    def load(self, data: dict, directory: str) -> int:
+        """Import an export, keeping its ids; returns the HTTP status.
+
+        An id already present is a 409 rather than a merge, so a session
+        that changed elsewhere has to be deleted here first.
+        """
+        status, _ = self.request(
+            "POST",
+            "/api/experimental/session/import",
+            {**data, "location": {"directory": directory}},
+        )
+
+        return status
+
+    def delete(self, session: str) -> None:
+        """Delete a session; opencode takes its child sessions with it."""
+        status, _ = self.request("DELETE", f"/api/session/{session}")
+        if status not in (200, 204):
+            raise click.ClickException(f"delete {session}: HTTP {status}")
+
+
+@dataclass
 class Report:
     profile: Profile
     steps: list[Step] = field(default_factory=list)
@@ -228,6 +494,9 @@ class Report:
     # listed as regular files: a symlink, a dir where a file was, an
     # unreadable subtree. Absent from the listing, yet not deleted.
     unknown: set[str] = field(default_factory=set)
+    # opencode sessions changed both in the database and in the export,
+    # whose export body was parked beside the original.
+    parked: list[str] = field(default_factory=list)
 
     def obscured(self, path: str) -> bool:
         return any(path == u or path.startswith(f"{u}/") for u in self.unknown)
@@ -437,6 +706,21 @@ class Synco:
     SESSION_ID = re.compile(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     )
+    OPENCODE_ID = re.compile(r"ses_[0-9A-Za-z]+")
+    REINDEX_TIMEOUT = 300.0
+    # Every `ThreadSourceKind` in app-server's schema, subagents included.
+    CODEX_SOURCES = (
+        "cli",
+        "vscode",
+        "exec",
+        "appServer",
+        "subAgent",
+        "subAgentReview",
+        "subAgentCompact",
+        "subAgentThreadSpawn",
+        "subAgentOther",
+        "unknown",
+    )
 
     # Mass-delete gate: unexplained absences on one side above both of these
     # refuse the profile, as does a whole directory of at least SUBTREE gone.
@@ -464,11 +748,13 @@ class Synco:
             "personal/kilic",
             Vendor.OPENCODE,
             Path.home() / ".local/share/opencode-kilic",
+            config=Path.home() / ".config/opencode-kilic",
         ),
         Profile(
             "work/ollama",
             Vendor.OPENCODE,
             Path.home() / ".local/share/opencode-laravel",
+            config=Path.home() / ".config/opencode-laravel",
         ),
     )
 
@@ -492,7 +778,9 @@ class Synco:
             "history.jsonl",
             "session_index.jsonl",
         ),
-        Vendor.OPENCODE: (),
+        # Not the database, which also holds the credentials: one export per
+        # session, written and read back by `reconcile`.
+        Vendor.OPENCODE: ("sessions/**",),
     }
 
     # Credentials are excluded by path rather than by flag, so no invocation
@@ -522,8 +810,17 @@ class Synco:
             "memories/raw_memories.md",
             "memories/rollout_summaries/**",
             "memories/phase2_workspace_diff.md",
+            # `codex migrate-rollouts` stages its rewrite beside the rollout
+            # and renames it into place; its journal sits in
+            # `rollout-migrations/`, which no include reaches.
+            "sessions/**/.*.tmp",
+            "archived_sessions/**/.*.tmp",
         ),
-        Vendor.OPENCODE: (),
+        Vendor.OPENCODE: (
+            "opencode.db",
+            "opencode.db-*",
+            "**/.*.synco",
+        ),
     }
 
     MERGES: ClassVar[dict[Vendor, tuple[tuple[str, Merge], ...]]] = {
@@ -547,7 +844,7 @@ class Synco:
             ("sessions/**/*.zst", Merge.NEWER),
             ("archived_sessions/**/*.zst", Merge.NEWER),
         ),
-        Vendor.OPENCODE: (),
+        Vendor.OPENCODE: (("sessions/*.json", Merge.SESSION),),
     }
 
     # First match wins; anything unlisted is RETAIN, so a kind nobody thought
@@ -571,7 +868,12 @@ class Synco:
             ("archived_sessions/**", Policy.PROPAGATE),
             ("memories/**", Policy.PROPAGATE),
         ),
-        Vendor.OPENCODE: (),
+        Vendor.OPENCODE: (
+            ("**/*.conflict-*", Policy.PROPAGATE),
+            # opencode sweeps nothing, but an absence still never reaches a
+            # database: a session deleted here stays wherever else it is.
+            ("sessions/**", Policy.RETAIN),
+        ),
     }
 
     ACTION_STYLES: ClassVar[dict[Action, str]] = {
@@ -978,6 +1280,18 @@ class Synco:
         return longer.startswith(shorter)
 
     @staticmethod
+    def transcript(body: str) -> tuple[str, ...] | None:
+        """An opencode export's message ids in order, or None if unreadable."""
+        try:
+            return tuple(m["id"] for m in json.loads(body)["messages"])
+        except ValueError, KeyError, TypeError:
+            return None
+
+    @staticmethod
+    def extends(longer: tuple[str, ...], shorter: tuple[str, ...]) -> bool:
+        return len(longer) > len(shorter) and longer[: len(shorter)] == shorter
+
+    @staticmethod
     def merge_lines(local: str, remote: str) -> str:
         """Both sides' lines, in an order consistent with both.
 
@@ -1294,11 +1608,8 @@ class Synco:
                 for step in chosen:
                     report.hold(step.path, f"over {flag} {limit}")
 
-    def plan(self, profile: Profile, staging: Path) -> Report:
-        report = Report(profile)
-        if not self.INCLUDES[profile.vendor]:
-            report.skipped = "no file-backed state; lives in sqlite"
-            return report
+    def plan(self, report: Report, staging: Path) -> Report:
+        profile = report.profile
         if not profile.root.is_dir():
             report.skipped = f"{profile.root} absent"
             return report
@@ -1373,11 +1684,13 @@ class Synco:
         for path in sorted(undecided):
             report.steps.append(self.decide(profile, path, staging))
         for path in mergeable:
-            report.steps.append(self.combine(profile, path, staging))
+            report.steps.append(self.combine(profile, path, staging, report))
 
         return report
 
-    def combine(self, profile: Profile, path: str, staging: Path) -> Step:
+    def combine(
+        self, profile: Profile, path: str, staging: Path, report: Report
+    ) -> Step:
         kind = self.merge_kind(profile, path)
         target = profile.root / path
         landed = staging / path
@@ -1386,6 +1699,32 @@ class Synco:
         # makes a gap look almost a second smaller than it was.
         drift = int(landed.stat().st_mtime) - int(target.stat().st_mtime)
         peer_is_newer = drift > 0
+        if kind is Merge.SESSION:
+            ours = self.transcript(target.read_text())
+            theirs = self.transcript(landed.read_text())
+            if ours is None or theirs is None:
+                return Step(path, Action.CONFLICT, kind, "unreadable export")
+            # Equal ids with different bytes is one session imported on the
+            # other side, which stamps its own time.updated on it.
+            if ours == theirs:
+                return Step(path, Action.SAME, kind)
+            pair = report.base.paths.get(path) if report.base else None
+            if pair is not None:
+                # The side that changed since both agreed wins even when it
+                # is shorter: a revert travels like any other edit.
+                here = report.local.get(path) != pair[0]
+                there = report.remote.get(path) != pair[1]
+                if here and not there:
+                    return Step(path, Action.PUSH, kind, "changed here")
+                if there and not here:
+                    return Step(path, Action.PULL, kind, "changed there")
+                return Step(path, Action.CONFLICT, kind, "changed on both")
+            if self.extends(theirs, ours):
+                return Step(path, Action.PULL, kind, "peer's runs further")
+            if self.extends(ours, theirs):
+                return Step(path, Action.PUSH, kind, "ours runs further")
+
+            return Step(path, Action.CONFLICT, kind, "resumed on both")
         if kind is Merge.NEWER:
             if target.read_bytes() == landed.read_bytes():
                 return Step(path, Action.SAME, kind)
@@ -1671,6 +2010,424 @@ class Synco:
 
         return parked
 
+    def reconcile(self, profile: Profile, report: Report) -> None:
+        """Level an opencode profile's database with its session exports.
+
+        Runs before planning and again after a pull. The ledger tells which
+        side moved since the two last agreed, and that side wins, so a revert
+        travels like any edit; with no ledger entry the longer message-id
+        list wins. Both moved parks the export beside the database's body.
+        """
+        store = Opencode(profile, self.log)
+        if not store.database.is_file():
+            # Pointed at a missing file, opencode would create an empty one.
+            self.log.info("%s: no database, nothing to export", profile.name)
+            return
+        if self.dry_run:
+            self.console.print(
+                f"{profile.name}: dry run starts no opencode server, so sessions"
+                " are neither exported nor imported; the plan covers the"
+                " exports as they stand"
+            )
+            return
+        live = (
+            run(
+                ["pgrep", "-x", "-u", str(os.getuid()), "opencode"],
+                log=self.log,
+                timeout=30.0,
+            ).returncode
+            == 0
+        )
+        ledger = Ledger.load(
+            self.STATE_DIR / "opencode" / f"{profile.slug}.json",
+            store.database.stat().st_ino,
+        )
+        folder = profile.root / "sessions"
+
+        def entry(session: str) -> Entry | None:
+            try:
+                info = (folder / f"{session}.json").lstat()
+            except FileNotFoundError:
+                return None
+            return Entry(info.st_size, int(info.st_mtime))
+
+        def parent(session: str) -> str | None:
+            if session in known:
+                return known[session].get("parentID")
+            try:
+                return json.loads((folder / f"{session}.json").read_text())["info"].get(
+                    "parentID"
+                )
+            except OSError, ValueError, KeyError, TypeError, AttributeError:
+                return None
+
+        def depth(session: str) -> int:
+            found = 0
+            above = parent(session)
+            while above is not None and found < 64:
+                found += 1
+                above = parent(above)
+            return found
+
+        exports = (
+            [p for p in folder.glob("ses_*.json") if self.OPENCODE_ID.fullmatch(p.stem)]
+            if folder.is_dir()
+            else []
+        )
+        files = {p.stem for p in exports if p.is_file() and not p.is_symlink()}
+        # A symlink or a directory where an export belongs: never read as a
+        # session, never written through.
+        irregular = {p.stem for p in exports} - files
+
+        with store:
+            if (state := store.migrating()) is not None:
+                raise click.ClickException(
+                    f"V1 migration {state}; let opencode finish it first"
+                )
+            known = store.sessions()
+            replacing = {
+                s
+                for s, (updated, _) in ledger.sessions.items()
+                if updated == Ledger.REPLACING
+            }
+            # A replace cut short is not a delete: its export is imported.
+            gone = [s for s in ledger.sessions if s not in known and s not in replacing]
+            if (
+                len(gone) > self.GATE_COUNT
+                and len(gone) > self.GATE_RATIO * len(ledger.sessions)
+                and not self.force_deletes
+            ):
+                raise click.ClickException(
+                    f"{len(gone)} of {len(ledger.sessions)} sessions gone from the database"
+                )
+            # An export that changed since is an edit elsewhere, which beats
+            # this delete: it is imported again below.
+            unlink = [
+                s for s in gone if s in files and entry(s) == ledger.sessions[s][1]
+            ]
+            holding = self.no_deletes or len(unlink) > self.max_delete
+            if holding and unlink:
+                report.capped = not self.no_deletes
+                self.log.warning(
+                    "%s: %d deleted session(s) held", profile.name, len(unlink)
+                )
+            pending = [
+                s
+                for s, info in known.items()
+                if ledger.sessions.get(s) != (info["time"]["updated"], entry(s))
+            ]
+            # A deletion held keeps its export, and one carried out removes
+            # it; neither is a session to import.
+            pending += [
+                s
+                for s in files
+                if s not in known and not (s in gone and (holding or s in unlink))
+            ]
+
+            exported = imported = replaced = held = 0
+            touched: set[str] = set()
+            try:
+                for session in replacing - set(known) - files:
+                    del ledger.sessions[session]
+                if not holding:
+                    for session in gone:
+                        if session in unlink:
+                            self.backup(profile, f"sessions/{session}.json")
+                            (folder / f"{session}.json").unlink()
+                        del ledger.sessions[session]
+
+                for session in sorted(pending, key=depth):
+                    path = folder / f"{session}.json"
+                    if session in irregular:
+                        held += 1
+                        continue
+                    if session not in known:
+                        if self.restore(store, path, known):
+                            imported += 1
+                            touched.add(session)
+                        else:
+                            held += 1
+                        continue
+                    seen = ledger.sessions.get(session)
+                    updated = known[session]["time"]["updated"]
+                    data = store.export(session)
+                    ours = tuple(m["id"] for m in data["messages"])
+                    theirs = (
+                        self.transcript(path.read_text()) if path.is_file() else None
+                    )
+                    if theirs is None or theirs != ours:
+                        if seen is None:
+                            db_moved, file_moved = (
+                                theirs is not None and self.extends(ours, theirs),
+                                theirs is not None and self.extends(theirs, ours),
+                            )
+                        else:
+                            db_moved = seen[0] not in (updated, Ledger.REPLACING)
+                            file_moved = seen[0] == Ledger.REPLACING or seen[
+                                1
+                            ] != entry(session)
+                        if not path.is_file():
+                            self.write_export(path, data)
+                            exported += 1
+                        elif file_moved and not db_moved:
+                            restored = self.replace(
+                                store, profile, session, data, known, ledger, live
+                            )
+                            touched.update(restored or ())
+                            if restored is None or session not in restored:
+                                held += 1
+                            else:
+                                replaced += 1
+                            continue
+                        elif db_moved and not file_moved:
+                            # Without a ledger entry the longer list only
+                            # looks newer: the shorter one may be a revert.
+                            if (
+                                seen is None
+                                or theirs is None
+                                or not self.extends(ours, theirs)
+                            ):
+                                self.backup(profile, f"sessions/{session}.json")
+                            self.write_export(path, data)
+                            exported += 1
+                        else:
+                            parked = path.with_name(
+                                f"{path.name}.conflict-incoming-{self.stamp}"
+                            )
+                            self.log.warning(
+                                "%s: %s changed on both", profile.name, session
+                            )
+                            shutil.copy2(path, parked)
+                            self.write_export(path, data)
+                            report.parked.append(f"sessions/{parked.name}")
+                    ledger.sessions[session] = (updated, entry(session))
+
+                if touched:
+                    # An import stamps its own time.updated, so the ledger
+                    # takes the database's word rather than the export's.
+                    known = store.sessions()
+                    for session in touched & set(known):
+                        ledger.sessions[session] = (
+                            known[session]["time"]["updated"],
+                            entry(session),
+                        )
+            finally:
+                ledger.save()
+        if exported or imported or replaced or held or report.parked:
+            self.console.print(
+                f"{profile.name}: exported {exported}, imported {imported},"
+                f" replaced {replaced}, held {held}, parked {len(report.parked)}"
+            )
+
+    def restore(self, store: Opencode, path: Path, known: dict[str, dict]) -> bool:
+        """Import one export; False, with the reason logged, when it cannot be.
+
+        A child needs its parent imported first, and opencode resolves the
+        session's project from its directory, which must exist here.
+        """
+        try:
+            data = json.loads(path.read_text())
+            info = data["info"]
+            directory = store.directory(info["location"]["directory"])
+        except OSError, ValueError, KeyError, TypeError:
+            self.log.warning("%s: unreadable export", path)
+            return False
+        # Debug, not warning: both recur on every run for as long as the
+        # directory is missing — a deleted worktree, an old /tmp scratchpad —
+        # and the held count already says how many there are.
+        if info.get("parentID") and info["parentID"] not in known:
+            self.log.debug("%s: parent %s not here", path.stem, info["parentID"])
+            return False
+        if directory is None:
+            self.log.debug("%s: %s absent here", path.stem, info["location"])
+            return False
+        if (status := store.load(data, directory)) != 200:
+            self.log.warning("%s: import refused, HTTP %d", path.stem, status)
+            return False
+        known.setdefault(path.stem, info)
+
+        return True
+
+    def replace(
+        self,
+        store: Opencode,
+        profile: Profile,
+        session: str,
+        planned: dict,
+        known: dict[str, dict],
+        ledger: Ledger,
+        live: bool,
+    ) -> list[str] | None:
+        """Swap a session in the database for the copy in its export.
+
+        Import refuses an existing id, and a delete takes the children along,
+        so each child's export is brought level first and every member's
+        database body is backed up as `<id>.json.db`. Returns the members
+        imported again, or None when nothing was deleted.
+        """
+        if self.no_deletes or live:
+            self.log.info(
+                "%s: replace held, %s",
+                session,
+                "deletes disabled" if self.no_deletes else "opencode running here",
+            )
+            return None
+        folder = profile.root / "sessions"
+        children: dict[str, list[str]] = {}
+        for child, info in known.items():
+            if info.get("parentID"):
+                children.setdefault(info["parentID"], []).append(child)
+        tree: list[str] = []
+        queue = list(children.get(session, []))
+        while queue:
+            tree.append(child := queue.pop(0))
+            queue += children.get(child, [])
+
+        for member in (session, *tree):
+            if store.directory(known[member]["location"]["directory"]) is None:
+                self.log.warning("%s: directory absent here, replace held", member)
+                return None
+        bodies = {session: planned}
+        for child in tree:
+            path = folder / f"{child}.json"
+            bodies[child] = data = store.export(child)
+            ours = tuple(m["id"] for m in data["messages"])
+            theirs = self.transcript(path.read_text()) if path.is_file() else None
+            if theirs is None or not (theirs == ours or self.extends(theirs, ours)):
+                if path.is_file():
+                    self.backup(profile, f"sessions/{child}.json")
+                self.write_export(path, data)
+        for member, data in bodies.items():
+            target = self.backup_root / profile.slug / "sessions" / f"{member}.json.db"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            self.record(
+                {
+                    "profile": profile.name,
+                    "session": member,
+                    "size": target.stat().st_size,
+                    "backup": str(target),
+                }
+            )
+
+        # Whatever ran in the database since it was read is not in the
+        # backup, so a session that moved is left for the next run.
+        current = store.info(session)
+        if (
+            current is None
+            or current["time"]["updated"] != known[session]["time"]["updated"]
+            or store.export(session)["messages"] != planned["messages"]
+        ):
+            self.log.warning("%s: changed since planning, replace held", session)
+            return None
+
+        for member in (session, *tree):
+            info = (folder / f"{member}.json").lstat()
+            entry = Entry(info.st_size, int(info.st_mtime))
+            ledger.sessions[member] = (Ledger.REPLACING, entry)
+            known.pop(member)
+        # Saved before the delete: a kill anywhere after this leaves entries
+        # saying the export is the copy to keep, never ones that read as a
+        # deletion and unlink a child's export or as the database moving.
+        ledger.save()
+        store.delete(session)
+
+        return [
+            member
+            for member in (session, *tree)
+            if self.restore(store, folder / f"{member}.json", known)
+        ]
+
+    @staticmethod
+    def write_export(path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Renamed into place, so a transfer never reads half of it.
+        temporary = path.with_name(f".{path.name}.synco")
+        temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(path)
+
+    def reindex(self, profile: Profile) -> None:
+        """Have codex index the rollouts pulled this run.
+
+        Its resume picker reads `state_5.sqlite` alone, so a rollout with no
+        row there resumes by id but never shows up. `thread/list` without
+        `useStateDbOnly` scans the rollouts and writes the missing rows.
+        app-server drops a request still pending when stdin closes, which
+        rules out `dotlib.cli.run`: stdin stays open until every page is read.
+        """
+        cmd = ["codex", "app-server"]
+        self.log.info("spawn: %s", " ".join(cmd))
+        stderr = self.backup_root / "lists" / f"app-server-{profile.slug}.log"
+        stderr.parent.mkdir(parents=True, exist_ok=True)
+        with stderr.open("w") as sink:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=sink,
+                env={**os.environ, "CODEX_HOME": str(profile.root)},
+                text=True,
+                start_new_session=True,
+            )
+        assert proc.stdin is not None and proc.stdout is not None
+        # A blocked readline cannot time out, so the deadline kills the group
+        # instead and the read then sees EOF.
+        timer = threading.Timer(
+            self.REINDEX_TIMEOUT, os.killpg, (proc.pid, signal.SIGKILL)
+        )
+        timer.start()
+        indexed = 0
+        try:
+
+            def call(method: str, params: dict) -> dict:
+                ask = {"id": method, "method": method, "params": params}
+                proc.stdin.write(json.dumps(ask) + "\n")
+                proc.stdin.flush()
+                for line in proc.stdout:
+                    message = json.loads(line)
+                    if message.get("id") != method:
+                        continue
+                    if "error" in message:
+                        raise ValueError(f"{method}: {message['error']}")
+                    return message["result"]
+                if not timer.is_alive():
+                    raise subprocess.TimeoutExpired(cmd, self.REINDEX_TIMEOUT)
+                raise ValueError(f"{method}: app-server exited")
+
+            call("initialize", {"clientInfo": {"name": "synco", "version": "1"}})
+            proc.stdin.write(json.dumps({"method": "initialized"}) + "\n")
+            for archived in (False, True):
+                cursor = None
+                while True:
+                    page = call(
+                        "thread/list",
+                        {
+                            "limit": 500,
+                            "cursor": cursor,
+                            "archived": archived,
+                            "useStateDbOnly": False,
+                            # Empty means every provider; omitted, only the
+                            # configured one.
+                            "modelProviders": [],
+                            # Omitted, interactive sources only.
+                            "sourceKinds": list(self.CODEX_SOURCES),
+                        },
+                    )
+                    indexed += len(page["data"])
+                    if not (cursor := page.get("nextCursor")):
+                        break
+        finally:
+            timer.cancel()
+            with contextlib.suppress(BrokenPipeError):
+                proc.stdin.close()
+            try:
+                proc.wait(timeout=30.0)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            self.log.debug("app-server stderr: %s", stderr.read_text())
+        self.log.info("%s: %d thread(s) indexed", profile.name, indexed)
+
     def live_vendors(self) -> set[Vendor]:
         """Which vendors have a process running on either side.
 
@@ -1724,7 +2481,7 @@ class Synco:
                 str(report.count(Action.KEEP)),
                 str(report.count(Action.UNCLAIMED)),
                 str(report.count(Action.HELD)),
-                str(report.count(Action.CONFLICT)),
+                str(report.count(Action.CONFLICT) + len(report.parked)),
                 report.skipped
                 or (f"refused: {report.refused}" if report.refused else "")
                 or ("capped" if report.capped else ""),
@@ -1811,9 +2568,26 @@ class Synco:
 
         self.warn_live(live)
         reports: list[Report] = []
+        # One profile's failure refuses that profile; the rest still sync.
+        failed = (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            click.ClickException,
+            OSError,
+            ValueError,
+            KeyError,
+        )
         for profile in profiles:
-            report = self.plan(profile, staging / profile.slug)
+            report = Report(profile)
             reports.append(report)
+            if profile.vendor is Vendor.OPENCODE:
+                try:
+                    self.reconcile(profile, report)
+                except failed as error:
+                    self.log.error("%s: %s", profile.name, error)
+                    report.refused = f"export failed: {error}"
+                    continue
+            self.plan(report, staging / profile.slug)
             self.detail(report)
             # Applied here rather than once every profile is planned: the
             # gap between reading the peer and writing to it is the window
@@ -1824,15 +2598,29 @@ class Synco:
                 # run re-plans safely; the remaining profiles still sync.
                 try:
                     sent = self.apply(profile, report, staging / profile.slug)
-                except (
-                    subprocess.CalledProcessError,
-                    subprocess.TimeoutExpired,
-                    click.ClickException,
-                ) as error:
+                except failed as error:
                     self.log.error("%s: %s", profile.name, error)
                     report.refused = f"apply failed: {error}"
                     continue
                 self.settle(profile, report, sent)
+                if profile.vendor is Vendor.OPENCODE and report.count(Action.PULL):
+                    try:
+                        self.reconcile(profile, report)
+                    except failed as error:
+                        self.log.error("%s: %s", profile.name, error)
+                        report.refused = f"import failed: {error}"
+                if profile.vendor is Vendor.CODEX and any(
+                    s.action is Action.PULL
+                    and s.path.startswith(("sessions/", "archived_sessions/"))
+                    for s in report.steps
+                ):
+                    try:
+                        self.reindex(profile)
+                    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                        # Nothing is lost: the rollouts are in place and
+                        # `codex resume <id>` finds them, only the picker
+                        # misses them until codex scans on its own.
+                        self.log.warning("%s: reindex failed: %s", profile.name, error)
 
         # Printed at the end as well because rclone's progress meter pushes
         # anything above it off screen on a transfer of any size.
@@ -1845,7 +2633,8 @@ class Synco:
                 " sync; review them and rerun with --adopt to push"
             )
         failures = sum(
-            r.count(Action.CONFLICT) + bool(r.refused) + r.capped for r in reports
+            r.count(Action.CONFLICT) + len(r.parked) + bool(r.refused) + r.capped
+            for r in reports
         )
         if self.dry_run:
             self.console.rule(self.DRY_RUN_BANNER)
@@ -1954,7 +2743,7 @@ class Synco:
                 profile.name,
                 profile.vendor,
                 str(profile.root),
-                "sqlite" if not Synco.INCLUDES[profile.vendor] else "files",
+                "sqlite export" if profile.vendor is Vendor.OPENCODE else "files",
                 "yes" if profile.sweeps else "no",
                 "yes" if profile.root.is_dir() else "no",
             )
