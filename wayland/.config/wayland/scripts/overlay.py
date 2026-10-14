@@ -128,7 +128,12 @@ class Card(Surface):
         self.meter = Gtk.Box(spacing=8)
         self.meter.append(self.clock)
         self.meter.append(self.level)
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # The bar has no width of its own, so before any text arrives the body
+        # would shrink to the clock and the bar to nothing. A floor keeps the
+        # card one size from its first frame to its last.
+        body = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=6, width_request=360
+        )
         body.append(header)
         body.append(self.meter)
         body.append(self.text)
