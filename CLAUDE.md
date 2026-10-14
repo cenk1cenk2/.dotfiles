@@ -691,6 +691,14 @@ not set. Read the active line, never the comment above it.
   ours is the border, on the content box because GTK draws no CSS border on a
   toplevel's node, in the palette's `@bg_color_400` (swaync's notification
   border) because the theme's `@borders` is 12% white and invisible here.
+- **A card's status pill belongs to the consumer.** `dotlib.notify.Status`
+  is only a label and a symbolic icon; each script defines its own as class
+  constants (`Stt.LISTENING`, `Tts.SPEAKING`, `Copywriter.REFINING`) and
+  passes them in. `dotlib` names no phase of anyone's work. A `Status` may
+  carry its own fill and text colour; without them the pill is the theme's
+  `@accent_bg_color` / `@accent_fg_color` pair. The daemon applies a caller's
+  colours as one display-wide rule over the card's pill, reloaded only when
+  they change.
 - **Keycaps are not `Gtk.ShortcutLabel`**, which capitalises every letter so
   `w` and `Shift+w` read alike. `Keycaps` is a box whose CSS name is set to
   `shortcut`, the only node the theme styles `.keycap` under; letters keep

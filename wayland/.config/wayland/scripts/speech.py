@@ -47,6 +47,7 @@ from dotlib.notify import (
     ChimeDirection,
     Notification,
     OsdIcon,
+    Status,
 )
 from dotlib.waybar import (
     signal_waybar,
@@ -533,6 +534,12 @@ class SttSession(SocketSession):
 class Stt:
     ICON = "audio-input-microphone"
     NOTIFICATION = Notification("STT", ICON, OsdIcon.MIC)
+    # Red while the microphone is live, the one phase worth noticing at a glance.
+    LISTENING = Status(
+        "listening", "audio-input-microphone-symbolic", "#e06c75", "#17191e"
+    )
+    TRANSCRIBING = Status("transcribing", "emblem-synchronizing-symbolic")
+    ENRICHING = Status("enriching", "document-edit-symbolic")
     SYSTEM_PROMPT = load_prompt("stt.md", relative_to=__file__)
     # Biases the recogniser toward the vocabulary this machine dictates in.
     WHISPER_PROMPT = load_prompt("stt-whisper.md", relative_to=__file__)
@@ -659,12 +666,12 @@ class Stt:
                 # The mic is shut; what runs now is the take closing and the
                 # transcription coming back, so the card says so instead of
                 # holding a dead level bar.
-                osd.elapsed("transcribing", icon=OsdIcon.THINKING, extract=tail)
+                osd.elapsed(self.TRANSCRIBING, icon=OsdIcon.THINKING, extract=tail)
                 return
             if server is not None and server.state.paused:
                 osd.hide()
                 return
-            osd.elapsed(level=_level(self._adapter), extract=tail)
+            osd.elapsed(self.LISTENING, level=_level(self._adapter), extract=tail)
 
         # Turns go to the sink as they close, not just to the card, when the
         # sink can take them and nothing downstream will rewrite them. An
@@ -766,7 +773,6 @@ class Stt:
                 and isinstance(enricher, EnrichStreaming)
                 and isinstance(output, OutputStreaming)
             ):
-                osd.send(osd.tail(text), icon=OsdIcon.THINKING, extract=True)
                 if save and not is_headless():
                     OutputAdapterClipboard().write(text)
                 if server:
@@ -784,7 +790,11 @@ class Stt:
                 # in whatever window has focus.
                 output.write_stream(
                     counted(
-                        osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING)
+                        osd.echo(
+                            enricher.enrich_stream(text),
+                            status=self.ENRICHING,
+                            icon=OsdIcon.THINKING,
+                        )
                     )
                 )
                 osd.dismiss(f"{len(text)} → {streamed} chars", icon=OsdIcon.DONE)
@@ -793,7 +803,6 @@ class Stt:
 
             raw = len(text)
             if enricher is not None:
-                osd.send("enriching", icon=OsdIcon.THINKING)
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
@@ -802,10 +811,15 @@ class Stt:
                     # clipboard holds one value, but watching the rewrite
                     # arrive is what says the wait is going somewhere.
                     enriched = "".join(
-                        osd.echo(enricher.enrich_stream(text), icon=OsdIcon.THINKING)
+                        osd.echo(
+                            enricher.enrich_stream(text),
+                            status=self.ENRICHING,
+                            icon=OsdIcon.THINKING,
+                        )
                     )
                 else:
-                    enriched = enricher.enrich(text)
+                    with osd.working(self.ENRICHING, icon=OsdIcon.THINKING):
+                        enriched = enricher.enrich(text)
                 if enriched and enriched.strip():
                     text = enriched.strip()
                 else:
@@ -1598,6 +1612,9 @@ def tts_speak_options():
 class Tts:
     ICON = "audio-headphones"
     NOTIFICATION = Notification("TTS", ICON, OsdIcon.SPEAKER)
+    REWRITING = Status("rewriting", "document-edit-symbolic")
+    SYNTHESIZING = Status("synthesizing", "emblem-synchronizing-symbolic")
+    SPEAKING = Status("speaking", "audio-volume-high-symbolic", "#98c379", "#17191e")
     # wl-paste also advertises the legacy X11 selection atoms, and some
     # toolkits offer nothing else for plain text.
     TEXT_ATOMS = ("UTF8_STRING", "STRING", "TEXT")
@@ -1679,17 +1696,17 @@ class Tts:
 
         if isinstance(self._enricher, EnrichStreaming):
             # Synthesis needs the whole rewrite before it can speak a word, so
-            # the card is the only place the wait shows as progress. A message
-            # card, because there is no level yet: a progress one would draw a
-            # bar for audio that has not been synthesised.
+            # the card is the only place the wait shows as progress.
             rewritten = "".join(
                 self.NOTIFICATION.echo(
-                    self._enricher.enrich_stream(text), icon=OsdIcon.THINKING
+                    self._enricher.enrich_stream(text),
+                    status=self.REWRITING,
+                    icon=OsdIcon.THINKING,
                 )
             )
         else:
-            self._notify("Rewriting for speech...", timeout=3000)
-            rewritten = self._enricher.enrich(text)
+            with self.NOTIFICATION.working(self.REWRITING, icon=OsdIcon.THINKING):
+                rewritten = self._enricher.enrich(text)
         if not (rewritten and rewritten.strip()):
             self.log.warning("rewrite empty; speaking raw")
             self._notify("Rewrite failed, speaking raw text")
@@ -1723,7 +1740,7 @@ class Tts:
         def tick() -> None:
             while not ticking.wait(Notification.TICK_SECONDS):
                 if not heard.is_set():
-                    self.NOTIFICATION.elapsed("synthesizing", extract=session.card())
+                    self.NOTIFICATION.elapsed(self.SYNTHESIZING, extract=session.card())
                     continue
                 progress = self._player.progress()
                 if progress is None:
@@ -1736,7 +1753,7 @@ class Tts:
                     position,
                     total,
                     done=done,
-                    status="speaking",
+                    status=self.SPEAKING,
                     text=session.card(),
                 )
 

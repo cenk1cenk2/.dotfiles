@@ -30,6 +30,7 @@ from dotlib.notify import (
     ChimeDirection,
     Notification,
     OsdIcon,
+    Status,
 )
 from dotlib.waybar import (
     signal_waybar,
@@ -58,6 +59,7 @@ class Copywriter:
     )
     ICON = "accessories-text-editor"
     NOTIFICATION = Notification("Copywriter", ICON, OsdIcon.WRITING)
+    REFINING = Status("refining", "document-edit-symbolic")
     SYSTEM_PROMPT = load_prompt("copywriter.md", relative_to=__file__)
     USER_PROMPT = "Clean up the following text:\n<text>\n{text}\n</text>"
 
@@ -166,17 +168,19 @@ class Copywriter:
             return
 
         self.log.info("%s text: %d chars", self._input.mode.value, len(text))
-        self.NOTIFICATION.send(f"{len(text)} chars")
         if isinstance(self._enricher, EnrichStreaming):
             # Joined, because the sink holds one value: the streaming is for
             # the card, which is where a rewrite going wrong becomes visible.
             result = "".join(
                 self.NOTIFICATION.echo(
-                    self._enricher.enrich_stream(text), icon=OsdIcon.WRITING
+                    self._enricher.enrich_stream(text),
+                    status=self.REFINING,
+                    icon=OsdIcon.WRITING,
                 )
             )
         else:
-            result = self._enricher.enrich(text)
+            with self.NOTIFICATION.working(self.REFINING, icon=OsdIcon.WRITING):
+                result = self._enricher.enrich(text)
         if not result or not result.strip():
             self.log.warning(
                 "enrichment empty; leaving %s unchanged", self._output.mode.value

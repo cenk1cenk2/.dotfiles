@@ -13,8 +13,11 @@ import os
 import struct
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import ClassVar
 
@@ -56,6 +59,20 @@ class OsdIcon(StrEnum):
     WRITING = "document-edit-symbolic"
     DONE = "object-select"
     ERROR = "dialog-error"
+
+
+@dataclass(frozen=True)
+class Status:
+    """What a piece of work is doing now, named in the card's pill.
+
+    Callers own their phases; this only carries one. A symbolic icon is
+    tinted to the pill's text colour. `color` and `foreground` are CSS colours
+    for the pill's fill and text; left empty, the theme's accent pair."""
+
+    label: str
+    icon: str = ""
+    color: str = ""
+    foreground: str = ""
 
 
 class Notification:
@@ -134,7 +151,7 @@ class Notification:
         timeout_ms: int,
         icon: OsdIcon | None,
         *,
-        status: str = "",
+        status: Status | None = None,
         clock: str | None = None,
         level: float | None = None,
         text: str = "",
@@ -146,7 +163,10 @@ class Notification:
             OverlaySlot.CARD,
             title=self.title,
             icon=chosen.value if chosen else "",
-            status=status,
+            status=status.label if status else "",
+            status_icon=status.icon if status else "",
+            status_color=status.color if status else "",
+            status_foreground=status.foreground if status else "",
             clock=clock,
             level=level,
             text=text,
@@ -200,17 +220,56 @@ class Notification:
         return flat
 
     def echo(
-        self, chunks: Iterator[str], *, icon: OsdIcon | None = None
+        self,
+        chunks: Iterator[str],
+        *,
+        status: Status | None = None,
+        icon: OsdIcon | None = None,
     ) -> Iterator[str]:
         """Pass chunks through untouched, showing the tail of them as they go.
 
         Wraps the stream rather than the sink, so a caller that only wants to
-        watch and a caller that writes somewhere both get the same view."""
+        watch and a caller that writes somewhere both get the same view. Held
+        up by `working`, so the wait for the first token shows too."""
         seen = ""
-        for chunk in chunks:
-            seen += chunk
-            self.send(self.tail(seen), icon=icon, extract=True)
-            yield chunk
+        with self.working(status, icon=icon, extract=lambda: self.tail(seen)):
+            for chunk in chunks:
+                seen += chunk
+                yield chunk
+
+    @contextmanager
+    def working(
+        self,
+        status: Status,
+        *,
+        icon: OsdIcon | None = None,
+        extract: Callable[[], str] | None = None,
+    ) -> Iterator[None]:
+        """Hold the card up while the block runs: the status, a clock from
+        entry, a pulsing bar, and `extract()` under them on every redraw.
+
+        For a wait with no progress of its own, like a model before its first
+        token, which a card drawn once would outlast and blink out of."""
+        if is_headless():
+            yield
+            return
+
+        done = threading.Event()
+
+        def tick() -> None:
+            while True:
+                self.elapsed(status, icon=icon, extract=extract() if extract else "")
+                if done.wait(self.TICK_SECONDS):
+                    return
+
+        self.start()
+        ticker = threading.Thread(target=tick, daemon=True)
+        ticker.start()
+        try:
+            yield
+        finally:
+            done.set()
+            ticker.join(timeout=self.TIMEOUT)
 
     def start(self) -> None:
         """Anchor the clock here, so `elapsed` counts from this instant.
@@ -243,7 +302,7 @@ class Notification:
 
     def elapsed(
         self,
-        status: str = "",
+        status: Status | None = None,
         timeout: int | None = None,
         *,
         icon: OsdIcon | None = None,
@@ -276,7 +335,7 @@ class Notification:
         total: float,
         *,
         done: bool,
-        status: str = "",
+        status: Status | None = None,
         text: str = "",
         icon: OsdIcon | None = None,
         timeout: int | None = None,

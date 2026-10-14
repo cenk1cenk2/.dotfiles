@@ -38,15 +38,24 @@ from gi.repository import Gtk4LayerShell as LayerShell
 
 class Surface:
     """A layer-shell window drawn by the GTK theme: its background, label
-    classes, progress bar and keycaps. Ours are the spacing and the border,
-    which the theme leaves to window decorations a layer surface has none of.
-    The border takes swaync's notification colour from the shared palette:
-    the theme's own `@borders` is 12% white and vanishes on a dark desktop."""
+    classes, progress bar and keycaps. Ours are the spacing, the border, which
+    the theme leaves to window decorations a layer surface has none of, and the
+    status pill, in the theme's accent pair. The border takes swaync's
+    notification colour from the shared palette: the theme's own `@borders` is
+    12% white and vanishes on a dark desktop."""
 
     PALETTE = Path.home() / ".config/wayland/theme.css"
-    # On the content box rather than the window: GTK draws no CSS border on a
-    # toplevel's own node.
-    STYLE = ".overlay-frame { border: 1px solid @bg_color_400; padding: 16px; }"
+    # The border sits on the content box rather than the window: GTK draws no
+    # CSS border on a toplevel's own node.
+    STYLE = """
+    .overlay-frame { border: 1px solid @bg_color_400; padding: 16px; }
+    .overlay-pill {
+      background-color: @accent_bg_color;
+      color: @accent_fg_color;
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    """
 
     MARGIN = 12
     EDGES: ClassVar[dict[OverlayPosition, tuple[LayerShell.Edge, ...]]] = {
@@ -109,9 +118,21 @@ class Card(Surface):
         super().__init__(app, "overlay-card", OverlayPosition.BOTTOM_RIGHT)
         self.icon = Gtk.Image(icon_size=Gtk.IconSize.LARGE, valign=Gtk.Align.START)
         self.title = Gtk.Label(xalign=0, hexpand=True, css_classes=["heading"])
-        self.status = Gtk.Label(
-            xalign=1, attributes=self.medium(), css_classes=["caption", "dim-label"]
+        self.status_icon = Gtk.Image(pixel_size=12)
+        self.status_label = Gtk.Label(css_classes=["caption-heading"])
+        self.status = Gtk.Box(
+            spacing=4, valign=Gtk.Align.CENTER, css_classes=["overlay-pill"]
         )
+        # A caller's colours, as one display-wide rule over the card's pill,
+        # reloaded only when they change: the card redraws five times a second.
+        self.pill_css = Gtk.CssProvider()
+        self.pill_colors: tuple[str, str] = ("", "")
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), self.pill_css, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
+        self.status.add_css_class("overlay-card-pill")
+        self.status.append(self.status_icon)
+        self.status.append(self.status_label)
         self.clock = Gtk.Label(css_classes=["numeric", "caption-heading"])
         self.level = Gtk.ProgressBar(hexpand=True, valign=Gtk.Align.CENTER)
         self.text = Gtk.Label(
@@ -148,6 +169,9 @@ class Card(Surface):
         title: str = "",
         icon: str = "",
         status: str = "",
+        status_icon: str = "",
+        status_color: str = "",
+        status_foreground: str = "",
         clock: str | None = None,
         level: float | None = None,
         text: str = "",
@@ -159,7 +183,20 @@ class Card(Surface):
         self.icon.set_from_icon_name(icon or None)
         self.icon.set_visible(bool(icon))
         self.title.set_label(title)
-        self.status.set_label(status)
+        self.status_label.set_label(status)
+        self.status_icon.set_from_icon_name(status_icon or None)
+        self.status_icon.set_visible(bool(status_icon))
+        if (status_color, status_foreground) != self.pill_colors:
+            self.pill_colors = (status_color, status_foreground)
+            rules = "".join(
+                f"{prop}: {value};"
+                for prop, value in (
+                    ("background-color", status_color),
+                    ("color", status_foreground),
+                )
+                if value
+            )
+            self.pill_css.load_from_string(f".overlay-card-pill {{ {rules} }}")
         self.status.set_visible(bool(status))
         self.clock.set_label(clock or "")
         self.clock.set_visible(clock is not None)
