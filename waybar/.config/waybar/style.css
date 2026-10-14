@@ -337,5 +337,5 @@ widget widget > * {
 #hyprland-submap {
   color: @accent_color;
   background-color: @bg_color_200;
-  padding: 0 4px;
+  padding: 0 8px;
 }

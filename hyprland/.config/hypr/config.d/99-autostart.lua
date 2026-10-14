@@ -6,6 +6,7 @@ local services = {
   "hypridle.service",
   "swaync.service",
   "swayosd.service",
+  "overlay.service",
   "kanshi.service",
   "clipse.service",
   "poweralertd.service",

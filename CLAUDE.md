@@ -654,11 +654,12 @@ not set. Read the active line, never the comment above it.
   a theme that is not there; `index.theme` inherits `hicolor,Adwaita,breeze`, so
   the fallback is Adwaita rather than nothing.
 - **Notification icons are freedesktop names, never absolute paths** —
-  `notify-send -i` and swayosd both resolve a name through the configured theme,
+  `notify-send -i` and the overlay both resolve a name through the configured theme,
   so a name follows the theme and degrades to Adwaita, where a hardcoded path
   simply breaks. `OsdIcon` in `dotlib/notify.py` is the shared set.
 - **105 icon names in Tela carry literal `NaN` in their path data.** GTK 4.22
-  spins on one, leaking gigabytes a second until swayosd is OOM-killed — which
+  spins on one, leaking gigabytes a second until the process drawing it (the
+  overlay, swayosd) is OOM-killed — which
   is why `OsdIcon.SPEAKER` is `audio-volume-high` and not `audio-speakers`.
   Grep a candidate for `NaN` before adopting it; among the affected are
   `text-markdown`, `text-x-markdown`, `network-no-route` and `torrent`.
@@ -669,6 +670,29 @@ not set. Read the active line, never the comment above it.
 - `*.svg` is deliberately **not** in git-lfs: the whole set is ~81 KB of text
   that deltas well, and LFS would cost readable diffs, `git blame` and
   three-way merges. Fonts and raster art stay in LFS, where the size is real.
+
+## Overlay (cards and submap hints)
+
+- `scripts/overlay.py serve` (`overlay.service`, started from
+  `99-autostart.lua`) owns two GTK4 layer-shell surfaces: the **card** that
+  `dotlib.notify.Notification` draws stt/tts/copywriter progress on, and the
+  **hints** shown while a Hyprland submap is active. swayosd keeps volume and
+  brightness only.
+- **Clients talk to it through `dotlib.overlay`**: JSON lines over
+  `$XDG_RUNTIME_DIR/overlay.sock`, one kept connection per process, dropped
+  silently when the daemon is down. Each `show` may carry a `position`
+  (`center`, `bottom-right`); cards default to the corner, hints to the centre.
+- **Hints come from Hyprland, not from the overlay's config**: the daemon
+  follows `submap>>` on socket2 and reads `j/binds` for the active submap, so a
+  bind inside a submap needs a `description` or it has no row. Submap names are
+  icons only; the icon is the hint title and the waybar label.
+- **Styling is the GTK theme's**, deliberately without a stylesheet: theme
+  window background, `heading` / `title-2` label classes, `Gtk.ProgressBar`,
+  and `Gtk.ShortcutLabel` keycaps. Keys are GTK accelerators, alternatives
+  space-separated; a `/` in the string fails to parse.
+- The process re-execs itself with `LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so`,
+  which has to load before libwayland-client; without it
+  `Gtk4LayerShell.is_supported()` is false and `serve` refuses to start.
 
 ## GTK client-side decorations
 

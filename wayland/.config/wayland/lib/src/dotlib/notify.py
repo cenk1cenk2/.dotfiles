@@ -13,13 +13,13 @@ import os
 import struct
 import subprocess
 import sys
-import textwrap
 import time
 from collections.abc import Iterator, Sequence
 from enum import StrEnum
 from typing import ClassVar
 
 from .desktop import is_headless
+from .overlay import Overlay, OverlayPosition, OverlaySlot
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,8 @@ class OsdIcon(StrEnum):
 
     MIC = "audio-input-microphone"
     # Not `audio-speakers`: Tela ships that one with a NaN arc, and GTK 4.22
-    # spins on it, leaking gigabytes a second until swayosd is OOM-killed.
+    # spins on it, leaking gigabytes a second until the process drawing it is
+    # OOM-killed.
     SPEAKER = "audio-volume-high"
     THINKING = "system-run"
     WRITING = "document-edit-symbolic"
@@ -67,28 +68,24 @@ class Notification:
 
     Both channels go quiet when headless — there is nobody to tell."""
 
-    BUS = "org.erikreider.swayosd-server"
-    PATH = "/org/erikreider/swayosd"
-    INTERFACE = "org.erikreider.swayosd"
-
-    # swayosd hides a card when its timer expires and offers no explicit hide,
-    # so a card is held open by re-firing inside this window and let go by
-    # firing once with a short one.
-    HOLD_MS = 1000
+    # The card hides itself when this runs out, so a caller that stops
+    # refreshing never leaves a stale card behind. Long enough to span the gap
+    # between one phase of a job and the next, so the card stays up rather
+    # than blinking out between them; `dismiss` and `hide` take it down at once.
+    HOLD_MS = 3000
     # How often a held card is redrawn. Short enough that a level meter reads
     # as one, and well inside the hold so the card never blinks between.
     TICK_SECONDS = 0.2
-    # A card kept up by re-firing needs a window wider than the gap between
-    # refreshes, or it blinks out in between.
-    TICK_HOLD_MS = 2000
-    DISMISS_MS = 200
-    # How much of a growing text `tail` keeps, and how wide it lays it out.
-    # Growing down rather than sideways: the card sits against a screen edge,
-    # so a long row runs out of room where more rows do not.
+    TICK_HOLD_MS = 3000
+    # How long a parting word stays, long enough to be read.
+    DISMISS_MS = 2000
+    # How much of a growing text `tail` keeps.
     CARD_CHARS = 128
-    WRAP_CHARS = 40
     # A wedged call must never delay the work it is describing.
     TIMEOUT = 2.0
+
+    # One connection per process, however many notifications it holds.
+    _overlay: ClassVar[Overlay] = Overlay()
 
     def __init__(
         self,
@@ -96,8 +93,10 @@ class Notification:
         icon: str = "",
         osd_icon: OsdIcon | None = None,
         channel: NotifyChannel = NotifyChannel.OSD,
+        position: OverlayPosition = OverlayPosition.BOTTOM_RIGHT,
     ):
         self.title = title
+        self.position = position
         self.icon = icon
         self.osd_icon = osd_icon
         self.channel = channel
@@ -130,43 +129,31 @@ class Notification:
         subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)
         return None
 
-    def _card(self, message: str, duration_ms: int, icon: OsdIcon | None) -> None:
-        """One `HandleAction` on swayosd's bus.
-
-        The bus rather than `swayosd-client`, which is a thin wrapper over this
-        single call: a card that ticks a clock would otherwise cost a process a
-        second. The interface is undocumented and was read off `dbus-monitor`
-        while the client ran."""
-        options = [("DURATION", str(duration_ms))]
+    def _card(
+        self,
+        timeout_ms: int,
+        icon: OsdIcon | None,
+        *,
+        status: str = "",
+        clock: str | None = None,
+        level: float | None = None,
+        text: str = "",
+        extract: bool = False,
+    ) -> None:
+        """Every call carries the whole card; a field left out is drawn empty."""
         chosen = icon or self.osd_icon
-        if chosen:
-            options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call("CUSTOM-MESSAGE", self._titled(self.wrapped(message)), options)
-
-    def _call(self, action: str, value: str, options: list[tuple[str, str]]) -> None:
-        flat: list[str] = []
-        for key, option in options:
-            flat += [key, option]
-        cmd = [
-            "busctl",
-            "--user",
-            "call",
-            self.BUS,
-            self.PATH,
-            self.INTERFACE,
-            "HandleAction",
-            "ssa(ss)",
-            action,
-            value,
-            str(len(options)),
-            *flat,
-        ]
-        log.debug("spawn: %s", " ".join(cmd))
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=self.TIMEOUT, check=False)
-        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            # A card is never the point of the work it describes.
-            log.warning("osd call failed: %s", e)
+        self._overlay.show(
+            OverlaySlot.CARD,
+            title=self.title,
+            icon=chosen.value if chosen else "",
+            status=status,
+            clock=clock,
+            level=level,
+            text=text,
+            extract=extract,
+            timeout_ms=timeout_ms,
+            position=self.position,
+        )
 
     # ── what callers use ──────────────────────────────────────────
 
@@ -179,12 +166,15 @@ class Notification:
         channel: NotifyChannel | None = None,
         urgency: Urgency | None = None,
         actions: Sequence[tuple[str, str]] | None = None,
+        extract: bool = False,
     ) -> str | None:
         """Say something, on this notification's channel or an override.
 
         Urgency and actions only mean anything to the desktop channel; a card
         has no notion of either. With actions the call blocks for the popup's
-        lifetime and returns the clicked action's name, or None."""
+        lifetime and returns the clicked action's name, or None. `extract`
+        marks the message as a clipped fragment of something longer, which the
+        card sets apart from a status."""
         if is_headless():
             log.debug("headless: dropping %r", message)
             return None
@@ -192,21 +182,10 @@ class Notification:
         if (channel or self.channel) is NotifyChannel.DESKTOP:
             return self._desktop(message, timeout, urgency, actions)
 
-        self._card(message, timeout or self.HOLD_MS, icon)
-
-    def wrapped(self, message: str) -> str:
-        """The message laid out down the card, each line already short enough.
-
-        A card against a screen edge has rows and no width, so a long line
-        widens it until it runs out of room. Lines the caller wrote stay
-        where they are; only the long ones are broken."""
-        return "\n".join(
-            textwrap.fill(line, self.WRAP_CHARS) if line else ""
-            for line in message.splitlines()
-        )
+        self._card(timeout or self.HOLD_MS, icon, text=message, extract=extract)
 
     def tail(self, message: str) -> str:
-        """The end of a growing text, flattened to fit one line on the card.
+        """The end of a growing text, flattened onto one line.
 
         The end rather than the start, because the interesting part of a text
         still arriving is the part that just arrived. `textwrap.shorten` keeps
@@ -218,7 +197,7 @@ class Notification:
             _, _, rest = clipped.partition(" ")
             flat = f"…{rest}" if rest else clipped
 
-        return textwrap.fill(flat, self.WRAP_CHARS)
+        return flat
 
     def echo(
         self, chunks: Iterator[str], *, icon: OsdIcon | None = None
@@ -230,9 +209,7 @@ class Notification:
         seen = ""
         for chunk in chunks:
             seen += chunk
-            # Set apart from the title for the same reason `elapsed` does it:
-            # the line is a clipped extract, not a status.
-            self.send(f"\n{self.tail(seen)}", icon=icon)
+            self.send(self.tail(seen), icon=icon, extract=True)
             yield chunk
 
     def start(self) -> None:
@@ -266,57 +243,68 @@ class Notification:
 
     def elapsed(
         self,
-        message: str = "",
+        status: str = "",
         timeout: int | None = None,
         *,
         icon: OsdIcon | None = None,
         level: float | None = None,
-        apart: bool = False,
+        extract: str = "",
     ) -> None:
         """Redraw the card with the time since the clock was anchored.
 
-        The clock is ours: swayosd renders the string it is handed and has no
-        notion of one running.
-
-        Every call carries the whole card. swayosd starts each action from
-        its defaults and clears the card's children before drawing, whatever
-        the action, so an option left out is not kept from last time but
-        drawn empty."""
+        `status` names the phase the work is in; `extract` is a clipped
+        fragment of what it is working on, drawn under the clock."""
         if is_headless():
             return
 
         # Zero until someone anchors it, and held once frozen: an unanchored
         # clock counting from the first card is what `start` exists to avoid.
         now = self._stopped or time.monotonic()
-        seconds = int(now - self._started) if self._started else 0
-        stamp = f"{seconds // 60:d}:{seconds % 60:02d}"
-        # The message goes under the clock, never beside it: the card sits
-        # against a screen edge, where it has rows to spare and no width. A
-        # blank line marks a clipped extract, which is a fragment of something
-        # longer rather than a status about the whole.
-        gap = "\n\n" if apart and message else "\n"
-        text = f"{stamp}{gap}{message}".rstrip()
-        options = [
-            ("CUSTOM-PROGRESS-TEXT", self._titled(text)),
-            ("DURATION", str(timeout or self.TICK_HOLD_MS)),
-        ]
-        chosen = icon or self.osd_icon
-        if chosen:
-            options.insert(0, ("CUSTOM-ICON", chosen.value))
-        self._call(
-            "CUSTOM-PROGRESS", f"{min(max(level or 0.0, 0.0), 1.0):.2f}", options
+        self._card(
+            timeout or self.TICK_HOLD_MS,
+            icon,
+            status=status,
+            clock=self.stamp(now - self._started if self._started else 0),
+            level=None if level is None else min(max(level, 0.0), 1.0),
+            text=extract,
+            extract=True,
         )
 
-    def _titled(self, message: str) -> str:
-        """Title above, detail below. GTK renders the break in its label."""
-        return f"{self.title}\n{message}" if self.title else message
+    def playback(
+        self,
+        heard: float,
+        total: float,
+        *,
+        done: bool,
+        status: str = "",
+        text: str = "",
+        icon: OsdIcon | None = None,
+        timeout: int | None = None,
+    ) -> None:
+        """Redraw the card with how far through a length the work is.
+
+        `done` says the total is final; until then it is what has arrived so
+        far, and the clock says so with a trailing ellipsis."""
+        if is_headless():
+            return
+
+        self._card(
+            timeout or self.TICK_HOLD_MS,
+            icon,
+            status=status,
+            clock=f"{self.stamp(heard)} / {self.stamp(total)}{'' if done else '…'}",
+            level=min(heard / total, 1.0) if total else 0.0,
+            text=text,
+        )
+
+    @staticmethod
+    def stamp(seconds: float) -> str:
+        seconds = int(seconds)
+
+        return f"{seconds // 60:d}:{seconds % 60:02d}"
 
     def dismiss(self, message: str = "", *, icon: OsdIcon | None = None) -> None:
-        """Let it go, after a beat if there is a parting word.
-
-        Always redraws, even with nothing to say: swayosd hides a card when
-        its own timer runs out, so leaving the last one to expire holds a
-        finished job on screen for the rest of its hold."""
+        """Let it go, after a beat if there is a parting word."""
         self._started = self._stopped = 0.0
         if is_headless():
             return
@@ -325,7 +313,19 @@ class Notification:
             self._desktop(message, None)
             return
 
-        self._card(message, self.DISMISS_MS, icon)
+        if message:
+            self._card(self.DISMISS_MS, icon, text=message)
+            return
+
+        self.hide()
+
+    def hide(self) -> None:
+        """Take the card down and leave the clock alone, for work that is
+        paused rather than over."""
+        if is_headless():
+            return
+
+        self._overlay.hide(OverlaySlot.CARD)
 
 
 class ChimeDirection(StrEnum):

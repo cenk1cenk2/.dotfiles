@@ -651,7 +651,7 @@ class Stt:
         transcript: list[str] = []
 
         # The meter ticks on one thread while turns close on another, and
-        # swayosd draws only what a call carries, so both redraw the whole
+        # the card draws only what a call carries, so both redraw the whole
         # card from what this run holds.
         def redraw() -> None:
             tail = osd.tail(" ".join(transcript))
@@ -659,12 +659,12 @@ class Stt:
                 # The mic is shut; what runs now is the take closing and the
                 # transcription coming back, so the card says so instead of
                 # holding a dead level bar.
-                osd.elapsed(f"transcribing\n\n{tail}".rstrip(), icon=OsdIcon.THINKING)
+                osd.elapsed("transcribing", icon=OsdIcon.THINKING, extract=tail)
                 return
             if server is not None and server.state.paused:
-                osd.elapsed(f"paused\n\n{tail}".rstrip())
+                osd.hide()
                 return
-            osd.elapsed(tail, level=_level(self._adapter), apart=True)
+            osd.elapsed(level=_level(self._adapter), extract=tail)
 
         # Turns go to the sink as they close, not just to the card, when the
         # sink can take them and nothing downstream will rewrite them. An
@@ -766,7 +766,7 @@ class Stt:
                 and isinstance(enricher, EnrichStreaming)
                 and isinstance(output, OutputStreaming)
             ):
-                osd.send(osd.tail(text), icon=OsdIcon.THINKING)
+                osd.send(osd.tail(text), icon=OsdIcon.THINKING, extract=True)
                 if save and not is_headless():
                     OutputAdapterClipboard().write(text)
                 if server:
@@ -1731,14 +1731,40 @@ class Tts:
                     source = PrefixReader(
                         Chime(ChimeDirection.UP, spec.sample_rate).pcm(), source
                     )
-                # One card at the first byte that can be heard, then gone. At
-                # the open response it would advertise silence, since synthesis
-                # takes seconds to hand a byte over; held open for the utterance
-                # it would cost five `busctl` forks a second. The waybar module
-                # carries the state that outlives the card.
-                source = OnsetReader(
-                    source, lambda: self._notify(session.card(), timeout=3000)
-                )
+                # The card starts at the first byte that can be heard: at the
+                # open response it would advertise silence, since synthesis
+                # takes seconds to hand a byte over. A sink that can say how far
+                # it is gets a progress card for the whole utterance; one that
+                # cannot gets a single card, and the waybar module carries the
+                # state that outlives it.
+                ticking = threading.Event()
+
+                def tick() -> None:
+                    while not ticking.wait(Notification.TICK_SECONDS):
+                        progress = self._player.progress()
+                        if progress is None:
+                            return
+                        if session.paused:
+                            self.NOTIFICATION.hide()
+                            continue
+                        heard, total, done = progress
+                        self.NOTIFICATION.playback(
+                            heard,
+                            total,
+                            done=done,
+                            status="speaking",
+                            text=session.card(),
+                        )
+
+                ticker = threading.Thread(target=tick, daemon=True)
+
+                def onset() -> None:
+                    if self._player.progress() is None:
+                        self._notify(session.card(), timeout=3000)
+                    else:
+                        ticker.start()
+
+                source = OnsetReader(source, onset)
                 try:
                     written, code = self._player.play(source, spec.sample_rate)
                 finally:
@@ -1746,6 +1772,10 @@ class Tts:
                     # next item before playing it, and holding the room quiet
                     # across that gap quiets it for nothing.
                     self._suppressor.restore()
+                    if ticker.is_alive():
+                        ticking.set()
+                        ticker.join(timeout=Notification.TIMEOUT)
+                        self.NOTIFICATION.dismiss()
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,

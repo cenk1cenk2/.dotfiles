@@ -122,6 +122,13 @@ take_screenshot() {
   fi
 }
 
+# The screenshot submap's hints are a layer the overlay daemon unmaps once the
+# submap resets. Wait for that, or wayfreeze and grim capture them too.
+for _ in $(seq 20); do
+  hyprctl layers -j | grep -q '"overlay-hints"' || break
+  sleep 0.025
+done
+
 wayfreeze &
 sleep 0.1
 

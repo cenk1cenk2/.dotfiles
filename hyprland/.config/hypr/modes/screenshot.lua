@@ -6,10 +6,12 @@ local submap = "󰄀"
 
 hl.bind(("%s + S"):format(d.mod), hl.dsp.submap(submap), { description = "screenshot mode" })
 
+-- Reset first: leaving the submap is what takes the hints down, and
+-- grimshot.sh waits for that before it captures.
 local function shot_then_reset(cmd)
   return function()
-    hl.exec_cmd(cmd)
     hl.dispatch(hl.dsp.submap("reset"))
+    hl.exec_cmd(cmd)
   end
 end
 

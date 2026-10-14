@@ -250,6 +250,8 @@ class PlayerAdapter(Protocol):
 
     def cycle_tempo(self) -> float: ...
 
+    def progress(self) -> tuple[float, float, bool] | None: ...
+
 
 class PlayerBase:
     """The pump every sink shares, and the transport over the running player.
@@ -284,6 +286,9 @@ class PlayerBase:
         self._pending: int | None = None
         # Players a seek replaced, waiting for the pump to close and collect.
         self._spent: list[subprocess.Popen] = []
+        # Whether the backend has finished sending, so `_sent` is the whole
+        # utterance rather than what has arrived so far.
+        self._received = False
         self.paused = False
         self.tempo = 1.0
 
@@ -354,6 +359,23 @@ class PlayerBase:
             self._restart(at)
 
             return self.tempo
+
+    def progress(self) -> tuple[float, float, bool] | None:
+        """Seconds heard, seconds received, and whether that is all of it.
+
+        The backend sends no length up front, so the total is what has
+        arrived; it runs ahead of the speakers and settles early. None for a
+        sink whose byte offset is not a time."""
+        if not self.seeks:
+            return None
+        with self._lock:
+            per_second = self._rate * 2
+
+            return (
+                self._position / per_second,
+                len(self._sent) / per_second,
+                self._received,
+            )
 
     # ── clock and process, always under the lock ──────────────────
 
@@ -496,6 +518,7 @@ class PlayerBase:
             self._origin = 0
             self._played = 0.0
             self._since = None
+            self._received = False
             # `tempo` deliberately survives: a rate set to skim a backlog was
             # meant for the backlog, not for the one item it was pressed on.
             # Brings the first player up on the opening pass.
@@ -531,6 +554,8 @@ class PlayerBase:
                     continue
 
                 draining = True
+                with self._lock:
+                    self._received = True
                 self._close()
 
             # Nothing left to feed. Waiting in slices rather than once, so a

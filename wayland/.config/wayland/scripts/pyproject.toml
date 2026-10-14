@@ -41,6 +41,9 @@ dependencies = [
   # The realtime transcription socket. The stdlib has no WebSocket client,
   # and the endpoint speaks nothing else.
   "websocket-client>=1.8",
+  # GTK4 + gtk4-layer-shell bindings for the overlay daemon. Builds against
+  # the system gobject-introspection on first sync.
+  "pygobject>=3.58",
 ]
 
 [tool.ty.environment]
