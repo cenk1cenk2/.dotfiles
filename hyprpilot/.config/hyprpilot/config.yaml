@@ -96,8 +96,10 @@ patches:
       "$patch": replace
       CODEX_HOME: "${HOME}/.codex-kilic"
 
-  # OPENCODE_CONFIG_DIR moves only the config; sessions and credentials live
-  # in the sqlite file OPENCODE_DB points at. Both are needed.
+  # OPENCODE_CONFIG_DIR replaces the global config dir, so opencode.jsonc,
+  # cli.json, service.json and plugins/ all come from the profile's dir;
+  # sessions and credentials live in the sqlite file OPENCODE_DB points at.
+  # Both are needed.
   - $match:
       profile: "personal/kilic/*"
     env:

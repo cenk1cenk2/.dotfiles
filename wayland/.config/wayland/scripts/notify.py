@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import click
 from dotlib.agents import NAMES, ancestor, config_dir, edit_waiting, last_reply
@@ -28,10 +29,13 @@ class Notify:
     """Agent hook: desktop popup with context, plus a chime.
 
     Serves Claude Code's Notification hook, codex's PermissionRequest /
-    Stop hooks and opencode's notify plugin. Both hand the same shape on stdin — `cwd` and
-    `transcript_path` — and differ only in what names the event: Claude
-    sends a ready-made `message`, codex sends `hook_event_name` plus the
-    fields that event carries.
+    Stop hooks and opencode's notify client plugin, which sends codex's
+    shape. All hand JSON on stdin carrying `cwd` and `session_id` and differ
+    in what names the event: Claude sends a ready-made `message` and a
+    `transcript_path`, codex and opencode send `hook_event_name` plus the
+    fields that event carries (`tool_name`, `last_assistant_message`).
+    opencode adds a `Question` event for a form awaiting an answer, its title
+    in `tool_name`.
 
     Clicking the popup focuses the pane this hook was spawned in: the right
     tmux window on the right client, and the kitty window hosting it."""
@@ -39,6 +43,8 @@ class Notify:
     CONTEXT_CHARS = 300
     # Notification messages that must not be missed while glancing away.
     URGENT_WORDS = ("permission", "approval", "waiting for your input")
+    # Subcommands taking codex's payload, and the vendor each one names.
+    CODEX_SHAPED: ClassVar[dict[str, str]] = {"codex": "Codex", "opencode": "OpenCode"}
     # Sent with every popup: an explicit expire-timeout wins over the server's
     # per-urgency defaults, so this script decides how long its own popups live.
     SHOW_MS = 5000
@@ -77,64 +83,46 @@ class Notify:
     @cli.command("codex")
     @click.argument("profile", required=False)
     @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
-    def cmd_codex(profile: str | None, verbose: bool) -> None:
-        """Read a codex hook payload from stdin and raise the alarm."""
+    @click.pass_context
+    def cmd_codex(ctx: click.Context, profile: str | None, verbose: bool) -> None:
+        """Read a codex-shaped hook payload from stdin and raise the alarm."""
         create_logger(verbose)
 
         payload = Notify.payload()
         if payload is None:
             return
 
-        # Codex names the event rather than writing the prose, and carries the
-        # answer inline on Stop — so no transcript parsing on either path, and
+        vendor = Notify.CODEX_SHAPED[ctx.info_name]
+        # The event is named rather than written as prose, and the answer rides
+        # inline on Stop — so no transcript parsing on either path, and
         # `URGENT_WORDS` still decides urgency off the sentence built here.
         match payload.get("hook_event_name"):
             case "PermissionRequest":
                 tool = payload.get("tool_name") or "a tool"
                 message = f"Needs approval to run {tool}"
                 context = ""
+            case "Question":
+                # opencode only: a form awaiting an answer, titled by its question.
+                message = "Waiting for your input"
+                context = Notify.shorten(payload.get("tool_name"))
             case "Stop":
                 message = "Turn finished"
                 context = Notify.shorten(payload.get("last_assistant_message"))
             case other:
-                message = f"{other or 'Codex'} fired"
+                message = f"{other or vendor} fired"
                 context = ""
 
         Notify.alarm(
-            vendor="Codex",
+            vendor=vendor,
             profile=profile,
             payload=payload,
             message=message,
             context=context,
         )
 
-    @staticmethod
-    @cli.command("opencode")
-    @click.argument("profile", required=False)
-    @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
-    def cmd_opencode(profile: str | None, verbose: bool) -> None:
-        """Read an opencode plugin event from stdin and raise the alarm."""
-        create_logger(verbose)
-
-        payload = Notify.payload()
-        if payload is None:
-            return
-
-        # opencode has no hooks; its notify plugin forwards `session.idle` and
-        # `permission.asked` in codex's shape, naming the event the same way.
-        match payload.get("hook_event_name"):
-            case "PermissionRequest":
-                message = "Waiting for your approval"
-            case _:
-                message = "Turn finished"
-
-        Notify.alarm(
-            vendor="OpenCode",
-            profile=profile,
-            payload=payload,
-            message=message,
-            context="",
-        )
+    # opencode has no hooks; its notify client plugin speaks codex's shape, so
+    # both names run one command and differ only in the vendor label.
+    cli.add_command(cli.commands["codex"], "opencode")
 
     @staticmethod
     @cli.command("focus")

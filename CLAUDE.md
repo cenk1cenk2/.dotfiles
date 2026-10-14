@@ -760,7 +760,7 @@ codex section below. Treat codex as carrying no deny list.
 
 The three formats share no source, so a change to one is a change to all three:
 `claude/.claude-*/settings.json` (`permissions.deny`),
-`opencode/.config/opencode-*/opencode.jsonc` (`permission.bash`) and
+`opencode/.config/opencode-*/opencode.jsonc` (`shell` rules in `permissions`) and
 `codex/.codex-*/rules/guardrails.rules`.
 
 - **None of the three is a security boundary.** All match text against argv, so
@@ -768,14 +768,19 @@ The three formats share no source, so a change to one is a change to all three:
   the wrapper as a single opaque command, and for the other two the wrapped
   text never matches a pattern. They stop accidents. Enforcement that does not
   depend on the command text needs a sandbox or a `PreToolUse` hook.
-- **opencode takes the last matching rule**, via a `findLast` over the rules in
-  config order with no sorting, so a catch-all belongs **above** the rules that
-  carve exceptions out of it and a read restore **below** the deny it undoes. A
-  `"*": "ask"` at the foot of a block silently kills every rule above it.
+- **opencode takes the last matching rule**, via a `findLast` over the
+  `permissions` array — one `{ action, resource, effect }` object per rule, in
+  config order with no sorting — so the `*`/`*` ask catch-all sits **first**,
+  every exception below it, and a read restore **below** the deny it undoes. A
+  catch-all at the foot silently kills every rule above it. Dropping it is
+  worse: opencode seeds every agent with an allow-all rule ahead of the
+  config's, so an action no rule names would run unprompted.
 - **opencode patterns match the whole command, not a prefix**, and a trailing
   `" *"` becomes `( .*)?` — so `"git status *"` covers both `git status` and
   `git status --porcelain`, while a bare `"git status"` matches that exact
-  string and nothing else. Write the trailing form.
+  string and nothing else. Write the trailing form. A leading `~` or `$HOME` is
+  expanded for `read`, `edit` and `external_directory` resources only; a
+  `shell` resource stays raw command text.
 - **Claude Code evaluates deny, then ask, then allow**, and specificity does
   not reorder that, so a deny cannot be narrowed by an `ask`. Its `*` works
   anywhere in a pattern, a trailing ` *` (or the `:*` suffix, end-of-pattern
@@ -836,20 +841,62 @@ Two homes, one per account: hyprpilot patches `CODEX_HOME` to
   definitions are hashed and confirmed once via `/hooks`; a changed command
   is a new definition and stays inert until re-trusted.
 
+## opencode
+
+Two config dirs, one per account: hyprpilot points `OPENCODE_CONFIG_DIR` at
+`~/.config/opencode-kilic` or `~/.config/opencode-laravel` and `OPENCODE_DB` at
+a matching sqlite file, which holds the sessions and credentials.
+
+- **`service.json` sets `disabled: true`**, so every launch starts a private
+  server. The shared background service is keyed by the state dir, which both
+  profiles share, and keeps the env of whichever launch started it.
+- **The root `AGENTS.md` is a symlink to this file** because opencode reads
+  only `AGENTS.md`, never `CLAUDE.md`.
+- **Changing a TUI preference (theme, toggles) rewrites `cli.json`** through a
+  temp file and a rename, which replaces the stow symlink with a real file and
+  decouples it from the repo, as with OBS. Diff it back into the repo and
+  restow. `opencode service set` does the same to `service.json`.
+
 ## Agent notification hook
 
 `wayland/.config/wayland/scripts/notify.py` is the only hook, shared by
-Claude Code (`Notification` in both profiles' `settings.json`) and codex
-(`PermissionRequest` and `Stop` in both `config.toml`s). The vendor is the
+Claude Code (`Notification` in both profiles' `settings.json`), codex
+(`PermissionRequest` and `Stop` in both `config.toml`s) and opencode (the
+`plugins/notify/tui.js` client plugin in both config dirs). The vendor is the
 subcommand, the profile label its argument: `notify.py codex laravel`. It
-sits in the wayland scripts project rather than either vendor's package
-because most of it is the tmux/kitty/hyprland focus chain, which neither
-vendor owns.
+sits in the wayland scripts project rather than any vendor's package
+because most of it is the tmux/kitty/hyprland focus chain, which no vendor
+owns.
 
-- **Both vendors' payloads are the same shape** — `cwd`, `transcript_path` —
-  and differ only in what names the event: Claude sends a ready-made
-  `message`, codex sends `hook_event_name` and carries the answer inline as
-  `last_assistant_message` on `Stop`. Nothing parses a codex transcript.
+- **All three payloads are the same shape** — `cwd` and `session_id`, plus
+  `transcript_path` from Claude and codex — and differ only in what names the
+  event: Claude sends a ready-made `message`; codex and opencode send
+  `hook_event_name`, with `tool_name` on `PermissionRequest` and the answer
+  inline as `last_assistant_message` on `Stop`. opencode adds a `Question`
+  event of its own. Nothing parses a codex or opencode transcript.
+
+- **opencode sends codex's shape, so `notify.py codex` and `notify.py
+  opencode` are one command** registered under both names; the name it was
+  invoked as picks only the vendor label.
+
+- **opencode has no hooks, so a client (TUI) plugin stands in for them.** It
+  runs in the terminal process, which is what hands `notify.py` the
+  `TMUX_PANE` and kitty environment its focus check reads; a server plugin
+  could run in a detached process with neither. `permission.asked` goes out as
+  `PermissionRequest` with the permission's `action` as `tool_name`;
+  `form.created` (a question waiting on an answer) as `Question`, an
+  opencode-only event that reads "Waiting for your input" with the form's
+  title as `tool_name` and context; and `session.execution.succeeded` /
+  `failed` / `interrupted` as `Stop`, once per execution, carrying the newest
+  assistant text since the last prompt from the client's message store. A
+  permission alarms only after 1.5 s unanswered, because under hyprpilot's
+  `--auto` the server still asks and the client replies at once; an interrupt
+  for `shutdown` or `superseded` is silent. Subagent `Stop`s are skipped by
+  `parentID` in the client's session store, which fills asynchronously, so a
+  very short subagent can slip through. The client discovers `<config
+  dir>/plugins/<name>/tui.*` by itself, so `cli.json` does not list it, and
+  `opencode plugin list` shows whether it was found. `opencode run` loads no
+  client plugins and never notifies.
 
 - **A hook's `timeout` is a cancel deadline, never a delay**, and
   Claude Code does not enforce it at all on a hook with `async: true`.
