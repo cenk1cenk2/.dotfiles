@@ -2,10 +2,9 @@
 
 local d = require("definitions")
 
-local submap =
-  "󰕧 Recording: (r/R) toggle/pause | (o) OBS | (s/S) stt→type | (c/C) stt→clip | (d) stt pause | (t/T/g) tts read/raw/gist | (f/F/←→) tts pause/stop/scrub | (v/V) paste/copy | (a) agents | (w/W) copywriter | (z) zoom | (q/Q) stop stt/rec | ESC"
+local submap = "󰕧"
 
-hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap))
+hl.bind(("%s + R"):format(d.mod), hl.dsp.submap(submap), { description = "recording mode" })
 
 local function exec_then_reset(cmd)
   return function()
@@ -15,57 +14,77 @@ local function exec_then_reset(cmd)
 end
 
 hl.define_submap(submap, function()
-  -- Toggle recording (start/stop)
-  hl.bind("r", exec_then_reset(("%s toggle"):format(d.recorder)))
+  hl.bind("r", exec_then_reset(("%s toggle"):format(d.recorder)), { description = "toggle recording" })
 
-  -- Pause/resume recording
-  hl.bind("SHIFT + r", exec_then_reset(("%s pause"):format(d.recorder)))
+  hl.bind("SHIFT + r", exec_then_reset(("%s pause"):format(d.recorder)), { description = "pause recording" })
 
-  -- Open OBS window
-  hl.bind("o", exec_then_reset(("%s open"):format(d.recorder)))
+  hl.bind("o", exec_then_reset(("%s open"):format(d.recorder)), { description = "open OBS" })
 
-  -- Stop recording
-  hl.bind("SHIFT + q", exec_then_reset(("%s stop"):format(d.recorder)))
+  hl.bind("SHIFT + q", exec_then_reset(("%s stop"):format(d.recorder)), { description = "stop recording" })
 
-  -- Speech-to-text direct typing with AI enrichment
-  hl.bind("s", exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)))
+  hl.bind(
+    "s",
+    exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)),
+    { description = "dictate to typing, enriched" }
+  )
 
   -- Speech-to-text direct typing (raw, no enrichment), through our own capture
-  hl.bind("SHIFT + s", exec_then_reset(("%s stt toggle --output type"):format(d.speech)))
+  hl.bind(
+    "SHIFT + s",
+    exec_then_reset(("%s stt toggle --output type"):format(d.speech)),
+    { description = "dictate to typing, raw" }
+  )
 
-  -- Speech-to-text to clipboard with AI enrichment
-  hl.bind("c", exec_then_reset(("%s stt toggle --output clipboard --enrich"):format(d.speech)))
+  hl.bind(
+    "c",
+    exec_then_reset(("%s stt toggle --output clipboard --enrich"):format(d.speech)),
+    { description = "dictate to clipboard, enriched" }
+  )
 
   -- Speech-to-text to clipboard (raw, no enrichment), through our own capture
-  hl.bind("SHIFT + c", exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech)))
+  hl.bind(
+    "SHIFT + c",
+    exec_then_reset(("%s stt toggle --output clipboard"):format(d.speech)),
+    { description = "dictate to clipboard, raw" }
+  )
 
-  -- Read clipboard aloud
-  hl.bind("t", exec_then_reset(("%s tts toggle --enrich"):format(d.speech)))
+  hl.bind(
+    "t",
+    exec_then_reset(("%s tts toggle --enrich"):format(d.speech)),
+    { description = "read clipboard, enriched" }
+  )
 
-  -- Read clipboard aloud (raw, no enrichment)
-  hl.bind("SHIFT + t", exec_then_reset(("%s tts toggle"):format(d.speech)))
+  hl.bind("SHIFT + t", exec_then_reset(("%s tts toggle"):format(d.speech)), { description = "read clipboard, raw" })
 
-  -- Summarize the clipboard aloud, rather than reading it in full
-  hl.bind("g", exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech)))
+  hl.bind(
+    "g",
+    exec_then_reset(("%s tts toggle --enrich --style summary"):format(d.speech)),
+    { description = "read clipboard summary" }
+  )
 
   -- Pause/resume the dictation. Resets like the stt toggles: live typing
   -- sends keystrokes through the compositor, and an open submap would catch them.
-  hl.bind("d", exec_then_reset(("%s stt pause"):format(d.speech)))
+  hl.bind("d", exec_then_reset(("%s stt pause"):format(d.speech)), { description = "pause dictation" })
 
-  -- Pause/resume the utterance being spoken
-  hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true })
+  hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true, description = "pause reading" })
 
-  -- Stop reading aloud
-  hl.bind("SHIFT + f", exec_then_reset(("%s tts kill"):format(d.speech)))
+  hl.bind("SHIFT + f", exec_then_reset(("%s tts kill"):format(d.speech)), { description = "stop reading" })
 
   -- Scrub the utterance. Deliberately without the reset every other bind
   -- here carries: scrubbing is held down, and leaving the submap after the
   -- first step would cost a Super+R for every three seconds.
-  hl.bind("right", hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)), { repeating = true })
-  hl.bind("left", hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)), { repeating = true })
+  hl.bind(
+    "right",
+    hl.dsp.exec_cmd(("%s tts seek 3"):format(d.speech)),
+    { repeating = true, description = "scrub forward 3s" }
+  )
+  hl.bind(
+    "left",
+    hl.dsp.exec_cmd(("%s tts seek -3"):format(d.speech)),
+    { repeating = true, description = "scrub back 3s" }
+  )
 
-  -- Copy the agent's last reply through its /copy command
-  hl.bind("SHIFT + v", exec_then_reset([[wtype "/copy" && wtype -k Return]]))
+  hl.bind("SHIFT + v", exec_then_reset([[wtype "/copy" && wtype -k Return]]), { description = "copy agent reply" })
 
   -- Paste into the focused window. Ctrl+Shift+V rather than Ctrl+V, which is
   -- what pastes in kitty.
@@ -73,24 +92,19 @@ hl.define_submap(submap, function()
     "v",
     exec_then_reset(
       [[a=$(hyprctl -j activewindow | jq -r .address) && ~/.config/hypr/scripts/send-key.py "address:$a" V -m CTRL+SHIFT]]
-    )
+    ),
+    { description = "paste" }
   )
 
-  -- Pick an agent to jump to, waiting ones first
-  hl.bind("a", exec_then_reset(d.agents))
+  hl.bind("a", exec_then_reset(d.agents), { description = "pick agent, waiting first" })
 
-  -- Copywriter: refine clipboard through AI
-  hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)))
+  hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)), { description = "copywriter on clipboard" })
 
-  -- Kill copywriter
-  hl.bind("SHIFT + w", exec_then_reset(("%s kill"):format(d.copywriter)))
+  hl.bind("SHIFT + w", exec_then_reset(("%s kill"):format(d.copywriter)), { description = "kill copywriter" })
 
-  -- Toggle zoom
-  hl.bind("z", exec_then_reset(("%s toggle"):format(d.zoom)))
+  hl.bind("z", exec_then_reset(("%s toggle"):format(d.zoom)), { description = "toggle zoom" })
 
-  -- Stop speech-to-text
-  hl.bind("q", exec_then_reset(("%s stt kill"):format(d.speech)))
+  hl.bind("q", exec_then_reset(("%s stt kill"):format(d.speech)), { description = "stop dictation" })
 
-  -- Exit recording mode
-  hl.bind("escape", hl.dsp.submap("reset"))
+  hl.bind("escape", hl.dsp.submap("reset"), { description = "exit" })
 end)

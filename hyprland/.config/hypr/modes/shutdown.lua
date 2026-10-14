@@ -4,7 +4,7 @@
 
 local d = require("definitions")
 
-local submap = "󰐥 Power: (l) lock | (s) suspend | (S) hibernate | (L) logout | (R) reboot | (Q) shutdown | ESC"
+local submap = "󰐥"
 
 local function exec_then_reset(cmd)
   return function()
@@ -14,24 +14,11 @@ local function exec_then_reset(cmd)
 end
 
 hl.define_submap(submap, function()
-  -- Lock
-  hl.bind("l", exec_then_reset(d.locking))
-
-  -- Hibernate
-  hl.bind("SHIFT + s", exec_then_reset("systemctl hibernate"))
-
-  -- Logout
-  hl.bind("SHIFT + l", exec_then_reset("loginctl terminate-user $USER"))
-
-  -- Shutdown
-  hl.bind("SHIFT + q", exec_then_reset("systemctl poweroff"))
-
-  -- Suspend
-  hl.bind("s", exec_then_reset("systemctl suspend"))
-
-  -- Reboot
-  hl.bind("SHIFT + r", exec_then_reset("systemctl reboot"))
-
-  -- Exit shutdown mode
-  hl.bind("escape", hl.dsp.submap("reset"))
+  hl.bind("l", exec_then_reset(d.locking), { description = "lock" })
+  hl.bind("SHIFT + s", exec_then_reset("systemctl hibernate"), { description = "hibernate" })
+  hl.bind("SHIFT + l", exec_then_reset("loginctl terminate-user $USER"), { description = "logout" })
+  hl.bind("SHIFT + q", exec_then_reset("systemctl poweroff"), { description = "shut down" })
+  hl.bind("s", exec_then_reset("systemctl suspend"), { description = "suspend" })
+  hl.bind("SHIFT + r", exec_then_reset("systemctl reboot"), { description = "reboot" })
+  hl.bind("escape", hl.dsp.submap("reset"), { description = "exit" })
 end)
