@@ -37,8 +37,16 @@ from gi.repository import Gtk4LayerShell as LayerShell
 
 
 class Surface:
-    """A borderless layer-shell window drawn entirely by the GTK theme: its
-    background, label classes, progress bar and keycaps. Only spacing is ours."""
+    """A layer-shell window drawn by the GTK theme: its background, label
+    classes, progress bar and keycaps. Ours are the spacing and the border,
+    which the theme leaves to window decorations a layer surface has none of.
+    The border takes swaync's notification colour from the shared palette:
+    the theme's own `@borders` is 12% white and vanishes on a dark desktop."""
+
+    PALETTE = Path.home() / ".config/wayland/theme.css"
+    # On the content box rather than the window: GTK draws no CSS border on a
+    # toplevel's own node.
+    STYLE = ".overlay-frame { border: 1px solid @bg_color_400; padding: 16px; }"
 
     MARGIN = 12
     EDGES: ClassVar[dict[OverlayPosition, tuple[LayerShell.Edge, ...]]] = {
@@ -48,7 +56,9 @@ class Surface:
 
     def __init__(self, app: Gtk.Application, namespace: str, position: OverlayPosition):
         self.window = Gtk.ApplicationWindow(
-            application=app, decorated=False, css_classes=["background", "csd"]
+            application=app,
+            decorated=False,
+            css_classes=["background", "csd"],
         )
         LayerShell.init_for_window(self.window)
         LayerShell.set_namespace(self.window, namespace)
@@ -86,8 +96,7 @@ class Surface:
         return attrs
 
     def frame(self, child: Gtk.Widget) -> None:
-        for side in ("top", "bottom", "start", "end"):
-            child.set_property(f"margin-{side}", 16)
+        child.add_css_class("overlay-frame")
         self.window.set_child(child)
 
 
@@ -177,6 +186,27 @@ class Card(Surface):
         return GLib.SOURCE_REMOVE
 
 
+class Keycaps(Gtk.Box):
+    """Keys drawn as the theme's keycaps, which it styles only inside a
+    `shortcut` node. Not a `Gtk.ShortcutLabel`: that one draws every letter as
+    a capital, so `w` and `Shift+w` would read the same."""
+
+    __gtype_name__ = "OverlayKeycaps"
+
+    def __init__(self, combos: list[list[str]]):
+        super().__init__(spacing=6, halign=Gtk.Align.END)
+        for i, combo in enumerate(combos):
+            if i:
+                self.append(Gtk.Label(label="/", css_classes=["dim-label"]))
+            for j, cap in enumerate(combo):
+                if j:
+                    self.append(Gtk.Label(label="+", css_classes=["dim-label"]))
+                self.append(Gtk.Label(label=cap, css_classes=["keycap"]))
+
+
+Keycaps.set_css_name("shortcut")
+
+
 class Hints(Surface):
     """What each key does in the active submap, read off the binds' own
     descriptions."""
@@ -197,17 +227,17 @@ class Hints(Surface):
     def show(
         self,
         title: str = "",
-        rows: list[list[str]] | None = None,
+        rows: list[tuple[list[list[str]], str]] | None = None,
         position: str | None = None,
     ):
         self.place(OverlayPosition(position or self.default))
         self.title.set_label(title)
         while child := self.grid.get_first_child():
             self.grid.remove(child)
-        for i, (accelerators, description) in enumerate(rows or []):
+        for i, (combos, description) in enumerate(rows or []):
             column, row = divmod(i, self.ROWS)
             self.grid.attach(
-                Gtk.ShortcutLabel(accelerator=accelerators, halign=Gtk.Align.END),
+                Keycaps(combos),
                 column * 2,
                 row,
                 1,
@@ -234,13 +264,22 @@ class Hints(Surface):
 class Submaps:
     """Follows Hyprland's submap and turns the active one's binds into hint rows."""
 
-    # Hyprland's modmask bits, as GTK accelerator modifiers.
+    # Hyprland's modmask bits, by the name a keycap shows.
     MODS: ClassVar[tuple[tuple[int, str], ...]] = (
-        (64, "<Super>"),
-        (4, "<Control>"),
-        (8, "<Alt>"),
-        (1, "<Shift>"),
+        (64, "Super"),
+        (4, "Ctrl"),
+        (8, "Alt"),
+        (1, "Shift"),
     )
+    GLYPHS: ClassVar[dict[str, str]] = {
+        "Left": "←",
+        "Right": "→",
+        "Up": "↑",
+        "Down": "↓",
+        "space": "␣",
+        "Return": "Enter",
+        "Escape": "Esc",
+    }
     RETRY_SECONDS = 2.0
 
     log = logging.getLogger("submaps")
@@ -259,30 +298,41 @@ class Submaps:
 
         return json.loads(data)
 
-    def accelerator(self, bind: dict[str, Any]) -> str:
-        """The bind as a GTK accelerator, for `Gtk.ShortcutLabel` to draw as
-        theme keycaps. Hyprland keeps the key as written in the config, while
-        GDK's key names are case-sensitive and mixed (`Left`, but `space`), so
-        the spelling GDK knows is the one used."""
+    def keys(self, bind: dict[str, Any]) -> list[str]:
+        """The bind as keycap labels, modifiers first.
+
+        A letter keeps its case, capital only under Shift, so `w` and
+        `Shift+W` cannot be mistaken for each other. Named keys go through
+        GDK, whose names are case-sensitive and mixed (`Left`, but `space`)
+        while Hyprland keeps the key as written in the config."""
+        shift = bool(bind["modmask"] & 1)
         key = bind["key"]
-        for spelling in (key, key[:1].upper() + key[1:], key.lower()):
-            if Gdk.keyval_from_name(spelling) != Gdk.KEY_VoidSymbol:
-                key = spelling
-                break
+        if len(key) == 1:
+            label = key.upper() if shift else key.lower()
+        else:
+            name = next(
+                (
+                    n
+                    for n in (key, key[:1].upper() + key[1:], key.lower())
+                    if Gdk.keyval_from_name(n) != Gdk.KEY_VoidSymbol
+                ),
+                key,
+            )
+            label = self.GLYPHS.get(name) or Gtk.accelerator_get_label(
+                Gdk.keyval_from_name(name), 0
+            )
 
-        return "".join(name for bit, name in self.MODS if bind["modmask"] & bit) + key
+        return [*(n for bit, n in self.MODS if bind["modmask"] & bit), label]
 
-    def rows(self, submap: str) -> list[list[str]]:
-        """Binds sharing a description collapse into one row, so `Left` and
-        `h` read as a single hint."""
-        grouped: dict[str, list[str]] = {}
+    def rows(self, submap: str) -> list[tuple[list[list[str]], str]]:
+        """Binds sharing a description collapse into one row, so `←` and `h`
+        read as a single hint."""
+        grouped: dict[str, list[list[str]]] = {}
         for bind in self.binds():
             if bind["submap"] == submap and bind["has_description"]:
-                grouped.setdefault(bind["description"], []).append(
-                    self.accelerator(bind)
-                )
+                grouped.setdefault(bind["description"], []).append(self.keys(bind))
 
-        return [[" ".join(keys), description] for description, keys in grouped.items()]
+        return [(combos, description) for description, combos in grouped.items()]
 
     def follow(self, hints: Hints) -> None:
         while True:
@@ -322,6 +372,13 @@ class OverlayServer:
         self.slots: dict[OverlaySlot, Card | Hints] = {}
 
     def activate(self, app: Gtk.Application) -> None:
+        css = Gtk.CssProvider()
+        css.load_from_string(
+            f'@import url("file://{Surface.PALETTE}");\n{Surface.STYLE}'
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
         self.slots = {OverlaySlot.CARD: Card(app), OverlaySlot.HINTS: Hints(app)}
         app.hold()
 

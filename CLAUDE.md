@@ -686,10 +686,15 @@ not set. Read the active line, never the comment above it.
   follows `submap>>` on socket2 and reads `j/binds` for the active submap, so a
   bind inside a submap needs a `description` or it has no row. Submap names are
   icons only; the icon is the hint title and the waybar label.
-- **Styling is the GTK theme's**, deliberately without a stylesheet: theme
-  window background, `heading` / `title-2` label classes, `Gtk.ProgressBar`,
-  and `Gtk.ShortcutLabel` keycaps. Keys are GTK accelerators, alternatives
-  space-separated; a `/` in the string fails to parse.
+- **Styling is the GTK theme's**: window background, `heading` / `title-2`
+  label classes, `Gtk.ProgressBar`, and its `.keycap` style. The one rule of
+  ours is the border, on the content box because GTK draws no CSS border on a
+  toplevel's node, in the palette's `@bg_color_400` (swaync's notification
+  border) because the theme's `@borders` is 12% white and invisible here.
+- **Keycaps are not `Gtk.ShortcutLabel`**, which capitalises every letter so
+  `w` and `Shift+w` read alike. `Keycaps` is a box whose CSS name is set to
+  `shortcut`, the only node the theme styles `.keycap` under; letters keep
+  their case, capital only under Shift.
 - The process re-execs itself with `LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so`,
   which has to load before libwayland-client; without it
   `Gtk4LayerShell.is_supported()` is false and `serve` refuses to start.
