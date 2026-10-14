@@ -1,5 +1,7 @@
 #!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
-"""Pick a coding agent running in tmux via rofi, waiting ones first."""
+"""Coding agents running in tmux: a rofi picker with waiting ones first, and
+the steps the agents submap binds - next and previous running agent, the
+oldest or newest waiting one, and clearing the waiting list."""
 
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from typing import ClassVar
 import click
 from dotlib import agents
 from dotlib.cli import create_logger, run
+from dotlib.notify import Notification
 
 from lib import Hyprctl
 
@@ -108,13 +111,13 @@ class AgentMenu:
                 case _:
                     self.dismiss(row.entry)
                     if row.pane:
-                        run(
-                            [str(self.NOTIFY), "focus", "--pane", row.pane],
-                            log=self.log,
-                            timeout=10.0,
-                        )
+                        self.focus(row.pane)
                     return
         self.log.info("no agents running")
+
+    @classmethod
+    def focus(cls, pane: str) -> None:
+        run([str(cls.NOTIFY), "focus", "--pane", pane], log=cls.log, timeout=10.0)
 
     @staticmethod
     def dismiss(entry: dict | None) -> None:
@@ -337,15 +340,66 @@ class AgentMenu:
 
         return f"{seconds // 3600}h"
 
+    # ── CLI ───────────────────────────────────────────────────────
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
-def cmd_main(verbose: bool) -> None:
-    create_logger(verbose, name="agents")
-    AgentMenu().run()
+    NOTIFICATION = Notification("Agents")
 
+    # Bare, it picks: the OpenDeck plugin is a copied deploy and calls it that way.
+    @click.group(
+        context_settings={"help_option_names": ["-h", "--help"]},
+        invoke_without_command=True,
+    )
+    @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+    @click.pass_context
+    def cli(ctx: click.Context, verbose: bool) -> None:
+        """Coding agents running in tmux."""
+        create_logger(verbose, name="agents")
+        if ctx.invoked_subcommand is None:
+            AgentMenu().run()
 
-AgentMenu.cli = cmd_main
+    @cli.command("pick")
+    def cmd_pick() -> None:
+        """Pick an agent in rofi, waiting ones first."""
+        AgentMenu().run()
+
+    @cli.command("next")
+    def cmd_next() -> None:
+        """Focus the running agent after the one on screen."""
+        AgentMenu.switch(1)
+
+    @cli.command("prev")
+    def cmd_prev() -> None:
+        """Focus the running agent before the one on screen."""
+        AgentMenu.switch(-1)
+
+    @cli.command("waiting")
+    @click.option("--newest", is_flag=True, help="Newest instead of oldest.")
+    def cmd_waiting(newest: bool) -> None:
+        """Focus a waiting agent and clear it from the list."""
+        # Paneless entries cannot be focused, so they are never the target.
+        waiting = [e for e in agents.waiting(agents.tmux_panes()) if e.get("pane")]
+        if not waiting:
+            AgentMenu.NOTIFICATION.send("Nothing waiting")
+            return
+        entry = waiting[-1] if newest else waiting[0]
+        AgentMenu.dismiss(entry)
+        AgentMenu.focus(entry["pane"])
+
+    @cli.command("dismiss")
+    def cmd_dismiss() -> None:
+        """Clear the whole waiting list."""
+        agents.edit_waiting(lambda w: [])
+        AgentMenu.NOTIFICATION.send("Waiting list cleared")
+
+    @classmethod
+    def switch(cls, offset: int) -> None:
+        panes = agents.tmux_panes() or {}
+        target = agents.step(agents.running(panes, agents.walk(panes)), offset)
+        if target is None:
+            cls.NOTIFICATION.send("No agents running")
+            return
+        cls.focus(target["pane"])
+
 
 if __name__ == "__main__":
     AgentMenu.cli()

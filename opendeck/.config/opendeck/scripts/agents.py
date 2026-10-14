@@ -103,7 +103,7 @@ class AgentsPlugin(Plugin):
             case Action.SESSIONS:
                 self.switch(1)
             case Action.PICKER:
-                self.spawn([str(self.PICKER)])
+                self.spawn([str(self.PICKER), "pick"])
             case Action.WAITING if key.settings["slot"] == 1:
                 self.cycle()
             case Action.WAITING if (entry := self.agent(key)) is not None:
@@ -151,23 +151,12 @@ class AgentsPlugin(Plugin):
                 if pane in panes and agents.alive(agent["pid"], agent["name"])
             }
 
-        return [
-            {
-                **agent,
-                "where": panes[pane]["where"],
-                "project": Path(panes[pane]["path"]).name or "/",
-                "seen": panes[pane]["seen"],
-            }
-            for pane, agent in self.found.items()
-            if pane in panes
-        ]
+        return agents.running(panes, self.found)
 
     def switch(self, step: int) -> None:
         """Focus the next (or previous) agent after the one on screen."""
-        if not self.agents:
+        if (target := agents.step(self.agents, step)) is None:
             return
-        current = next((i for i, a in enumerate(self.agents) if a["seen"]), -1)
-        target = self.agents[(current + step) % len(self.agents)]
         self.spawn([str(self.NOTIFY), "focus", "--pane", target["pane"]])
         self.next_agents = time.monotonic() + 0.3
 

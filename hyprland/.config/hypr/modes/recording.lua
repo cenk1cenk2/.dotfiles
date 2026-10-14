@@ -96,8 +96,6 @@ hl.define_submap(submap, function()
     { description = "paste" }
   )
 
-  hl.bind("a", exec_then_reset(d.agents), { description = "pick agent, waiting first" })
-
   hl.bind("w", exec_then_reset(("%s run clipboard"):format(d.copywriter)), { description = "copywriter on clipboard" })
 
   hl.bind("SHIFT + w", exec_then_reset(("%s kill"):format(d.copywriter)), { description = "kill copywriter" })

@@ -160,6 +160,38 @@ def walk(panes: dict[str, dict]) -> dict[str, dict]:
     return found
 
 
+def running(panes: dict[str, dict], found: dict[str, dict]) -> list[dict]:
+    """The agents `walk` found, in tmux's pane order, with where each sits."""
+    return [
+        {
+            **agent,
+            "where": panes[pane]["where"],
+            "project": Path(panes[pane]["path"]).name or "/",
+            "seen": panes[pane]["seen"],
+        }
+        for pane, agent in found.items()
+        if pane in panes
+    ]
+
+
+def step(agents: list[dict], offset: int) -> dict | None:
+    """The agent `offset` places from the one on screen, wrapping; from the
+    start of the list when none is on screen."""
+    if not agents:
+        return None
+    current = next((i for i, a in enumerate(agents) if a["seen"]), -1)
+
+    return agents[(current + offset) % len(agents)]
+
+
+def waiting(panes: dict[str, dict] | None) -> list[dict]:
+    """The waiting list with stale entries pruned, oldest first."""
+    return sorted(
+        edit_waiting(lambda w: [e for e in w if not stale(e, panes)]),
+        key=lambda e: e.get("at", 0),
+    )
+
+
 def ancestor(pid: int) -> tuple[int, str] | None:
     """The nearest agent process at or above `pid`, as its pid and name.
 
