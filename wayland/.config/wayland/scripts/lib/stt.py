@@ -130,6 +130,8 @@ class SttRecorder(SttAdapter, Protocol):
 
     def pause(self) -> bool: ...
 
+    def muted(self) -> bool: ...
+
 
 @runtime_checkable
 class LevelSource(Protocol):
@@ -285,6 +287,9 @@ class SttAdapterMic:
     def pause(self) -> bool:
         return self.mic.pause()
 
+    def muted(self) -> bool:
+        return self.mic.muted()
+
     def frame(self) -> tuple[float, list[float]] | None:
         return self.mic.frame()
 
@@ -371,6 +376,9 @@ class SttAdapterRealtime:
 
     def pause(self) -> bool:
         return self.mic.pause()
+
+    def muted(self) -> bool:
+        return self.mic.muted()
 
     def frame(self) -> tuple[float, list[float]] | None:
         return self.mic.frame()

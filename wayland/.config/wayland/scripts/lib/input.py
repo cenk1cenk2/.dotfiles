@@ -237,6 +237,28 @@ class MicCapture:
     def is_recording(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def muted(self) -> bool:
+        """Whether the default source is muted, which records pure silence.
+
+        Only the default source is asked: `wpctl` takes a node id, never the
+        node name `target` carries. Unreadable answers no."""
+        if self.target:
+            return False
+
+        cmd = ["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"]
+        log.debug("spawn: %s", " ".join(cmd))
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=2
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log.warning("mute check failed: %s", e)
+            return False
+        if proc.stderr:
+            log.debug("wpctl stderr: %s", proc.stderr.strip())
+
+        return "[MUTED]" in proc.stdout
+
     def stop(self) -> None:
         """End the capture and wait for the recorder to actually be gone.
 

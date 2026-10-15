@@ -46,6 +46,7 @@ from dotlib.notify import (
     Chime,
     ChimeDirection,
     Notification,
+    NotifyChannel,
     OsdIcon,
     Status,
 )
@@ -648,6 +649,14 @@ class Stt:
         )
         if server:
             server.start()
+        # A muted source still records, so the take runs to the end and
+        # fails as "no turns". The desktop channel, because the card is
+        # redrawn by the meter the moment the take starts.
+        if recorder is not None and recorder.muted():
+            self.log.warning("microphone is muted; the take will be silent")
+            self.NOTIFICATION.send(
+                "Microphone is muted", 8000, channel=NotifyChannel.DESKTOP
+            )
         # The only cue that the microphone is live. Waited on, and before the
         # suppression, so it is heard at full volume rather than ducking itself.
         Chime(ChimeDirection.UP).play(wait=True)
