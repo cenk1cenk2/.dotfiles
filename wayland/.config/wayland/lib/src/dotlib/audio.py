@@ -49,6 +49,29 @@ DEFAULT_DUCK_FACTOR = 0.3
 
 log = logging.getLogger(__name__)
 
+DEFAULT_SINK = "@DEFAULT_AUDIO_SINK@"
+DEFAULT_SOURCE = "@DEFAULT_AUDIO_SOURCE@"
+
+
+def muted(node: str) -> bool:
+    """Whether a WirePlumber node is muted, by id or `DEFAULT_SINK` / `DEFAULT_SOURCE`.
+
+    `wpctl` takes no node name. Unreadable answers no, so a broken probe never
+    stands in the way of the audio it is asked about."""
+    cmd = ["wpctl", "get-volume", node]
+    log.debug("spawn: %s", " ".join(cmd))
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=2
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("mute check failed: %s", e)
+        return False
+    if proc.stderr:
+        log.debug("wpctl stderr: %s", proc.stderr.strip())
+
+    return "[MUTED]" in proc.stdout
+
 @dataclass(frozen=True)
 class DuckedStream:
     """A stream's volume as it was, plus enough to know nothing else moved it."""

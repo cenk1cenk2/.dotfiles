@@ -22,7 +22,9 @@ from typing import Any
 import click
 from dotlib.audio import (
     DEFAULT_DUCK_FACTOR,
+    DEFAULT_SINK,
     PlaybackSuppressor,
+    muted,
 )
 from dotlib.cli import (
     create_logger,
@@ -1874,6 +1876,12 @@ class Tts:
             return
 
         self.log.info("speaking %d chars (voice=%s)", len(text), spec.voice)
+        # The desktop channel, because the card is redrawn by playback.
+        if muted(DEFAULT_SINK):
+            self.log.warning("output is muted; nothing will be heard")
+            self.NOTIFICATION.send(
+                "Output is muted", 8000, channel=NotifyChannel.DESKTOP
+            )
         session = TtsSession(spec.voice, len(text), self._suppressor, self._player)
         session.start()
         try:
