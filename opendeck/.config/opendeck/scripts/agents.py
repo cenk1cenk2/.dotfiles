@@ -158,7 +158,7 @@ class AgentsPlugin(Plugin):
 
     def dictate(self) -> None:
         """Land the take being recorded in the current agent, as agents mode's
-        dictate does: focus its pane, then stop the take with pasted output.
+        dictate does: focus its pane, then stop the take with a submitted paste.
 
         The take keeps the enrichment it was started with, since a stop
         override replaces it either way. With nothing recording this opens
@@ -174,7 +174,7 @@ class AgentsPlugin(Plugin):
             [
                 *SpeechPlugin.SPEECH[:2],
                 f'{self.NOTIFY} focus --pane "$1"'
-                f" && ~/.config/wayland/scripts/speech.py stt toggle --output paste{enrich}",
+                f" && ~/.config/wayland/scripts/speech.py stt toggle --output paste --submit{enrich}",
                 "zsh",
                 found[0]["pane"],
             ]

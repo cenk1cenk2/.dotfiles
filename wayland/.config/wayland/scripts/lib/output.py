@@ -3,6 +3,7 @@
 import logging
 import subprocess
 import sys
+import time
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
@@ -64,18 +65,30 @@ class OutputAdapterPaste:
     `kitty.conf`.
 
     The text stays on the clipboard, so a paste that landed in the wrong
-    window can be repeated by hand. Not streaming: a paste cannot append."""
+    window can be repeated by hand. Not streaming: a paste cannot append.
+
+    `submit` presses Enter after it, for a prompt that should go out as it
+    lands. The paste key only asks the app to fetch the clipboard, which it
+    does asynchronously, so an Enter sent at once can submit before the text
+    is in; SUBMIT_DELAY waits that out."""
 
     mode = OutputMode.PASTE
 
     KEYS = ("wtype", "-M", "shift", "-k", "Insert", "-m", "shift")
+    SUBMIT = ("wtype", "-k", "Return")
+    SUBMIT_DELAY = 0.3
+
+    def __init__(self, submit: bool = False):
+        self.submit = submit
 
     def write(self, text: str) -> None:
         OutputAdapterClipboard().write(text)
-        log.debug("spawn: %s", " ".join(self.KEYS))
-        subprocess.run(
-            list(self.KEYS), check=False, stdout=sys.stderr, stderr=sys.stderr
-        )
+        keys = [list(self.KEYS)] + ([list(self.SUBMIT)] if self.submit else [])
+        for i, cmd in enumerate(keys):
+            if i:
+                time.sleep(self.SUBMIT_DELAY)
+            log.debug("spawn: %s", " ".join(cmd))
+            subprocess.run(cmd, check=False, stdout=sys.stderr, stderr=sys.stderr)
 
 
 class OutputAdapterStdout:

@@ -480,7 +480,9 @@ class SttSession(SocketSession):
                     )
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
-                self._apply_output_override(OutputMode(obj["output"]))
+                self._apply_output_override(
+                    OutputMode(obj["output"]), bool(obj.get("submit"))
+                )
             return Response(ok=True)
         if cmd is Command.PAUSE:
             return self.pause()
@@ -528,10 +530,10 @@ class SttSession(SocketSession):
             )
         self.set_enricher(new_enricher)
 
-    def _apply_output_override(self, mode: OutputMode) -> None:
+    def _apply_output_override(self, mode: OutputMode, submit: bool) -> None:
         # A file sink carries a path the socket payload does not, so
         # build_output refuses it and the client is told why.
-        self.set_output(build_output(mode))
+        self.set_output(build_output(mode, submit=submit or None))
 
 
 class Stt:
@@ -612,13 +614,17 @@ class Stt:
         output_mode: OutputMode,
         save: bool,
         stream: bool = False,
+        submit: bool = False,
     ) -> None:
         assert self._adapter is not None, "a capture needs an adapter"
         recorder = self._recorder
         if recorder is not None:
             enrich_payload = enrich_spec.to_dict() if enrich_spec else None
             response = self._send(
-                Command.STOP, enrich=enrich_payload, output=output_mode.value
+                Command.STOP,
+                enrich=enrich_payload,
+                output=output_mode.value,
+                submit=submit,
             )
             if response is not None:
                 self.log.info("press-2: signaled running session to stop")
@@ -1003,6 +1009,7 @@ class Stt:
     @click.option(
         "--output-file", type=click.Path(path_type=Path), help="Text file to write."
     )
+    @click.option("--submit", is_flag=True, help="Press Enter after a paste output.")
     @click.option("--model", default=None, help="Transcription model id.")
     @click.option(
         "--whisper-prompt",
@@ -1056,8 +1063,7 @@ class Stt:
         default=True,
         help=(
             "Emit as it is produced rather than at the end: the rewrite with "
-            "--enrich, the realtime turns without it. Needs a type or stdout "
-            "output."
+            "--enrich, the realtime turns without it. Needs a stdout output."
         ),
     )
     @click.option(
@@ -1084,6 +1090,7 @@ class Stt:
         input_file,
         output,
         output_file,
+        submit,
         model,
         whisper_prompt,
         response_format,
@@ -1104,7 +1111,9 @@ class Stt:
         """Start a session, or toggle an existing one."""
         output_mode = OutputMode(output)
         try:
-            output_adapter = build_output(output_mode, path=output_file)
+            output_adapter = build_output(
+                output_mode, path=output_file, submit=submit or None
+            )
         except (TypeError, ValueError) as e:
             raise click.UsageError(str(e)) from e
 
@@ -1183,6 +1192,7 @@ class Stt:
         ).run_once(
             enrich_spec=enrich_spec,
             output_mode=output_mode,
+            submit=submit,
             save=save,
             stream=stream,
         )
