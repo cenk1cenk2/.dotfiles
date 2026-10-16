@@ -6,6 +6,7 @@ handlers; keys only receive a state or title when what they show changes."""
 
 from __future__ import annotations
 
+import configparser
 import json
 import logging
 import os
@@ -16,12 +17,29 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import click
 import websocket
 from dotlib.cli import create_logger
+from xdg.IconTheme import getIconPath
 
 logging.getLogger("websocket").setLevel(logging.CRITICAL)
+
+GTK_SETTINGS = Path.home() / ".config/gtk-3.0/settings.ini"
+
+
+def icon(name: str, size: int = 144) -> Path | None:
+    """`name` resolved through the GTK icon theme and what it inherits.
+
+    Resolved on every call, so a theme switched or reinstalled while the
+    plugin runs is picked up; None when no theme carries the name."""
+    settings = configparser.ConfigParser()
+    settings.read(GTK_SETTINGS)
+    theme = settings.get("Settings", "gtk-icon-theme-name", fallback="hicolor")
+    found = getIconPath(name, size, theme, ["svg", "png"])
+
+    return Path(found) if found else None
 
 
 @dataclass

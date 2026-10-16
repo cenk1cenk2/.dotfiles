@@ -22,6 +22,8 @@ dependencies = [
   "pulsectl>=24.12",
   # Downscales cover art to key size; the key is redrawn as the track plays.
   "pillow>=11.0",
+  # Freedesktop icon lookup, so keys draw icons by name through the theme.
+  "pyxdg>=0.28",
 ]
 
 [tool.ty.environment]

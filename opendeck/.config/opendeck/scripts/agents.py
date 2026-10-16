@@ -11,7 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
-from deck import Key, Plugin, command
+from deck import Key, Plugin, command, icon
 from dotlib import agents
 
 
@@ -36,9 +36,6 @@ class AgentsPlugin(Plugin):
     NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
     PICKER = Path.home() / ".config/hypr/scripts/agents.py"
     ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.agents.sdPlugin/icons"
-    TERMINAL = Path(
-        "/usr/share/icons/Tela-yellow-dark/scalable/apps/utilities-terminal.svg"
-    )
     SAMPLE_SECONDS = 1.0
     AGENTS_SECONDS = 2.0
     WALK_SECONDS = 15.0
@@ -228,8 +225,24 @@ class AgentsPlugin(Plugin):
             self.waiting[0],
         )
 
-    def terminal(self) -> str:
-        return base64.b64encode(self.TERMINAL.read_bytes()).decode()
+    @staticmethod
+    def terminal(x: int, y: int, size: int, opacity: float) -> str:
+        """The theme's terminal icon as an `<image>`, or nothing without one.
+
+        Nothing rather than a crash: a theme mid-reinstall when the plugin
+        starts would otherwise take every key down until OpenDeck restarts."""
+        if (path := icon("utilities-terminal")) is None:
+            return ""
+        try:
+            data = base64.b64encode(path.read_bytes()).decode()
+        except OSError:
+            return ""
+        mime = "image/svg+xml" if path.suffix == ".svg" else "image/png"
+
+        return (
+            f'<image href="data:{mime};base64,{data}" x="{x}" y="{y}"'
+            f' width="{size}" height="{size}" opacity="{opacity}"/>'
+        )
 
     def mark(self, entry: dict) -> str | None:
         vendor = self.VENDORS.get(entry.get("vendor", ""), "claude")
@@ -253,8 +266,7 @@ class AgentsPlugin(Plugin):
                 # stack reads as solid cards rather than overlapping ghosts.
                 + "".join(
                     f'<rect x="{x + 4}" y="{y + 6}" width="48" height="44" rx="6" fill="#17191e"/>'
-                    f'<image href="data:image/svg+xml;base64,{self.terminal()}"'
-                    f' x="{x}" y="{y}" width="56" height="56" opacity="{opacity}"/>'
+                    + self.terminal(x, y, 56, opacity)
                     for x, y, opacity in ((60, 38, 0.12), (50, 50, 0.2), (40, 62, 0.3))
                 )
                 + "</svg>"
@@ -301,12 +313,11 @@ class AgentsPlugin(Plugin):
 
         entry = self.agent(key)
         if entry is None:
-            icon = base64.b64encode(self.TERMINAL.read_bytes()).decode()
             return self.uri(
                 '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
                 '<rect width="144" height="144" fill="#17191e"/>'
-                f'<image href="data:image/svg+xml;base64,{icon}" x="40" y="52" width="64" height="64"'
-                ' opacity="0.3"/></svg>'
+                + self.terminal(40, 52, 64, 0.3)
+                + "</svg>"
             )
 
         colour = self.URGENT if entry.get("urgent") else self.WAITING_TILE
@@ -335,12 +346,11 @@ class AgentsPlugin(Plugin):
     def sessions_image(self) -> str:
         found = self.current_agent()
         if found is None:
-            terminal = base64.b64encode(self.TERMINAL.read_bytes()).decode()
             svg = (
                 '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144">'
                 '<rect width="144" height="144" fill="#17191e"/>'
-                f'<image href="data:image/svg+xml;base64,{terminal}" x="40" y="52" width="64" height="64"'
-                ' opacity="0.3"/></svg>'
+                + self.terminal(40, 52, 64, 0.3)
+                + "</svg>"
             )
             return (
                 f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
