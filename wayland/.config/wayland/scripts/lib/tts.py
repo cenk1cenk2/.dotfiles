@@ -53,7 +53,7 @@ DEFAULT_TTS_TIMEOUT = 120.0
 DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
 # Kokoro hands back about -23 LUFS, some 7 LU under a normal speech target and
 # audibly thin against anything else on the desktop. This lifts it to about
-# -17.8 LUFS at -0.3 dBTP.
+# -14.6 LUFS at -0.5 dBTP.
 #
 # `speechnorm` rather than the obvious alternatives, each of which fails on
 # material that peaks at -3.3 dBTP with almost no dynamic range:
@@ -63,8 +63,15 @@ DEFAULT_TTS_PLAYER = PlayerMode.FFPLAY
 #     a multi-second lookahead, and `ffplay -autoexit` quits at input EOF
 #     without draining it. That silently cut every utterance short - a 5.7s
 #     sample played for 2.9s.
-# `speechnorm` has no lookahead, so playback keeps its full length.
-SPEECHNORM_FILTER = "speechnorm=e=6.25:r=0.00001:l=1"
+# `speechnorm` has no lookahead, so playback keeps its full length, but alone
+# it stops at about -19 LUFS with its peaks already at the ceiling. The
+# compressor's makeup gain carries the rest, and the limiter's ceiling sits at
+# 0.75 rather than near 1 to leave the true-peak headroom it cannot see.
+LOUDNESS_FILTER = (
+    "speechnorm=e=6.25:r=0.00001:l=1,"
+    "acompressor=threshold=-18dB:ratio=4:attack=5:release=80:makeup=10dB,"
+    "alimiter=limit=0.75:level=false:attack=2:release=40"
+)
 
 # Big enough that the pump is not syscall-bound, small enough that the
 # first chunk lands at the sink well inside a human's patience.
@@ -626,7 +633,7 @@ class PlayerAdapterFfplay(PlayerBase):
         # normaliser should read the samples as they will be heard.
         filters = [f"atempo={self.tempo}"] if self.tempo != 1.0 else []
         if self.normalize:
-            filters.append(SPEECHNORM_FILTER)
+            filters.append(LOUDNESS_FILTER)
         if filters:
             cmd += ["-af", ",".join(filters)]
         cmd += ["-i", "pipe:0"]
