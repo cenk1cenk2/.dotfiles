@@ -52,8 +52,8 @@ class Key:
     settings: dict
     shown: tuple[int, str] | None = None
     # What the key was last drawn from: the plugin's image or the state files,
-    # and the hold hint laid over it.
-    drawn: tuple[str | None, str | None] | None = None
+    # the hold hint laid over it, and whether that hold was firing.
+    drawn: tuple[str | None, str | None, bool] | None = None
     pressed_at: float | None = None
     held: bool = False
     fired_at: float = 0.0
@@ -200,20 +200,22 @@ class Plugin:
     HINT_MARK = 'data-deck-hint="1"'
 
     @classmethod
-    def hinted(cls, image: str, hint: str) -> str:
+    def hinted(cls, image: str, hint: str, lit: bool = False) -> str:
         """`image` with `hint` in a band along its bottom edge.
 
         The original is embedded whole rather than edited, so any image works
-        and `unwrap` can always recover it."""
+        and `unwrap` can always recover it. `lit` inverts the band, for while
+        the hold it names is the one firing."""
+        band, ink = ("#e5e5e5", "#17191e") if lit else ("#17191e", "#e5e5e5")
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144"'
             f' viewBox="0 0 144 144" {cls.HINT_MARK}>'
             f'<image href="{image}" width="144" height="144"/>'
             # Sized for the device rather than the canvas: a key is drawn at
             # half this size, where anything under ~20px stops reading.
-            '<rect y="114" width="144" height="30" fill="#17191e" fill-opacity="0.9"/>'
+            f'<rect y="114" width="144" height="30" fill="{band}" fill-opacity="0.9"/>'
             '<text x="72" y="136" font-family="Liberation Sans" font-size="21"'
-            ' font-weight="bold" fill="#e5e5e5" text-anchor="middle">'
+            f' font-weight="bold" fill="{ink}" text-anchor="middle">'
             f"{html.escape(hint)}</text></svg>"
         )
 
@@ -259,28 +261,28 @@ class Plugin:
         return images
 
     def draw(self, context: str, key: Key) -> None:
-        """Send the key's image when it or its hint changed.
+        """Send the key's image when it, its hint or its hold changed.
 
         A plugin image goes to every state, as OpenDeck applies a stateless
         `setImage`; without one, a hint is laid over each state's own file."""
         hint = self.hold_hint(key) if self.holds(key) else None
         image = self.image(context, key)
-        if (image, hint) == key.drawn or (image is None and hint is None):
+        if (image, hint, key.held) == key.drawn or (image is None and hint is None):
             return
         if image is not None:
             self.send(
                 "setImage",
                 context,
-                {"image": self.hinted(image, hint) if hint else image},
+                {"image": self.hinted(image, hint, key.held) if hint else image},
             )
         elif hint is not None:
             for state, base in self.state_images(context).items():
                 self.send(
                     "setImage",
                     context,
-                    {"image": self.hinted(base, hint), "state": state},
+                    {"image": self.hinted(base, hint, key.held), "state": state},
                 )
-        key.drawn = (image, hint)
+        key.drawn = (image, hint, key.held)
 
     def render(self) -> None:
         for context, key in self.keys.items():
