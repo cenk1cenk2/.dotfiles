@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from deck import Key, Plugin, command, icon
+from speech import Session, SpeechPlugin
 from dotlib import agents
 
 
@@ -109,15 +110,20 @@ class AgentsPlugin(Plugin):
                 self.dismiss(entry)
 
     def holds(self, key: AgentKey) -> bool:
-        return key.action != Action.PICKER
+        return True
 
     def hold_status(self, key: AgentKey) -> str | None:
-        if key.action == Action.SESSIONS:
-            return "previous"
+        match key.action:
+            case Action.SESSIONS:
+                return "previous"
+            case Action.PICKER:
+                return "dictate"
 
         return "dismiss all" if key.settings["slot"] == 1 else "dismiss"
 
     def hold(self, context: str, key: AgentKey) -> None:
+        if key.action == Action.PICKER:
+            return self.dictate()
         if key.action == Action.SESSIONS:
             return self.switch(-1)
         if key.settings["slot"] == 1:
@@ -149,6 +155,30 @@ class AgentsPlugin(Plugin):
             }
 
         return agents.running(panes, self.found)
+
+    def dictate(self) -> None:
+        """Land the take being recorded in the current agent, as agents mode's
+        dictate does: focus its pane, then stop the take with typed output.
+
+        The take keeps the enrichment it was started with, since a stop
+        override replaces it either way. With nothing recording this opens
+        the picker, as a press does."""
+        state = SpeechPlugin.status(Session.STT)
+        self.agents = self.find_agents()
+        found = self.current_agent()
+        if state is None or found is None:
+            return self.spawn([str(self.PICKER), "pick"])
+
+        enrich = " --enrich" if state.get("enrich") else ""
+        self.spawn(
+            [
+                *SpeechPlugin.SPEECH[:2],
+                f'{self.NOTIFY} focus --pane "$1"'
+                f" && ~/.config/wayland/scripts/speech.py stt toggle --output type{enrich}",
+                "zsh",
+                found[0]["pane"],
+            ]
+        )
 
     def switch(self, step: int) -> None:
         """Focus the next (or previous) agent after the one on screen."""
