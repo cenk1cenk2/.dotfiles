@@ -339,6 +339,9 @@ class SoundPlugin(Plugin):
     def repeats(self, key: SoundKey) -> bool:
         return self.holds(key)
 
+    def hold_hint(self, key: SoundKey) -> str | None:
+        return "repeat" if key.action == Action.VOLUME else self.hold_status(key)
+
     def hold_status(self, key: SoundKey) -> str | None:
         if key.action != Action.MEDIA:
             return None

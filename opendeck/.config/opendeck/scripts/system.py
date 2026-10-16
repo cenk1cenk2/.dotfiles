@@ -359,6 +359,9 @@ class SystemPlugin(Plugin):
     def hold_status(self, key: SystemKey) -> str | None:
         return "reset" if key.action == Action.TIMER else None
 
+    def hold_hint(self, key: SystemKey) -> str | None:
+        return "dnd" if key.action == Action.NOTIFY else self.hold_status(key)
+
     def hold(self, context: str, key: SystemKey) -> None:
         if key.action == Action.TIMER:
             return self.timer_reset()

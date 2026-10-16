@@ -6,10 +6,13 @@ handlers; keys only receive a state or title when what they show changes."""
 
 from __future__ import annotations
 
+import base64
 import configparser
+import html
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -27,6 +30,7 @@ from xdg.IconTheme import getIconPath
 logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
 GTK_SETTINGS = Path.home() / ".config/gtk-3.0/settings.ini"
+IMAGES = Path.home() / ".config/opendeck/images"
 
 
 def icon(name: str, size: int = 144) -> Path | None:
@@ -47,7 +51,9 @@ class Key:
     action: str
     settings: dict
     shown: tuple[int, str] | None = None
-    drawn: str | None = None
+    # What the key was last drawn from: the plugin's image or the state files,
+    # and the hold hint laid over it.
+    drawn: tuple[str | None, str | None] | None = None
     pressed_at: float | None = None
     held: bool = False
     fired_at: float = 0.0
@@ -157,6 +163,10 @@ class Plugin:
         """What a key shows in place of its status while its hold is active."""
         return None
 
+    def hold_hint(self, key: Key) -> str | None:
+        """What holding the key does, shown along its bottom edge at all times."""
+        return self.hold_status(key)
+
     def key_down(self, context: str, key: Key) -> None:
         key.pressed_at, key.held = time.monotonic(), False
 
@@ -185,11 +195,96 @@ class Plugin:
             )
         )
 
+    # Marks a hinted image, so one read back from OpenDeck's saved copy is
+    # unwrapped to the original instead of gaining a second band.
+    HINT_MARK = 'data-deck-hint="1"'
+
+    @classmethod
+    def hinted(cls, image: str, hint: str) -> str:
+        """`image` with `hint` in a band along its bottom edge.
+
+        The original is embedded whole rather than edited, so any image works
+        and `unwrap` can always recover it."""
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144"'
+            f' viewBox="0 0 144 144" {cls.HINT_MARK}>'
+            f'<image href="{image}" width="144" height="144"/>'
+            # Sized for the device rather than the canvas: a key is drawn at
+            # half this size, where anything under ~20px stops reading.
+            '<rect y="114" width="144" height="30" fill="#17191e" fill-opacity="0.9"/>'
+            '<text x="72" y="136" font-family="Liberation Sans" font-size="21"'
+            ' font-weight="bold" fill="#e5e5e5" text-anchor="middle">'
+            f"{html.escape(hint)}</text></svg>"
+        )
+
+        return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
+
+    @classmethod
+    def unwrap(cls, path: Path) -> str | None:
+        """A state image file as a data URI, minus any hint band on it.
+
+        OpenDeck saves every image a plugin sets over the key's own file, so
+        after the first hint the file holds the hinted copy."""
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        if path.suffix == ".svg":
+            text = data.decode(errors="replace")
+            if cls.HINT_MARK in text and (
+                found := re.search(r'<image href="([^"]+)"', text)
+            ):
+                return found[1]
+            mime = "image/svg+xml"
+        else:
+            mime = f"image/{path.suffix.lstrip('.').replace('jpg', 'jpeg')}"
+
+        return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+    @classmethod
+    def state_images(cls, context: str) -> dict[int, str]:
+        """Each state's own image, from the files OpenDeck keeps per key.
+
+        A context is `device.profile.controller.position.index`, and the files
+        sit at `images/<device>/<profile>/<controller.position.index>/<state>`.
+        A state drawn from a plugin's own icon has no file and is left out."""
+        device, rest = context.split(".", 1)
+        profile, controller, position, index = rest.rsplit(".", 3)
+        folder = IMAGES / device / profile / f"{controller}.{position}.{index}"
+        images = {}
+        for path in folder.iterdir() if folder.is_dir() else ():
+            if path.stem.isdigit() and (image := cls.unwrap(path)) is not None:
+                images[int(path.stem)] = image
+
+        return images
+
+    def draw(self, context: str, key: Key) -> None:
+        """Send the key's image when it or its hint changed.
+
+        A plugin image goes to every state, as OpenDeck applies a stateless
+        `setImage`; without one, a hint is laid over each state's own file."""
+        hint = self.hold_hint(key) if self.holds(key) else None
+        image = self.image(context, key)
+        if (image, hint) == key.drawn or (image is None and hint is None):
+            return
+        if image is not None:
+            self.send(
+                "setImage",
+                context,
+                {"image": self.hinted(image, hint) if hint else image},
+            )
+        elif hint is not None:
+            for state, base in self.state_images(context).items():
+                self.send(
+                    "setImage",
+                    context,
+                    {"image": self.hinted(base, hint), "state": state},
+                )
+        key.drawn = (image, hint)
+
     def render(self) -> None:
         for context, key in self.keys.items():
-            if (image := self.image(context, key)) is not None and image != key.drawn:
-                self.send("setImage", context, {"image": image})
-                key.drawn = image
+            self.draw(context, key)
 
             look, status = self.look(context, key)
             if key.held and (held := self.hold_status(key)) is not None:
@@ -219,6 +314,7 @@ class Plugin:
             case "didReceiveSettings" if context in self.keys:
                 self.keys[context].settings = payload.get("settings") or {}
                 self.keys[context].shown = None
+                self.keys[context].drawn = None
                 self.render()
             case "keyDown" if context in self.keys:
                 self.key_down(context, self.keys[context])
