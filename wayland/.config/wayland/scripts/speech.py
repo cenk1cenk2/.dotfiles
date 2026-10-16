@@ -1538,7 +1538,10 @@ def tts_speak_options():
         click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
         click.option("--model", default=None, help="TTS model id."),
         click.option(
-            "--speed", type=float, default=1.3, help="Speaking rate multiplier."
+            "--speed",
+            type=float,
+            default=None,
+            help="Speaking rate multiplier. Unset, the backend picks it.",
         ),
         click.option(
             "--format",

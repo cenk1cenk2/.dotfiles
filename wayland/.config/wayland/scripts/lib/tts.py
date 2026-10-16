@@ -89,7 +89,7 @@ class TtsSpec:
 
     model: str | None = None
     voice: str = DEFAULT_TTS_VOICE
-    speed: float = 1.0
+    speed: float | None = None
     response_format: AudioFormat = AudioFormat.PCM
     sample_rate: int = DEFAULT_TTS_SAMPLE_RATE
     base_url: str = DEFAULT_BASE_URL
@@ -122,8 +122,11 @@ class TtsAdapterHttp:
             "voice": spec.voice,
             "response_format": spec.response_format.value,
             "sample_rate": spec.sample_rate,
-            "speed": spec.speed,
         }
+        # Unset, the gateway fills in the default (cluster/workloads/ollama
+        # `speaches-tts-defaults`).
+        if spec.speed is not None:
+            body["speed"] = spec.speed
         payload = json.dumps(body)
         log.debug("request: %s", payload)
         req = urllib.request.Request(
