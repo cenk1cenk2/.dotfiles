@@ -281,6 +281,9 @@ class PlayerBase:
     TEMPOS = (1.0, 1.5)
     # How long to block on a finished player before looking for a seek.
     DRAIN_POLL_SECONDS = 0.1
+    # Silence written after the last sample, for a sink that quits before
+    # what it has buffered downstream is heard.
+    TAIL_PAD_SECONDS = 0.0
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -507,6 +510,12 @@ class PlayerBase:
         proc = self._proc
         if proc is None or proc.stdin is None:
             return
+        # Pushed past `_sent` so the clock and a seek never count it, and only
+        # where bytes are samples: zeros appended to a container corrupt it.
+        if self.TAIL_PAD_SECONDS and self.seeks:
+            pad = int(self.TAIL_PAD_SECONDS * self._rate) * 2
+            if not self._push(bytes(pad)):
+                return
         try:
             proc.stdin.close()
         except BrokenPipeError:
@@ -597,6 +606,10 @@ class PlayerAdapterFfplay(PlayerBase):
     and the raw sinks below take a linear volume at best."""
 
     mode = PlayerMode.FFPLAY
+    # `-autoexit` quits once its own frame queue is empty and closes the
+    # device, dropping what SDL, PipeWire and EasyEffects still hold - the
+    # last 50-200ms of every utterance (`fftools/ffplay.c` `read_thread`).
+    TAIL_PAD_SECONDS = 0.4
 
     def __init__(
         self,
