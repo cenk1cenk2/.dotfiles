@@ -107,7 +107,6 @@ tasks:
             xdg-desktop-portal
             xdg-desktop-portal-termfilechooser
             xsettingsd
-            ydotool
             zathura
       - ./install.py obs opendeck
       - systemctl --user daemon-reload

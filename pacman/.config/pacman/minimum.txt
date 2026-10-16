@@ -144,6 +144,7 @@ wl-mirror
 wlogout
 wol-systemd
 wpa_supplicant
+wtype
 xclip
 xdg-desktop-portal
 xdg-desktop-portal-termfilechooser-hunkyburrito-git
@@ -158,6 +159,5 @@ xorg-xwayland
 xsel
 xsettingsd
 yay
-ydotool
 zathura
 zathura-pdf-poppler

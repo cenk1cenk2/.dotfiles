@@ -11,7 +11,6 @@ local services = {
   "clipse.service",
   "poweralertd.service",
   "input-remapper-autoload.service",
-  "ydotool.service",
   "wayland-pipewire-idle-inhibit.service",
   "pimsync.service",
   "tailscale-systray.service",
