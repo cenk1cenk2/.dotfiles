@@ -38,7 +38,7 @@ from .output import (
     OutputAdapterStdout as OutputAdapterStdout,
 )
 from .output import (
-    OutputAdapterType as OutputAdapterType,
+    OutputAdapterPaste as OutputAdapterPaste,
 )
 from .output import (
     OutputMode as OutputMode,

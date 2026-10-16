@@ -32,9 +32,9 @@ hl.define_submap(submap, function()
   hl.bind("space", exec_then_reset(("%s pick"):format(d.agents)), { description = "pick agent" })
   hl.bind("a", exec_then_reset(("%s pick"):format(d.agents)), { description = "pick agent" })
 
-  -- Dictation types into the focused window, which the submap would catch,
-  -- so it leaves the submap like the recording mode's stt binds.
-  hl.bind("s", exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)), { description = "dictate" })
+  -- Dictation pastes into the focused window, and the submap would catch
+  -- the paste key, so it leaves the submap like the recording mode's stt binds.
+  hl.bind("s", exec_then_reset(("%s stt toggle --output paste --enrich"):format(d.speech)), { description = "dictate" })
 
   -- Paste into the focused window. Ctrl+Shift+V rather than Ctrl+V, which is
   -- what pastes in kitty.

@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 class OutputMode(StrEnum):
     CLIPBOARD = "clipboard"
-    TYPE = "type"
+    PASTE = "paste"
     STDOUT = "stdout"
     FILE = "file"
 
@@ -53,55 +53,29 @@ class OutputAdapterClipboard:
         )
 
 
-class OutputAdapterType:
-    mode = OutputMode.TYPE
+class OutputAdapterPaste:
+    """Pastes into the focused window, through the clipboard.
 
-    CMD = ("ydotool", "type", "--key-delay", "10", "--key-hold", "10", "--file", "-")
+    Typed keys turn every newline into an Enter, which submits a chat or an
+    agent prompt once per line, and go through a keyboard layout that may
+    not hold every character. A paste lands the text whole, as a bracketed
+    paste in a terminal. Shift+Insert is the paste key GTK, Qt, Chromium,
+    Firefox and Electron share, and kitty maps it to the clipboard in
+    `kitty.conf`.
+
+    The text stays on the clipboard, so a paste that landed in the wrong
+    window can be repeated by hand. Not streaming: a paste cannot append."""
+
+    mode = OutputMode.PASTE
+
+    KEYS = ("wtype", "-M", "shift", "-k", "Insert", "-m", "shift")
 
     def write(self, text: str) -> None:
-        log.debug("spawn: %s (%d chars)", " ".join(self.CMD), len(text))
+        OutputAdapterClipboard().write(text)
+        log.debug("spawn: %s", " ".join(self.KEYS))
         subprocess.run(
-            list(self.CMD),
-            input=text,
-            text=True,
-            check=False,
-            stdout=sys.stderr,
-            stderr=sys.stderr,
+            list(self.KEYS), check=False, stdout=sys.stderr, stderr=sys.stderr
         )
-
-    def write_stream(self, chunks: Iterable[str]) -> None:
-        """Type chunks as they arrive, through a single recorder.
-
-        One long-lived `ydotool` fed progressively rather than one per chunk:
-        it consumes stdin incrementally and emits each key as it reads, so the
-        typing overlaps generation instead of waiting for the whole answer.
-
-        Nothing typed can be taken back, so this is only ever handed
-        append-only text."""
-        log.debug("spawn: %s (streaming)", " ".join(self.CMD))
-        proc = subprocess.Popen(
-            list(self.CMD),
-            stdin=subprocess.PIPE,
-            text=True,
-            stdout=sys.stderr,
-            stderr=sys.stderr,
-        )
-        assert proc.stdin is not None
-        written = 0
-        try:
-            for chunk in chunks:
-                proc.stdin.write(chunk)
-                proc.stdin.flush()
-                written += len(chunk)
-        except BrokenPipeError:
-            log.warning("ydotool closed the pipe after %d chars", written)
-        finally:
-            try:
-                proc.stdin.close()
-            except BrokenPipeError:
-                pass
-            proc.wait()
-        log.info("typed %d chars as they arrived", written)
 
 
 class OutputAdapterStdout:
@@ -147,8 +121,8 @@ def build_output(mode: OutputMode, **kwargs) -> OutputAdapter:
         match mode:
             case OutputMode.CLIPBOARD:
                 return OutputAdapterClipboard(**kwargs)
-            case OutputMode.TYPE:
-                return OutputAdapterType(**kwargs)
+            case OutputMode.PASTE:
+                return OutputAdapterPaste(**kwargs)
             case OutputMode.STDOUT:
                 return OutputAdapterStdout(**kwargs)
             case OutputMode.FILE:

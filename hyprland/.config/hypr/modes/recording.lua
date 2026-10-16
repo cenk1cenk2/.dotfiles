@@ -24,15 +24,15 @@ hl.define_submap(submap, function()
 
   hl.bind(
     "s",
-    exec_then_reset(("%s stt toggle --output type --enrich"):format(d.speech)),
-    { description = "dictate to typing, enriched" }
+    exec_then_reset(("%s stt toggle --output paste --enrich"):format(d.speech)),
+    { description = "dictate to paste, enriched" }
   )
 
-  -- Speech-to-text direct typing (raw, no enrichment), through our own capture
+  -- Speech-to-text pasted into the focused window (raw, no enrichment), through our own capture
   hl.bind(
     "SHIFT + s",
-    exec_then_reset(("%s stt toggle --output type"):format(d.speech)),
-    { description = "dictate to typing, raw" }
+    exec_then_reset(("%s stt toggle --output paste"):format(d.speech)),
+    { description = "dictate to paste, raw" }
   )
 
   hl.bind(
@@ -62,8 +62,8 @@ hl.define_submap(submap, function()
     { description = "read clipboard summary" }
   )
 
-  -- Pause/resume the dictation. Resets like the stt toggles: live typing
-  -- sends keystrokes through the compositor, and an open submap would catch them.
+  -- Pause/resume the dictation. Resets like the stt toggles: the paste key
+  -- goes through the compositor, and an open submap would catch it.
   hl.bind("d", exec_then_reset(("%s stt pause"):format(d.speech)), { description = "pause dictation" })
 
   hl.bind("f", hl.dsp.exec_cmd(("%s tts pause"):format(d.speech)), { repeating = true, description = "pause reading" })

@@ -353,9 +353,9 @@ class SttAdapterRealtime:
         self._closing = False
         self._segments: list[str] = []
         # Turns reach the subscriber from here rather than from `_receive`.
-        # A subscriber may type its turn, which for ydotool is seconds, and
-        # a receive thread inside that is a receive thread not reading the
-        # socket: the turns behind it are lost when the socket closes.
+        # A subscriber may take seconds over its turn, and a receive thread
+        # inside that is a receive thread not reading the socket: the turns
+        # behind it are lost when the socket closes.
         self._delivery: queue.Queue[str] = queue.Queue()
         self._delivered = 0
         self._on_segment: Callable[[str], None] | None = None

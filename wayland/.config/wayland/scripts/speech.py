@@ -775,9 +775,8 @@ class Stt:
             ticking.set()
             ticker.join(timeout=Notification.TIMEOUT)
             # When both halves can stream, the sink starts with the first token
-            # instead of after the last one. Typing is the slow part — roughly
-            # fifty characters a second — so there it overlaps generation with
-            # the keystrokes; on stdout it lets whatever is downstream start.
+            # instead of after the last one, so whatever reads stdout starts
+            # before the rewrite is done.
             if (
                 stream
                 and enricher is not None
@@ -919,13 +918,13 @@ class Stt:
 
         icons = {
             OutputMode.CLIPBOARD: "󰅇",
-            OutputMode.TYPE: "󰌌",
+            OutputMode.PASTE: "󰆒",
             OutputMode.STDOUT: "󰼭",
             OutputMode.FILE: "󰈔",
         }
         labels = {
             OutputMode.CLIPBOARD: "clipboard",
-            OutputMode.TYPE: "typing",
+            OutputMode.PASTE: "paste",
             OutputMode.STDOUT: "stdout",
             OutputMode.FILE: "file",
         }
