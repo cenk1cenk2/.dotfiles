@@ -206,7 +206,7 @@ class Plugin:
         The original is embedded whole rather than edited, so any image works
         and `unwrap` can always recover it. `lit` inverts the band, for while
         the hold it names is the one firing."""
-        band, ink = ("#e5e5e5", "#17191e") if lit else ("#17191e", "#e5e5e5")
+        band, ink = ("#e5c07b", "#17191e") if lit else ("#17191e", "#e5e5e5")
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144"'
             f' viewBox="0 0 144 144" {cls.HINT_MARK}>'
