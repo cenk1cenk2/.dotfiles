@@ -8,8 +8,8 @@
   "rotation": 0,
   "separatewine": false,
   "sleep_timeout_minutes": 60,
-  "sleep_when_computer_locked": false,
-  "statistics": true,
-  "updatecheck": true,
+  "sleep_when_computer_locked": true,
+  "statistics": false,
+  "updatecheck": false,
   "version": "2.14.0"
 }
