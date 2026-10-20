@@ -48,13 +48,14 @@ Goal state: the dGPU reaches D3cold whenever idle. Verified against driver
 source at `/usr/src/nvidia-<version>/` — read the source, not the docs, when
 these need re-checking.
 
-### What blocks sleep (all three must hold, independently)
+### Runtime power checks
 
-- **Open fds on `/dev/nvidia0`** hold a power ref for as long as any fd is
-  open: the first open takes a COARSE ref, the last close releases it
-  (`nv.c`, `nv_start_device`/`nv_stop_device`). `/dev/nvidiactl` never pins
-  (control opens bypass `nv_start_device`). Bare `/dev/dri/renderD*` opens
-  take no ref (`nv_drm_open` assigns an id and returns).
+- **Open `/dev/nvidia0` handles alone do not prove RTD3 is blocked.**
+  In fine-grained mode, `nv_start_device` releases the initialization power
+  reference before returning (`nv.c`); retaining initialized driver state
+  is not the same as retaining a power reference. Check runtime state and
+  active operations. `/dev/nvidiactl` opens bypass `nv_start_device`, and
+  bare `/dev/dri/renderD*` opens take no ref (`nv_drm_open`).
 - **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
   toggle**: GCOFF (full power-off, video memory dropped) requires used vidmem
   <= threshold, and RM keeps ~2MiB allocated, so `0` rules GCOFF out and the
@@ -69,22 +70,19 @@ these need re-checking.
 
 ### Standing constraints
 
-- `nvidia-persistenced` is **enabled, and required for Proton**. Without it
-  the kernel tears device state down whenever no client holds the GPU, and
-  vkd3d-proton then fails swapchain creation with `VK_ERROR_UNKNOWN` (-13)
+- `nvidia-persistenced` is **configured as a Proton stability workaround**
+  for vkd3d-proton swapchain creation failures with `VK_ERROR_UNKNOWN` (-13)
   in `dxgi_vk_swap_chain_recreate_swapchain_in_present_task`, followed by a
   `vkGetPastPresentationTimingEXT` fault — a crash seconds in, or an endless
-  retry loop showing as a black screen. It does pin the GPU awake (the daemon
-  opens `/dev/nvidia0` before enabling SW persistence, so its own fds hold a
-  COARSE ref for its lifetime), which costs nothing while the driver bug
-  below makes sleep unreachable anyway. Never toggle the daemon or
-  `nvidia-smi -pm` live: it flips the persistence flag against in-flight
-  refs, the refcount desyncs silently (asserts are compiled out of release
-  builds), and the GPU stops attempting suspend until reboot. The signature
-  of that state: zero rpm trace events with zero holders.
+  retry loop showing as a black screen. Its necessity on 615.78.08 is
+  unverified: `NVreg_GpuInitOnProbe` defaults to auto (`2`), and
+  `nv_close_device` retains initialized state after last-client close when
+  probe-time initialization is enabled. Keep the workaround until a fresh
+  hybrid test passes. Never toggle the daemon or `nvidia-smi -pm` live;
+  use a fresh boot for a controlled persistence test.
   It is not enabled at boot, and neither is `nvidia-powerd` (Dynamic Boost,
-  which shifts power budget from the CPU to the dGPU and also keeps it
-  awake): `80-nvidia-pm.rules` starts both through `SYSTEMD_WANTS` once the
+  which shifts power budget from the CPU to the dGPU):
+  `80-nvidia-pm.rules` starts both through `SYSTEMD_WANTS` once the
   driver has bound a GPU, so a dGPU the firmware GPU mode hides never starts
   them. Drop-ins also condition both units on `/proc/driver/nvidia/gpus`
   being non-empty, guarding any other start.
@@ -201,10 +199,10 @@ these need re-checking.
   ftrace-able (`nv_indicate_idle`, `nv_idle_holdoff`, `nv_pmops_runtime_*`);
   only `nv-kernel.o` refuses kprobes, because linux-zen lacks
   `CONFIG_KPROBE_EVENTS_ON_NOTRACE`.
-- Parked, not open: persistenced is mandatory for Proton and pins the GPU by
-  design, so even a fixed driver yields sleep only with persistenced stopped.
-  Do not reopen the userspace investigation; re-test only on a driver newer
-  than 610.57.04, or if the persistenced requirement goes away.
+- The Proton stability workaround stays configured until a fresh hybrid
+  test establishes whether it is needed. Re-test runtime PM on a driver
+  newer than 610.57.04, or if the persistence requirement goes away; do not
+  infer a power reference from daemon status or an open handle alone.
 
 ### Verifying without waking the GPU
 
