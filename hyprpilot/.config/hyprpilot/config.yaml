@@ -197,40 +197,16 @@ profiles:
       enabled: false
 
   # AI_KILIC_DEV_API_KEY comes from the `personal/kilic/*` patch, which
-  # replaces any per-profile env block.
-  - id: personal/kilic/deepseek-v4-pro:cloud
+  # replaces any per-profile env block, and so does the opencode config dir.
+  #
+  # No model pin: every model the gateway lists for the key is offered, so choose
+  # with /models or pass --with-config '@{"model":"kilic/opencode/go/mimo-v2.6-flash"}'.
+  - id: personal/kilic/gateway
     agent: opencode
-    model: kilic/ollama/cloud/deepseek-v4-pro:cloud
     mode: build
 
-  - id: personal/kilic/glm-5.3:cloud
-    agent: opencode
-    model: kilic/ollama/cloud/glm-5.3:cloud
-    mode: build
-
-  - id: personal/kilic/glm-5.3-flash:cloud
-    agent: opencode
-    model: kilic/ollama/cloud/glm-5.3-flash:cloud
-    mode: build
-
-  - id: personal/kilic/kimi-k3:cloud
-    agent: opencode
-    model: kilic/ollama/cloud/kimi-k3:cloud
-    mode: build
-
-  - id: personal/kilic/gemma4:31b-cloud
-    agent: opencode
-    model: kilic/ollama/cloud/gemma4:31b-cloud
-    mode: plan
-    system_prompt: []
-    mcp:
-      enabled: false
-
-  # kilic.dev/* are agentgateway virtual models, each failing over across zai,
-  # ollama-cloud, codex and ollama-neutrino. Pinning a tier survives a single
-  # backing model's quota, which pinning a concrete model above does not.
-  # Named under `personal/kilic/` so the patch there supplies the API key and
-  # the opencode config dir.
+  # kilic.dev/* are agentgateway virtual models; the gateway decides which
+  # backing model each tier routes to.
   - id: personal/kilic/cheap
     agent: opencode
     model: kilic/kilic.dev/cheap
