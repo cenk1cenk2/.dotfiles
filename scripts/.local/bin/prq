@@ -53,29 +53,35 @@ class QuitAll(Exception):
 
 
 class ZshCompletion(ZshComplete):
-    """Click's zsh completion without the trailing space after a partial ref.
+    """Click's zsh completion without the trailing space after an owner.
 
-    `owner/`, `owner/repo#` and `group/project!` are stepping stones to the
-    next completion, so they take no suffix; everything else completes as a
-    word. Also drops click's `$+commands` guard, which a stowed symlink passes
+    `owner/` is a stepping stone to the repository completion, so it takes no
+    suffix; everything else completes as a word. One `compadd -l -d` per kind
+    instead of click's `_describe`: `_describe` folds options sharing a help
+    text onto one line through hidden matches, which fzf-tab-completion lists
+    as stray rows. Also drops click's `$+commands` guard, which a stowed symlink passes
     but a shell function wrapping prq would not.
     """
 
     source_template = r"""
 %(complete_func)s() {
-    local -a response items partial
-    local type key descr entry
+    local -a response keys displays partial_keys partial_displays
+    local type key descr display
+    local -i width=0
     response=("${(@f)$(env COMP_WORDS="${words[*]}" COMP_CWORD=$((CURRENT-1)) %(complete_var)s=zsh_complete %(prog_name)s)}")
 
     for type key descr in ${response}; do
+        [[ "$type" == plain ]] && (( ${#key} > width )) && width=${#key}
+    done
+    for type key descr in ${response}; do
         case "$type" in
         plain)
-            entry="${key//:/\\:}"
-            [[ "$descr" != "_" ]] && entry+=":$descr"
-            if [[ "$key" == *[/#!] ]]; then
-                partial+=("$entry")
+            display="${(r:width:)key}"
+            [[ "$descr" != "_" ]] && display+="  -- $descr"
+            if [[ "$key" == */ ]]; then
+                partial_keys+=("$key") partial_displays+=("$display")
             else
-                items+=("$entry")
+                keys+=("$key") displays+=("$display")
             fi
             ;;
         dir) _path_files -/ ;;
@@ -83,8 +89,8 @@ class ZshCompletion(ZshComplete):
         esac
     done
 
-    (( $#items )) && _describe -V unsorted items -U
-    (( $#partial )) && _describe -V partial partial -U -S ''
+    (( $#keys )) && compadd -U -V prq -l -d displays -a keys
+    (( $#partial_keys )) && compadd -U -V prq -l -S '' -d partial_displays -a partial_keys
 }
 
 if [[ $zsh_eval_context[-1] == loadautofunc ]]; then
@@ -370,7 +376,15 @@ class Forge:
     def review(self, repo: str, number: str) -> None:
         raise NotImplementedError
 
-    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
+    def complete_ref(
+        self, incomplete: str, repo: str | None = None
+    ) -> list[CompletionItem]:
+        """Repositories, or with `repo` the open numbers in it.
+
+        The two go in separate words: `#` is a glob operator under
+        extendedglob and `!` a history expansion, so a joined `repo#12`
+        completes escaped and breaks when typed bare.
+        """
         raise NotImplementedError
 
     # -- list ------------------------------------------------------------
@@ -957,9 +971,10 @@ class GitHub(Forge):
                     case _:
                         return
 
-    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
-        if "#" in incomplete:
-            repo = incomplete.split("#", 1)[0]
+    def complete_ref(
+        self, incomplete: str, repo: str | None = None
+    ) -> list[CompletionItem]:
+        if repo is not None:
             prs = Cache.read(f"gh-prs-{repo.replace('/', '_')}", ttl=600)
             if prs is None:
                 prs = [
@@ -985,8 +1000,8 @@ class GitHub(Forge):
                 Cache.write(f"gh-prs-{repo.replace('/', '_')}", prs)
             items = [
                 CompletionItem(
-                    f"{repo}#{p['n']}",
-                    help=f"{age(p['updated']):<4} {'draft ' if p['draft'] else ''}{p['author']}: {p['title']}",
+                    str(p["n"]),
+                    help=f"{age(p['updated']):<4} {'draft ' if p['draft'] else ''}{p['author']}: {trim(p['title'], 60)}",
                 )
                 for p in prs
             ]
@@ -1010,7 +1025,7 @@ class GitHub(Forge):
                     check=False,
                 ).split()
                 Cache.write(f"gh-repos-{owner}", repos)
-            items = [CompletionItem(f"{owner}/{r}#") for r in repos]
+            items = [CompletionItem(f"{owner}/{r}") for r in repos]
         else:
             owners = Cache.read("gh-owners", ttl=3600)
             if owners is None:
@@ -1457,9 +1472,10 @@ class GitLab(Forge):
                     case _:
                         return
 
-    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
-        if "!" in incomplete:
-            repo = incomplete.split("!", 1)[0]
+    def complete_ref(
+        self, incomplete: str, repo: str | None = None
+    ) -> list[CompletionItem]:
+        if repo is not None:
             mrs = Cache.read(f"gl-mrs-{repo.replace('/', '_')}", ttl=600)
             if mrs is None:
                 try:
@@ -1497,8 +1513,8 @@ class GitLab(Forge):
                 Cache.write(f"gl-mrs-{repo.replace('/', '_')}", mrs)
             items = [
                 CompletionItem(
-                    f"{repo}!{m['n']}",
-                    help=f"{age(m['updated']):<4} {m['status']} {m['author']}: {m['title']}",
+                    str(m["n"]),
+                    help=f"{age(m['updated']):<4} {m['status']} {m['author']}: {trim(m['title'], 60)}",
                 )
                 for m in mrs
             ]
@@ -1526,7 +1542,7 @@ class GitLab(Forge):
                 except ValueError:
                     projects = []
                 Cache.write("gl-projects", projects)
-            items = [CompletionItem(f"{p}!") for p in projects]
+            items = [CompletionItem(p) for p in projects]
         return [i for i in items if i.value.startswith(incomplete)]
 
 
@@ -1546,10 +1562,13 @@ def complete_user(
 
 
 def complete_ref(
-    ctx: click.Context, _param: click.Parameter, incomplete: str
+    ctx: click.Context, param: click.Parameter, incomplete: str
 ) -> list[CompletionItem]:
+    repo = ctx.params.get("ref") if param.name == "number" else None
+    if repo is not None and "/" not in repo:
+        return []
     try:
-        return forge_of(ctx).complete_ref(incomplete)
+        return forge_of(ctx).complete_ref(incomplete, repo)
     except click.ClickException, subprocess.TimeoutExpired:
         return []
 
@@ -1673,7 +1692,7 @@ def forge_group(name: str, help: str) -> click.Group:
         "review", help=f"Review one {forge.noun}: file browser, then the action menu."
     )
     @click.argument("ref", shell_complete=complete_ref)
-    @click.argument("number", required=False)
+    @click.argument("number", required=False, shell_complete=complete_ref)
     def cmd_review(ref: str, number: str | None) -> None:
         repo = ref
         if number is None and re.search(r"[#!]", ref):
