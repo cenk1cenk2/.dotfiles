@@ -1,0 +1,1717 @@
+#!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
+# vim: ft=python
+"""Browse and review GitHub pull requests and GitLab merge requests in fzf.
+
+`prq gh` and `prq gl` list the open PRs/MRs awaiting your review across every
+repository, newest updated first, and review one from a file-by-file diff
+browser followed by an action menu. Filter flags replace the defaults, and a
+"whose" filter of your own (`--author`, `--assignee`, `--reviewer`, or a
+`--param` naming one) drops the default "review requested from me".
+
+The list opens from a disk cache and refreshes in the background: the fresh
+table is pushed into the running fzf through its `--listen` socket, so a launch
+only waits on the network the first time a query runs.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import http.client
+import io
+import json
+import logging
+import os
+import re
+import shlex
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, ClassVar
+
+import click
+from click.shell_completion import CompletionItem, ZshComplete, add_completion_class
+from dotlib.cli import create_logger
+from rich.console import Console
+from rich.prompt import Confirm
+from rich.table import Table
+from rich.text import Text
+
+log = logging.getLogger("prq")
+console = Console()
+err_console = Console(stderr=True)
+
+
+class QuitAll(Exception):
+    """ctrl-q anywhere: leave the review and the list behind it."""
+
+
+class ZshCompletion(ZshComplete):
+    """Click's zsh completion without the trailing space after a partial ref.
+
+    `owner/`, `owner/repo#` and `group/project!` are stepping stones to the
+    next completion, so they take no suffix; everything else completes as a
+    word. Also drops click's `$+commands` guard, which a stowed symlink passes
+    but a shell function wrapping prq would not.
+    """
+
+    source_template = r"""
+%(complete_func)s() {
+    local -a response items partial
+    local type key descr entry
+    response=("${(@f)$(env COMP_WORDS="${words[*]}" COMP_CWORD=$((CURRENT-1)) %(complete_var)s=zsh_complete %(prog_name)s)}")
+
+    for type key descr in ${response}; do
+        case "$type" in
+        plain)
+            entry="${key//:/\\:}"
+            [[ "$descr" != "_" ]] && entry+=":$descr"
+            if [[ "$key" == *[/#!] ]]; then
+                partial+=("$entry")
+            else
+                items+=("$entry")
+            fi
+            ;;
+        dir) _path_files -/ ;;
+        file) _path_files -f ;;
+        esac
+    done
+
+    (( $#items )) && _describe -V unsorted items -U
+    (( $#partial )) && _describe -V partial partial -U -S ''
+}
+
+if [[ $zsh_eval_context[-1] == loadautofunc ]]; then
+    %(complete_func)s "$@"
+else
+    compdef %(complete_func)s %(prog_name)s
+fi
+"""
+
+
+add_completion_class(ZshCompletion, "zsh")
+
+
+class Cache:
+    ROOT = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "prq"
+
+    @classmethod
+    def path(cls, name: str) -> Path:
+        return cls.ROOT / name
+
+    @classmethod
+    def read(cls, name: str, ttl: float | None = None) -> Any:
+        path = cls.path(name)
+        try:
+            if ttl is not None and time.time() - path.stat().st_mtime > ttl:
+                return None
+            return json.loads(path.read_text())
+        except OSError, ValueError:
+            return None
+
+    @classmethod
+    def write(cls, name: str, data: Any) -> None:
+        cls.write_text(name, json.dumps(data))
+
+    @classmethod
+    def write_text(cls, name: str, text: str) -> Path:
+        path = cls.path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # rename over the old file so a reader never sees a half-written one;
+        # the background refresh and a completion can race on the same name
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
+        tmp.write_text(text)
+        tmp.replace(path)
+        return path
+
+    @classmethod
+    def remember(cls, name: str, values: list[str]) -> None:
+        """Fold `values` into a completion list, most recently seen first."""
+        seen = cls.read(name) or []
+        cls.write(name, list(dict.fromkeys([*values, *seen]))[:500])
+
+
+def capture(cmd: list[str], *, timeout: float = 60, check: bool = True) -> str:
+    log.debug("spawn: %s", " ".join(cmd))
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=timeout, check=False
+    )
+    if proc.stderr:
+        log.debug("%s stderr: %s", cmd[0], proc.stderr.strip())
+    if check and proc.returncode != 0:
+        raise click.ClickException(
+            f"{' '.join(cmd[:3])} failed: {proc.stderr.strip() or f'exit {proc.returncode}'}"
+        )
+    return proc.stdout
+
+
+def interactive(cmd: list[str], *, input: str | None = None) -> int:
+    """Run a tool the user watches or answers, on the real terminal."""
+    log.debug("spawn: %s", " ".join(cmd))
+    return subprocess.run(cmd, input=input, text=True, check=False).returncode
+
+
+def epoch(stamp: str) -> float:
+    return datetime.fromisoformat(stamp).timestamp()
+
+
+def age(then: float) -> str:
+    d = time.time() - then
+    if d < 3600:
+        return f"{int(d // 60)}m"
+    if d < 86400:
+        return f"{int(d // 3600)}h"
+    if d < 604800:
+        return f"{int(d // 86400)}d"
+    return f"{int(d // 604800)}w"
+
+
+def trim(value: str, n: int) -> str:
+    return value if len(value) <= n else value[: n - 1] + "…"
+
+
+def people(names: list[str]) -> str:
+    if not names:
+        return "-"
+    return names[0] if len(names) == 1 else f"{names[0]} +{len(names) - 1}"
+
+
+def fzf() -> list[str]:
+    return shlex.split(os.environ.get("FZF_COMMAND") or "fzf")
+
+
+def editor() -> str:
+    with tempfile.NamedTemporaryFile("r", suffix=".md", prefix="prq-") as tmp:
+        interactive([*shlex.split(os.environ.get("EDITOR") or "vi"), tmp.name])
+        return Path(tmp.name).read_text()
+
+
+def page_markdown(text: str) -> None:
+    interactive(
+        ["bat", "--language", "markdown", "--style", "plain", "--paging", "never"],
+        input=text,
+    )
+
+
+def require(*tools: str) -> None:
+    for tool in tools:
+        if shutil.which(tool) is None:
+            raise click.ClickException(f"'{tool}' is required but not installed.")
+
+
+@dataclass
+class Row:
+    ref: str
+    updated: float
+    created: float
+    author: str
+    assignees: list[str]
+    review: str
+    you: str
+    ci: str
+    status: str
+    size: str
+    notes: int
+    title: str
+
+
+@dataclass(frozen=True)
+class Filters:
+    author: str | None = None
+    assignee: str | None = None
+    reviewer: str | None = None
+    labels: tuple[str, ...] = ()
+    not_labels: tuple[str, ...] = ()
+    milestone: str | None = None
+    search: str | None = None
+    state: str = "open"
+    draft: bool | None = None
+    sort: str = "updated"
+    order: str = "desc"
+    limit: int = 50
+    params: tuple[tuple[str, str], ...] = ()
+
+    def key(self) -> str:
+        return hashlib.sha1(json.dumps(asdict(self)).encode()).hexdigest()[:16]
+
+
+class ListTable:
+    HEADERS: ClassVar[tuple[str, ...]] = (
+        "REF",
+        "AGE",
+        "OPENED",
+        "AUTHOR",
+        "ASSIGNEE",
+        "REVIEW",
+        "YOU",
+        "CI",
+        "STATUS",
+        "SIZE",
+        "N",
+        "TITLE",
+    )
+    PAINTED: ClassVar[set[str]] = {"REVIEW", "YOU", "CI", "STATUS"}
+    GOOD = re.compile(r"^(approved|pass|ready)")
+    BAD = re.compile(r"^(fail|changes-req|conflict|ci-failed|error|blocked|canceled)$")
+    WAIT = re.compile(
+        r"^(needs-review|pending|running|draft|needs-approval|ci-running|unresolved|rebase|unstable|todo|re-review|started)"
+    )
+
+    @classmethod
+    def paint(cls, value: str) -> Text:
+        if cls.GOOD.match(value):
+            return Text(value, style="green")
+        if cls.BAD.match(value):
+            return Text(value, style="red")
+        if cls.WAIT.match(value):
+            return Text(value, style="yellow")
+        return Text(value)
+
+    @classmethod
+    def render(cls, rows: list[Row], color: bool) -> str:
+        table = Table(
+            box=None,
+            show_edge=False,
+            pad_edge=False,
+            padding=(0, 2, 0, 0),
+            header_style="bold" if color else "",
+        )
+        for header in cls.HEADERS:
+            table.add_column(header, no_wrap=True, overflow="ignore")
+        for row in rows:
+            cells = [
+                row.ref,
+                age(row.updated),
+                age(row.created),
+                trim(row.author, 20),
+                trim(people(row.assignees), 20),
+                row.review,
+                row.you,
+                row.ci,
+                row.status,
+                row.size,
+                str(row.notes) if row.notes else "-",
+                trim(row.title, 60),
+            ]
+            table.add_row(
+                *(
+                    cls.paint(c) if h in cls.PAINTED else Text(c)
+                    for h, c in zip(cls.HEADERS, cells)
+                )
+            )
+        buf = io.StringIO()
+        Console(
+            file=buf,
+            width=10_000,
+            force_terminal=color,
+            color_system="standard" if color else None,
+        ).print(table)
+        return "\n".join(line.rstrip() for line in buf.getvalue().splitlines())
+
+
+class FzfSocket(http.client.HTTPConnection):
+    """POST actions to an fzf started with `--listen=<path>.sock`."""
+
+    def __init__(self, path: Path):
+        super().__init__("localhost", timeout=5)
+        self.socket_path = path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(str(self.socket_path))
+
+    @classmethod
+    def post(cls, path: Path, action: str, wait: float = 5) -> None:
+        deadline = time.monotonic() + wait
+        while not path.exists():
+            if time.monotonic() > deadline:
+                return
+            time.sleep(0.05)
+        conn = cls(path)
+        try:
+            conn.request("POST", "/", body=action.encode())
+            conn.getresponse().read()
+        except OSError as e:
+            log.debug("fzf socket %s: %s", path, e)
+        finally:
+            conn.close()
+
+
+class Forge:
+    """What `prq gh` and `prq gl` share: the list picker and the review loop."""
+
+    name: ClassVar[str]
+    noun: ClassVar[str]
+    sep: ClassVar[str]
+    tool: ClassVar[str]
+
+    LIST_HEADER = "enter review · ctrl-d diff · ctrl-v description · ctrl-o browser · ctrl-f/ctrl-b scroll · esc/ctrl-q quit"
+
+    # -- per forge -------------------------------------------------------
+
+    def rows(self, filters: Filters) -> list[Row]:
+        raise NotImplementedError
+
+    def preview_view(self) -> str:
+        raise NotImplementedError
+
+    def preview_diff(self) -> str:
+        raise NotImplementedError
+
+    def open_web(self) -> str:
+        raise NotImplementedError
+
+    def review(self, repo: str, number: str) -> None:
+        raise NotImplementedError
+
+    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
+        raise NotImplementedError
+
+    # -- list ------------------------------------------------------------
+
+    def fetch(self, filters: Filters) -> list[Row]:
+        rows = self.rows(filters)
+        Cache.write(f"{self.name}-list-{filters.key()}", [asdict(r) for r in rows])
+        Cache.remember(
+            f"{self.name}-users", [u for r in rows for u in (r.author, *r.assignees)]
+        )
+        return rows
+
+    def list(self, filters: Filters, plain: bool) -> None:
+        color = sys.stdout.isatty()
+        if plain or not color:
+            rows = self.fetch(filters)
+            if rows:
+                click.echo(ListTable.render(rows, color))
+            return
+        while True:
+            cached = Cache.read(f"{self.name}-list-{filters.key()}")
+            if cached:
+                rows, refresh = [Row(**r) for r in cached], True
+            else:
+                with err_console.status(f"Fetching {self.noun}s…"):
+                    rows, refresh = self.fetch(filters), False
+            if not rows:
+                err_console.print(f"No matching {self.noun}s.")
+                return
+            ref = self.pick(rows, filters, refresh)
+            if ref is None:
+                return
+            repo, _, number = ref.rpartition(self.sep)
+            try:
+                self.review(repo, number)
+            except QuitAll:
+                return
+
+    def pick(self, rows: list[Row], filters: Filters, refresh: bool) -> str | None:
+        view = self.preview_view()
+        cmd = [
+            *fzf(),
+            "--ansi",
+            "--reverse",
+            "--header-lines",
+            "1",
+            "--header",
+            f"{self.LIST_HEADER} · refreshing…" if refresh else self.LIST_HEADER,
+            "--bind",
+            "ctrl-q:abort,ctrl-f:preview-page-down,ctrl-b:preview-page-up",
+            "--preview",
+            view,
+            "--preview-window",
+            "down,70%,wrap",
+            "--bind",
+            f"ctrl-d:change-preview({self.preview_diff()})",
+            "--bind",
+            f"ctrl-v:change-preview({view})",
+            "--bind",
+            f"ctrl-o:execute-silent({self.open_web()})",
+        ]
+        sock = Path(tempfile.gettempdir()) / f"prq-{os.getpid()}.sock"
+        if refresh:
+            sock.unlink(missing_ok=True)
+            cmd.append(f"--listen={sock}")
+            threading.Thread(
+                target=self.refresh, args=(filters, sock), daemon=True
+            ).start()
+        log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            input=ListTable.render(rows, True),
+            stdout=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout.split()[0]
+
+    def refresh(self, filters: Filters, sock: Path) -> None:
+        try:
+            rows = self.fetch(filters)
+        except (
+            click.ClickException,
+            subprocess.TimeoutExpired,
+            ValueError,
+            KeyError,
+        ) as e:
+            log.debug("refresh failed: %s", e)
+            FzfSocket.post(sock, f"change-header({self.LIST_HEADER} · refresh failed)")
+            return
+        table = Cache.write_text(
+            f"{self.name}-list-{filters.key()}.table", ListTable.render(rows, True)
+        )
+        FzfSocket.post(
+            sock,
+            f"reload(cat {shlex.quote(str(table))})+change-header({self.LIST_HEADER})",
+        )
+
+    # -- review ----------------------------------------------------------
+
+    @staticmethod
+    def split_diff(diff: str, dir: Path) -> list[str]:
+        """Write each file's section to `<n>.diff`; return the browser rows."""
+        lines: list[str] = []
+        sections = re.split(r"(?m)^(?=diff --git )", diff)
+        for n, section in enumerate(
+            (s for s in sections if s.startswith("diff --git ")), 1
+        ):
+            (dir / f"{n}.diff").write_text(section)
+            body = section.splitlines()
+            name = re.sub(r"^.* b/", "", body[0])
+            adds = dels = 0
+            in_header = True
+            for line in body[1:]:
+                if in_header:
+                    if line.startswith("+++ "):
+                        if line[4:] != "/dev/null":
+                            name = re.sub(r"^b/", "", line[4:])
+                        in_header = False
+                    elif line.startswith("@@"):
+                        in_header = False
+                    else:
+                        continue
+                if line.startswith("+") and not line.startswith("+++ "):
+                    adds += 1
+                elif line.startswith("-") and not line.startswith("--- "):
+                    dels += 1
+            lines.append(
+                f"{n}\t\x1b[32m+{adds:<5}\x1b[0m \x1b[31m-{dels:<5}\x1b[0m {name}"
+            )
+        return lines
+
+    @staticmethod
+    def browse(title: str, dir: Path, files: list[str]) -> bool:
+        """File-by-file diff browser; True to go on to the action menu."""
+        preview = (
+            f'n={{1}}; if [ "$n" = 0 ]; then cat {shlex.quote(str(dir / "overview"))}; '
+            f"else delta --paging=never --width=$FZF_PREVIEW_COLUMNS < {shlex.quote(str(dir))}/$n.diff; fi"
+        )
+        cmd = [
+            *fzf(),
+            "--ansi",
+            "--reverse",
+            "--delimiter",
+            "\t",
+            "--with-nth",
+            "2..",
+            "--header",
+            f"{title} · enter actions · esc quit · ctrl-q quit all · ctrl-f/ctrl-b scroll",
+            "--preview",
+            preview,
+            "--preview-window",
+            "down,70%,wrap",
+            "--bind",
+            "ctrl-f:preview-page-down,ctrl-b:preview-page-up,ctrl-q:become(exit 99)",
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        rc = subprocess.run(
+            cmd,
+            input="\n".join(["0\t\x1b[1mdescription\x1b[0m", *files]),
+            stdout=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        ).returncode
+        if rc == 99:
+            raise QuitAll
+        return rc == 0
+
+    @staticmethod
+    def menu(header: str, actions: list[tuple[str, str, str]]) -> str | None:
+        """fzf menu without a search prompt, so each entry's key picks it at once."""
+        lines = [
+            f"{action}\t\x1b[1;36m{key}\x1b[0m  {action:<16} \x1b[2m{desc}\x1b[0m"
+            for key, action, desc in actions
+        ]
+        binds = [
+            b
+            for key, action, _ in actions
+            for b in ("--bind", f"{key}:become(echo {action})")
+        ]
+        cmd = [
+            *fzf(),
+            "--ansi",
+            "--no-input",
+            "--height",
+            "~50%",
+            "--reverse",
+            "--delimiter",
+            "\t",
+            "--with-nth",
+            "2",
+            "--accept-nth",
+            "1",
+            "--header",
+            f"{header} · ctrl-q quit all",
+            "--bind",
+            "j:down,k:up",
+            "--bind",
+            "ctrl-q:become(exit 99)",
+            *binds,
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        proc = subprocess.run(
+            cmd, input="\n".join(lines), stdout=subprocess.PIPE, text=True, check=False
+        )
+        if proc.returncode == 99:
+            raise QuitAll
+        return proc.stdout.strip() or None
+
+    def prepare(self, dir: Path, overview: str, diff: str) -> list[str]:
+        (dir / "overview").write_text(self.highlight(overview))
+        return self.split_diff(diff, dir)
+
+    @staticmethod
+    def highlight(markdown: str) -> str:
+        cmd = [
+            "bat",
+            "--language",
+            "markdown",
+            "--style",
+            "plain",
+            "--paging",
+            "never",
+            "--color",
+            "always",
+        ]
+        log.debug("spawn: %s", " ".join(cmd))
+        return subprocess.run(
+            cmd, input=markdown, capture_output=True, text=True, check=False
+        ).stdout
+
+    def body(self, action: str) -> str | None:
+        text = editor()
+        if not text.strip():
+            err_console.print(f"[red]Error:[/] '{action}' requires a non-empty body.")
+            return None
+        return text
+
+    # -- completion ------------------------------------------------------
+
+    def complete_user(self, incomplete: str) -> list[CompletionItem]:
+        users = ["@me", *(Cache.read(f"{self.name}-users") or [])]
+        return [CompletionItem(u) for u in users if u.startswith(incomplete)]
+
+
+class GitHub(Forge):
+    name = "gh"
+    noun = "pull request"
+    sep = "#"
+    tool = "gh"
+
+    FIELDS = "repository,number,title,author,assignees,updatedAt,createdAt,isDraft,commentsCount"
+    # `gh search prs` flags and query qualifiers that pick whose PRs to list
+    WHO: ClassVar[set[str]] = {
+        "author",
+        "app",
+        "assignee",
+        "involves",
+        "mentions",
+        "commenter",
+        "reviewed-by",
+        "review-requested",
+        "user-review-requested",
+        "team-review-requested",
+    }
+    TMPL = "# {{.title}}\nby {{.author.login}} · {{.state}} · {{.url}}\n\n{{.body}}\n"
+    CONVO = (
+        "{{range .reviews}}{{if .body}}### review by {{.author.login}} ({{.state}})\n\n{{.body}}\n\n---\n\n{{end}}{{end}}"
+        "{{range .comments}}### {{.author.login}}\n\n{{.body}}\n\n---\n\n{{end}}"
+    )
+    CI: ClassVar[dict[str, str]] = {
+        "SUCCESS": "pass",
+        "FAILURE": "fail",
+        "PENDING": "running",
+        "ERROR": "error",
+    }
+    STATUS: ClassVar[dict[str, str]] = {
+        "CLEAN": "ready",
+        "HAS_HOOKS": "ready",
+        "BLOCKED": "blocked",
+        "BEHIND": "rebase",
+        "DIRTY": "conflict",
+        "UNSTABLE": "unstable",
+        "DRAFT": "draft",
+    }
+    MINE: ClassVar[dict[str, str]] = {
+        "APPROVED": "approved",
+        "CHANGES_REQUESTED": "changes-req",
+        "COMMENTED": "commented",
+        "DISMISSED": "dismissed",
+    }
+
+    def search_args(self, f: Filters) -> list[str]:
+        args = [
+            "--sort",
+            f.sort,
+            "--order",
+            f.order,
+            "--limit",
+            str(f.limit),
+            "--json",
+            self.FIELDS,
+        ]
+        args += {
+            "open": ["--state", "open"],
+            "closed": ["--state", "closed"],
+            "merged": ["--merged"],
+            "all": [],
+        }[f.state]
+        for flag, value in (
+            ("--author", f.author),
+            ("--assignee", f.assignee),
+            ("--review-requested", f.reviewer),
+            ("--milestone", f.milestone),
+        ):
+            if value:
+                args += [flag, value]
+        if not (
+            f.author
+            or f.assignee
+            or f.reviewer
+            or any(k in self.WHO for k, _ in f.params)
+        ):
+            args += ["--review-requested", "@me"]
+        for label in f.labels:
+            args += ["--label", label]
+        query = [f'-label:"{label}"' for label in f.not_labels]
+        if f.draft is not None:
+            query.append(f"draft:{str(f.draft).lower()}")
+        query += [f"{k}:{v}" for k, v in f.params]
+        if f.search:
+            query.append(f.search)
+        return [*args, "--", *query] if query else args
+
+    def rows(self, filters: Filters) -> list[Row]:
+        found = json.loads(capture(["gh", "search", "prs", *self.search_args(filters)]))
+        if not found:
+            return []
+        # `gh search` exposes no review, CI, merge state or diff size, and a `gh pr view` per
+        # result would be one round-trip each; one aliased GraphQL query covers the whole page
+        aliases = []
+        for i, pr in enumerate(found):
+            owner, repo = pr["repository"]["nameWithOwner"].split("/", 1)
+            aliases.append(
+                f"p{i}: repository(owner: {json.dumps(owner)}, name: {json.dumps(repo)}) {{"
+                f" pullRequest(number: {pr['number']}) {{"
+                " reviewDecision mergeStateStatus additions deletions"
+                " latestReviews(first: 50) { nodes { state author { login } } }"
+                " reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } }"
+                " commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"
+                " } }"
+            )
+        try:
+            enrich = (
+                json.loads(
+                    capture(
+                        [
+                            "gh",
+                            "api",
+                            "graphql",
+                            "-f",
+                            f"query={{ viewer {{ login }} {' '.join(aliases)} }}",
+                        ],
+                        check=False,
+                    )
+                ).get("data")
+                or {}
+            )
+        except ValueError:
+            enrich = {}
+        me = (enrich.get("viewer") or {}).get("login", "")
+        rows = []
+        for i, pr in enumerate(found):
+            x = (enrich.get(f"p{i}") or {}).get("pullRequest") or {}
+            commit = ((x.get("commits") or {}).get("nodes") or [{}])[0].get(
+                "commit"
+            ) or {}
+            rollup = (commit.get("statusCheckRollup") or {}).get("state")
+            rows.append(
+                Row(
+                    ref=f"{pr['repository']['nameWithOwner']}#{pr['number']}",
+                    updated=epoch(pr["updatedAt"]),
+                    created=epoch(pr["createdAt"]),
+                    author=re.sub(r"\[bot\]$", "", pr["author"]["login"]),
+                    assignees=[a["login"] for a in pr.get("assignees") or []],
+                    review="draft" if pr["isDraft"] else self.review_state(x),
+                    you=self.mine(x, me),
+                    ci=self.CI.get(rollup or "", "-"),
+                    status=self.STATUS.get(x.get("mergeStateStatus") or "", "-"),
+                    size=f"+{x['additions']}/-{x['deletions']}"
+                    if x.get("additions") is not None
+                    else "-",
+                    notes=pr.get("commentsCount") or 0,
+                    title=pr["title"],
+                )
+            )
+        return rows
+
+    @staticmethod
+    def review_state(x: dict) -> str:
+        reviews = (x.get("latestReviews") or {}).get("nodes") or []
+        approvals = sum(r["state"] == "APPROVED" for r in reviews)
+        decision = x.get("reviewDecision")
+        # reviewDecision is null on repos without required reviews, so fall back to the reviews themselves
+        if decision == "CHANGES_REQUESTED" or any(
+            r["state"] == "CHANGES_REQUESTED" for r in reviews
+        ):
+            return "changes-req"
+        if decision == "APPROVED" or (decision is None and approvals):
+            return f"approved {approvals}"
+        return f"needs-review {approvals}" if approvals else "needs-review"
+
+    def mine(self, x: dict, me: str) -> str:
+        reviews = (x.get("latestReviews") or {}).get("nodes") or []
+        state = next(
+            (r["state"] for r in reviews if (r.get("author") or {}).get("login") == me),
+            None,
+        )
+        requests = (x.get("reviewRequests") or {}).get("nodes") or []
+        if any((r.get("requestedReviewer") or {}).get("login") == me for r in requests):
+            return "re-review" if state else "todo"
+        return self.MINE.get(state or "", "team")
+
+    def preview_view(self) -> str:
+        return (
+            "r={1}; gh pr view ${r##*#} --repo ${r%#*} --json title,body,author,url,state "
+            f"--template {shlex.quote(self.TMPL)} | bat --language markdown --style plain --paging never --color always"
+        )
+
+    def preview_diff(self) -> str:
+        return "r={1}; gh pr diff ${r##*#} --repo ${r%#*} | delta --paging=never --width=$FZF_PREVIEW_COLUMNS"
+
+    def open_web(self) -> str:
+        return "r={1}; gh pr view ${r##*#} --repo ${r%#*} --web"
+
+    def review(self, repo: str, number: str) -> None:
+        title = f"{repo}#{number}"
+        overview = capture(
+            [
+                "gh",
+                "pr",
+                "view",
+                number,
+                "--repo",
+                repo,
+                "--json",
+                "title,body,author,url,state",
+                "--template",
+                self.TMPL,
+            ]
+        )
+        diff = capture(["gh", "pr", "diff", number, "--repo", repo])
+
+        # offer only what GitHub would accept: comment unless locked to collaborators, approve and
+        # request-changes unless you authored it, merge for collaborators, close for collaborators or the author
+        try:
+            data = json.loads(
+                capture(
+                    [
+                        "gh",
+                        "api",
+                        "graphql",
+                        "-f",
+                        f"owner={repo.split('/')[0]}",
+                        "-f",
+                        f"name={repo.split('/', 1)[1]}",
+                        "-F",
+                        f"number={number}",
+                        "-f",
+                        (
+                            "query=query($owner: String!, $name: String!, $number: Int!) {"
+                            " repository(owner: $owner, name: $name) { viewerPermission pullRequest(number: $number) { locked viewerDidAuthor } } }"
+                        ),
+                    ]
+                )
+            )["data"]["repository"]
+            collaborator = data["viewerPermission"] in ("ADMIN", "MAINTAIN", "WRITE")
+            locked, authored = (
+                data["pullRequest"]["locked"],
+                data["pullRequest"]["viewerDidAuthor"],
+            )
+        except click.ClickException, ValueError, KeyError, TypeError:
+            err_console.print(
+                f"[yellow]Warning:[/] could not read your permissions on {title}, offering every action."
+            )
+            collaborator, locked, authored = True, False, False
+
+        actions: list[tuple[str, str, str]] = []
+        reasons: list[str] = []
+        if authored:
+            reasons.append("you authored it, no approve or request-changes")
+        else:
+            actions.append(("a", "approve", "gh pr review --approve"))
+        if locked and not collaborator:
+            reasons.append("conversation locked to collaborators")
+        else:
+            actions.append(("c", "comment", "gh pr review --comment ($EDITOR)"))
+        if not authored:
+            actions.append(
+                ("r", "request-changes", "gh pr review --request-changes ($EDITOR)")
+            )
+        actions += [
+            ("f", "files", "back to the file browser"),
+            ("v", "comments", "show the conversation"),
+            ("s", "checks", "gh pr checks"),
+            ("o", "open", "open in browser"),
+        ]
+        if collaborator:
+            actions.append(("m", "merge", "gh pr merge (confirms)"))
+        if collaborator or authored:
+            actions.append(("x", "close", "gh pr close (confirms)"))
+        actions.append(("q", "skip", "leave the menu"))
+
+        with tempfile.TemporaryDirectory(prefix="prq-") as tmp:
+            dir = Path(tmp)
+            files = self.prepare(dir, overview, diff)
+            if not self.browse(title, dir, files):
+                return
+            header = f"Review {title}" + (f" · {'; '.join(reasons)}" if reasons else "")
+            # the menu loops only for read-only views; acting choices leave when done
+            while True:
+                action = self.menu(header, actions)
+                pr = [number, "--repo", repo]
+                match action:
+                    case "approve":
+                        interactive(["gh", "pr", "review", *pr, "--approve"])
+                        return
+                    case "comment" | "request-changes":
+                        if (text := self.body(action)) is None:
+                            continue
+                        interactive(
+                            ["gh", "pr", "review", *pr, f"--{action}", "--body", text]
+                        )
+                        return
+                    case "files":
+                        self.browse(title, dir, files)
+                    case "comments":
+                        convo = capture(
+                            [
+                                "gh",
+                                "pr",
+                                "view",
+                                *pr,
+                                "--json",
+                                "comments,reviews",
+                                "--template",
+                                self.CONVO,
+                            ],
+                            check=False,
+                        )
+                        try:
+                            inline = json.loads(
+                                capture(
+                                    [
+                                        "gh",
+                                        "api",
+                                        f"repos/{repo}/pulls/{number}/comments",
+                                    ],
+                                    check=False,
+                                )
+                                or "[]"
+                            )
+                        except ValueError:
+                            inline = []
+                        convo += "".join(
+                            f"### {c['user']['login']} — `{c['path']}:{c.get('line') or c.get('original_line')}`\n\n{c['body']}\n\n---\n"
+                            for c in inline
+                        )
+                        page_markdown(convo) if convo.strip() else console.print(
+                            f"No comments on {title}."
+                        )
+                    case "checks":
+                        interactive(["gh", "pr", "checks", *pr])
+                    case "open":
+                        interactive(["gh", "pr", "view", *pr, "--web"])
+                    case "merge" | "close":
+                        if Confirm.ask(
+                            f"{action.capitalize()} {title}?", default=False
+                        ):
+                            interactive(["gh", "pr", action, *pr])
+                            return
+                    case _:
+                        return
+
+    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
+        if "#" in incomplete:
+            repo = incomplete.split("#", 1)[0]
+            prs = Cache.read(f"gh-prs-{repo.replace('/', '_')}", ttl=600)
+            if prs is None:
+                prs = [
+                    {
+                        "n": p["number"],
+                        "updated": epoch(p["updated_at"]),
+                        "draft": p["draft"],
+                        "author": re.sub(r"\[bot\]$", "", p["user"]["login"]),
+                        "title": p["title"],
+                    }
+                    for p in json.loads(
+                        capture(
+                            [
+                                "gh",
+                                "api",
+                                f"repos/{repo}/pulls?state=open&sort=updated&direction=desc&per_page=50",
+                            ],
+                            check=False,
+                        )
+                        or "[]"
+                    )
+                ]
+                Cache.write(f"gh-prs-{repo.replace('/', '_')}", prs)
+            items = [
+                CompletionItem(
+                    f"{repo}#{p['n']}",
+                    help=f"{age(p['updated']):<4} {'draft ' if p['draft'] else ''}{p['author']}: {p['title']}",
+                )
+                for p in prs
+            ]
+        elif "/" in incomplete:
+            owner = incomplete.split("/", 1)[0]
+            repos = Cache.read(f"gh-repos-{owner}", ttl=3600)
+            if repos is None:
+                repos = capture(
+                    [
+                        "gh",
+                        "repo",
+                        "list",
+                        owner,
+                        "--limit",
+                        "100",
+                        "--json",
+                        "name",
+                        "--jq",
+                        ".[].name",
+                    ],
+                    check=False,
+                ).split()
+                Cache.write(f"gh-repos-{owner}", repos)
+            items = [CompletionItem(f"{owner}/{r}#") for r in repos]
+        else:
+            owners = Cache.read("gh-owners", ttl=3600)
+            if owners is None:
+                owners = capture(
+                    ["gh", "api", "user", "--jq", ".login"], check=False
+                ).split()
+                owners += capture(
+                    ["gh", "api", "user/orgs", "--jq", ".[].login"], check=False
+                ).split()
+                Cache.write("gh-owners", owners)
+            items = [CompletionItem(f"{o}/") for o in owners]
+        return [i for i in items if i.value.startswith(incomplete)]
+
+
+class GitLab(Forge):
+    name = "gl"
+    noun = "merge request"
+    sep = "!"
+    tool = "glab"
+
+    # merge_requests params that pick whose MRs to list
+    WHO: ClassVar[set[str]] = {
+        "author_id",
+        "author_username",
+        "assignee_id",
+        "assignee_username",
+        "assignee_username[]",
+        "reviewer_id",
+        "reviewer_username",
+        "scope",
+        "my_reaction_emoji",
+        "approved_by_ids[]",
+        "approved_by_usernames[]",
+        "approver_ids[]",
+        "merge_user_id",
+        "merge_user_username",
+    }
+    STATE: ClassVar[dict[str, str]] = {
+        "open": "opened",
+        "closed": "closed",
+        "merged": "merged",
+        "all": "all",
+    }
+    CI: ClassVar[dict[str, str]] = {
+        "SUCCESS": "pass",
+        "FAILED": "fail",
+        "RUNNING": "running",
+        "PENDING": "pending",
+        "CANCELED": "canceled",
+        "SKIPPED": "skipped",
+    }
+    MERGE_STATUS: ClassVar[dict[str, str]] = {
+        "mergeable": "ready",
+        "not_approved": "needs-approval",
+        "requested_changes": "changes-req",
+        "discussions_not_resolved": "unresolved",
+        "ci_still_running": "ci-running",
+        "ci_must_pass": "ci-failed",
+        "need_rebase": "rebase",
+        "blocked_status": "blocked",
+    }
+    MINE: ClassVar[dict[str, str]] = {
+        "UNREVIEWED": "todo",
+        "UNAPPROVED": "todo",
+        "REVIEW_STARTED": "started",
+        "REVIEWED": "reviewed",
+        "REQUESTED_CHANGES": "changes-req",
+        "APPROVED": "approved",
+    }
+
+    def me(self) -> str:
+        if me := Cache.read("gl-user"):
+            return me
+        me = json.loads(capture(["glab", "api", "user"])).get("username")
+        if not me:
+            raise click.ClickException("could not resolve your GitLab username.")
+        Cache.write("gl-user", me)
+        return me
+
+    def user(self, name: str) -> str:
+        return self.me() if name == "@me" else name
+
+    def query(self, f: Filters) -> dict[str, str]:
+        # scope=all is required for reviewer_username to match beyond your own MRs;
+        # non_archived drops MRs from archived projects
+        q = {
+            "scope": "all",
+            "state": self.STATE[f.state],
+            "non_archived": "true",
+            "order_by": f"{f.sort}_at",
+            "sort": f.order,
+            "per_page": str(f.limit),
+        }
+        for key, value in (
+            ("author_username", f.author),
+            ("assignee_username", f.assignee),
+            ("reviewer_username", f.reviewer),
+        ):
+            if value:
+                q[key] = self.user(value)
+        if not (
+            f.author
+            or f.assignee
+            or f.reviewer
+            or any(k in self.WHO for k, _ in f.params)
+        ):
+            q["reviewer_username"] = self.me()
+        if f.labels:
+            q["labels"] = ",".join(f.labels)
+        if f.not_labels:
+            q["not[labels]"] = ",".join(f.not_labels)
+        if f.milestone:
+            q["milestone"] = f.milestone
+        if f.search:
+            q["search"] = f.search
+        if f.draft is not None:
+            q["draft"] = str(f.draft).lower()
+        q.update(f.params)
+        return q
+
+    def rows(self, filters: Filters) -> list[Row]:
+        fields = [
+            arg for k, v in self.query(filters).items() for arg in ("-f", f"{k}={v}")
+        ]
+        found = json.loads(
+            capture(["glab", "api", "-X", "GET", "merge_requests", *fields])
+        )
+        if not found:
+            return []
+        me = self.me()
+        # the REST list carries no review, pipeline or diff size data; aliased GraphQL queries add them,
+        # ten per query to stay under GitLab's complexity cap of 300, past which the whole query fails
+        enrich: dict[str, Any] = {}
+        for start in range(0, len(found), 10):
+            aliases = " ".join(
+                f"m{i}: project(fullPath: {json.dumps(mr['references']['full'].split('!')[0])}) {{"
+                f' mergeRequest(iid: "{mr["iid"]}") {{'
+                " approved approvedBy { nodes { username } } headPipeline { status }"
+                " reviewers { nodes { username mergeRequestInteraction { reviewState } } }"
+                " diffStatsSummary { additions deletions } } }"
+                for i, mr in enumerate(found[start : start + 10], start)
+            )
+            try:
+                enrich |= (
+                    json.loads(
+                        capture(
+                            ["glab", "api", "graphql", "-f", f"query={{ {aliases} }}"],
+                            check=False,
+                        )
+                    ).get("data")
+                    or {}
+                )
+            except ValueError:
+                pass
+        rows = []
+        for i, mr in enumerate(found):
+            x = (enrich.get(f"m{i}") or {}).get("mergeRequest") or {}
+            stats = x.get("diffStatsSummary")
+            pipeline = (x.get("headPipeline") or {}).get("status")
+            rows.append(
+                Row(
+                    ref=mr["references"]["full"],
+                    updated=epoch(mr["updated_at"]),
+                    created=epoch(mr["created_at"]),
+                    author=mr["author"]["username"],
+                    assignees=[a["username"] for a in mr.get("assignees") or []],
+                    review=self.review_state(x),
+                    you=self.mine(x, me),
+                    ci=self.CI.get(pipeline, pipeline.lower()) if pipeline else "-",
+                    status=self.status(mr),
+                    size=f"+{stats['additions']}/-{stats['deletions']}"
+                    if stats
+                    else "-",
+                    notes=mr.get("user_notes_count") or 0,
+                    title=mr["title"],
+                )
+            )
+        return rows
+
+    @staticmethod
+    def review_state(x: dict) -> str:
+        approvals = len((x.get("approvedBy") or {}).get("nodes") or [])
+        reviewers = (x.get("reviewers") or {}).get("nodes") or []
+        if any(
+            (r.get("mergeRequestInteraction") or {}).get("reviewState")
+            == "REQUESTED_CHANGES"
+            for r in reviewers
+        ):
+            return "changes-req"
+        if x.get("approved") and approvals:
+            return f"approved {approvals}"
+        return f"needs-review {approvals}" if approvals else "needs-review"
+
+    def mine(self, x: dict, me: str) -> str:
+        if any(
+            a["username"] == me for a in (x.get("approvedBy") or {}).get("nodes") or []
+        ):
+            return "approved"
+        state = next(
+            (
+                (r.get("mergeRequestInteraction") or {}).get("reviewState")
+                for r in (x.get("reviewers") or {}).get("nodes") or []
+                if r["username"] == me
+            ),
+            None,
+        )
+        return self.MINE.get(state or "", "-")
+
+    def status(self, mr: dict) -> str:
+        if mr.get("draft"):
+            return "draft"
+        if mr.get("has_conflicts"):
+            return "conflict"
+        merge = mr.get("detailed_merge_status") or ""
+        return self.MERGE_STATUS.get(merge, merge or "-")
+
+    TMPL = '"# \\(.title)\\nby \\(.author.username) · \\(.state) · \\(.web_url)\\n\\n\\(.description // "")"'
+
+    def preview_view(self) -> str:
+        return (
+            f"r={{1}}; glab mr view ${{r##*!}} -R ${{r%!*}} -F json | jq -r {shlex.quote(self.TMPL)} "
+            "| bat --language markdown --style plain --paging never --color always"
+        )
+
+    def preview_diff(self) -> str:
+        return "r={1}; glab mr diff ${r##*!} -R ${r%!*} --raw | delta --paging=never --width=$FZF_PREVIEW_COLUMNS"
+
+    def open_web(self) -> str:
+        return "r={1}; glab mr view ${r##*!} -R ${r%!*} --web"
+
+    def graphql(self, query: str, **variables: str) -> dict:
+        fields = [arg for k, v in variables.items() for arg in ("-f", f"{k}={v}")]
+        return json.loads(
+            capture(
+                ["glab", "api", "graphql", *fields, "-f", f"query={query}"], check=False
+            )
+            or "{}"
+        )
+
+    def mutate(
+        self, title: str, what: str, mutation: str, field: str, **variables: str
+    ) -> bool:
+        result = self.graphql(mutation, **variables)
+        errors = [e["message"] for e in result.get("errors") or []]
+        errors += ((result.get("data") or {}).get(field) or {}).get("errors") or []
+        if errors:
+            err_console.print(
+                f"[red]Error:[/] {what} {title} failed: {', '.join(errors)}"
+            )
+        return not errors
+
+    def review(self, repo: str, number: str) -> None:
+        title = f"{repo}!{number}"
+        mr = json.loads(
+            capture(["glab", "mr", "view", number, "-R", repo, "-F", "json"])
+        )
+        overview = f"# {mr['title']}\nby {mr['author']['username']} · {mr['state']} · {mr['web_url']}\n\n{mr.get('description') or ''}"
+        diff = capture(["glab", "mr", "diff", number, "-R", repo, "--raw"])
+        branch = mr.get("source_branch")
+
+        # offer only what GitLab would accept: comment while you can write notes, approve or revoke depending
+        # on whether you already approved, request-changes unless you already did, merge/close by permission
+        data = (
+            self.graphql(
+                "query($project: ID!, $iid: String!) { currentUser { username }"
+                " project(fullPath: $project) { mergeRequest(iid: $iid) {"
+                " discussionLocked userPermissions { createNote canApprove canMerge updateMergeRequest }"
+                " approvedBy { nodes { username } } reviewers { nodes { username mergeRequestInteraction { reviewState } } } } } }",
+                project=repo,
+                iid=number,
+            ).get("data")
+            or {}
+        )
+        x = (data.get("project") or {}).get("mergeRequest")
+        if x:
+            me = data["currentUser"]["username"]
+            perms = x["userPermissions"]
+            approved = any(a["username"] == me for a in x["approvedBy"]["nodes"])
+            state = next(
+                (
+                    r["mergeRequestInteraction"]["reviewState"]
+                    for r in x["reviewers"]["nodes"]
+                    if r["username"] == me
+                ),
+                "none",
+            )
+            locked = x["discussionLocked"]
+        else:
+            err_console.print(
+                f"[yellow]Warning:[/] could not read your permissions on {title}, offering every action."
+            )
+            me = self.me()
+            perms = {
+                "createNote": True,
+                "canApprove": True,
+                "canMerge": True,
+                "updateMergeRequest": True,
+            }
+            approved, state, locked = False, "UNREVIEWED", False
+
+        actions: list[tuple[str, str, str]] = []
+        reasons: list[str] = []
+        if approved:
+            actions.append(("u", "revoke", "glab mr revoke (remove your approval)"))
+        elif perms["canApprove"]:
+            actions.append(("a", "approve", "glab mr approve"))
+        else:
+            reasons.append("you can not approve")
+        if perms["createNote"]:
+            actions.append(("c", "comment", "glab mr note create ($EDITOR)"))
+        else:
+            reasons.append("discussion locked" if locked else "you can not comment")
+        if state == "REQUESTED_CHANGES":
+            reasons.append("changes already requested")
+        elif state == "none":
+            actions.append(
+                (
+                    "r",
+                    "request-changes",
+                    "request changes, adds you as reviewer (confirms)",
+                )
+            )
+        else:
+            actions.append(
+                ("r", "request-changes", "request changes, optional note ($EDITOR)")
+            )
+        actions += [
+            ("f", "files", "back to the file browser"),
+            ("v", "comments", "show the conversation"),
+            ("s", "pipeline", "glab ci view for the source branch"),
+            ("o", "open", "open in browser"),
+        ]
+        if perms["canMerge"]:
+            actions.append(("m", "merge", "glab mr merge (confirms)"))
+        if perms["updateMergeRequest"]:
+            actions.append(("x", "close", "glab mr close (confirms)"))
+        actions.append(("q", "skip", "leave the menu"))
+
+        with tempfile.TemporaryDirectory(prefix="prq-") as tmp:
+            dir = Path(tmp)
+            files = self.prepare(dir, overview, diff)
+            if not self.browse(title, dir, files):
+                return
+            header = f"Review {title}" + (f" · {'; '.join(reasons)}" if reasons else "")
+            mrargs = [number, "-R", repo]
+            # the menu loops only for read-only views; acting choices leave when done
+            while True:
+                match self.menu(header, actions):
+                    case "request-changes":
+                        if state == "none":
+                            if not Confirm.ask(
+                                f"Requesting changes needs you as a reviewer, add yourself to {title}?",
+                                default=False,
+                            ):
+                                continue
+                            if not self.mutate(
+                                title,
+                                "adding you as a reviewer of",
+                                "mutation($project: ID!, $iid: String!, $username: String!) {"
+                                " mergeRequestSetReviewers(input: { projectPath: $project, iid: $iid,"
+                                " reviewerUsernames: [$username], operationMode: APPEND }) { errors } }",
+                                "mergeRequestSetReviewers",
+                                project=repo,
+                                iid=number,
+                                username=me,
+                            ):
+                                continue
+                            state = "UNREVIEWED"
+                        text = editor()
+                        if (
+                            text.strip()
+                            and interactive(
+                                ["glab", "mr", "note", "create", *mrargs, "-m", text]
+                            )
+                            != 0
+                        ):
+                            continue
+                        if not self.mutate(
+                            title,
+                            "requesting changes on",
+                            "mutation($project: ID!, $iid: String!) {"
+                            " mergeRequestRequestChanges(input: { projectPath: $project, iid: $iid }) { errors } }",
+                            "mergeRequestRequestChanges",
+                            project=repo,
+                            iid=number,
+                        ):
+                            continue
+                        console.print(f"Requested changes on {title}.")
+                        return
+                    case "approve" | "revoke" as action:
+                        interactive(["glab", "mr", action, *mrargs])
+                        return
+                    case "comment":
+                        if (text := self.body("comment")) is None:
+                            continue
+                        interactive(
+                            ["glab", "mr", "note", "create", *mrargs, "-m", text]
+                        )
+                        return
+                    case "files":
+                        self.browse(title, dir, files)
+                    case "comments":
+                        # flatten discussion threads into one conversation, dropping system notes
+                        try:
+                            threads = json.loads(
+                                capture(
+                                    [
+                                        "glab",
+                                        "mr",
+                                        "note",
+                                        "list",
+                                        *mrargs,
+                                        "-F",
+                                        "json",
+                                    ],
+                                    check=False,
+                                )
+                                or "[]"
+                            )
+                        except ValueError:
+                            threads = []
+                        convo = "".join(
+                            f"### {n['author']['username']}\n\n{n['body']}\n\n---\n"
+                            for t in threads
+                            for n in t.get("notes") or []
+                            if not n.get("system")
+                        )
+                        page_markdown(convo) if convo else console.print(
+                            f"No comments on {title}."
+                        )
+                    case "pipeline":
+                        if branch:
+                            interactive(["glab", "ci", "view", branch, "-R", repo])
+                        else:
+                            err_console.print(f"No source branch found for {title}.")
+                    case "open":
+                        interactive(["glab", "mr", "view", *mrargs, "--web"])
+                    case "merge" | "close" as action:
+                        if Confirm.ask(
+                            f"{action.capitalize()} {title}?", default=False
+                        ):
+                            interactive(["glab", "mr", action, *mrargs])
+                            return
+                    case _:
+                        return
+
+    def complete_ref(self, incomplete: str) -> list[CompletionItem]:
+        if "!" in incomplete:
+            repo = incomplete.split("!", 1)[0]
+            mrs = Cache.read(f"gl-mrs-{repo.replace('/', '_')}", ttl=600)
+            if mrs is None:
+                try:
+                    found = json.loads(
+                        capture(
+                            [
+                                "glab",
+                                "mr",
+                                "list",
+                                "-R",
+                                repo,
+                                "--order",
+                                "updated_at",
+                                "--sort",
+                                "desc",
+                                "-F",
+                                "json",
+                            ],
+                            check=False,
+                        )
+                        or "[]"
+                    )
+                except ValueError:
+                    found = []
+                mrs = [
+                    {
+                        "n": m["iid"],
+                        "updated": epoch(m["updated_at"]),
+                        "status": self.status(m),
+                        "author": m["author"]["username"],
+                        "title": m["title"],
+                    }
+                    for m in found
+                ]
+                Cache.write(f"gl-mrs-{repo.replace('/', '_')}", mrs)
+            items = [
+                CompletionItem(
+                    f"{repo}!{m['n']}",
+                    help=f"{age(m['updated']):<4} {m['status']} {m['author']}: {m['title']}",
+                )
+                for m in mrs
+            ]
+        else:
+            projects = Cache.read("gl-projects", ttl=3600)
+            if projects is None:
+                try:
+                    pages = capture(
+                        [
+                            "glab",
+                            "api",
+                            "--paginate",
+                            "projects?membership=true&simple=true&per_page=100&order_by=last_activity_at&sort=desc",
+                        ],
+                        check=False,
+                        timeout=120,
+                    )
+                    # --paginate prints one JSON array per page back to back
+                    projects = [
+                        p["path_with_namespace"]
+                        for page in re.split(r"(?<=\])\s*(?=\[)", pages.strip())
+                        if page
+                        for p in json.loads(page)
+                    ]
+                except ValueError:
+                    projects = []
+                Cache.write("gl-projects", projects)
+            items = [CompletionItem(f"{p}!") for p in projects]
+        return [i for i in items if i.value.startswith(incomplete)]
+
+
+FORGES: dict[str, Forge] = {"gh": GitHub(), "gl": GitLab()}
+
+
+def forge_of(ctx: click.Context) -> Forge:
+    while ctx.parent is not None and ctx.info_name not in FORGES:
+        ctx = ctx.parent
+    return FORGES[ctx.info_name or "gh"]
+
+
+def complete_user(
+    ctx: click.Context, _param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    return forge_of(ctx).complete_user(incomplete)
+
+
+def complete_ref(
+    ctx: click.Context, _param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    try:
+        return forge_of(ctx).complete_ref(incomplete)
+    except click.ClickException, subprocess.TimeoutExpired:
+        return []
+
+
+def parse_param(
+    _ctx: click.Context, _param: click.Parameter, values: tuple[str, ...]
+) -> tuple[tuple[str, str], ...]:
+    pairs = []
+    for value in values:
+        key, sep, val = value.partition("=")
+        if not sep or not key:
+            raise click.BadParameter(f"expected key=value, got '{value}'")
+        pairs.append((key, val))
+    return tuple(pairs)
+
+
+def filter_options(f):
+    options = [
+        click.option(
+            "--author",
+            shell_complete=complete_user,
+            help="Author username, @me for you.",
+        ),
+        click.option(
+            "--assignee",
+            shell_complete=complete_user,
+            help="Assignee username, @me for you.",
+        ),
+        click.option(
+            "--reviewer",
+            shell_complete=complete_user,
+            help="Requested reviewer, @me for you.",
+        ),
+        click.option(
+            "--label", "labels", multiple=True, help="Label to require, repeatable."
+        ),
+        click.option(
+            "--not-label",
+            "not_labels",
+            multiple=True,
+            help="Label to exclude, repeatable.",
+        ),
+        click.option("--milestone", help="Milestone title."),
+        click.option("--search", help="Free-text search."),
+        click.option(
+            "--state",
+            type=click.Choice(["open", "closed", "merged", "all"]),
+            default="open",
+            show_default=True,
+            help="State.",
+        ),
+        click.option(
+            "--draft/--no-draft", default=None, help="Only drafts, or no drafts."
+        ),
+        click.option(
+            "--sort",
+            type=click.Choice(["updated", "created"]),
+            default="updated",
+            show_default=True,
+            help="Sort field.",
+        ),
+        click.option(
+            "--order",
+            type=click.Choice(["desc", "asc"]),
+            default="desc",
+            show_default=True,
+            help="Sort order.",
+        ),
+        click.option(
+            "--limit",
+            type=click.IntRange(1, 100),
+            default=50,
+            show_default=True,
+            help="Maximum results.",
+        ),
+        click.option(
+            "--param",
+            "params",
+            multiple=True,
+            callback=parse_param,
+            metavar="KEY=VALUE",
+            help="Raw filter, repeatable: a search qualifier on gh, a merge_requests param on gl.",
+        ),
+        click.option(
+            "--plain", is_flag=True, help="Print the table instead of the picker."
+        ),
+    ]
+    for option in reversed(options):
+        f = option(f)
+    return f
+
+
+class ForgeGroup(click.Group):
+    """`prq gh` lists, `prq gh <ref>` reviews; the subcommands stay explicit too."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if (not ctx.resilient_parsing or args) and (
+            not args
+            or (args[0] not in self.commands and args[0] not in ("-h", "--help"))
+        ):
+            args = ["review" if args and not args[0].startswith("-") else "list", *args]
+        return super().parse_args(ctx, args)
+
+
+def forge_group(name: str, help: str) -> click.Group:
+    forge = FORGES[name]
+
+    @click.group(name, cls=ForgeGroup, help=help)
+    def group() -> None:
+        require(forge.tool, "fzf", "bat", "delta")
+
+    @group.command(
+        "list",
+        help=f"List open {forge.noun}s awaiting your review and pick one to review.",
+    )
+    @filter_options
+    def cmd_list(plain: bool, **filters: Any) -> None:
+        forge.list(Filters(**filters), plain)
+
+    @group.command(
+        "review", help=f"Review one {forge.noun}: file browser, then the action menu."
+    )
+    @click.argument("ref", shell_complete=complete_ref)
+    @click.argument("number", required=False)
+    def cmd_review(ref: str, number: str | None) -> None:
+        repo = ref
+        if number is None and re.search(r"[#!]", ref):
+            repo, number = re.split(r"[#!](?=[^#!]*$)", ref)
+        if not number or "/" not in repo:
+            raise click.UsageError(
+                f"expected group/project{forge.sep}number, got '{ref}'"
+            )
+        if not number.isdigit():
+            raise click.UsageError(
+                f"{forge.noun} number must be numeric, got '{number}'"
+            )
+        try:
+            forge.review(repo, number)
+        except QuitAll:
+            pass
+
+    return group
+
+
+class Prq:
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option("-v", "--verbose", is_flag=True, help="Show subprocess traces.")
+    def cli(verbose: bool) -> None:
+        create_logger(verbose, name="prq")
+
+    cli.add_command(forge_group("gh", "GitHub pull requests."))
+    cli.add_command(forge_group("gl", "GitLab merge requests."))
+
+    @cli.command("completion")
+    @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")
+    @click.pass_context
+    def cmd_completion(ctx: click.Context, shell: str) -> None:
+        """Print the shell completion script."""
+        click.echo(
+            ZshCompletion(ctx.find_root().command, {}, "prq", "_PRQ_COMPLETE").source()
+        )
+
+
+if __name__ == "__main__":
+    Prq.cli(prog_name="prq")
