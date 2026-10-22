@@ -58,17 +58,13 @@ from dotlib.waybar import (
 )
 
 from lib import (
-    DEFAULT_SPEECH_BACKEND,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
-    DEFAULT_VAD_SILENCE_MS,
-    DEFAULT_VAD_THRESHOLD,
     DEFAULT_TTS_PLAYER,
     DEFAULT_TTS_SAMPLE_RATE,
     DEFAULT_TTS_TIMEOUT,
     DEFAULT_TTS_VOICE,
     PLAIN_FORMATS,
-    SPEECH_BACKEND_ENV,
     RealtimeUnavailable,
     AudioFormat,
     InputAdapter,
@@ -87,7 +83,6 @@ from lib import (
     PlayerMode,
     PrefixReader,
     ResponseFormat,
-    SpeechBackend,
     SttAdapter,
     SttAdapterHttp,
     SttAdapterMic,
@@ -96,7 +91,6 @@ from lib import (
     SttProvider,
     SttRecorder,
     SttSpec,
-    SttStreaming,
     TeeReader,
     TtsAdapterHttp,
     TtsSpec,
@@ -273,6 +267,10 @@ def _input_choices(*modes: InputMode) -> click.Choice:
     return click.Choice([m.value for m in modes], case_sensitive=False)
 
 
+# TODO: @cenk1cenk2 drop once the gateway routes speech without the header.
+SPEECH_BACKEND_HEADER = ("x-speech-backend", "localai")
+
+
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
     parsed = []
@@ -283,17 +281,6 @@ def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
         parsed.append((name, rest))
 
     return tuple(parsed)
-
-
-def _backend_option():
-    return click.option(
-        "--backend",
-        type=click.Choice([b.value for b in SpeechBackend], case_sensitive=False),
-        default=DEFAULT_SPEECH_BACKEND.value,
-        envvar=SPEECH_BACKEND_ENV,
-        show_default=True,
-        help="Speech server the calls are for; localai adds its routing header.",
-    )
 
 
 class SocketSession:
@@ -424,10 +411,6 @@ class SttSession(SocketSession):
         # when the microphone actually shut.
         self.osd = osd
         self._adapter = adapter
-        # Set once turns start reaching the sink. What is typed cannot be
-        # taken back, so an override that would rewrite the take arrives too
-        # late to be honoured and is refused rather than dropped.
-        self.emitting = False
 
     @staticmethod
     def _socket_path() -> str:
@@ -467,8 +450,8 @@ class SttSession(SocketSession):
             # running with no second toggle able to reach it.
             self._adapter.stop()
             # The take ends where the microphone does. What follows - the
-            # silence tail, the settle, the transcription - is the job still
-            # running, not more recording, so the card keeps its turns coming
+            # transcription - is the job still
+            # running, not more recording, so the card keeps its caption coming
             # with the clock held where the recording left it. A paused take
             # is already held at its last live second.
             with self._lock:
@@ -488,11 +471,6 @@ class SttSession(SocketSession):
             # transcription and any enrichment come back.
             Chime(ChimeDirection.FLAT).play()
             if "enrich" in obj:
-                if self.emitting and obj["enrich"]:
-                    return Response(
-                        ok=False,
-                        error="turns already typed; a rewrite cannot replace them",
-                    )
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
                 self._apply_output_override(
@@ -685,16 +663,14 @@ class Stt:
         Chime(ChimeDirection.UP).play(wait=True)
 
         osd = self.NOTIFICATION
-        # Finalised turns, which are never taken back, and the live caption a
-        # LocalAI socket reports, which is replaced as the speaker goes on.
-        transcript: list[str] = []
+        # The live caption the socket reports, replaced as the speaker goes on.
         caption = ""
 
-        # The meter ticks on one thread while turns close on another, and
+        # The meter ticks on one thread while the caption changes on another, and
         # the card draws only what a call carries, so both redraw the whole
         # card from what this run holds.
         def redraw() -> None:
-            tail = osd.tail(" ".join(transcript) or caption)
+            tail = osd.tail(caption)
             if server is not None and server.state.phase is not Phase.RECORDING:
                 # The mic is shut; what runs now is the take closing and the
                 # transcription coming back, so the card says so instead of
@@ -706,30 +682,7 @@ class Stt:
                 return
             osd.elapsed(self.LISTENING, level=_level(self._adapter), extract=tail)
 
-        # Turns go to the sink as they close, not just to the card, when the
-        # sink can take them and nothing downstream will rewrite them. An
-        # enrichment would, so it rules this out. Read off this invocation
-        # rather than the session: a socket override lands after the capture,
-        # and by then the early turns are already out.
-        live_sink = self._output
-        live = (
-            stream
-            and self._enricher is None
-            and isinstance(live_sink, OutputStreaming)
-            and isinstance(self._adapter, SttStreaming)
-        )
         redraw()
-        if isinstance(self._adapter, SttStreaming):
-
-            def on_turn(text: str) -> None:
-                transcript.append(text)
-                redraw()
-                if live:
-                    if server:
-                        server.emitting = True
-                    live_sink.write(text if len(transcript) == 1 else f" {text}")
-
-            self._adapter.subscribe(on_turn)
         if isinstance(self._adapter, SttPartials):
 
             def on_partial(text: str) -> None:
@@ -870,24 +823,7 @@ class Stt:
 
             if server:
                 server.set_phase(Phase.OUTPUT)
-            # Whatever the take ended up being, minus what already went out a
-            # turn at a time. Only a clean prefix is trusted: anything else
-            # means the socket's turns and the finished text disagree, and
-            # writing the difference would duplicate or reorder a dictation
-            # that is already in the user's window.
-            emitted = " ".join(transcript)
-            if not live or output is not live_sink:
-                # A mid-take override asked for a different sink, so that one
-                # has had nothing yet and takes the whole take.
-                output.write(text)
-            elif text.startswith(emitted):
-                if rest := text[len(emitted) :]:
-                    output.write(rest)
-            else:
-                self.log.error(
-                    "typed turns do not prefix the take; %d chars dropped", len(text)
-                )
-                self._notify("Take and typed turns disagree", timeout=8000)
+            output.write(text)
             osd.dismiss(
                 f"{raw} → {len(text)} chars"
                 if enricher is not None
@@ -1002,19 +938,6 @@ class Stt:
         default=SttProvider.REALTIME.value,
         help="Transcription backend.",
     )
-    @_backend_option()
-    @click.option(
-        "--vad-threshold",
-        type=float,
-        default=DEFAULT_VAD_THRESHOLD,
-        help="Speech probability a realtime turn needs, not a level. Speaches only.",
-    )
-    @click.option(
-        "--vad-silence-ms",
-        type=int,
-        default=DEFAULT_VAD_SILENCE_MS,
-        help="Silence that closes a realtime turn. Speaches only.",
-    )
     @click.option(
         "--input",
         "input_",
@@ -1087,8 +1010,8 @@ class Stt:
         "--stream/--no-stream",
         default=True,
         help=(
-            "Emit as it is produced rather than at the end: the rewrite with "
-            "--enrich, the realtime turns without it. Needs a stdout output."
+            "Emit the --enrich rewrite as it is produced rather than at the "
+            "end. Needs a stdout output."
         ),
     )
     @click.option(
@@ -1109,9 +1032,6 @@ class Stt:
     )
     def cmd_toggle(
         source,
-        backend,
-        vad_threshold,
-        vad_silence_ms,
         input_,
         input_file,
         output,
@@ -1146,8 +1066,6 @@ class Stt:
         if whisper_prompt is None:
             whisper_prompt = Stt.WHISPER_PROMPT
         stt_format = ResponseFormat(response_format)
-        speech_backend = SpeechBackend(backend)
-        stt_headers = (*speech_backend.headers, *_pairs(headers, "--header"))
         provider = SttProvider(source)
         adapter: SttAdapter
         match provider:
@@ -1167,10 +1085,9 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=stt_headers,
+                        headers=(SPEECH_BACKEND_HEADER, *_pairs(headers, "--header")),
                         timeout=timeout,
                         user_agent="speech/1.0",
-                        backend=speech_backend,
                     ),
                     audio_source,
                 )
@@ -1191,12 +1108,9 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=stt_headers,
+                        headers=(SPEECH_BACKEND_HEADER, *_pairs(headers, "--header")),
                         timeout=timeout,
                         user_agent="speech/1.0",
-                        backend=speech_backend,
-                        vad_threshold=vad_threshold,
-                        vad_silence_ms=vad_silence_ms,
                     )
                 )
             case _:
@@ -1576,7 +1490,6 @@ def tts_speak_options():
         ),
         click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
         click.option("--model", default=None, help="TTS model id."),
-        _backend_option(),
         click.option(
             "--speed",
             type=float,
@@ -2046,7 +1959,6 @@ class Tts:
         input_file,
         voice,
         model,
-        backend,
         speed,
         response_format,
         sample_rate,
@@ -2099,8 +2011,7 @@ class Tts:
             api_key_env=api_key_env,
             timeout=timeout,
             user_agent="speech/1.0",
-            backend=SpeechBackend(backend),
-            headers=SpeechBackend(backend).headers,
+            headers=(SPEECH_BACKEND_HEADER,),
         )
 
         tts_style = TtsStyle(style)

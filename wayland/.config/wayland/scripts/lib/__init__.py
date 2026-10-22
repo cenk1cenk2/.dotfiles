@@ -4,15 +4,6 @@ Re-exports follow the `X as X` form so Ruff treats them as explicit
 public re-exports (silences F401) and LSP rename still works — those
 are real imported names, not string literals in `__all__`."""
 
-from .backend import (
-    DEFAULT_SPEECH_BACKEND as DEFAULT_SPEECH_BACKEND,
-)
-from .backend import (
-    SPEECH_BACKEND_ENV as SPEECH_BACKEND_ENV,
-)
-from .backend import (
-    SpeechBackend as SpeechBackend,
-)
 from .input import (
     InputAdapter as InputAdapter,
 )
@@ -70,12 +61,6 @@ from .stt import (
     DEFAULT_STT_TIMEOUT as DEFAULT_STT_TIMEOUT,
 )
 from .stt import (
-    DEFAULT_VAD_SILENCE_MS as DEFAULT_VAD_SILENCE_MS,
-)
-from .stt import (
-    DEFAULT_VAD_THRESHOLD as DEFAULT_VAD_THRESHOLD,
-)
-from .stt import (
     PLAIN_FORMATS as PLAIN_FORMATS,
 )
 from .stt import (
@@ -110,9 +95,6 @@ from .stt import (
 )
 from .stt import (
     SttSpec as SttSpec,
-)
-from .stt import (
-    SttStreaming as SttStreaming,
 )
 from .tts import (
     DEFAULT_TTS_PLAYER as DEFAULT_TTS_PLAYER,
