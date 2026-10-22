@@ -236,7 +236,8 @@ class TranscriptionAdapter(Protocol):
 
 class TranscriptionAdapterHttp:
     """OpenAI-compatible `/audio/transcriptions` endpoint returning
-    `verbose_json` with word-level timestamps.
+    `verbose_json` with word-level timestamps, each word spelled
+    `word` (OpenAI, speaches) or `text` (LocalAI).
 
     Reached through the wayland `speech.py`, which owns the upload and
     the credential for every caller on this machine. Spawning it costs a
@@ -331,9 +332,16 @@ class TranscriptionAdapterHttp:
             for w in words:
                 start, end = w.get("start"), w.get("end")
                 if start is None or end is None:
-                    log.warning("dropping word without timings: %r", w.get("word"))
+                    log.warning(
+                        "dropping word without timings: %r",
+                        w.get("word") or w.get("text"),
+                    )
                     continue
-                timed.append(TimedWord(text=w.get("word", ""), start=start, end=end))
+                timed.append(
+                    TimedWord(
+                        text=w.get("word") or w.get("text") or "", start=start, end=end
+                    )
+                )
             return timed
 
         segments = data.get("segments", [])
@@ -345,7 +353,11 @@ class TranscriptionAdapterHttp:
                 if seg_words:
                     for w in seg_words:
                         result.append(
-                            TimedWord(text=w["word"], start=w["start"], end=w["end"])
+                            TimedWord(
+                                text=w.get("word") or w.get("text") or "",
+                                start=w["start"],
+                                end=w["end"],
+                            )
                         )
                 else:
                     result.append(
@@ -2821,8 +2833,7 @@ class Remsi:
     )
     @click.option(
         "--http-model",
-        # Parakeet behind `kilic.dev/stt` cannot return word timestamps.
-        default="kilic.dev/stt/whisper",
+        default="kilic.dev/stt",
         help="HTTP STT model name.",
     )
     @click.option(
