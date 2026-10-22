@@ -237,7 +237,7 @@ recording mode; there is no separate AI mode).
 
 Recording is driven by `recorder.py`, speech-to-text by `speech.py stt` (the
 `--enrich` variants pass the transcript through the configured LLM enricher
-first), text-to-speech by `speech.py tts` (Kokoro through speaches, streamed as
+first), text-to-speech by `speech.py tts` (Kokoro-FastAPI, streamed as
 raw PCM into `ffplay`), and clipboard refinement by `copywriter.py`.
 
 ## Scripts to Port

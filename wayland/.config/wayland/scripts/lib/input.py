@@ -31,7 +31,6 @@ class InputMode(StrEnum):
     MIC = "mic"
 
 
-
 class InputAdapter(Protocol):
     mode: InputMode
     # Names the payload for backends that upload it; only the file
@@ -216,9 +215,7 @@ class MicCapture:
         # Raw Popen rather than `dotlib.cli.run`: that helper starts children
         # in their own session, which would put the recorder out of reach of
         # the session's `killpg` and leave a microphone open after a kill.
-        self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=sys.stderr
-        )
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=sys.stderr)
         self._started = time.monotonic()
         self._reader = threading.Thread(target=self._drain, daemon=True)
         self._reader.start()
@@ -370,8 +367,6 @@ class MicCapture:
             log.error("ffmpeg exit=%d: %s", proc.returncode, proc.stderr.decode())
             return None
 
-        log.info(
-            "encoded %.1fs to %d bytes of opus", self.seconds, len(proc.stdout)
-        )
+        log.info("encoded %.1fs to %d bytes of opus", self.seconds, len(proc.stdout))
 
         return proc.stdout or None
