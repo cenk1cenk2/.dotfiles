@@ -17,6 +17,7 @@ import json
 import logging
 import mimetypes
 import os
+import queue
 import threading
 import time
 import urllib.error
@@ -149,6 +150,16 @@ class SttPartials(SttRecorder, Protocol):
     taken back, and the take's real text is what `capture` returns."""
 
     def subscribe_partials(self, on_partial: Callable[[str], None]) -> None: ...
+
+
+@runtime_checkable
+class SttTurns(SttRecorder, Protocol):
+    """Recorder whose closed turns are the take's text, as they close.
+
+    Nothing handed to `on_turn` is revised afterwards, so it can go straight
+    to a sink; `capture` returns the same turns joined."""
+
+    def subscribe_turns(self, on_turn: Callable[[str], None]) -> None: ...
 
 
 class SttAdapterHttp:
@@ -309,11 +320,12 @@ class SttAdapterRealtime:
 
     The same capture as `SttAdapterMic` — 24 kHz mono s16 is the wire format,
     which is why the recorder runs at that rate — pushed at the socket in
-    100ms frames while it is being recorded. The socket only captions: its
-    deltas and turns go to the `subscribe_partials` callback, and the text of
-    the take is the whole recording posted to the batch endpoint when it ends.
-    The streaming model emits lowercase, unpunctuated turns, which the batch
-    one does not.
+    100ms frames while it is being recorded. Its deltas and turns go to the
+    `subscribe_partials` callback. With `batch` the text of the take is the
+    whole recording posted to the batch endpoint when it ends: the streaming
+    model emits lowercase, unpunctuated turns, which the batch one does not.
+    Without it the text is the socket's own turns, each handed to
+    `subscribe_turns` as it closes.
 
     A socket that cannot do its job is a failure and raises: a transcript
     that arrived by another route is indistinguishable from a realtime one,
@@ -324,12 +336,24 @@ class SttAdapterRealtime:
     # 100ms frames: small enough that the server's VAD sees speech begin
     # promptly, large enough not to spend the take in syscalls.
     CHUNK_MS = 100
-    # How long to wait for the sender to drain once the microphone closes.
+    # How long to wait for the sender to drain once the microphone closes, and
+    # again for the last turn to close.
     STOP_DEADLINE = 8.0
+    # The detector only runs on arriving audio, so silence is sent after the
+    # microphone closes for it to notice the talking stopped.
+    TAIL_MS = 1500
+    # Quiet spell after the last turn event that counts as the take being over.
+    SETTLE_SECONDS = 1.0
 
-    def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
+    def __init__(
+        self,
+        spec: SttSpec,
+        mic: MicCapture | None = None,
+        batch: bool = True,
+    ):
         self.spec = spec
         self.mic = mic or MicCapture()
+        self.batch = batch
         self._stopped = threading.Event()
         # Why the socket stopped being usable, if it did. A drop mid-take is
         # as much a failure as one at the handshake, and it used to end the
@@ -340,6 +364,14 @@ class SttAdapterRealtime:
         # Turns by item id, in arrival order: a delta extends its turn,
         # `completed` replaces it and `failed` retracts it.
         self._items: dict[str, str] = {}
+        # Turns that have deltas but no `completed` or `failed` yet.
+        self._open: set[str] = set()
+        self._last_event = time.monotonic()
+        # Closed turns reach the subscriber from here rather than from
+        # `_receive`: a subscriber may take seconds over a turn, and a receive
+        # thread inside it is not reading the socket.
+        self._delivery: queue.Queue[str | None] = queue.Queue()
+        self._on_turn: Callable[[str], None] | None = None
         self._lock = threading.Lock()
 
     # ── recorder contract ─────────────────────────────────────────
@@ -366,6 +398,9 @@ class SttAdapterRealtime:
 
     def subscribe_partials(self, on_partial: Callable[[str], None]) -> None:
         self._on_partial = on_partial
+
+    def subscribe_turns(self, on_turn: Callable[[str], None]) -> None:
+        self._on_turn = on_turn
 
     # ── the socket ────────────────────────────────────────────────
 
@@ -430,17 +465,49 @@ class SttAdapterRealtime:
                 self._items[item] = self._items.get(item, "") + (
                     event.get("delta") or ""
                 )
+                self._open.add(item)
             elif kind.endswith("input_audio_transcription.completed"):
                 self._items[item] = event.get("transcript") or ""
+                self._open.discard(item)
+                if not self.batch and (turn := self._items[item].strip()):
+                    self._delivery.put(turn)
             elif kind.endswith("input_audio_transcription.failed"):
                 self._items.pop(item, None)
+                self._open.discard(item)
             else:
                 return
-            line = " ".join(
-                text for turn in self._items.values() if (text := turn.strip())
-            )
+            self._last_event = time.monotonic()
+            line = self._line()
         if self._on_partial:
             self._on_partial(line)
+
+    def _line(self) -> str:
+        return " ".join(text for turn in self._items.values() if (text := turn.strip()))
+
+    def _deliver(self) -> None:
+        """Hand closed turns to the subscriber, one at a time, off the socket."""
+        while (turn := self._delivery.get()) is not None:
+            if self._on_turn:
+                try:
+                    self._on_turn(turn)
+                except OSError as e:
+                    log.warning("subscriber refused a turn: %s", e)
+            self._delivery.task_done()
+
+    def _settle(self) -> None:
+        """Wait for the last turn to close, reach the subscriber, and the
+        socket to go quiet."""
+        deadline = time.monotonic() + self.STOP_DEADLINE
+        while not self.socket_error and time.monotonic() < deadline:
+            with self._lock:
+                if (
+                    not self._open
+                    and not self._delivery.unfinished_tasks
+                    and time.monotonic() - self._last_event >= self.SETTLE_SECONDS
+                ):
+                    return
+            time.sleep(self.CHUNK_MS / 1000)
+        log.warning("realtime turns still open at the deadline")
 
     def _pump(self, ws) -> None:
         """Send the take as it is recorded."""
@@ -459,6 +526,14 @@ class SttAdapterRealtime:
             if not self._send_audio(ws, pcm[sent : sent + chunk]):
                 return
             sent += chunk
+        if self.batch:
+            return
+        # Paced like the capture it follows, so the detector reads it as time
+        # passing rather than one burst.
+        for _ in range(self.TAIL_MS // self.CHUNK_MS):
+            if not self._send_audio(ws, b"\0" * chunk):
+                return
+            time.sleep(self.CHUNK_MS / 1000)
 
     def _send_audio(self, ws, pcm: bytes) -> bool:
         """Push one frame; False once the socket has stopped taking them."""
@@ -514,10 +589,14 @@ class SttAdapterRealtime:
             raise RealtimeUnavailable(f"socket refused: {self.socket_error}") from e
 
         threading.Thread(target=self._receive, args=(ws,), daemon=True).start()
+        threading.Thread(target=self._deliver, daemon=True).start()
         pump = threading.Thread(target=self._pump, args=(ws,), daemon=True)
         pump.start()
         self._stopped.wait()
         pump.join(timeout=self.STOP_DEADLINE)
+        if not self.batch:
+            self._settle()
+        self._delivery.put(None)
 
         self._closing = True
         try:
@@ -530,5 +609,8 @@ class SttAdapterRealtime:
         if not self.mic.pcm():
             log.error("capture held no audio")
             return None
+        if not self.batch:
+            with self._lock:
+                return self._line()
 
         return SttAdapterHttp(self.spec, self.mic).capture()
