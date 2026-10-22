@@ -31,6 +31,8 @@ from typing import Any, Protocol
 
 from dotlib.enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
+from .backend import DEFAULT_SPEECH_BACKEND, SpeechBackend
+
 
 class AudioFormat(StrEnum):
     PCM = "pcm"
@@ -96,6 +98,8 @@ class TtsSpec:
     api_key_env: str = DEFAULT_API_KEY_ENV
     timeout: float = DEFAULT_TTS_TIMEOUT
     user_agent: str = "tts/1.0"
+    backend: SpeechBackend = DEFAULT_SPEECH_BACKEND
+    headers: tuple[tuple[str, str], ...] = ()
 
 
 class ByteStream(Protocol):
@@ -127,6 +131,10 @@ class TtsAdapterHttp:
         # `speaches-tts-defaults`).
         if spec.speed is not None:
             body["speed"] = spec.speed
+        # Kokoro-FastAPI synthesises a sentence at a time and sends each as it
+        # is done; without this it answers once the whole text is ready.
+        if spec.backend is SpeechBackend.LOCALAI:
+            body["stream"] = True
         payload = json.dumps(body)
         log.debug("request: %s", payload)
         req = urllib.request.Request(
@@ -136,6 +144,7 @@ class TtsAdapterHttp:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {os.environ.get(spec.api_key_env, '')}",
                 "User-Agent": spec.user_agent,
+                **dict(spec.headers),
             },
         )
         try:
