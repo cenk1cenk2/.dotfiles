@@ -96,7 +96,6 @@ class TtsSpec:
     api_key_env: str = DEFAULT_API_KEY_ENV
     timeout: float = DEFAULT_TTS_TIMEOUT
     user_agent: str = "tts/1.0"
-    headers: tuple[tuple[str, str], ...] = ()
 
 
 class ByteStream(Protocol):
@@ -139,7 +138,6 @@ class TtsAdapterHttp:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {os.environ.get(spec.api_key_env, '')}",
                 "User-Agent": spec.user_agent,
-                **dict(spec.headers),
             },
         )
         try:
