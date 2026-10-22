@@ -267,10 +267,6 @@ def _input_choices(*modes: InputMode) -> click.Choice:
     return click.Choice([m.value for m in modes], case_sensitive=False)
 
 
-# TODO: @cenk1cenk2 drop once the gateway routes speech without the header.
-SPEECH_BACKEND_HEADER = ("x-speech-backend", "localai")
-
-
 def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
     """Parse repeated `name=value` arguments, keeping order and duplicates."""
     parsed = []
@@ -1085,7 +1081,7 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=(SPEECH_BACKEND_HEADER, *_pairs(headers, "--header")),
+                        headers=_pairs(headers, "--header"),
                         timeout=timeout,
                         user_agent="speech/1.0",
                     ),
@@ -1108,7 +1104,7 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=(SPEECH_BACKEND_HEADER, *_pairs(headers, "--header")),
+                        headers=_pairs(headers, "--header"),
                         timeout=timeout,
                         user_agent="speech/1.0",
                     )
@@ -2011,7 +2007,6 @@ class Tts:
             api_key_env=api_key_env,
             timeout=timeout,
             user_agent="speech/1.0",
-            headers=(SPEECH_BACKEND_HEADER,),
         )
 
         tts_style = TtsStyle(style)
