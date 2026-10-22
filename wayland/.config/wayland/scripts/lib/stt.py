@@ -31,6 +31,7 @@ from typing import Protocol, runtime_checkable
 import websocket
 from dotlib.enrich import DEFAULT_API_KEY_ENV, DEFAULT_BASE_URL
 
+from .backend import DEFAULT_SPEECH_BACKEND, SpeechBackend
 from .input import InputAdapter, MicCapture
 
 
@@ -59,6 +60,9 @@ class ResponseFormat(StrEnum):
 
 DEFAULT_STT_MODEL = "kilic.dev/stt"
 DEFAULT_STT_TIMEOUT = 300.0
+# LocalAI serves the live captions from a pipeline model of its own, apart
+# from the batch one that produces the text.
+LOCALAI_REALTIME_MODEL = "kilic.dev/stt/realtime"
 # One ISO-639-1 code: the endpoint answers 500 to a list or an unknown
 # code. Empty leaves the field off, which is the model's auto-detect.
 DEFAULT_STT_LANGUAGE = "en"
@@ -94,6 +98,8 @@ class SttSpec:
     prompt: str = ""
     timeout: float = DEFAULT_STT_TIMEOUT
     user_agent: str = "stt/1.0"
+    # Selects the dialect; the routing header travels in `headers`.
+    backend: SpeechBackend = DEFAULT_SPEECH_BACKEND
     # Server-side turn detection, for the realtime backend. The threshold is
     # a speech probability rather than a level, so a quiet but clear voice
     # scores lower than a loud one and needs a lower bar, not more gain.
@@ -144,6 +150,17 @@ class LevelSource(Protocol):
     def frame(self) -> tuple[float, list[float]] | None:
         """Current (peak, bars), or None before anything has been captured."""
         ...
+
+
+@runtime_checkable
+class SttPartials(SttRecorder, Protocol):
+    """Recorder that reports the live, revisable transcript during a take.
+
+    The text handed to `on_partial` is the whole line so far and is replaced
+    by the next call, so it is for display only: whatever it said can be
+    taken back, and the take's real text is what `capture` returns."""
+
+    def subscribe_partials(self, on_partial: Callable[[str], None]) -> None: ...
 
 
 @runtime_checkable
@@ -227,9 +244,16 @@ class SttAdapterHttp:
         name = self.source.name
         content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
         boundary = f"----speech-stt-{uuid.uuid4().hex}"
+        # LocalAI names its plain-text format `txt` and answers 400 to `text`.
+        response_format = (
+            "txt"
+            if spec.backend is SpeechBackend.LOCALAI
+            and spec.response_format is ResponseFormat.TEXT
+            else spec.response_format.value
+        )
         fields = [
             ("model", self.model),
-            ("response_format", spec.response_format.value),
+            ("response_format", response_format),
         ]
         if spec.language:
             fields.append(("language", spec.language))
@@ -308,27 +332,34 @@ class SttAdapterRealtime:
 
     The same capture as `SttAdapterMic` — 24 kHz mono s16 is the wire format,
     which is why the recorder runs at that rate — pushed at the socket in
-    100ms frames while it is being recorded. The server closes a turn on its
-    own silence detection and answers with one finalised segment per turn;
-    there are no partial deltas, so nothing handed back is ever revised.
+    100ms frames while it is being recorded.
 
-    Every take is also kept whole in memory, which is what serves a take too
-    short for the server to close a turn on at all. Anything else the socket
-    cannot do is a failure and raises: a transcript that arrived by another
-    route is indistinguishable from a realtime one, and hides the fault."""
+    Against speaches the server closes a turn on its own silence detection
+    and answers with one finalised segment per turn; there are no partial
+    deltas, so nothing handed back is ever revised. Every take is also kept
+    whole in memory, which is what serves a take too short for the server to
+    close a turn on at all. Anything else the socket cannot do is a failure
+    and raises: a transcript that arrived by another route is
+    indistinguishable from a realtime one, and hides the fault.
+
+    Against LocalAI the socket only captions: its deltas and turns go to the
+    `subscribe_partials` callback, and the text of the take is the whole
+    recording posted to the batch endpoint when it ends. The streaming model
+    emits lowercase, unpunctuated turns, which the batch one does not."""
 
     provider = SttProvider.REALTIME
 
     # 100ms frames: small enough that the server's VAD sees speech begin
     # promptly, large enough not to spend the take in syscalls.
     CHUNK_MS = 100
-    # A turn closes on a pause of well under a second, but not in the first
-    # three seconds of a take: speaches only ends one when the last speech in
-    # its rolling 3s window has stopped AND the buffer already exceeds 3s
-    # (`input_audio_buffer_event_router.vad_detection_flow`, its own `FIX:
-    # magic number`). So the opening sentence is always one turn however it is
-    # spoken, and every pause after that splits. Neither `silence_duration_ms`
-    # nor `prefix_padding_ms` moves that floor; both were measured against it.
+    # Speaches: a turn closes on a pause of well under a second, but not in
+    # the first three seconds of a take: speaches only ends one when the last
+    # speech in its rolling 3s window has stopped AND the buffer already
+    # exceeds 3s (`input_audio_buffer_event_router.vad_detection_flow`, its own
+    # `FIX: magic number`). So the opening sentence is always one turn however
+    # it is spoken, and every pause after that splits. Neither
+    # `silence_duration_ms` nor `prefix_padding_ms` moves that floor; both were
+    # measured against it.
     # Silence pushed after the microphone closes so the server's own detector
     # ends the last turn. Added to the configured silence rather than fixed —
     # a shorter tail than the detector waits for would never close it.
@@ -337,14 +368,16 @@ class SttAdapterRealtime:
     STOP_DEADLINE = 8.0
     # Quiet spell after the last segment that counts as the take being over.
     SETTLE_SECONDS = 1.5
-    # Below this the server cannot close a turn at all, whatever is said into
-    # it, so a take this short yielding nothing is expected rather than broken.
+    # Speaches: below this the server cannot close a turn at all, whatever is
+    # said into it, so a take this short yielding nothing is expected rather
+    # than broken.
     MIN_TURN_SECONDS = 3.0
 
     def __init__(self, spec: SttSpec, mic: MicCapture | None = None):
         self.spec = spec
         self.mic = mic or MicCapture()
         self.model = spec.model or DEFAULT_STT_MODEL
+        self.localai = spec.backend is SpeechBackend.LOCALAI
         self._stopped = threading.Event()
         # Why the socket stopped being usable, if it did. A drop mid-take is
         # as much a failure as one at the handshake, and it used to end the
@@ -359,6 +392,10 @@ class SttAdapterRealtime:
         self._delivery: queue.Queue[str] = queue.Queue()
         self._delivered = 0
         self._on_segment: Callable[[str], None] | None = None
+        self._on_partial: Callable[[str], None] | None = None
+        # LocalAI turns by item id, in arrival order: a delta extends its
+        # turn, `completed` replaces it and `failed` retracts it.
+        self._items: dict[str, str] = {}
         self._lock = threading.Lock()
 
     # ── recorder contract ─────────────────────────────────────────
@@ -386,12 +423,20 @@ class SttAdapterRealtime:
     def subscribe(self, on_segment: Callable[[str], None]) -> None:
         self._on_segment = on_segment
 
+    def subscribe_partials(self, on_partial: Callable[[str], None]) -> None:
+        self._on_partial = on_partial
+
     # ── the socket ────────────────────────────────────────────────
 
     def _url(self) -> str:
         base = self.spec.base_url.replace("https://", "wss://", 1).replace(
             "http://", "ws://", 1
         )
+        if self.localai:
+            query = urllib.parse.urlencode({"model": LOCALAI_REALTIME_MODEL})
+
+            return f"{base}/realtime?{query}"
+
         query = urllib.parse.urlencode(
             {
                 # `model` is required — without it the handshake is refused.
@@ -419,7 +464,9 @@ class SttAdapterRealtime:
                 continue
 
             kind = event.get("type", "")
-            if kind.endswith("input_audio_transcription.completed"):
+            if self.localai:
+                self._caption(kind, event)
+            elif kind.endswith("input_audio_transcription.completed"):
                 text = (event.get("transcript") or "").strip()
                 if not text:
                     continue
@@ -435,6 +482,31 @@ class SttAdapterRealtime:
                 self._delivery.put(text)
             elif kind == "error":
                 log.warning("realtime error: %s", (event.get("error") or {}))
+
+    def _caption(self, kind: str, event: dict) -> None:
+        """Fold a LocalAI transcription event into the live line."""
+        if kind == "error":
+            log.warning("realtime error: %s", (event.get("error") or {}))
+            return
+        if not (item := event.get("item_id")):
+            return
+
+        with self._lock:
+            if kind.endswith("input_audio_transcription.delta"):
+                self._items[item] = self._items.get(item, "") + (
+                    event.get("delta") or ""
+                )
+            elif kind.endswith("input_audio_transcription.completed"):
+                self._items[item] = event.get("transcript") or ""
+            elif kind.endswith("input_audio_transcription.failed"):
+                self._items.pop(item, None)
+            else:
+                return
+            line = " ".join(
+                text for turn in self._items.values() if (text := turn.strip())
+            )
+        if self._on_partial:
+            self._on_partial(line)
 
     def _deliver(self) -> None:
         """Hand turns to the subscriber, one at a time, off the socket thread."""
@@ -466,6 +538,10 @@ class SttAdapterRealtime:
             if not self._send_audio(ws, pcm[sent : sent + chunk]):
                 return
             sent += chunk
+        # LocalAI's captions are display only and the text comes from the batch
+        # call, so nothing waits on the last turn closing.
+        if self.localai:
+            return
         # The detector only runs on arriving audio, so silence has to be sent
         # for it to notice the talking stopped. No manual commit: committing
         # mid-speech trips a server assertion and drops the socket.
@@ -510,6 +586,41 @@ class SttAdapterRealtime:
         log.error("%s: %s", what, error)
         self.stop()
 
+    def _session(self) -> dict:
+        if not self.localai:
+            return {
+                "type": "session.update",
+                "session": {
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": self.spec.vad_threshold,
+                        "silence_duration_ms": self.spec.vad_silence_ms,
+                    }
+                },
+            }
+
+        transcription = {"model": LOCALAI_REALTIME_MODEL}
+        if self.spec.language:
+            transcription["language"] = self.spec.language
+
+        # `turn_detection` has to be sent, and `session.updated` never echoes it.
+        return {
+            "type": "session.update",
+            "session": {
+                "type": "transcription",
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": self.mic.rate},
+                        "transcription": transcription,
+                        "turn_detection": {
+                            "type": "semantic_vad",
+                            "eagerness": "high",
+                        },
+                    }
+                },
+            },
+        }
+
     # ── capture ───────────────────────────────────────────────────
 
     def capture(self) -> str | None:
@@ -519,25 +630,13 @@ class SttAdapterRealtime:
             ws = websocket.create_connection(
                 self._url(),
                 header=[
-                    f"Authorization: Bearer {os.environ.get(self.spec.api_key_env, '')}"
+                    f"Authorization: Bearer {os.environ.get(self.spec.api_key_env, '')}",
+                    *(f"{name}: {value}" for name, value in self.spec.headers),
                 ],
                 timeout=30,
                 suppress_origin=True,
             )
-            ws.send(
-                json.dumps(
-                    {
-                        "type": "session.update",
-                        "session": {
-                            "turn_detection": {
-                                "type": "server_vad",
-                                "threshold": self.spec.vad_threshold,
-                                "silence_duration_ms": self.spec.vad_silence_ms,
-                            }
-                        },
-                    }
-                )
-            )
+            ws.send(json.dumps(self._session()))
         except (OSError, websocket.WebSocketException) as e:
             self.socket_error = str(e) or e.__class__.__name__
             self.mic.cancel()
@@ -554,10 +653,13 @@ class SttAdapterRealtime:
         # Waits for a quiet spell after the last turn reached the subscriber,
         # not after it arrived: a subscriber that types its turn is still
         # working long after the socket handed it over, and closing under it
-        # loses whatever the socket had not been read for yet.
+        # loses whatever the socket had not been read for yet. LocalAI turns
+        # are captions with no subscriber to wait on.
         deadline = time.monotonic() + self.STOP_DEADLINE
         counted, since = -1, time.monotonic()
-        while not self.socket_error and time.monotonic() < deadline:
+        while (
+            not self.localai and not self.socket_error and time.monotonic() < deadline
+        ):
             done = self._delivered
             if done != counted:
                 counted, since = done, time.monotonic()
@@ -583,6 +685,13 @@ class SttAdapterRealtime:
         if self.socket_error:
             raise RealtimeUnavailable(f"socket dropped: {self.socket_error}")
 
+        if self.localai:
+            if not self.mic.pcm():
+                log.error("capture held no audio")
+                return None
+
+            return SttAdapterHttp(self.spec, self.mic).capture()
+
         with self._lock:
             segments = list(self._segments)
 
@@ -592,11 +701,8 @@ class SttAdapterRealtime:
             # is not a fault. Longer than that, silence from the socket is.
             seconds = len(self.mic.pcm()) / self.mic.rate / self.mic.SAMPLE_BYTES
             if seconds > self.MIN_TURN_SECONDS:
-                raise RealtimeUnavailable(
-                    f"no turns in {seconds:.1f}s of audio"
-                )
+                raise RealtimeUnavailable(f"no turns in {seconds:.1f}s of audio")
             log.info("%.1fs is under the turn floor; posting it whole", seconds)
             return SttAdapterHttp(self.spec, self.mic).capture()
 
         return " ".join(segments).strip()
-

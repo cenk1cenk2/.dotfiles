@@ -58,6 +58,7 @@ from dotlib.waybar import (
 )
 
 from lib import (
+    DEFAULT_SPEECH_BACKEND,
     DEFAULT_STT_LANGUAGE,
     DEFAULT_STT_TIMEOUT,
     DEFAULT_VAD_SILENCE_MS,
@@ -67,6 +68,7 @@ from lib import (
     DEFAULT_TTS_TIMEOUT,
     DEFAULT_TTS_VOICE,
     PLAIN_FORMATS,
+    SPEECH_BACKEND_ENV,
     RealtimeUnavailable,
     AudioFormat,
     InputAdapter,
@@ -85,10 +87,12 @@ from lib import (
     PlayerMode,
     PrefixReader,
     ResponseFormat,
+    SpeechBackend,
     SttAdapter,
     SttAdapterHttp,
     SttAdapterMic,
     SttAdapterRealtime,
+    SttPartials,
     SttProvider,
     SttRecorder,
     SttSpec,
@@ -279,6 +283,17 @@ def _pairs(values: tuple[str, ...], flag: str) -> tuple[tuple[str, str], ...]:
         parsed.append((name, rest))
 
     return tuple(parsed)
+
+
+def _backend_option():
+    return click.option(
+        "--backend",
+        type=click.Choice([b.value for b in SpeechBackend], case_sensitive=False),
+        default=DEFAULT_SPEECH_BACKEND.value,
+        envvar=SPEECH_BACKEND_ENV,
+        show_default=True,
+        help="Speech server the calls are for; localai adds its routing header.",
+    )
 
 
 class SocketSession:
@@ -670,15 +685,16 @@ class Stt:
         Chime(ChimeDirection.UP).play(wait=True)
 
         osd = self.NOTIFICATION
-        # Finalised turns only — the endpoint publishes no partial deltas, so
-        # what reaches the card is never taken back.
+        # Finalised turns, which are never taken back, and the live caption a
+        # LocalAI socket reports, which is replaced as the speaker goes on.
         transcript: list[str] = []
+        caption = ""
 
         # The meter ticks on one thread while turns close on another, and
         # the card draws only what a call carries, so both redraw the whole
         # card from what this run holds.
         def redraw() -> None:
-            tail = osd.tail(" ".join(transcript))
+            tail = osd.tail(" ".join(transcript) or caption)
             if server is not None and server.state.phase is not Phase.RECORDING:
                 # The mic is shut; what runs now is the take closing and the
                 # transcription coming back, so the card says so instead of
@@ -714,6 +730,14 @@ class Stt:
                     live_sink.write(text if len(transcript) == 1 else f" {text}")
 
             self._adapter.subscribe(on_turn)
+        if isinstance(self._adapter, SttPartials):
+
+            def on_partial(text: str) -> None:
+                nonlocal caption
+                caption = text
+                redraw()
+
+            self._adapter.subscribe_partials(on_partial)
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
@@ -978,17 +1002,18 @@ class Stt:
         default=SttProvider.REALTIME.value,
         help="Transcription backend.",
     )
+    @_backend_option()
     @click.option(
         "--vad-threshold",
         type=float,
         default=DEFAULT_VAD_THRESHOLD,
-        help="Speech probability a realtime turn needs, not a level.",
+        help="Speech probability a realtime turn needs, not a level. Speaches only.",
     )
     @click.option(
         "--vad-silence-ms",
         type=int,
         default=DEFAULT_VAD_SILENCE_MS,
-        help="Silence that closes a realtime turn.",
+        help="Silence that closes a realtime turn. Speaches only.",
     )
     @click.option(
         "--input",
@@ -1084,6 +1109,7 @@ class Stt:
     )
     def cmd_toggle(
         source,
+        backend,
         vad_threshold,
         vad_silence_ms,
         input_,
@@ -1120,6 +1146,8 @@ class Stt:
         if whisper_prompt is None:
             whisper_prompt = Stt.WHISPER_PROMPT
         stt_format = ResponseFormat(response_format)
+        speech_backend = SpeechBackend(backend)
+        stt_headers = (*speech_backend.headers, *_pairs(headers, "--header"))
         provider = SttProvider(source)
         adapter: SttAdapter
         match provider:
@@ -1139,9 +1167,10 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=_pairs(headers, "--header"),
+                        headers=stt_headers,
                         timeout=timeout,
                         user_agent="speech/1.0",
+                        backend=speech_backend,
                     ),
                     audio_source,
                 )
@@ -1162,9 +1191,10 @@ class Stt:
                         language=language,
                         prompt=whisper_prompt,
                         fields=_pairs(fields, "--field"),
-                        headers=_pairs(headers, "--header"),
+                        headers=stt_headers,
                         timeout=timeout,
                         user_agent="speech/1.0",
+                        backend=speech_backend,
                         vad_threshold=vad_threshold,
                         vad_silence_ms=vad_silence_ms,
                     )
@@ -1546,6 +1576,7 @@ def tts_speak_options():
         ),
         click.option("--voice", default=DEFAULT_TTS_VOICE, help="Backend voice id."),
         click.option("--model", default=None, help="TTS model id."),
+        _backend_option(),
         click.option(
             "--speed",
             type=float,
@@ -2015,6 +2046,7 @@ class Tts:
         input_file,
         voice,
         model,
+        backend,
         speed,
         response_format,
         sample_rate,
@@ -2067,6 +2099,8 @@ class Tts:
             api_key_env=api_key_env,
             timeout=timeout,
             user_agent="speech/1.0",
+            backend=SpeechBackend(backend),
+            headers=SpeechBackend(backend).headers,
         )
 
         tts_style = TtsStyle(style)
