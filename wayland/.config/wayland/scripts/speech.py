@@ -91,6 +91,7 @@ from lib import (
     SttProvider,
     SttRecorder,
     SttSpec,
+    SttTurns,
     TeeReader,
     TtsAdapterHttp,
     TtsSpec,
@@ -407,6 +408,10 @@ class SttSession(SocketSession):
         # when the microphone actually shut.
         self.osd = osd
         self._adapter = adapter
+        # Set once turns start reaching the sink. What is written cannot be
+        # taken back, so an override that would rewrite the take arrives too
+        # late to be honoured and is refused rather than dropped.
+        self.emitting = False
 
     @staticmethod
     def _socket_path() -> str:
@@ -467,6 +472,11 @@ class SttSession(SocketSession):
             # transcription and any enrichment come back.
             Chime(ChimeDirection.FLAT).play()
             if "enrich" in obj:
+                if self.emitting and obj["enrich"]:
+                    return Response(
+                        ok=False,
+                        error="turns already written; a rewrite cannot replace them",
+                    )
                 self._apply_enrich_override(obj["enrich"])
             if obj.get("output"):
                 self._apply_output_override(
@@ -687,6 +697,28 @@ class Stt:
                 redraw()
 
             self._adapter.subscribe_partials(on_partial)
+        # Turns go to the sink as they close when the sink can take them and
+        # nothing downstream will rewrite them. An enrichment would, so it
+        # rules this out. Read off this invocation rather than the session: a
+        # socket override lands after the capture, and by then the early turns
+        # are already out.
+        live_sink = self._output
+        live = (
+            stream
+            and self._enricher is None
+            and isinstance(live_sink, OutputStreaming)
+            and isinstance(self._adapter, SttTurns)
+        )
+        emitted: list[str] = []
+        if live and isinstance(self._adapter, SttTurns):
+
+            def on_turn(text: str) -> None:
+                emitted.append(text)
+                if server:
+                    server.emitting = True
+                live_sink.write(text if len(emitted) == 1 else f" {text}")
+
+            self._adapter.subscribe_turns(on_turn)
         # swayosd hides a card when its own timer runs out, so holding one open
         # for an open-ended recording means re-firing. A daemon thread rather
         # than the capture loop, which is blocked inside the adapter.
@@ -819,7 +851,24 @@ class Stt:
 
             if server:
                 server.set_phase(Phase.OUTPUT)
-            output.write(text)
+            # Whatever the take ended up being, minus what already went out a
+            # turn at a time. Only a clean prefix is trusted: anything else
+            # means the turns and the finished text disagree, and writing the
+            # difference would duplicate or reorder a dictation that is
+            # already in the user's window.
+            already = " ".join(emitted)
+            if not live or output is not live_sink:
+                # A mid-take override asked for a different sink, so that one
+                # has had nothing yet and takes the whole take.
+                output.write(text)
+            elif text.startswith(already):
+                if rest := text[len(already) :]:
+                    output.write(rest)
+            else:
+                self.log.error(
+                    "written turns do not prefix the take; %d chars dropped", len(text)
+                )
+                self._notify("Take and written turns disagree", timeout=8000)
             osd.dismiss(
                 f"{raw} → {len(text)} chars"
                 if enricher is not None
@@ -934,6 +983,18 @@ class Stt:
         default=SttProvider.REALTIME.value,
         help="Transcription backend.",
     )
+    # TODO: @cenk1cenk2 default to --no-batch once a realtime model's turns are
+    # good enough to paste, with the `kilic.dev/stt/realtime` pipeline in
+    # cluster/workloads/ollama pointed at that model.
+    @click.option(
+        "--batch/--no-batch",
+        default=True,
+        help=(
+            "Transcribe a realtime take again through the batch model for its "
+            "text. Without it the socket's turns are the text, written to a "
+            "streaming output as they close."
+        ),
+    )
     @click.option(
         "--input",
         "input_",
@@ -1028,6 +1089,7 @@ class Stt:
     )
     def cmd_toggle(
         source,
+        batch,
         input_,
         input_file,
         output,
@@ -1063,6 +1125,14 @@ class Stt:
             whisper_prompt = Stt.WHISPER_PROMPT
         stt_format = ResponseFormat(response_format)
         provider = SttProvider(source)
+        if not batch:
+            if provider is not SttProvider.REALTIME:
+                raise click.UsageError("--no-batch needs --source realtime")
+            # The socket answers in turns of plain text, nothing else.
+            if stt_format not in PLAIN_FORMATS:
+                raise click.UsageError(
+                    f"--no-batch needs a plain format, not {stt_format}"
+                )
         adapter: SttAdapter
         match provider:
             case SttProvider.HTTP:
@@ -1090,24 +1160,22 @@ class Stt:
             case SttProvider.MIC | SttProvider.REALTIME:
                 if not os.environ.get(api_key_env, "").strip():
                     raise click.UsageError(f"{api_key_env} is empty")
-                build = (
-                    SttAdapterRealtime
-                    if provider is SttProvider.REALTIME
-                    else SttAdapterMic
+                spec = SttSpec(
+                    model=model,
+                    base_url=base_url,
+                    api_key_env=api_key_env,
+                    response_format=stt_format,
+                    language=language,
+                    prompt=whisper_prompt,
+                    fields=_pairs(fields, "--field"),
+                    headers=_pairs(headers, "--header"),
+                    timeout=timeout,
+                    user_agent="speech/1.0",
                 )
-                adapter = build(
-                    SttSpec(
-                        model=model,
-                        base_url=base_url,
-                        api_key_env=api_key_env,
-                        response_format=stt_format,
-                        language=language,
-                        prompt=whisper_prompt,
-                        fields=_pairs(fields, "--field"),
-                        headers=_pairs(headers, "--header"),
-                        timeout=timeout,
-                        user_agent="speech/1.0",
-                    )
+                adapter = (
+                    SttAdapterRealtime(spec, batch=batch)
+                    if provider is SttProvider.REALTIME
+                    else SttAdapterMic(spec)
                 )
             case _:
                 raise click.UsageError(f"unsupported source: {provider!r}")
