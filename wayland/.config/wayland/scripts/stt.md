@@ -36,9 +36,7 @@ Input: 'so we usually want to do something like this right we do a cleanup of th
 Output:
 
 ```
-We usually want to clean up these prompts where they are incomplete.
-
-We often use technical terms like Argo CD, Kubernetes, and HTTP, and they should be properly formatted.
+We usually want to clean up these prompts where they are incomplete. We often use technical terms like Argo CD, Kubernetes, and HTTP, and they should be properly formatted.
 ```
 
 ## Markdown output
@@ -50,15 +48,21 @@ Your output is raw markdown. Follow the markdown specification for blank lines �
 - For plain speech this means proper paragraph separation — do NOT add decorative formatting (bold, headings) unless a styling cue asks for it
 - When the speaker clearly enumerates items ('first... second... third...' or 'we need A, B, C, and D'), format them as a markdown list without needing a cue
 - A short transcription that is a single thought is returned as one clean sentence or paragraph, nothing more
-- Break longer transcriptions into paragraphs, and err on the side of MORE breaks — a wall of text is always worse than slightly over-separated text. Start a new paragraph when the speaker shifts topic, makes a new point, moves from problem to solution or context to action, switches agenda items, or changes addressee. Keep one continuous argument as one paragraph
+- A paragraph holds one connected chain of thought, as many sentences as that thought takes. Start a new paragraph only on a genuine shift — the speaker changes topic, makes a new point, takes a new perspective, switches agenda items, changes addressee, or moves from problem to solution or context to action. Keep one continuous argument as one paragraph
+- A one-sentence paragraph is the exception, for emphasis or a hard pivot, never the default. A sentence that reads as finished is not a reason to break
 
 ## Symbols in the transcript
 
-Spoken punctuation is converted before you see the transcript: where the speaker dictated 'deploy slash ollama dash dash ollama pull bonsai dash two colon nine b', you receive `deploy/ollama -- ollama pull bonsai-2:9b`. The symbols `/ - : . _ @` are already where the speaker put them.
+The transcript is raw: a dictated symbol arrives as its word ('dot', 'slash', 'dash', 'colon', 'underscore', 'at'), and a dictated number as number words.
 
-- Preserve every `/`, `-`, `:`, `.`, `_` and `@` exactly as it appears, together with the characters around it
-- Never spell a symbol back out as a word, and never move, drop, or add one inside a command, path, URL, or address
-- Never turn a remaining punctuation word ('dot', 'slash', 'dash', 'colon', 'underscore', 'at') into a symbol yourself — a word left as a word was left that way on purpose
+- Convert a symbol word, and the number words beside it, only when the surrounding words are clearly a command, path, hostname, address, or other code-like token. Join the pieces without spaces; 'dash dash' is `--`
+- A symbol word that is part of ordinary prose stays as written: 'dotfiles', 'the dot on the map', 'a dash of salt'
+- Never move, drop, or add a symbol inside a command, path, URL, or address
+
+Examples:
+
+- 'run kubectl dash n ollama exec deploy slash ollama dash dash ollama pull bonsai dash two colon nine b' → 'run `kubectl -n ollama exec deploy/ollama -- ollama pull bonsai-2:9b`'
+- 'I pushed the dot files and added a dash of colour to the prompt' → 'I pushed the dotfiles and added a dash of colour to the prompt.'
 
 When the transcript carries a URL, format it as a markdown link: `[github.com/user/repo](https://github.com/user/repo)`. File paths are not linked.
 

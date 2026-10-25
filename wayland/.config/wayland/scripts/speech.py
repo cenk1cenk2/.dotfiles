@@ -57,7 +57,6 @@ from dotlib.notify import (
     OsdIcon,
     Status,
 )
-from dotlib.spoken import punctuate
 from dotlib.waybar import (
     signal_waybar,
     watch,
@@ -1022,9 +1021,7 @@ class Stt:
                     output.write_stream(
                         counted(
                             osd.echo(
-                                self._rewrite_stream(
-                                    enricher, punctuate(text), on_part
-                                ),
+                                self._rewrite_stream(enricher, text, on_part),
                                 status=lambda: enriching,
                                 icon=OsdIcon.THINKING,
                             )
@@ -1048,16 +1045,14 @@ class Stt:
                         # arrive is what says the wait is going somewhere.
                         enriched = "".join(
                             osd.echo(
-                                self._rewrite_stream(
-                                    enricher, punctuate(text), on_part
-                                ),
+                                self._rewrite_stream(enricher, text, on_part),
                                 status=lambda: enriching,
                                 icon=OsdIcon.THINKING,
                             )
                         )
                     else:
                         with osd.working(lambda: enriching, icon=OsdIcon.THINKING):
-                            enriched = self._rewrite(enricher, punctuate(text), on_part)
+                            enriched = self._rewrite(enricher, text, on_part)
                 except EnrichTruncated as e:
                     self._truncated(e, text, saved=save)
                 if enriched and enriched.strip():
@@ -1478,12 +1473,10 @@ class Stt:
             if isinstance(enricher, EnrichStreaming) and isinstance(
                 output_adapter, OutputStreaming
             ):
-                output_adapter.write_stream(
-                    Stt._rewrite_stream(enricher, punctuate(text))
-                )
+                output_adapter.write_stream(Stt._rewrite_stream(enricher, text))
                 return
 
-            enriched = Stt._rewrite(enricher, punctuate(text))
+            enriched = Stt._rewrite(enricher, text)
         except EnrichTruncated as e:
             Stt.log.error("%s", e)
             Stt.NOTIFICATION.send(str(e), 8000)
