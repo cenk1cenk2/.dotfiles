@@ -223,7 +223,7 @@ class Notification:
         self,
         chunks: Iterator[str],
         *,
-        status: Status | None = None,
+        status: Status | Callable[[], Status] | None = None,
         icon: OsdIcon | None = None,
     ) -> Iterator[str]:
         """Pass chunks through untouched, showing the tail of them as they go.
@@ -240,7 +240,7 @@ class Notification:
     @contextmanager
     def working(
         self,
-        status: Status,
+        status: Status | Callable[[], Status] | None,
         *,
         icon: OsdIcon | None = None,
         extract: Callable[[], str] | None = None,
@@ -249,7 +249,9 @@ class Notification:
         entry, a pulsing bar, and `extract()` under them on every redraw.
 
         For a wait with no progress of its own, like a model before its first
-        token, which a card drawn once would outlast and blink out of."""
+        token, which a card drawn once would outlast and blink out of. A
+        callable `status` is read on every redraw, for work whose phase moves
+        on while the card is held."""
         if is_headless():
             yield
             return
@@ -258,7 +260,11 @@ class Notification:
 
         def tick() -> None:
             while True:
-                self.elapsed(status, icon=icon, extract=extract() if extract else "")
+                self.elapsed(
+                    status() if callable(status) else status,
+                    icon=icon,
+                    extract=extract() if extract else "",
+                )
                 if done.wait(self.TICK_SECONDS):
                     return
 
