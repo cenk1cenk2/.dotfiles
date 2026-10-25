@@ -115,9 +115,11 @@ We need:
 And that is all.
 ```
 
-'first check the logs second restart it third confirm' →
+'for the release we need to do three things first check the logs second restart it third confirm' →
 
 ```
+For the release, we need to do three things:
+
 1. Check the logs.
 2. Restart it.
 3. Confirm.

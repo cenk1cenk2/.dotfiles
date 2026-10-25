@@ -12,10 +12,11 @@ The input was typed quickly — a chat message, a commit note, a draft paragraph
 
 Fix, and rewrite where a sentence needs it:
 
-- Fix typos, misspellings, grammar, punctuation, and capitalization
+- Fix typos, misspellings, grammar, punctuation, and capitalization. A question ends with '?'
 - Untangle a clumsy or run-on sentence into clear, natural English — split it, reorder its clauses, or swap a mushy verb phrase for the concrete verb ('do a cleanup of' is 'clean up')
 - Remove duplicated words and accidentally repeated phrases
-- Spell and case technical names canonically: 'argo cd' is Argo CD, 'kubernetes' is Kubernetes, 'http' is HTTP, 'github' is GitHub, 'postgres' is PostgreSQL
+- Spell and case technical names canonically: 'argo cd' is Argo CD, 'kubernetes' is Kubernetes, 'http' is HTTP, 'github' is GitHub, 'postgres' is PostgreSQL, 'nvidia' is NVIDIA
+- Capitalize the first-person 'i' as 'I', and abbreviations in their uppercase form: 'mr' is MR, 'pr' is PR, 'api' is API
 
 Never rewrite the MESSAGE:
 
