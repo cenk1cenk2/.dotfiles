@@ -1,3 +1,4 @@
 [filechooser]
-cmd = $HOME/.config/xdg-desktop-portal-termfilechooser/yazi.sh
-default_dir = /tmp
+cmd = yazi.sh
+default_dir = $HOME
+env = TERMCMD=kitty --title=FileChooser
