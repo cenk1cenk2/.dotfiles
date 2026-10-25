@@ -138,7 +138,7 @@ class EnrichAdapterHttp:
     """OpenAI-compatible chat-completions endpoint."""
 
     provider = EnrichProvider.HTTP
-    DEFAULT_MODEL = "kilic.dev/cheap"
+    DEFAULT_MODEL = "kilic.dev/local"
 
     def __init__(self, system_prompt: str, user_prompt_template: str, spec: EnrichSpec):
         self.system_prompt = system_prompt
