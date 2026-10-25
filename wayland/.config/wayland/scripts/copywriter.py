@@ -21,6 +21,7 @@ from dotlib.desktop import (
 from dotlib.enrich import (
     EnrichAdapter,
     EnrichStreaming,
+    EnrichTruncated,
     build_enricher,
     enrich_options,
     spec_from_options,
@@ -133,8 +134,10 @@ class Copywriter:
         # A pipe and a file both have a caller waiting on the payload;
         # forking would return before either holds anything.
         if self._output.mode in (OutputMode.STDOUT, OutputMode.FILE):
-            self._execute()
-            signal_waybar(self.WAYBAR_MODULE)
+            try:
+                self._execute()
+            finally:
+                signal_waybar(self.WAYBAR_MODULE)
             return
 
         if os.fork() > 0:
@@ -168,19 +171,26 @@ class Copywriter:
             return
 
         self.log.info("%s text: %d chars", self._input.mode.value, len(text))
-        if isinstance(self._enricher, EnrichStreaming):
-            # Joined, because the sink holds one value: the streaming is for
-            # the card, which is where a rewrite going wrong becomes visible.
-            result = "".join(
-                self.NOTIFICATION.echo(
-                    self._enricher.enrich_stream(text),
-                    status=self.REFINING,
-                    icon=OsdIcon.WRITING,
+        try:
+            if isinstance(self._enricher, EnrichStreaming):
+                # Joined, because the sink holds one value: the streaming is
+                # for the card, which is where a rewrite going wrong becomes
+                # visible.
+                result = "".join(
+                    self.NOTIFICATION.echo(
+                        self._enricher.enrich_stream(text),
+                        status=self.REFINING,
+                        icon=OsdIcon.WRITING,
+                    )
                 )
-            )
-        else:
-            with self.NOTIFICATION.working(self.REFINING, icon=OsdIcon.WRITING):
-                result = self._enricher.enrich(text)
+            else:
+                with self.NOTIFICATION.working(self.REFINING, icon=OsdIcon.WRITING):
+                    result = self._enricher.enrich(text)
+        except EnrichTruncated as e:
+            self.log.error("%s", e)
+            self._notify(f"{e}\n{self._output.mode.value.capitalize()} unchanged")
+            self.NOTIFICATION.dismiss("truncated", icon=OsdIcon.ERROR)
+            sys.exit(1)
         if not result or not result.strip():
             self.log.warning(
                 "enrichment empty; leaving %s unchanged", self._output.mode.value

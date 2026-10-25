@@ -28,6 +28,26 @@ import click
 from dotlib.cli import run
 
 
+class EnrichTruncated(RuntimeError):
+    """The model stopped at its length limit, partway through the rewrite.
+
+    Raised rather than returning what arrived. A cut-off rewrite ends on a
+    clean word and reads as finished, so whoever pastes it or hears it read
+    aloud has no way to tell the rest is missing."""
+
+    def __init__(self, model: str, usage: dict[str, Any] | None = None):
+        tokens = ""
+        if usage and "prompt_tokens" in usage and "completion_tokens" in usage:
+            tokens = (
+                f" ({usage['prompt_tokens']} prompt + "
+                f"{usage['completion_tokens']} output tokens)"
+            )
+        super().__init__(
+            f"Enrichment hit the context limit of {model}, "
+            f"the rewrite is incomplete{tokens}"
+        )
+
+
 class EnrichProvider(StrEnum):
     HTTP = "http"
     HYPRPILOT = "hyprpilot"
@@ -233,7 +253,11 @@ class EnrichAdapterHttp:
             log.error("unexpected API response: %s", data)
             return None
 
-        result = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise EnrichTruncated(self.model, data.get("usage"))
+
+        result = choice["message"]["content"]
         log.info("enrichment complete (%d chars)", len(result))
 
         return result
@@ -244,8 +268,13 @@ class EnrichAdapterHttp:
         Append-only: a chat completion never revises what it has already
         emitted, which is what makes it safe to type straight into a window.
         A failure part-way is not recoverable — the caller has already typed
-        what arrived — so it is logged and the stream simply ends."""
+        what arrived — so it is logged and the stream simply ends. Running
+        out of context is the exception: the reason only arrives with the
+        last chunk, so `EnrichTruncated` is raised once the stream is done,
+        after whatever arrived has gone through."""
         req = self._request(self._body(text, stream=True))
+        finish: str | None = None
+        usage: dict[str, Any] | None = None
         try:
             with urllib.request.urlopen(req, timeout=self.spec.timeout) as resp:
                 for raw in resp:
@@ -256,14 +285,19 @@ class EnrichAdapterHttp:
                     if chunk == "[DONE]":
                         break
                     try:
-                        delta = json.loads(chunk)["choices"][0]["delta"]
+                        event = json.loads(chunk)
+                        usage = event.get("usage") or usage
+                        choice = event["choices"][0]
                     except json.JSONDecodeError, KeyError, IndexError:
                         log.debug("unparsed stream chunk: %s", chunk)
                         continue
-                    if content := delta.get("content"):
+                    finish = choice.get("finish_reason") or finish
+                    if content := choice.get("delta", {}).get("content"):
                         yield content
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
             log.error("streaming enrichment failed: %s", e)
+        if finish == "length":
+            raise EnrichTruncated(self.model, usage)
 
 
 class EnrichAdapterHyprpilot:
