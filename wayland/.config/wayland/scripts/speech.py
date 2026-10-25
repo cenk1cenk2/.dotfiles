@@ -8,12 +8,15 @@ import json
 import logging
 import math
 import os
+import queue
+import re
 import signal
 import socket
 import sys
 import threading
 import urllib.error
-from collections.abc import Iterator
+import urllib.request
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -37,6 +40,7 @@ from dotlib.enrich import (
     DEFAULT_API_KEY_ENV,
     DEFAULT_BASE_URL,
     EnrichAdapter,
+    EnrichAdapterHttp,
     EnrichProvider,
     EnrichSpec,
     EnrichStreaming,
@@ -553,6 +557,17 @@ class Stt:
         "Clean up the following speech transcription:\n"
         "<transcription>\n{text}\n</transcription>"
     )
+    # Share of the window a request plans to fill. The rest takes up a rewrite
+    # that runs past its allowance and the chat template's own tokens, because
+    # ollama answers an overflow by silently dropping the front of the prompt.
+    CONTEXT_HEADROOM = 0.75
+    # Output tokens planned per part token: the cleanup rewrites rather than
+    # summarises, so it comes back about as long as it went in.
+    REWRITE_RATIO = 1.0
+    # Below the ~4.3 measured on dictation, so a token count estimated from
+    # characters errs long; code and punctuation tokenise denser than prose.
+    CHARS_PER_TOKEN = 3
+    MODELS_TIMEOUT = 5.0
 
     log = logging.getLogger("speech.stt")
 
@@ -595,6 +610,175 @@ class Stt:
         self._notify(message, timeout=8000)
         self.NOTIFICATION.dismiss("truncated", icon=OsdIcon.ERROR)
         sys.exit(1)
+
+    @classmethod
+    def _window(cls, enricher: EnrichAdapter) -> int | None:
+        """Tokens the gateway advertises one request to `enricher`'s model.
+
+        None when nothing says, so the caller sends the take whole rather
+        than split it against a window nobody reported."""
+        if not isinstance(enricher, EnrichAdapterHttp):
+            cls.log.debug("%s has no model metadata", enricher.provider.value)
+            return None
+        spec = enricher.spec
+        req = urllib.request.Request(
+            f"{spec.base_url}/models",
+            headers={
+                "Authorization": f"Bearer {os.environ.get(spec.api_key_env, '')}",
+                "User-Agent": spec.user_agent,
+            },
+        )
+        cls.log.debug("fetch: %s", req.full_url)
+        try:
+            with urllib.request.urlopen(req, timeout=cls.MODELS_TIMEOUT) as resp:
+                models = json.loads(resp.read())["data"]
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            KeyError,
+        ) as e:
+            cls.log.warning("no model metadata, enriching unchunked: %s", e)
+            return None
+        entry = next((m for m in models if m.get("id") == enricher.model), {})
+        advertised = entry.get("context_length") or entry.get("max_model_len")
+        if not advertised:
+            cls.log.warning(
+                "no context length listed for %s, enriching unchunked", enricher.model
+            )
+            return None
+        cls.log.debug("%s advertises %s tokens", enricher.model, advertised)
+
+        return int(advertised)
+
+    @classmethod
+    def _budget(cls, enricher: EnrichAdapter) -> int | None:
+        """Characters per part, or None when the window is unknown.
+
+        Every part is its own request, so each one pays for the whole system
+        prompt again. What the window leaves after that is split between the
+        part and its rewrite."""
+        window = cls._window(enricher)
+        if window is None:
+            return None
+        prompts = (len(cls.SYSTEM_PROMPT) + len(cls.USER_PROMPT)) / cls.CHARS_PER_TOKEN
+        part = (window * cls.CONTEXT_HEADROOM - prompts) / (1 + cls.REWRITE_RATIO)
+        if part <= 0:
+            raise RuntimeError(
+                f"a {window}-token window cannot hold the enrichment prompts"
+            )
+
+        return int(part * cls.CHARS_PER_TOKEN)
+
+    @staticmethod
+    def _chunks(text: str, budget: int | None) -> list[str]:
+        """Split `text` into parts of at most `budget` characters, in order.
+
+        Paragraphs are kept whole where they fit, an oversized one is cut
+        between sentences, and a single sentence longer than the limit stays
+        whole rather than being cut mid-sentence. No budget is one part."""
+        if budget is None or len(text) <= budget:
+            return [text]
+        # Each unit with the separator that joins it to the one before.
+        units: list[tuple[str, str]] = []
+        for paragraph in re.split(r"\n\s*\n", text.strip()):
+            separator = "\n\n"
+            for sentence in re.split(r"(?<=[.!?])\s+|(?<=[.!?][\"')\]])\s+", paragraph):
+                if sentence := sentence.strip():
+                    units.append((sentence, separator))
+                    separator = " "
+        chunks: list[str] = []
+        current = ""
+        for unit, separator in units:
+            if current and len(current) + len(separator) + len(unit) > budget:
+                chunks.append(current)
+                current = ""
+            current = f"{current}{separator}{unit}" if current else unit
+        if current:
+            chunks.append(current)
+
+        return chunks
+
+    @classmethod
+    def _parts(
+        cls,
+        enricher: EnrichAdapter,
+        chunks: list[str],
+        on_part: Callable[[int, int], None] | None,
+    ) -> Iterator[str]:
+        """Rewrite `chunks` on a worker thread, yielding each whole, in order.
+
+        The worker runs ahead, so one part is being enriched while the one
+        before it is still being written out. A part that comes back empty
+        keeps its raw text, so one failed request costs that part its cleanup
+        rather than the take its text. A worker failure is raised here once
+        the parts before it are out."""
+        finished: queue.Queue[str | Exception | None] = queue.Queue()
+        abandoned = threading.Event()
+
+        def work() -> None:
+            try:
+                for i, chunk in enumerate(chunks, 1):
+                    if abandoned.is_set():
+                        return
+                    if on_part:
+                        on_part(i, len(chunks))
+                    cls.log.info(
+                        "enriching part %d/%d (%d chars)", i, len(chunks), len(chunk)
+                    )
+                    rewrite = enricher.enrich(chunk)
+                    if not rewrite or not rewrite.strip():
+                        cls.log.warning(
+                            "part %d/%d enrichment empty; using raw", i, len(chunks)
+                        )
+                        rewrite = chunk
+                    finished.put(rewrite.strip())
+            except Exception as e:
+                finished.put(e)
+                return
+            finished.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+        try:
+            while (part := finished.get()) is not None:
+                if isinstance(part, Exception):
+                    raise part
+                yield part
+        finally:
+            abandoned.set()
+
+    @classmethod
+    def _rewrite(
+        cls,
+        enricher: EnrichAdapter,
+        text: str,
+        on_part: Callable[[int, int], None] | None = None,
+    ) -> str | None:
+        """Enrich `text`, one request per part, joined by a blank line."""
+        chunks = cls._chunks(text, cls._budget(enricher))
+        if len(chunks) == 1:
+            return enricher.enrich(text)
+
+        return "\n\n".join(cls._parts(enricher, chunks, on_part))
+
+    @classmethod
+    def _rewrite_stream(
+        cls,
+        enricher: EnrichStreaming,
+        text: str,
+        on_part: Callable[[int, int], None] | None = None,
+    ) -> Iterator[str]:
+        """Stream `text`'s rewrite as `_rewrite` joins it.
+
+        One part streams token by token. Several go out a whole part at a
+        time, each as soon as it is done, so a long take starts landing after
+        one part's latency and a sink never holds half of one part."""
+        chunks = cls._chunks(text, cls._budget(enricher))
+        if len(chunks) == 1:
+            yield from enricher.enrich_stream(text)
+            return
+        for i, part in enumerate(cls._parts(enricher, chunks, on_part)):
+            yield f"\n\n{part}" if i else part
 
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> Response | None:
@@ -803,6 +987,13 @@ class Stt:
                 server.set_phase(Phase.WORKING)
             ticking.set()
             ticker.join(timeout=Notification.TIMEOUT)
+            # Once a long take is split, the pill names the part in flight.
+            enriching = self.ENRICHING
+
+            def on_part(i: int, count: int) -> None:
+                nonlocal enriching
+                enriching = Status(f"chunk {i}/{count}", self.ENRICHING.icon)
+
             # When both halves can stream, the sink starts with the first token
             # instead of after the last one, so whatever reads stdout starts
             # before the rewrite is done.
@@ -831,8 +1022,10 @@ class Stt:
                     output.write_stream(
                         counted(
                             osd.echo(
-                                enricher.enrich_stream(punctuate(text)),
-                                status=self.ENRICHING,
+                                self._rewrite_stream(
+                                    enricher, punctuate(text), on_part
+                                ),
+                                status=lambda: enriching,
                                 icon=OsdIcon.THINKING,
                             )
                         )
@@ -855,14 +1048,16 @@ class Stt:
                         # arrive is what says the wait is going somewhere.
                         enriched = "".join(
                             osd.echo(
-                                enricher.enrich_stream(punctuate(text)),
-                                status=self.ENRICHING,
+                                self._rewrite_stream(
+                                    enricher, punctuate(text), on_part
+                                ),
+                                status=lambda: enriching,
                                 icon=OsdIcon.THINKING,
                             )
                         )
                     else:
-                        with osd.working(self.ENRICHING, icon=OsdIcon.THINKING):
-                            enriched = enricher.enrich(punctuate(text))
+                        with osd.working(lambda: enriching, icon=OsdIcon.THINKING):
+                            enriched = self._rewrite(enricher, punctuate(text), on_part)
                 except EnrichTruncated as e:
                     self._truncated(e, text, saved=save)
                 if enriched and enriched.strip():
@@ -1283,10 +1478,12 @@ class Stt:
             if isinstance(enricher, EnrichStreaming) and isinstance(
                 output_adapter, OutputStreaming
             ):
-                output_adapter.write_stream(enricher.enrich_stream(punctuate(text)))
+                output_adapter.write_stream(
+                    Stt._rewrite_stream(enricher, punctuate(text))
+                )
                 return
 
-            enriched = enricher.enrich(punctuate(text))
+            enriched = Stt._rewrite(enricher, punctuate(text))
         except EnrichTruncated as e:
             Stt.log.error("%s", e)
             Stt.NOTIFICATION.send(str(e), 8000)
