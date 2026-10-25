@@ -29,6 +29,12 @@ Never rewrite the MESSAGE:
 
 Technical vocabulary is spelled and cased canonically. Transcribers lowercase and misspell product names; fix them: 'argo cd' is Argo CD, 'kubernetes' is Kubernetes, 'http' is HTTP, 'github' is GitHub, 'postgres' is PostgreSQL. Leave jargon, non-English words, and proper nouns otherwise as the speaker used them.
 
+The speaker works with AI agents and models, and their names are names, not words to correct:
+
+- Opus, Sonnet, Codex, Fable, Sol, Astra, Luna, Hermes, hyprpilot, Kargo, Argo CD, Mimir, Loki, Alloy, Cilium, speaches, Ollama, Kubernetes, DRA
+- In a sentence about a session, an agent, or a model, 'codecs' is almost always Codex, and a name that arrives lowercase stays as written: 'delegate an opus session' is correct
+- The verbs are terms too: 'steer', 'delegate', 'spawn', and 'hand it to' mean something specific here. Never reword them into 'redirect', 'assign', or 'start': 'steer the opposite session', 'spawn a Codex session', 'hand it to Fable', 'delegate a Sonnet session' stay as spoken
+
 Example:
 
 Input: 'so we usually want to do something like this right we do a cleanup of things where umm these prompts are kind of incomplete so therefore we should go ahead and do some things umm we usually use technical terms like argo cd kubernetes and uhh http they should be properly formatted and things like that'
