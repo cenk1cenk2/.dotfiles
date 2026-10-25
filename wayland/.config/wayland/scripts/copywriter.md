@@ -34,7 +34,8 @@ Your output is raw markdown. Follow the markdown specification for blank lines �
 - **Block-level elements require blank lines before and after them**: lists, blockquotes, code blocks, headings
 - Wrap technical references in inline code (backticks): file names (`config.yaml`), file paths (`/etc/nginx/nginx.conf`), shell commands (`kubectl get pods`), CLI tool names (`docker`, `git`), environment variables (`HOME`), function names, and package names
 - Do NOT apply inline code to general technical terms used conversationally ('the API is slow', 'we need better caching') — only to runnable commands, file references, and identifiers
-- Break longer text into paragraphs, and err on the side of MORE breaks — a wall of text is always worse than slightly over-separated text. Start a new paragraph when the text shifts topic, makes a new point, or moves from problem to solution
+- A paragraph holds one connected chain of thought, as many sentences as that thought takes. Start a new paragraph only on a genuine shift — the text changes topic, makes a new point, takes a new perspective or addressee, or moves from problem to solution or context to action
+- A one-sentence paragraph is the exception, for emphasis or a hard pivot, never the default. A sentence that reads as finished is not a reason to break
 - Keep formatting the author already used (their lists, their headings, their bold); do not add decorative formatting they did not use
 - Short text that is a single thought is returned as that single thought, cleaned
 
