@@ -53,6 +53,7 @@ from dotlib.notify import (
     OsdIcon,
     Status,
 )
+from dotlib.spoken import punctuate
 from dotlib.waybar import (
     signal_waybar,
     watch,
@@ -830,7 +831,7 @@ class Stt:
                     output.write_stream(
                         counted(
                             osd.echo(
-                                enricher.enrich_stream(text),
+                                enricher.enrich_stream(punctuate(text)),
                                 status=self.ENRICHING,
                                 icon=OsdIcon.THINKING,
                             )
@@ -854,14 +855,14 @@ class Stt:
                         # arrive is what says the wait is going somewhere.
                         enriched = "".join(
                             osd.echo(
-                                enricher.enrich_stream(text),
+                                enricher.enrich_stream(punctuate(text)),
                                 status=self.ENRICHING,
                                 icon=OsdIcon.THINKING,
                             )
                         )
                     else:
                         with osd.working(self.ENRICHING, icon=OsdIcon.THINKING):
-                            enriched = enricher.enrich(text)
+                            enriched = enricher.enrich(punctuate(text))
                 except EnrichTruncated as e:
                     self._truncated(e, text, saved=save)
                 if enriched and enriched.strip():
@@ -1282,10 +1283,10 @@ class Stt:
             if isinstance(enricher, EnrichStreaming) and isinstance(
                 output_adapter, OutputStreaming
             ):
-                output_adapter.write_stream(enricher.enrich_stream(text))
+                output_adapter.write_stream(enricher.enrich_stream(punctuate(text)))
                 return
 
-            enriched = enricher.enrich(text)
+            enriched = enricher.enrich(punctuate(text))
         except EnrichTruncated as e:
             Stt.log.error("%s", e)
             Stt.NOTIFICATION.send(str(e), 8000)
