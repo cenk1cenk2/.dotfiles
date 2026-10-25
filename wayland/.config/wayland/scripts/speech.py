@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 from dotlib.audio import (
@@ -40,6 +40,7 @@ from dotlib.enrich import (
     EnrichProvider,
     EnrichSpec,
     EnrichStreaming,
+    EnrichTruncated,
     build_enricher,
     enrich_options,
     spec_from_options,
@@ -578,6 +579,22 @@ class Stt:
     def _notify(self, message, timeout=None):
         self.NOTIFICATION.send(message, timeout)
 
+    def _truncated(self, error: EnrichTruncated, raw: str, saved: bool) -> NoReturn:
+        """Fail the take on a cut-off rewrite, keeping the transcription.
+
+        A long dictation is the one most likely to overflow and the most
+        expensive to lose, so the raw text goes to the clipboard when the
+        caller did not already save it there."""
+        self.log.error("%s", error)
+        message = str(error)
+        if not is_headless():
+            if not saved:
+                OutputAdapterClipboard().write(raw)
+            message += "\nRaw transcription is on the clipboard"
+        self._notify(message, timeout=8000)
+        self.NOTIFICATION.dismiss("truncated", icon=OsdIcon.ERROR)
+        sys.exit(1)
+
     @classmethod
     def _send(cls, cmd: Command, **kwargs) -> Response | None:
         raw = _rpc(_STT_PATHS.socket_path, cmd.value, **kwargs)
@@ -809,15 +826,18 @@ class Stt:
                 # Show the rewrite arriving rather than a spinner word: the
                 # card is the only place the text is visible before it lands
                 # in whatever window has focus.
-                output.write_stream(
-                    counted(
-                        osd.echo(
-                            enricher.enrich_stream(text),
-                            status=self.ENRICHING,
-                            icon=OsdIcon.THINKING,
+                try:
+                    output.write_stream(
+                        counted(
+                            osd.echo(
+                                enricher.enrich_stream(text),
+                                status=self.ENRICHING,
+                                icon=OsdIcon.THINKING,
+                            )
                         )
                     )
-                )
+                except EnrichTruncated as e:
+                    self._truncated(e, text, saved=save)
                 osd.dismiss(f"{len(text)} → {streamed} chars", icon=OsdIcon.DONE)
                 Chime(ChimeDirection.DOWN).play()
                 return
@@ -827,20 +847,23 @@ class Stt:
                 if save and not is_headless():
                     self.log.debug("saving raw transcription to clipboard")
                     OutputAdapterClipboard().write(text)
-                if isinstance(enricher, EnrichStreaming):
-                    # The card can stream even where the sink cannot: a
-                    # clipboard holds one value, but watching the rewrite
-                    # arrive is what says the wait is going somewhere.
-                    enriched = "".join(
-                        osd.echo(
-                            enricher.enrich_stream(text),
-                            status=self.ENRICHING,
-                            icon=OsdIcon.THINKING,
+                try:
+                    if isinstance(enricher, EnrichStreaming):
+                        # The card can stream even where the sink cannot: a
+                        # clipboard holds one value, but watching the rewrite
+                        # arrive is what says the wait is going somewhere.
+                        enriched = "".join(
+                            osd.echo(
+                                enricher.enrich_stream(text),
+                                status=self.ENRICHING,
+                                icon=OsdIcon.THINKING,
+                            )
                         )
-                    )
-                else:
-                    with osd.working(self.ENRICHING, icon=OsdIcon.THINKING):
-                        enriched = enricher.enrich(text)
+                    else:
+                        with osd.working(self.ENRICHING, icon=OsdIcon.THINKING):
+                            enriched = enricher.enrich(text)
+                except EnrichTruncated as e:
+                    self._truncated(e, text, saved=save)
                 if enriched and enriched.strip():
                     text = enriched.strip()
                 else:
@@ -1255,13 +1278,18 @@ class Stt:
             return
 
         Stt.log.info("%s text: %d chars", input_mode.value, len(text))
-        if isinstance(enricher, EnrichStreaming) and isinstance(
-            output_adapter, OutputStreaming
-        ):
-            output_adapter.write_stream(enricher.enrich_stream(text))
-            return
+        try:
+            if isinstance(enricher, EnrichStreaming) and isinstance(
+                output_adapter, OutputStreaming
+            ):
+                output_adapter.write_stream(enricher.enrich_stream(text))
+                return
 
-        enriched = enricher.enrich(text)
+            enriched = enricher.enrich(text)
+        except EnrichTruncated as e:
+            Stt.log.error("%s", e)
+            Stt.NOTIFICATION.send(str(e), 8000)
+            sys.exit(1)
         if enriched and enriched.strip():
             output_adapter.write(enriched.strip())
         else:
@@ -1721,23 +1749,30 @@ class Tts:
         return text.strip()
 
     def _enrich(self, text: str, session: TtsSession | None = None) -> str:
-        """Rewrite for speech, falling back to the original on any failure."""
+        """Rewrite for speech, falling back to the original on any failure
+        but a truncated rewrite, which ends the run."""
         if self._enricher is None:
             return text
 
-        if isinstance(self._enricher, EnrichStreaming):
-            # Synthesis needs the whole rewrite before it can speak a word, so
-            # the card is the only place the wait shows as progress.
-            rewritten = "".join(
-                self.NOTIFICATION.echo(
-                    self._enricher.enrich_stream(text),
-                    status=self.REWRITING,
-                    icon=OsdIcon.THINKING,
+        try:
+            if isinstance(self._enricher, EnrichStreaming):
+                # Synthesis needs the whole rewrite before it can speak a word,
+                # so the card is the only place the wait shows as progress.
+                rewritten = "".join(
+                    self.NOTIFICATION.echo(
+                        self._enricher.enrich_stream(text),
+                        status=self.REWRITING,
+                        icon=OsdIcon.THINKING,
+                    )
                 )
-            )
-        else:
-            with self.NOTIFICATION.working(self.REWRITING, icon=OsdIcon.THINKING):
-                rewritten = self._enricher.enrich(text)
+            else:
+                with self.NOTIFICATION.working(self.REWRITING, icon=OsdIcon.THINKING):
+                    rewritten = self._enricher.enrich(text)
+        except EnrichTruncated as e:
+            self.log.error("%s", e)
+            self._notify(str(e))
+            self.NOTIFICATION.dismiss("truncated", icon=OsdIcon.ERROR)
+            sys.exit(1)
         if not (rewritten and rewritten.strip()):
             self.log.warning("rewrite empty; speaking raw")
             self._notify("Rewrite failed, speaking raw text")
