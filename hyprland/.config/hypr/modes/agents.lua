@@ -49,7 +49,7 @@ hl.define_submap(submap, function()
     ),
     { description = "paste" }
   )
-  hl.bind("SHIFT + v", exec_then_reset([[wtype "/copy" && wtype -k Return]]), { description = "copy agent reply" })
+  hl.bind("c", exec_then_reset([[wtype "/copy" && wtype -k Return]]), { description = "copy agent reply" })
 
   hl.bind("escape", hl.dsp.submap("reset"), { description = "exit" })
 end)
