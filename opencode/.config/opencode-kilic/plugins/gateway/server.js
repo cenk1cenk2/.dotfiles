@@ -33,7 +33,8 @@ export default {
         if (editor.get(providerID, entry.id)) continue
         editor.update(providerID, entry.id, (model) => {
           const contextLimit = positive(entry.context_length) ?? positive(entry.max_model_len)
-          const outputLimit = positive(entry.max_output_tokens)
+          const outputLimit =
+            positive(entry.max_output_tokens) ?? (contextLimit && Math.min(8192, Math.floor(contextLimit / 4)))
           if (contextLimit) model.limit.context = contextLimit
           if (outputLimit) model.limit.output = outputLimit
         })
