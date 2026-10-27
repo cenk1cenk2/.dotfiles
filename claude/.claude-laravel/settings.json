@@ -404,6 +404,7 @@
   "effortLevel": "high",
   "promptSuggestionEnabled": false,
   "awaySummaryEnabled": false,
+  "idleCompaction": false,
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
