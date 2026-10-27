@@ -397,7 +397,6 @@
   "effortLevel": "high",
   "promptSuggestionEnabled": false,
   "awaySummaryEnabled": false,
-  "idleCompaction": false,
   "showClearContextOnPlanAccept": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
@@ -411,9 +410,11 @@
   "editorMode": "vim",
   "verbose": false,
   "preferredNotifChannel": "terminal_bell",
+  "idleCompaction": false,
   "showTurnDuration": true,
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
-  "voiceEnabled": true
+  "voiceEnabled": true,
+  "feedbackDrafts": "off"
 }
