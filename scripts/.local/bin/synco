@@ -728,8 +728,9 @@ class Synco:
     GATE_RATIO = 0.5
     GATE_SUBTREE = 5
 
-    # Mirrors the env patches in ~/.config/hyprpilot/config.yaml, which is the
-    # source of truth for which profile writes where. The two share no parser,
+    # Mirrors the env patches in the hyprpilot overlays under
+    # ~/.agents/config/hyprpilot/.config/hyprpilot/profiles/{personal,work}.yaml,
+    # which are the source of truth for which profile writes where. The two share no parser,
     # so a state directory moved there has to be moved here in the same commit.
     # `~/.claude` is no hyprpilot profile: it is where claude writes when run
     # without CLAUDE_CONFIG_DIR, and where skills that name a fixed path for

@@ -2,7 +2,9 @@
 
 Repository knowledge base for agent sessions. Scope today: Python
 script conventions, waybar, kitty and OBS configuration, agent
-notification hooks, and NVIDIA dGPU runtime power. Everything below is an established rule — apply it to
+notification hooks and state sync, and NVIDIA dGPU runtime power. The
+claude, codex, opencode and hyprpilot stow packages live in
+`~/.agents/config/`; their rules are in `~/.agents/CLAUDE.md`. Everything below is an established rule — apply it to
 every new script (and every touch of an old one) without re-discussion.
 
 Linux (Arch, Wayland) is the only deployment target. `Taskfile.yml` has
@@ -504,7 +506,10 @@ adapter; the rest of the code never knows which one.
   model, permission mode, MCP set and the vendor's config-dir env,
   so a new agent backend is a hyprpilot config entry, not a class.
   `spec.model` names a model id for http and a profile id for
-  hyprpilot — one flag, resolved per adapter.
+  hyprpilot — one flag, resolved per adapter. Profile ids are unprefixed
+  (`claude/haiku`) and resolve under a config overlay from
+  `~/.agents/config/hyprpilot`; the adapter passes `--config-profile
+  personal`.
 
 - hyprpilot only ever passes `--append-system-prompt`, so an agent
   profile keeps its vendor's own agent identity. Enrichment
@@ -794,125 +799,13 @@ not set. Read the active line, never the comment above it.
   cmdline edits are ignored under Secure Boot. Turning off `vfr` on `bat`
   only hides the symptom, at the cost of rendering every frame at 120 Hz.
 
-## Agent permissions
-
-Claude Code, opencode and codex each carry the same policy in their own
-dialect, across both profile pairs: read-only git and shell commands auto-run,
-cloud and cluster writes are blocked, everything else asks. Blocked are `aws`,
-`eksctl`, the `argocd` write verbs, the `kubectl` / `kubecolor` /
-`rancher kubectl` write verbs, `helm`, `velero`, `terraform` / `tofu` and
-`pulumi`. Every prefix is written twice, because a flag may sit between the
-executable and the verb (`kubectl -n ns delete …`).
-
-**Claude Code and opencode enforce this; codex does not** — its rules file is
-stowed in a form codex will not read, for the reason and the trade-off in the
-codex section below. Treat codex as carrying no deny list.
-
-The three formats share no source, so a change to one is a change to all three:
-`claude/.claude-*/settings.json` (`permissions.deny`),
-`opencode/.config/opencode-*/opencode.jsonc` (`shell` rules in `permissions`) and
-`codex/.codex-*/rules/guardrails.rules`.
-
-- **None of the three is a security boundary.** All match text against argv, so
-  `bash -lc 'aws s3 ls > /tmp/o'` evades every one of them — codex evaluates
-  the wrapper as a single opaque command, and for the other two the wrapped
-  text never matches a pattern. They stop accidents. Enforcement that does not
-  depend on the command text needs a sandbox or a `PreToolUse` hook.
-- **opencode takes the last matching rule**, via a `findLast` over the
-  `permissions` array — one `{ action, resource, effect }` object per rule, in
-  config order with no sorting — so the `*`/`*` ask catch-all sits **first**,
-  every exception below it, and a read restore **below** the deny it undoes. A
-  catch-all at the foot silently kills every rule above it. Dropping it is
-  worse: opencode seeds every agent with an allow-all rule ahead of the
-  config's, so an action no rule names would run unprompted.
-- **opencode patterns match the whole command, not a prefix**, and a trailing
-  `" *"` becomes `( .*)?` — so `"git status *"` covers both `git status` and
-  `git status --porcelain`, while a bare `"git status"` matches that exact
-  string and nothing else. Write the trailing form. A leading `~` or `$HOME` is
-  expanded for `read`, `edit` and `external_directory` resources only; a
-  `shell` resource stays raw command text.
-- **Claude Code evaluates deny, then ask, then allow**, and specificity does
-  not reorder that, so a deny cannot be narrowed by an `ask`. Its `*` works
-  anywhere in a pattern, a trailing ` *` (or the `:*` suffix, end-of-pattern
-  only) also matches the bare command, and deny reaches into compound commands,
-  command substitution, and past leading `FOO=bar` assignments.
-- **codex `prefix_rule` matches an argv prefix with no wildcard**, so the
-  flag-before-verb spelling cannot be expressed there and falls back to an
-  approval prompt. A pattern element may be a list of alternatives in any
-  position, which is what collapses each cross-product to one rule. Test with
-  `codex execpolicy check --rules <file> -- <argv…>`, which evaluates raw argv
-  and does no shell splitting.
-- **`kubectl -n ns auth can-i <write-verb> …` is blocked under Claude Code.**
-  The flag-before-verb patterns match a write verb anywhere after a flag, and
-  `can-i` takes one as its argument; Claude's precedence offers no carve-out.
-  opencode restores the read below the deny, and codex never matches it. Read
-  through the `kubernetes-*` MCP server instead.
-
-## codex
-
-Two homes, one per account: hyprpilot patches `CODEX_HOME` to
-`~/.codex-kilic` for `personal/codex/*` and `~/.codex-laravel` for
-`work/codex/*`, so both stay logged in side by side.
-
-- **`CODEX_HOME` carries the whole state dir, credentials included**, and
-  `config.toml` and `rules/` in there are stowed. `auth.json`, the sqlite
-  history, `memories/`, `skills/` and the logs (hundreds of MB) are live state
-  this repo does not carry, so each home needs its own `codex login`.
-- **`rules/guardrails.rules` is stowed but does not load**, so codex enforces
-  no deny list and rests on `sandbox_mode` and `approval_policy` alone. Codex
-  skips a `.rules` file that is a symlink — `collect_policy_files` in
-  `core/src/exec_policy.rs` stats each entry without following it and gates on
-  `file_type().is_file()` — and `--no-folding` deploys exactly that. The file
-  records the policy the other two agents enforce, ready for the day the
-  loading is fixed. `find ~/.codex-*/rules/ -maxdepth 1 -type f -name
-  '*.rules'` prints nothing, which is the whole symptom: there is no error and
-  no log line.
-  - **Fix it when codex becomes something you rely on**, not before: linking
-    `rules/` as a whole directory makes codex read it, at the price of a
-    codex-only step in `deploy:linux:user` plus a `.stow-local-ignore`, against
-    the repo's one-symlink-per-file rule. Linking the directory also puts the
-    `default.rules` codex writes from its own TUI inside the repo, so that
-    needs gitignoring at the same time.
-- **`default.rules` is codex's own file**, written when a command is added to
-  the allow list from its TUI. It lands beside the symlink as a real file,
-  outside this repo. The rules this repo owns live in `guardrails.rules`.
-- **`codex-remote-control@.service` is templated on the same suffix** —
-  `Environment=CODEX_HOME=%h/.codex-%i`, so `@kilic` and `@laravel` are the
-  instances. Stow links it; nothing enables it. Enable an instance by hand
-  when the remote-control daemon is wanted.
-- **Model ids come from `codex debug models`, never from memory.** It prints
-  slug, visibility and API support as JSON; `visibility: "hide"` entries are
-  live but unlisted. `gpt-6-astra` is the whole of the gpt-6 line.
-- **`--profile` only applies to runtime commands.** The `codex` agent entry
-  passes `--profile default`, so `hyprpilot <profile> -- login status` errors
-  out; `-- sandbox -- sh -c '…'` is a runtime command and is the way to read
-  the launched environment.
-- **Editing a hook command re-triggers codex's trust review.** Hook
-  definitions are hashed and confirmed once via `/hooks`; a changed command
-  is a new definition and stays inert until re-trusted.
-
-## opencode
-
-Two config dirs, one per account: hyprpilot points `OPENCODE_CONFIG_DIR` at
-`~/.config/opencode-kilic` or `~/.config/opencode-laravel` and `OPENCODE_DB` at
-a matching sqlite file, which holds the sessions and credentials.
-
-- **`service.json` sets `disabled: true`**, so every launch starts a private
-  server. The shared background service is keyed by the state dir, which both
-  profiles share, and keeps the env of whichever launch started it.
-- **The root `AGENTS.md` is a symlink to this file** because opencode reads
-  only `AGENTS.md`, never `CLAUDE.md`.
-- **Changing a TUI preference (theme, toggles) rewrites `cli.json`** through a
-  temp file and a rename, which replaces the stow symlink with a real file and
-  decouples it from the repo, as with OBS. Diff it back into the repo and
-  restow. `opencode service set` does the same to `service.json`.
-
 ## Agent notification hook
 
 `wayland/.config/wayland/scripts/notify.py` is the only hook, shared by
 Claude Code (`Notification` in both profiles' `settings.json`), codex
 (`PermissionRequest` and `Stop` in both `config.toml`s) and opencode (the
-`plugins/notify/tui.js` client plugin in both config dirs). The vendor is the
+`plugins/notify/tui.js` client plugin in both config dirs), all stowed from
+`~/.agents/config/{claude,codex,opencode}`. The vendor is the
 subcommand, the profile label its argument: `notify.py codex laravel`. It
 sits in the wayland scripts project rather than any vendor's package
 because most of it is the tmux/kitty/hyprland focus chain, which no vendor
