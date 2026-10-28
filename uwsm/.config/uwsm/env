@@ -2,6 +2,10 @@
 
 export PATH="${HOME}/.local/share/mise/shims:${HOME}/.local/bin:${PATH}"
 
+# hyprpilot profiles live in per-account config overlays; launches outside a
+# login shell (desktop launchers, editors) need one selected too.
+export HYPRPILOT_CONFIG_PROFILE="${HYPRPILOT_CONFIG_PROFILE:-personal}"
+
 export LIBSEAT_BACKEND=logind
 
 export QT_QPA_PLATFORM=wayland

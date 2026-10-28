@@ -55,7 +55,7 @@ class EnrichProvider(StrEnum):
 
 DEFAULT_ENRICH_ADAPTER = EnrichProvider.HTTP
 # Cheap, fast, and patched to carry no MCP servers and a read-only mode.
-DEFAULT_PROFILE = "personal/claude/haiku"
+DEFAULT_PROFILE = "claude/haiku"
 DEFAULT_BASE_URL = "https://ai.kilic.dev/v1"
 DEFAULT_API_KEY_ENV = "AI_KILIC_DEV_API_KEY"
 DEFAULT_TIMEOUT = 120.0
@@ -327,7 +327,14 @@ class EnrichAdapterHyprpilot:
             with open(prompt_path, "w") as fh:
                 fh.write(prompt)
 
-            argv = ["hyprpilot", self.profile, "--file", prompt_path]
+            argv = [
+                "hyprpilot",
+                "--config-profile",
+                "personal",
+                self.profile,
+                "--file",
+                prompt_path,
+            ]
             log.info("hyprpilot enrichment: profile=%s", self.profile)
             try:
                 result = run(argv, log=log, tag="hyprpilot", timeout=self.spec.timeout)
