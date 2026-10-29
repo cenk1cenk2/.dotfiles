@@ -39,13 +39,15 @@ class VirtualDisplay:
             for m in self._hypr.query("monitors", "all") or []
         )
 
-    def start(self, width: int, height: int, fps: int) -> None:
+    def start(self, width: int, height: int, fps: int, scale: float) -> None:
         if not self.exists():
             self.log.info("creating headless output %s", self.name)
             self._hypr.output("create", "headless", self.name)
-        self.log.info("mode %dx%d@%d on %s", width, height, fps, self.name)
+        self.log.info(
+            "mode %dx%d@%d scale %g on %s", width, height, fps, scale, self.name
+        )
         self._hypr.eval(
-            f'hl.monitor({{ output = "{self.name}", mode = "{width}x{height}@{fps}", position = "auto", scale = "1" }})'
+            f'hl.monitor({{ output = "{self.name}", mode = "{width}x{height}@{fps}", position = "auto", scale = "{scale:g}" }})'
         )
         self._hypr.dispatch(f'hl.dsp.focus({{ monitor = "{self.name}" }})')
 
@@ -64,6 +66,17 @@ class VirtualDisplay:
 
         return int(value) if value else default
 
+    @staticmethod
+    def client_scale(scales: tuple[str, ...], default: float) -> float:
+        """The scale for SUNSHINE_CLIENT_NAME out of `NAME=SCALE` pairs."""
+        client = os.environ.get("SUNSHINE_CLIENT_NAME")
+        for pair in scales:
+            name, _, scale = pair.partition("=")
+            if name == client:
+                return float(scale)
+
+        return default
+
     @click.group(context_settings={"help_option_names": ["-h", "--help"]})
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cli(verbose: bool):
@@ -75,13 +88,29 @@ class VirtualDisplay:
     @click.option("--width", type=int, help="Defaults to SUNSHINE_CLIENT_WIDTH.")
     @click.option("--height", type=int, help="Defaults to SUNSHINE_CLIENT_HEIGHT.")
     @click.option("--fps", type=int, help="Defaults to SUNSHINE_CLIENT_FPS.")
-    def cmd_start(name: str, width: int | None, height: int | None, fps: int | None):
+    @click.option("--scale", type=float, default=1.0, show_default=True)
+    @click.option(
+        "--client-scale",
+        "client_scales",
+        multiple=True,
+        metavar="NAME=SCALE",
+        help="Scale for the client named in SUNSHINE_CLIENT_NAME; repeatable.",
+    )
+    def cmd_start(
+        name: str,
+        width: int | None,
+        height: int | None,
+        fps: int | None,
+        scale: float,
+        client_scales: tuple[str, ...],
+    ):
         """Create the virtual monitor at the given mode and focus it."""
         cls = VirtualDisplay
         VirtualDisplay(Hyprctl(), name).start(
             width or cls.client_value("WIDTH", cls.DEFAULT_WIDTH),
             height or cls.client_value("HEIGHT", cls.DEFAULT_HEIGHT),
             fps or cls.client_value("FPS", cls.DEFAULT_FPS),
+            cls.client_scale(client_scales, scale),
         )
 
     @cli.command("stop")

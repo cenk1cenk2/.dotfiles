@@ -8,7 +8,7 @@
       "name": "Desktop",
       "prep-cmd": [
         {
-          "do": "$(HOME)/.config/hypr/scripts/virtual-display.py start --name SUNSHINE",
+          "do": "$(HOME)/.config/hypr/scripts/virtual-display.py start --name SUNSHINE --client-scale emanet=2",
           "undo": "$(HOME)/.config/hypr/scripts/virtual-display.py stop --name SUNSHINE"
         }
       ],
