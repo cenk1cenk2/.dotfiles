@@ -122,7 +122,6 @@ hl.window_rule({
   float = true,
   border_size = 1,
   size = "(monitor_w*0.65) (monitor_h*0.65)",
-  no_screen_share = true,
 })
 
 hl.window_rule({
@@ -171,20 +170,12 @@ hl.window_rule({
   match = { class = "Bitwarden" },
   float = true,
   size = "(monitor_w*0.75) (monitor_h*0.70)",
-  no_screen_share = true,
 })
 
 hl.window_rule({
   name = "brave-bitwarden",
   match = { class = "^(brave-)(.*)$", title = "Bitwarden" },
   float = true,
-  no_screen_share = true,
-})
-
-hl.window_rule({
-  name = "brave-whatsapp",
-  match = { class = "^(brave-)(.*)$", title = "WhatsApp Web" },
-  no_screen_share = true,
 })
 
 hl.window_rule({
@@ -192,8 +183,16 @@ hl.window_rule({
   match = { class = "1Password" },
   float = true,
   size = "(monitor_w*0.75) (monitor_h*0.70)",
-  no_screen_share = true,
 })
+
+-- kept out of screen captures; see screen-share.lua
+local screen_share = require("screen-share")
+
+screen_share.window("clipse", { class = "clipse" })
+screen_share.window("bitwarden", { class = "Bitwarden" })
+screen_share.window("brave-bitwarden", { class = "^(brave-)(.*)$", title = "Bitwarden" })
+screen_share.window("brave-whatsapp", { class = "^(brave-)(.*)$", title = "WhatsApp Web" })
+screen_share.window("1password", { class = "1Password" })
 
 hl.window_rule({
   name = "obsidian",

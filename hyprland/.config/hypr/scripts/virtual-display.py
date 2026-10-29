@@ -8,7 +8,11 @@ commands, so a stream gets a native frame at the client's own resolution
 whatever the physical monitors offer.
 
 Headless outputs carry no description, so the monitor profiles never sweep
-one into an `ANY` disable rule."""
+one into an `ANY` disable rule.
+
+`--reveal` lifts the `no_screen_share` rules `screen-share.lua` keeps, so a
+remote desktop stream shows the windows a screen share hides; `stop` always
+puts them back."""
 
 from __future__ import annotations
 
@@ -39,7 +43,13 @@ class VirtualDisplay:
             for m in self._hypr.query("monitors", "all") or []
         )
 
-    def start(self, width: int, height: int, fps: int, scale: float) -> None:
+    def screen_share_hidden(self, hidden: bool) -> None:
+        self.log.info("screen share hiding %s", "on" if hidden else "off")
+        self._hypr.eval(f'require("screen-share").set({str(hidden).lower()})')
+
+    def start(
+        self, width: int, height: int, fps: int, scale: float, reveal: bool
+    ) -> None:
         if not self.exists():
             self.log.info("creating headless output %s", self.name)
             self._hypr.output("create", "headless", self.name)
@@ -50,8 +60,11 @@ class VirtualDisplay:
             f'hl.monitor({{ output = "{self.name}", mode = "{width}x{height}@{fps}", position = "auto", scale = "{scale:g}" }})'
         )
         self._hypr.dispatch(f'hl.dsp.focus({{ monitor = "{self.name}" }})')
+        if reveal:
+            self.screen_share_hidden(False)
 
     def stop(self) -> None:
+        self.screen_share_hidden(True)
         if not self.exists():
             self.log.info("%s already gone", self.name)
             return
@@ -96,6 +109,11 @@ class VirtualDisplay:
         metavar="NAME=SCALE",
         help="Scale for the client named in SUNSHINE_CLIENT_NAME; repeatable.",
     )
+    @click.option(
+        "--reveal",
+        is_flag=True,
+        help="Show windows that screen shares hide, until stop.",
+    )
     def cmd_start(
         name: str,
         width: int | None,
@@ -103,6 +121,7 @@ class VirtualDisplay:
         fps: int | None,
         scale: float,
         client_scales: tuple[str, ...],
+        reveal: bool,
     ):
         """Create the virtual monitor at the given mode and focus it."""
         cls = VirtualDisplay
@@ -111,6 +130,7 @@ class VirtualDisplay:
             height or cls.client_value("HEIGHT", cls.DEFAULT_HEIGHT),
             fps or cls.client_value("FPS", cls.DEFAULT_FPS),
             cls.client_scale(client_scales, scale),
+            reveal,
         )
 
     @cli.command("stop")

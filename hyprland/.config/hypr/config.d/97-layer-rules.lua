@@ -1,14 +1,7 @@
-hl.layer_rule({
-  name = "swaync-control-center",
-  match = { namespace = "swaync-control-center" },
-  no_screen_share = true,
-})
+local screen_share = require("screen-share")
 
-hl.layer_rule({
-  name = "swaync-notification-window",
-  match = { namespace = "swaync-notification-window" },
-  no_screen_share = true,
-})
+screen_share.layer("swaync-control-center", { namespace = "swaync-control-center" })
+screen_share.layer("swaync-notification-window", { namespace = "swaync-notification-window" })
 
 -- Hints go the moment their submap ends, not over a fade, so a screenshot
 -- taken from the submap never catches them on the way out.
