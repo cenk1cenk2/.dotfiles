@@ -1,0 +1,6 @@
+{
+    "device": "alsa_input.pci-0000_74_00.6.analog-stereo",
+    "device-description": "Ryzen HD Audio Controller Analog Stereo",
+    "device-profile": "Internal Microphone",
+    "preset-name": "emanet"
+}
