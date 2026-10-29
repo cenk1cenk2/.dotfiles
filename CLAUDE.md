@@ -36,9 +36,16 @@ not automatically dead — see the kitty section.
   units; a mismatched name is loaded and simply never triggers.
 - `TimeoutIdleSec=60` plus `WantedBy=remote-fs.target` reproduce what
   `x-systemd.automount,x-systemd.idle-timeout=60s` gave in fstab. The package's
-  `post` enables the three automount units by name, because placing a unit
-  file does not wire it into `remote-fs.target` and an unenabled automount is
-  inert after a reboot — `/mnt/norsu/*` is then empty with no error anywhere.
+  `post` only runs `daemon-reload`; it does **not** enable the automounts.
+  Placing a unit file does not wire it into `remote-fs.target`, and an
+  unenabled automount is inert after a reboot — `/mnt/norsu/*` is then empty
+  with no error anywhere — so enable them by hand once per machine:
+  `sudo systemctl enable --now mnt-norsu-{rock,WD4P_1,WD4P_2}.automount`.
+- **The `.mount` units need no `network-online.target` lines or `_netdev`.**
+  `cifs` is a network filesystem by type, so systemd already gives each mount
+  `After=` and `Wants=network-online.target` implicitly; only `nofail` would
+  remove that. The automounts keep it off the boot path, since a mount starts
+  only when `/mnt/norsu/*` is first opened.
 - **The SMB credentials are not in this repo.** `/mnt/.norsu` is root-owned
   plaintext `username=` / `password=`, named to sit beside the `/mnt/norsu`
   tree it unlocks, and written by hand on a rebuilt machine. Every mount fails
