@@ -84,6 +84,15 @@ class Hyprctl:
 
         return response == "ok"
 
+    def output(self, *args: str) -> bool:
+        """Create or remove a virtual output:
+        hypr.output("create", "headless", "NAME")"""
+        response = self._request("output " + " ".join(args))
+        if response != "ok":
+            log.debug("hyprland output error: %s", response)
+
+        return response == "ok"
+
     def run_lua(
         self, script: str, env: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:
