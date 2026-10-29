@@ -16,12 +16,14 @@ puts them back."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 
 import click
 from dotlib.cli import create_logger
+from dotlib.waybar import watch
 from lib import Hyprctl
 
 
@@ -37,10 +39,31 @@ class VirtualDisplay:
         self._hypr = hypr
         self.name = name
 
+    def monitor(self) -> dict | None:
+        for m in self._hypr.query("monitors", "all") or []:
+            if m.get("name") == self.name:
+                return m
+
+        return None
+
     def exists(self) -> bool:
-        return any(
-            m.get("name") == self.name
-            for m in self._hypr.query("monitors", "all") or []
+        return self.monitor() is not None
+
+    def status_json(self) -> str:
+        monitor = self.monitor()
+        # The empty text hides the waybar module while no virtual monitor exists.
+        if monitor is None:
+            return json.dumps({"class": "idle", "text": "", "tooltip": ""})
+
+        return json.dumps(
+            {
+                "class": "active",
+                "text": "󰢹",
+                "tooltip": (
+                    f"Remote session on {self.name} "
+                    f"({monitor['width']}x{monitor['height']} @ {monitor['scale']:g}x)"
+                ),
+            }
         )
 
     def screen_share_hidden(self, hidden: bool) -> None:
@@ -94,7 +117,7 @@ class VirtualDisplay:
     @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
     def cli(verbose: bool):
         """Manage headless virtual monitors."""
-        create_logger(verbose, log_file="virtual-display.log")
+        create_logger(verbose, log_file="virtual-display.log", quiet={"status"})
 
     @cli.command("start")
     @click.option("-n", "--name", default=DEFAULT_NAME, show_default=True)
@@ -138,6 +161,17 @@ class VirtualDisplay:
     def cmd_stop(name: str):
         """Remove the virtual monitor."""
         VirtualDisplay(Hyprctl(), name).stop()
+
+    @cli.command("status")
+    @click.option("-n", "--name", default=DEFAULT_NAME, show_default=True)
+    @click.option(
+        "--watch", "watching", is_flag=True, help="Print a line per change, for waybar."
+    )
+    def cmd_status(name: str, watching: bool):
+        """Print waybar-shaped status JSON."""
+        if watching:
+            return watch(VirtualDisplay(Hyprctl(), name).status_json, 1.0)
+        sys.stdout.write(VirtualDisplay(Hyprctl(), name).status_json() + "\n")
 
 
 if __name__ == "__main__":
