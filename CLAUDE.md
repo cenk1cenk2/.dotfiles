@@ -124,6 +124,11 @@ these need re-checking.
   reloading would otherwise leave the next run reporting nothing to do.
   `./install.py --dry-run` (or `task check`) reports what would change across
   every package; bare `task` only lists tasks and copies nothing.
+- **`rootfs`'s `post` switches docker to socket activation** where docker is
+  installed: `docker.service` is ordered after `network-online.target`, so an
+  enabled service holds `multi-user.target` and the desktop until the network
+  is online. `docker.socket` starts the daemon on first use instead. Containers
+  with a restart policy then come up on the first docker call, not at boot.
 - **`./cleanup.py` removes what past migrations left behind** (dangling stow
   links, stale system files, enablement of retired units, networkd on a
   NetworkManager host). It is a dry run by default; `./cleanup.py -y` applies.

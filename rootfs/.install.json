@@ -23,6 +23,11 @@
       "sh",
       "-c",
       "systemctl disable --quiet nvidia-persistenced.service nvidia-powerd.service 2>/dev/null || true"
+    ],
+    [
+      "sh",
+      "-c",
+      "systemctl cat docker.socket >/dev/null 2>&1 || exit 0; systemctl disable --quiet docker.service && systemctl enable --quiet docker.socket"
     ]
   ]
 }
