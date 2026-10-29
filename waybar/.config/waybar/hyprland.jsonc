@@ -122,6 +122,14 @@
     "on-click": "~/.config/hypr/scripts/zoom.py toggle",
   },
 
+  // Hidden until a Sunshine stream creates its virtual monitor.
+  "custom/remote": {
+    "return-type": "json",
+    "format": "{}",
+    "exec": "~/.config/waybar/tail.sh remote",
+    "restart-interval": 2,
+  },
+
   "privacy": {
     "icon-size": 14,
     "icon-spacing": 4,
@@ -146,6 +154,7 @@
   "group/status": {
     "orientation": "horizontal",
     "modules": [
+      "custom/remote",
       "privacy",
       "pulseaudio#sink",
       "backlight",

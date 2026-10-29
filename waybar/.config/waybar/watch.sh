@@ -14,6 +14,7 @@ case "$1" in
   copywriter) set -- "$HOME/.config/wayland/scripts/copywriter.py" status --watch ;;
   recorder) set -- "$HOME/.config/wayland/scripts/recorder.py" status --watch ;;
   zoom) set -- "$HOME/.config/hypr/scripts/zoom.py" status --watch ;;
+  remote) set -- "$HOME/.config/hypr/scripts/virtual-display.py" status --name SUNSHINE --watch ;;
   gpu)
     set -- sh -c 'nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits -lms 5000 |
       awk '"'"'{c=($1>=72)?"critical":(($1>=62)?"warning":""); printf "{\"text\":\"%d\",\"class\":\"%s\"}\n",$1,c; fflush()}'"'"''

@@ -8,7 +8,7 @@ Requires=dbus.socket
 # Starting the bar starts the watchers feeding it; waybar-watch@ orders itself
 # Before= the bar, so they come up first. Wants=, so a failed watcher leaves
 # the bar running with that module hidden.
-Wants=waybar-watch@stt.service waybar-watch@tts.service waybar-watch@copywriter.service waybar-watch@recorder.service waybar-watch@zoom.service
+Wants=waybar-watch@stt.service waybar-watch@tts.service waybar-watch@copywriter.service waybar-watch@recorder.service waybar-watch@zoom.service waybar-watch@remote.service
 
 [Service]
 Type=simple

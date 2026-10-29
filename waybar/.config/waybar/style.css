@@ -234,6 +234,11 @@ widget > * {
   color: @bg_color_100;
 }
 
+#custom-remote.active {
+  background-color: #d19a66;
+  color: @bg_color_100;
+}
+
 #battery.critical,
 #cpu.critical,
 #custom-gpu.critical,
