@@ -17,5 +17,10 @@ local services = {
 }
 
 hl.on("hyprland.start", function()
-  hl.exec_cmd("uwsm finalize; systemctl --user start --no-block " .. table.concat(services, " "))
+  -- one start per unit: a single missing unit fails the whole batch enqueue
+  hl.exec_cmd(
+    ("uwsm finalize; for unit in %s; do systemctl --user start --no-block \"$unit\"; done"):format(
+      table.concat(services, " ")
+    )
+  )
 end)
