@@ -124,6 +124,10 @@ these need re-checking.
   reloading would otherwise leave the next run reporting nothing to do.
   `./install.py --dry-run` (or `task check`) reports what would change across
   every package; bare `task` only lists tasks and copies nothing.
+- **`./cleanup.py` removes what past migrations left behind** (dangling stow
+  links, stale system files, enablement of retired units, networkd on a
+  NetworkManager host). It is a dry run by default; `./cleanup.py -y` applies.
+  Run it on each machine after pulling, and again when the script changes.
 - **Only tracked files are installed**, because the file list is `git ls-files`
   over the package. A file written but never `git add`ed is skipped in silence
   and the run still reports success, since nothing failed — it just had nothing
