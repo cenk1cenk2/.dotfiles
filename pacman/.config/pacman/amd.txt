@@ -2,7 +2,6 @@ amd-ucode
 amdonly-gaming-libva-mesa-driver-git
 amdonly-gaming-mesa-git
 amdonly-gaming-mesa-vdpau-git
-amdonly-gaming-opencl-rusticl-mesa-git
 amdonly-gaming-vulkan-mesa-layers-git
 amdonly-gaming-vulkan-radeon-git
 amdonly-gaming-vulkan-swrast-git
