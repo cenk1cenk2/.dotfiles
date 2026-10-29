@@ -13,21 +13,6 @@
         }
       ],
       "wait-all": false
-    },
-    {
-      "auto-detach": true,
-      "detached": ["setsid steam steam://open/bigpicture"],
-      "exclude-global-prep-cmd": false,
-      "exit-timeout": 5,
-      "image-path": "steam.png",
-      "name": "Steam Big Picture",
-      "prep-cmd": [
-        {
-          "do": "$(HOME)/.config/hypr/scripts/virtual-display.py start --name SUNSHINE",
-          "undo": "$(HOME)/.config/hypr/scripts/virtual-display.py stop --name SUNSHINE"
-        }
-      ],
-      "wait-all": true
     }
   ],
   "env": {
