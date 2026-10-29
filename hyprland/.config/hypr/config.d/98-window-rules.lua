@@ -67,6 +67,14 @@ hl.window_rule({
   opaque = true,
 })
 
+-- Moonlight's borderless mode only tiles under Hyprland; the stream window is titled
+-- "<host> - Moonlight", the launcher plain "Moonlight".
+hl.window_rule({
+  name = "moonlight-stream",
+  match = { class = "^(com\\.moonlight_stream\\.Moonlight)$", title = "^(.+ - Moonlight)$" },
+  fullscreen = true,
+})
+
 -- Fullscreen inhibit idle - prevent screen lock during fullscreen
 hl.window_rule({
   name = "fullscreen-idle-inhibit",
