@@ -1,4 +1,24 @@
 ####################################################################################################
+# streaming
+####################################################################################################
+
+# sunshine stream on the virtual output virtual-display.py creates. `*` matches one leftover head,
+# not all of them, so every physical monitor of a setup is named. No mode here: the script sets
+# the client's mode itself. Removing the output brings the regular profile back.
+profile stream-main {
+    output SUNSHINE enable
+    output "LG Electronics 38GN950 207NTSU62014" disable
+    output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" disable
+    output "ASUSTek COMPUTER INC VG27A L4LMQS123005" disable
+    output "*" disable
+}
+
+profile stream-gpd {
+    output SUNSHINE enable
+    output "Japan Display Inc. GPD1001H 0x00000001" disable
+}
+
+####################################################################################################
 # gpd win max 2
 ####################################################################################################
 
