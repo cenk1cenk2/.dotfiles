@@ -28,11 +28,6 @@
       "sh",
       "-c",
       "systemctl cat docker.socket >/dev/null 2>&1 || exit 0; systemctl disable --quiet docker.service && systemctl enable --quiet docker.socket"
-    ],
-    [
-      "sh",
-      "-c",
-      "systemctl cat keyd.service >/dev/null 2>&1 || exit 0; systemctl enable --quiet keyd.service && systemctl reload-or-restart keyd.service"
     ]
   ]
 }
