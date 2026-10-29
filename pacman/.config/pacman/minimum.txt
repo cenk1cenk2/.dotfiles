@@ -132,6 +132,7 @@ virt-viewer
 vulkan-tools
 waybar
 wayfreeze-git
+wayland-pipewire-idle-inhibit
 wayland-utils
 wdisplays
 wev

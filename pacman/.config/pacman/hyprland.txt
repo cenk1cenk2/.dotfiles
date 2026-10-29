@@ -11,5 +11,4 @@ hyprshutdown
 libnewt
 python-cairo
 uwsm
-wayland-pipewire-idle-inhibit
 xdg-desktop-portal-hyprland
