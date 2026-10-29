@@ -13,11 +13,6 @@ profile stream-main {
     output "*" disable
 }
 
-profile stream-gpd {
-    output SUNSHINE enable
-    output "Japan Display Inc. GPD1001H 0x00000001" disable
-}
-
 ####################################################################################################
 # gpd win max 2
 ####################################################################################################
