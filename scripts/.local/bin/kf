@@ -1,0 +1,527 @@
+#!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
+# vim: ft=python
+"""Manage kubeconfig files: list, remove, extract and merge contexts, and pull Rancher clusters.
+
+Every edit goes through `kubectl config`, so kubectl's own lock and format apply,
+and a file is backed up to `<file>.bak` before it is replaced.
+
+`rancher extract --readonly` logs the Rancher CLI in with a read-only token in a
+throwaway config directory, so the kubeconfigs it writes can never carry the
+operator's own Rancher login. `rancher clusters kf` resolves a cluster by its
+id; a user who may not list `management.cattle.io` clusters gets a 403 for a
+name, so names are mapped to ids through `rancher clusters ls` first.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+import click
+from click.shell_completion import CompletionItem, get_completion_class
+from dotlib.cli import create_logger
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+log = create_logger(False, name="kf")
+
+
+def _kubeconfig() -> Path:
+    return Path(
+        os.environ.get("KUBECONFIG", "").split(os.pathsep)[0]
+        or Path.home() / ".kube" / "config"
+    )
+
+
+def _complete_contexts(
+    ctx: click.Context, _param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    # A failure here has to stay silent: an exception during completion prints into the prompt.
+    try:
+        names = Kubeconfig(
+            Path(ctx.find_root().params.get("kubeconfig") or _kubeconfig())
+        ).contexts()
+    except click.ClickException, OSError, json.JSONDecodeError:
+        return []
+    taken = set(ctx.params.get("contexts") or ())
+    return [
+        CompletionItem(name)
+        for name in names
+        if name.startswith(incomplete) and name not in taken
+    ]
+
+
+def _complete_clusters(
+    ctx: click.Context, _param: click.Parameter, incomplete: str
+) -> list[CompletionItem]:
+    try:
+        clusters = Rancher().clusters()
+    except click.ClickException, OSError:
+        return []
+    taken = set(ctx.params.get("clusters") or ())
+    return [
+        CompletionItem(name)
+        for name in clusters
+        if name.startswith(incomplete) and name not in taken
+    ]
+
+
+class Kubeconfig:
+    """One kubeconfig file, edited through kubectl."""
+
+    def __init__(self, path: Path, dry_run: bool = False) -> None:
+        self.path = path
+        self.dry_run = dry_run
+
+    def kubectl(self, *args: str, kubeconfig: str | None = None) -> str:
+        env = {**os.environ, "KUBECONFIG": kubeconfig or str(self.path)}
+        log.debug("spawn: kubectl %s", " ".join(args))
+        result = subprocess.run(
+            ["kubectl", *args], env=env, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"kubectl {' '.join(args[:3])}: {result.stderr.strip()}"
+            )
+
+        return result.stdout
+
+    def view(self) -> dict:
+        if not self.path.exists():
+            return {}
+
+        return json.loads(self.kubectl("config", "view", "--raw", "-o", "json")) or {}
+
+    def contexts(self) -> list[str]:
+        return [context["name"] for context in self.view().get("contexts") or []]
+
+    def edit(self, *args: str) -> None:
+        if self.dry_run:
+            log.info("would run: kubectl %s", " ".join(args))
+            return
+        self.kubectl(*args)
+
+    @contextmanager
+    def replace(self) -> Iterator[Path]:
+        """A temp file next to the kubeconfig that replaces it atomically, after a backup, when the block succeeds."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
+        os.close(fd)
+        staged = Path(name)
+        try:
+            yield staged
+            if staged.stat().st_size == 0:
+                raise click.ClickException(
+                    f"refusing to write an empty kubeconfig to {self.path}"
+                )
+            if self.dry_run:
+                log.info("would write %s", self.path)
+                return
+            if self.path.exists():
+                shutil.copy2(self.path, self.path.with_name(f"{self.path.name}.bak"))
+            staged.chmod(0o600)
+            staged.replace(self.path)
+        finally:
+            staged.unlink(missing_ok=True)
+
+    def remove(self, contexts: tuple[str, ...]) -> None:
+        """Delete contexts, then the clusters and users no remaining context references."""
+        config = self.view()
+        known = {
+            context["name"]: context["context"]
+            for context in config.get("contexts") or []
+        }
+        for name in contexts:
+            if name not in known:
+                log.error("no context %s in %s", name, self.path)
+                continue
+            self.edit("config", "delete-context", name)
+            console.print(f"Removed context [bold]{name}[/]")
+        self.prune(gone=set(contexts) & set(known))
+
+    def prune(self, gone: set[str] | frozenset[str] = frozenset()) -> int:
+        """Delete clusters and users that no context, other than the ones in `gone`, references."""
+        config = self.view()
+        live = [
+            c["context"] for c in config.get("contexts") or [] if c["name"] not in gone
+        ]
+        removed = 0
+        for kind, key in (("cluster", "clusters"), ("user", "users")):
+            used = {context.get(kind) for context in live}
+            for entry in config.get(key) or []:
+                if entry["name"] not in used:
+                    self.edit("config", f"delete-{kind}", entry["name"])
+                    console.print(f"Removed unused {kind} [bold]{entry['name']}[/]")
+                    removed += 1
+
+        return removed
+
+    def extract(self, output: Path, contexts: tuple[str, ...]) -> None:
+        """Write the given contexts, with their clusters and users, to OUTPUT."""
+        with tempfile.TemporaryDirectory() as tmp:
+            parts = []
+            for index, context in enumerate(contexts):
+                part = Path(tmp) / f"{index}.yaml"
+                part.write_text(
+                    self.kubectl(
+                        "config",
+                        "view",
+                        "--minify",
+                        "--flatten",
+                        f"--context={context}",
+                    )
+                )
+                parts.append(str(part))
+            with Kubeconfig(output, self.dry_run).replace() as staged:
+                staged.write_text(
+                    self.kubectl(
+                        "config", "view", "--flatten", kubeconfig=os.pathsep.join(parts)
+                    )
+                )
+        console.print(f"Extracted {', '.join(contexts)} to [bold]{output}[/]")
+
+    def merge(self, sources: list[Path]) -> None:
+        """Merge SOURCES into this kubeconfig. A source wins over an entry of the same name, so a re-extract refreshes it."""
+        files = []
+        for source in sources:
+            if source.is_dir():
+                files += sorted(
+                    p
+                    for p in source.iterdir()
+                    if p.suffix in (".yaml", ".yml") and p.stat().st_size
+                )
+            elif source.is_file():
+                files.append(source)
+            else:
+                log.warning("%s does not exist, skipping", source)
+        if not files:
+            raise click.ClickException("nothing to merge")
+
+        # kubectl keeps the first file's entry on a name clash.
+        chain = [str(f) for f in files] + (
+            [str(self.path)] if self.path.exists() else []
+        )
+        current = self.view().get("current-context")
+        with self.replace() as staged:
+            staged.write_text(
+                self.kubectl(
+                    "config", "view", "--flatten", kubeconfig=os.pathsep.join(chain)
+                )
+            )
+            if current:
+                self.kubectl("config", "use-context", current, kubeconfig=str(staged))
+        console.print(f"Merged {len(files)} file(s) into [bold]{self.path}[/]")
+
+
+class Rancher:
+    """The Rancher CLI, logged in either as the operator or, read-only, with a token in a throwaway config."""
+
+    def __init__(self, config: Path | None = None) -> None:
+        self.config = config
+
+    def run(self, *args: str) -> str:
+        command = [
+            "rancher",
+            *(["--config", str(self.config)] if self.config else []),
+            *args,
+        ]
+        log.debug("spawn: %s", " ".join(command))
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"rancher {' '.join(args[:2])}: {result.stderr.strip()}"
+            )
+
+        return result.stdout
+
+    @classmethod
+    @contextmanager
+    def readonly(cls, url: str, token_env: str) -> Iterator[Rancher]:
+        token = os.environ.get(token_env)
+        if not token:
+            raise click.ClickException(f"${token_env} is not set")
+        # login prompts for a project without --context and dies on EOF; any project will do for kubeconfigs.
+        request = urllib.request.Request(
+            f"{url}/v3/projects?limit=1", headers={"Authorization": f"Bearer {token}"}
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                projects = json.load(response).get("data") or []
+        except urllib.error.URLError as error:
+            raise click.ClickException(f"listing Rancher projects: {error}") from error
+        if not projects:
+            raise click.ClickException(
+                f"${token_env} sees no Rancher project to log in with"
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            rancher = cls(Path(tmp))
+            rancher.run(
+                "login",
+                url,
+                "--token",
+                token,
+                "--name",
+                "readonly",
+                "--context",
+                projects[0]["id"],
+            )
+            yield rancher
+
+    def clusters(self) -> dict[str, str]:
+        """Cluster name to id."""
+        rows = self.run(
+            "clusters", "ls", "--format", "{{.Cluster.Name}} {{.Cluster.ID}}"
+        ).split("\n")
+
+        return dict(row.split(" ", 1) for row in rows if " " in row)
+
+    def kubeconfig(self, cluster_id: str) -> str:
+        return self.run("clusters", "kf", cluster_id)
+
+
+class Kf:
+    RANCHER_DIR = Path.home() / ".kube" / "rancher"
+    READONLY_DIR = Path.home() / ".kube" / "rancher-readonly"
+    RANCHER_URL = "https://rancher.int.kilic.dev"
+
+    @click.group("kf", context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option(
+        "-k",
+        "--kubeconfig",
+        type=click.Path(dir_okay=False, path_type=Path),
+        default=_kubeconfig,
+        show_default="$KUBECONFIG or ~/.kube/config",
+        help="Kubeconfig to work on.",
+    )
+    @click.option(
+        "-n", "--dry-run", is_flag=True, help="Show what would change; write nothing."
+    )
+    @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+    @click.pass_context
+    def cli(ctx: click.Context, kubeconfig: Path, dry_run: bool, verbose: bool) -> None:
+        """Kubeconfig management: contexts, extraction, merging and Rancher clusters."""
+        global log
+        log = create_logger(verbose, name="kf")
+        ctx.obj = Kubeconfig(kubeconfig.expanduser(), dry_run)
+
+    @cli.command("ls")
+    @click.option("-o", "--names", is_flag=True, help="Print only the context names.")
+    @click.pass_obj
+    def cmd_ls(kubeconfig: Kubeconfig, names: bool) -> None:
+        """List the contexts."""
+        config = kubeconfig.view()
+        contexts = config.get("contexts") or []
+        if names:
+            for context in contexts:
+                sys.stdout.write(f"{context['name']}\n")
+            return
+
+        table = Table(title=str(kubeconfig.path), title_justify="left")
+        for column in ("", "context", "cluster", "user", "namespace"):
+            table.add_column(column)
+        for context in contexts:
+            entry = context["context"]
+            table.add_row(
+                "*" if context["name"] == config.get("current-context") else "",
+                context["name"],
+                entry.get("cluster", ""),
+                entry.get("user", ""),
+                entry.get("namespace", ""),
+            )
+        console.print(table)
+
+    @cli.command("rm")
+    @click.argument(
+        "contexts", nargs=-1, required=True, shell_complete=_complete_contexts
+    )
+    @click.pass_obj
+    def cmd_rm(kubeconfig: Kubeconfig, contexts: tuple[str, ...]) -> None:
+        """Remove contexts, and the clusters and users only they used."""
+        kubeconfig.remove(contexts)
+
+    @cli.command("prune")
+    @click.pass_obj
+    def cmd_prune(kubeconfig: Kubeconfig) -> None:
+        """Remove clusters and users no context references."""
+        if not kubeconfig.prune():
+            console.print("Nothing to prune.")
+
+    @cli.command("extract")
+    @click.argument("output", type=click.Path(dir_okay=False, path_type=Path))
+    @click.argument(
+        "contexts", nargs=-1, required=True, shell_complete=_complete_contexts
+    )
+    @click.pass_obj
+    def cmd_extract(
+        kubeconfig: Kubeconfig, output: Path, contexts: tuple[str, ...]
+    ) -> None:
+        """Write CONTEXTS from the kubeconfig to OUTPUT."""
+        kubeconfig.extract(output.expanduser(), contexts)
+
+    @cli.command("merge")
+    @click.argument(
+        "sources", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path)
+    )
+    @click.pass_obj
+    def cmd_merge(kubeconfig: Kubeconfig, sources: tuple[Path, ...]) -> None:
+        """Merge kubeconfig files, or every YAML file of a directory, into the kubeconfig."""
+        kubeconfig.merge(list(sources))
+
+    @cli.group("rancher")
+    def rancher() -> None:
+        """Rancher clusters, one kubeconfig file each under ~/.kube/rancher (or ~/.kube/rancher-readonly)."""
+
+    @rancher.command("ls")
+    @click.option(
+        "-r", "--readonly", is_flag=True, help="List what the read-only token sees."
+    )
+    @click.option(
+        "--token-env",
+        default="AGENTS_KUBERNETES_TOKEN",
+        show_default=True,
+        help="Read-only token variable.",
+    )
+    def cmd_rancher_ls(readonly: bool, token_env: str) -> None:
+        """List the Rancher clusters."""
+        with (
+            Rancher.readonly(Kf.RANCHER_URL, token_env)
+            if readonly
+            else _plain() as rancher
+        ):
+            table = Table()
+            table.add_column("cluster")
+            table.add_column("id")
+            for name, cluster_id in sorted(rancher.clusters().items()):
+                table.add_row(name, cluster_id)
+            console.print(table)
+
+    @rancher.command("extract")
+    @click.argument("clusters", nargs=-1, shell_complete=_complete_clusters)
+    @click.option(
+        "-a", "--all", "every", is_flag=True, help="Every cluster the login can see."
+    )
+    @click.option(
+        "-r",
+        "--readonly",
+        is_flag=True,
+        help="Use the read-only token instead of your Rancher login.",
+    )
+    @click.option(
+        "--token-env",
+        default="AGENTS_KUBERNETES_TOKEN",
+        show_default=True,
+        help="Read-only token variable.",
+    )
+    @click.option(
+        "-m",
+        "--merge",
+        is_flag=True,
+        help="Merge the extracted files into the kubeconfig.",
+    )
+    @click.option(
+        "-s",
+        "--switch",
+        is_flag=True,
+        help="Switch to the cluster's context; one cluster only.",
+    )
+    @click.pass_obj
+    def cmd_rancher_extract(
+        kubeconfig: Kubeconfig,
+        clusters: tuple[str, ...],
+        every: bool,
+        readonly: bool,
+        token_env: str,
+        merge: bool,
+        switch: bool,
+    ) -> None:
+        """Write each cluster's kubeconfig to its own file, then optionally merge them.
+
+        \b
+        kf rancher extract -m neutrino rubik
+        kf -k ~/.kube/config-readonly rancher extract -r -a -m
+        """
+        if not clusters and not every:
+            raise click.UsageError("name clusters or pass --all")
+        directory = Kf.READONLY_DIR if readonly else Kf.RANCHER_DIR
+        written = []
+        failed = False
+        with (
+            Rancher.readonly(Kf.RANCHER_URL, token_env)
+            if readonly
+            else _plain() as rancher
+        ):
+            known = rancher.clusters()
+            for name in sorted(known) if every else clusters:
+                if name not in known:
+                    log.error("no Rancher cluster %s", name)
+                    failed = True
+                    continue
+                output = directory / f"{name}.yaml"
+                if kubeconfig.dry_run:
+                    log.info("would write %s", output)
+                    continue
+                directory.mkdir(parents=True, exist_ok=True)
+                output.write_text(rancher.kubeconfig(known[name]))
+                output.chmod(0o600)
+                console.print(f"Wrote [bold]{name}[/] to {output}")
+                written.append(output)
+
+        if merge and written:
+            kubeconfig.merge(written)
+        if switch and len(written) == 1:
+            kubeconfig.edit("config", "use-context", written[0].stem)
+            console.print(f"Switched to [bold]{written[0].stem}[/]")
+        if failed:
+            raise SystemExit(1)
+
+    @rancher.command("rm")
+    @click.argument(
+        "clusters", nargs=-1, required=True, shell_complete=_complete_clusters
+    )
+    @click.option(
+        "-r", "--readonly", is_flag=True, help="Remove from ~/.kube/rancher-readonly."
+    )
+    def cmd_rancher_rm(clusters: tuple[str, ...], readonly: bool) -> None:
+        """Remove extracted cluster files."""
+        for name in clusters:
+            output = (Kf.READONLY_DIR if readonly else Kf.RANCHER_DIR) / f"{name}.yaml"
+            if not output.is_file():
+                log.error("not a kubeconfig: %s", output)
+                continue
+            output.unlink()
+            console.print(f"Removed {output}")
+
+    @cli.command("completion")
+    @click.argument("shell", type=click.Choice(["zsh"]), default="zsh")
+    @click.pass_context
+    def cmd_completion(ctx: click.Context, shell: str) -> None:
+        """Print the shell completion script."""
+        completion = get_completion_class(shell)
+        prog = ctx.find_root().info_name or "kf"
+        variable = f"_{prog.replace('-', '_').replace('.', '_').upper()}_COMPLETE"
+        click.echo(completion(ctx.find_root().command, {}, prog, variable).source())
+
+
+@contextmanager
+def _plain() -> Iterator[Rancher]:
+    yield Rancher()
+
+
+if __name__ == "__main__":
+    Kf.cli()
