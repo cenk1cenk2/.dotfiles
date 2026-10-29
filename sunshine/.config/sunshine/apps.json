@@ -10,6 +10,10 @@
         {
           "do": "$(HOME)/.config/hypr/scripts/virtual-display.py start --name SUNSHINE --client-scale emanet=2 --reveal",
           "undo": "$(HOME)/.config/hypr/scripts/virtual-display.py stop --name SUNSHINE"
+        },
+        {
+          "do": "$(HOME)/.config/hypr/scripts/virtual-audio.py start --name SUNSHINE",
+          "undo": "$(HOME)/.config/hypr/scripts/virtual-audio.py stop --name SUNSHINE"
         }
       ],
       "wait-all": false
