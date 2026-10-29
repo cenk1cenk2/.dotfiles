@@ -11,8 +11,8 @@ Headless outputs carry no description, so the monitor profiles never sweep
 one into an `ANY` disable rule.
 
 `--reveal` lifts the `no_screen_share` rules `screen-share.lua` keeps, so a
-remote desktop stream shows the windows a screen share hides; `stop` always
-puts them back."""
+remote desktop stream shows the windows a screen share hides; that display's
+`stop` puts them back."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 import click
 from dotlib.cli import create_logger
@@ -38,6 +39,13 @@ class VirtualDisplay:
     def __init__(self, hypr: Hyprctl, name: str):
         self._hypr = hypr
         self.name = name
+        # Marks that this display lifted the hiding, so only its own stop puts
+        # it back: stopping another virtual display must not re-hide windows
+        # in a stream that is still running.
+        self._revealed = (
+            Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+            / f"virtual-display-{name}.revealed"
+        )
 
     def monitor(self) -> dict | None:
         for m in self._hypr.query("monitors", "all") or []:
@@ -85,9 +93,12 @@ class VirtualDisplay:
         self._hypr.dispatch(f'hl.dsp.focus({{ monitor = "{self.name}" }})')
         if reveal:
             self.screen_share_hidden(False)
+            self._revealed.touch()
 
     def stop(self) -> None:
-        self.screen_share_hidden(True)
+        if self._revealed.exists():
+            self.screen_share_hidden(True)
+            self._revealed.unlink()
         if not self.exists():
             self.log.info("%s already gone", self.name)
             return
