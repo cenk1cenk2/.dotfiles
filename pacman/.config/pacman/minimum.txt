@@ -162,3 +162,4 @@ xsettingsd
 yay
 zathura
 zathura-pdf-poppler
+zram-generator
