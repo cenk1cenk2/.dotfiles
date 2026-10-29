@@ -1302,7 +1302,7 @@ class Tdp:
         if proc.stdout.strip():
             self.console.print(Text(proc.stdout.rstrip()))
 
-    def battery_backend(self) -> BatteryBackend:
+    def detect_battery_backend(self) -> BatteryBackend | None:
         backends: list[type[ThresholdBattery | IdeapadConservationBattery]] = [
             ThresholdBattery,
             IdeapadConservationBattery,
@@ -1320,12 +1320,17 @@ class Tdp:
                     backend_cls.__name__,
                     type(chosen).__name__,
                 )
-        if chosen is None:
+
+        return chosen
+
+    def battery_backend(self) -> BatteryBackend:
+        backend = self.detect_battery_backend()
+        if backend is None:
             raise click.ClickException(
                 "No supported battery charge-limit interface found."
             )
 
-        return chosen
+        return backend
 
     def battery_device(self) -> Path | None:
         candidates = sorted(self.POWER_SUPPLY_PATH.glob("BAT*"))
@@ -1357,6 +1362,19 @@ class Tdp:
                     (
                         f"{health:.0f}% "
                         f"({energy_full / 1e6:.1f}/{energy_design / 1e6:.1f} Wh)"
+                    ),
+                )
+            )
+        charge_full = num("charge_full")
+        charge_design = num("charge_full_design")
+        if not (energy_full and energy_design) and charge_full and charge_design:
+            health = charge_full / charge_design * 100
+            rows.append(
+                (
+                    "Health",
+                    (
+                        f"{health:.0f}% "
+                        f"({charge_full / 1e3:.0f}/{charge_design / 1e3:.0f} mAh)"
                     ),
                 )
             )
@@ -1446,17 +1464,23 @@ class Tdp:
         return current, choices
 
     def show_battery(self) -> None:
-        status = self.battery_backend().status()
+        backend = self.detect_battery_backend()
         self.console.rule("[bold yellow]Battery charge limit[/]")
-        self.console.print(f"Backend: [bold]{status.backend}[/]")
-        self.console.print(f"Limit: [bold]{status.limit}[/]")
+        if backend is None:
+            self.console.print(
+                "No charge-limit interface found, limit is not settable."
+            )
+        else:
+            status = backend.status()
+            self.console.print(f"Backend: [bold]{status.backend}[/]")
+            self.console.print(f"Limit: [bold]{status.limit}[/]")
 
-        table = Table(box=None)
-        table.add_column("Field", style="bold")
-        table.add_column("Value")
-        for field, value in status.rows:
-            table.add_row(field, value)
-        self.console.print(table)
+            table = Table(box=None)
+            table.add_column("Field", style="bold")
+            table.add_column("Value")
+            for field, value in status.rows:
+                table.add_row(field, value)
+            self.console.print(table)
 
         device = self.battery_device()
         if device is not None:
