@@ -19,6 +19,13 @@ hl.bind(("%s + SHIFT + Return"):format(d.mod), hl.dsp.exec_cmd(d.term.default))
 hl.bind(("%s + SHIFT + Q"):format(d.mod), hl.dsp.window.close())
 hl.bind(("%s + CTRL + SHIFT + W"):format(d.mod), hl.dsp.exec_cmd("hyprctl reload"))
 hl.bind(("%s + CTRL + SHIFT + E"):format(d.mod), hl.dsp.exec_cmd(d.shutdown))
+-- key_press_enables_dpms wakes on any key event, releases included, so the
+-- outputs go off only once the bind's keys are up.
+hl.bind(("%s + CTRL + SHIFT + D"):format(d.mod), function()
+  hl.timer(function()
+    hl.dispatch(hl.dsp.dpms({ action = "off" }))
+  end, { timeout = 500, type = "oneshot" })
+end)
 
 -- Launchers
 hl.bind(("%s + Space"):format(d.mod), hl.dsp.exec_cmd(d.menu))
