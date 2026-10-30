@@ -22,7 +22,7 @@ hl.config({
 for _, name in ipairs({ "--mouse-for-windows-2", "--mouse-for-windows-3" }) do
   hl.device({
     name = name,
-    accel_profile = "custom 1 0 2",
+    accel_profile = "custom 1 0 2.4",
     scroll_factor = 1.5,
   })
 end
