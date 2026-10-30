@@ -5,6 +5,7 @@ hyprland
 hyprland-qt-support
 hyprlock
 hyprpaper
+hyprpicker
 hyprpolkitagent
 hyprpwcenter
 hyprshutdown

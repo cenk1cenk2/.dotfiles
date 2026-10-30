@@ -167,6 +167,10 @@ USER_PATHS = [
     ),
     # input-remapper's own xdg autostart entry already runs the autoload
     *stale("~/.config/systemd/user/input-remapper-autoload.service"),
+    # grimshot.sh, replaced by screenshot.py
+    *stale("~/.config/hypr/scripts/grimshot.sh"),
+    # install-plugins.sh, an empty hyprpm list nothing ran any more
+    *stale("~/.config/hypr/scripts/install-plugins.sh"),
     # a stow run from the wrong directory linked playerctl-waybar.service
     # under ~/systemd instead of ~/.config/systemd/user
     *stale("~/systemd"),

@@ -60,23 +60,23 @@ M.workspaces = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }
 
 -- Screenshot tools
 M.screenshot = {}
-M.screenshot.grimshot = "~/.config/hypr/scripts/grimshot.sh"
+M.screenshot.script = "~/.config/hypr/scripts/screenshot.py"
 M.screenshot.screen = {
-  clipboard = M.screenshot.grimshot .. " --notify copy output",
-  file = M.screenshot.grimshot .. " --notify save output",
-  edit = M.screenshot.grimshot .. " --notify save output - | swappy -f -",
+  clipboard = M.screenshot.script .." --notify copy output",
+  file = M.screenshot.script .." --notify save output",
+  edit = M.screenshot.script .." --notify save output - | swappy -f -",
 }
 M.screenshot.selection = {
-  clipboard = M.screenshot.grimshot .. " --notify copy area",
-  file = M.screenshot.grimshot .. " --notify save area",
-  edit = M.screenshot.grimshot .. " --notify save area - | swappy -f -",
+  clipboard = M.screenshot.script .." --notify copy area",
+  file = M.screenshot.script .." --notify save area",
+  edit = M.screenshot.script .." --notify save area - | swappy -f -",
 }
 M.screenshot.window = {
-  clipboard = M.screenshot.grimshot .. " --notify copy active",
-  file = M.screenshot.grimshot .. " --notify save active",
-  edit = M.screenshot.grimshot .. " --notify save active - | swappy -f -",
+  clipboard = M.screenshot.script .." --notify copy active",
+  file = M.screenshot.script .." --notify save active",
+  edit = M.screenshot.script .." --notify save active - | swappy -f -",
 }
-M.screenshot.snipping_tool = M.screenshot.grimshot .. " --notify save area - | swappy -f -"
+M.screenshot.snipping_tool = M.screenshot.script .." --notify save area - | swappy -f -"
 
 -- On-screen display (monitor-aware). swayosd-client has no
 -- focused-monitor flag, so the target is resolved per keypress —

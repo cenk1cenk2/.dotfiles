@@ -252,7 +252,7 @@ The following scripts still need migration:
 The following scripts have been successfully ported to Hyprland:
 
 - ✅ `recorder.py` - Screen recording with wl-screenrec
-- ✅ `grimshot.py` - Screenshot utility using hyprctl instead of swaymsg
+- ✅ `screenshot.py` - Screenshot utility using hyprctl instead of swaymsg
 - ✅ `display-profile.py` - Monitor profile switching using kanshictl (compositor-agnostic)
 - ✅ `new-workspace.py` - Replaced with native Hyprland `empty` workspace dispatcher
 
