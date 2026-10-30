@@ -41,7 +41,6 @@ gnupg
 greetd
 greetd-tuigreet
 grim
-grub
 gst-plugin-pipewire
 gvfs
 gvfs-mtp
@@ -95,7 +94,6 @@ pipewire-pulse
 playerctl
 polkit-gnome
 poweralertd
-qt5-styleplugins
 qt5-wayland
 rclone
 rebuild-detector
