@@ -322,13 +322,19 @@ local function gesture(spec)
 end
 
 -- Moonlight forwards no touchpad gestures, so a stream window gets the host's
--- keybind for the same action instead.
+-- keybind for the same action instead. Sunshine synthesizes Shift, Ctrl and Alt
+-- from the forwarded modifier flags but never Super, so Super_L is pressed as a
+-- key of its own around the shortcut; Moonlight only forwards it while it
+-- captures system keys.
 local function moonlight(mods, key)
   return {
     class = "^com%.moonlight_stream%.Moonlight$",
     title = ".+ %- Moonlight$",
     action = function(window)
-      hl.dispatch(hl.dsp.send_shortcut({ mods = mods, key = key, window = "address:" .. window.address }))
+      local target = "address:" .. window.address
+      hl.dispatch(hl.dsp.send_key_state({ mods = "SUPER", key = "Super_L", state = "down", window = target }))
+      hl.dispatch(hl.dsp.send_shortcut({ mods = mods, key = key, window = target }))
+      hl.dispatch(hl.dsp.send_key_state({ mods = "", key = "Super_L", state = "up", window = target }))
     end,
   }
 end
