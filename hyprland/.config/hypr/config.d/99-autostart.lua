@@ -10,7 +10,6 @@ local services = {
   "kanshi.service",
   "clipse.service",
   "poweralertd.service",
-  "input-remapper-autoload.service",
   "wayland-pipewire-idle-inhibit.service",
   "pimsync.service",
   "tailscale-systray.service",

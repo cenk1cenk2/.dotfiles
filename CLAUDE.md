@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Repository knowledge base for agent sessions. Scope today: Python
-script conventions, waybar, kitty and OBS configuration, agent
+script conventions, waybar, kitty, OBS and input-remapper configuration, agent
 notification hooks and state sync, and NVIDIA dGPU runtime power. The
 claude, codex, opencode and hyprpilot stow packages live in
 `~/.agents/config/`; their rules are in `~/.agents/CLAUDE.md`. Everything below is an established rule — apply it to
@@ -50,6 +50,26 @@ not automatically dead — see the kitty section.
   plaintext `username=` / `password=`, named to sit beside the `/mnt/norsu`
   tree it unlocks, and written by hand on a rebuilt machine. Every mount fails
   with a permission error until it exists.
+
+## input-remapper
+
+- **The package carries presets, never enablement.** Each machine opts in by
+  hand: install `input-remapper` and `sudo systemctl enable --now
+  input-remapper.service`. Autoload needs no unit of ours: the Arch package's
+  `/etc/xdg/autostart/input-remapper-autoload.desktop` runs at every login,
+  through uwsm's xdg-autostart generator.
+- **Presets are portable across machines.** A mapping's `origin_hash` is md5 of
+  the device's capabilities plus its name (`get_device_hash` in
+  `inputremapper/utils.py`), not its USB path, so a preset applies to that
+  model wherever it is plugged in and is inert where it is absent. Preset
+  folders are named after the device, leading spaces included
+  (`  Mouse for Windows`).
+- **Stow only `config.json` and deliberate presets.** The app writes both in
+  place, through the symlink, so a GUI edit shows up as a repo diff. A GUI
+  preset rename moves the symlink itself, leaving the repo behind.
+  `xmodmap.json` is regenerated from the active keyboard layout on every
+  daemon start, and the GUI leaves an empty `new preset.json` for every device
+  it was opened on; neither belongs in the repo.
 
 ## NVIDIA dGPU runtime power (hybrid profile, RTX 5070 / nvidia-open)
 

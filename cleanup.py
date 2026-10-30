@@ -165,6 +165,8 @@ USER_PATHS = [
         "~/.local/share/fonts/TTF/Consolasligaturizedv3-Italic.ttf",
         "~/.local/share/fonts/TTF/Consolasligaturizedv3-BoldItalic.ttf",
     ),
+    # input-remapper's own xdg autostart entry already runs the autoload
+    *stale("~/.config/systemd/user/input-remapper-autoload.service"),
     # a stow run from the wrong directory linked playerctl-waybar.service
     # under ~/systemd instead of ~/.config/systemd/user
     *stale("~/systemd"),
