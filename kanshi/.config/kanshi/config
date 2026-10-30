@@ -19,21 +19,21 @@ profile stream-main {
 
 # gpd only
 profile gpd {
-    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 2.0 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 0,0 scale 1.6667 transform normal adaptive_sync off
     exec notify-send kanshi "Profile gpd has been applied."
 }
 
 # gpd with portable monitor (XG17A)
 profile gpd-xg17a {
     output "ASUSTek COMPUTER INC ASUS XG17A 0x000179A5" enable mode 1920x1080@239.964Hz position 0,0 scale 1.0 transform normal adaptive_sync off
-    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 2.0 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 350,1080 scale 1.6667 transform normal adaptive_sync off
     exec notify-send kanshi "Profile gpd-xg17a has been applied."
 }
 
 # gpd with portable monitor (MB16QHG)
 profile gpd-mb16 {
     output "ASUSTek COMPUTER INC MB16QHG T6LMTF161825" enable mode 2560x1600@119.963Hz position 0,0 scale 1.333 transform normal adaptive_sync off
-    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 300,1200 scale 2.0 transform normal adaptive_sync off
+    output "Japan Display Inc. GPD1001H 0x00000001" enable mode 2560x1600@60.009Hz position 300,1200 scale 1.6667 transform normal adaptive_sync off
     exec notify-send kanshi "Profile gpd-mb16 has been applied."
 }
 
