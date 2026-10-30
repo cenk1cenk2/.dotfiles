@@ -1,0 +1,5 @@
+# Inspiroy Frego M over bluetooth reports its upper pen button as a secondary
+# tip switch, which hid-input maps to BTN_TOUCH, so a hovering press reads as
+# the nib touching down.
+evdev:input:b0005v256Cp8251*
+ KEYBOARD_KEY_d0043=btn_stylus2

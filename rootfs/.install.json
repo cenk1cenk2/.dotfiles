@@ -17,6 +17,7 @@
   ],
   "post": [
     ["systemctl", "daemon-reload"],
+    ["systemd-hwdb", "update"],
     ["udevadm", "control", "--reload"],
     ["sysctl", "--system"],
     [
