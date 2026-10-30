@@ -106,6 +106,7 @@ tasks:
             xsettingsd
             zathura
       - ./install.py obs opendeck
+      - update-desktop-database ~/.local/share/applications
       - systemctl --user daemon-reload
       - systemctl --user enable --now --no-block wayland-theme.service xsettingsd.service waybar@hyprland.service
 
