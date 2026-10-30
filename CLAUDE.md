@@ -160,6 +160,11 @@ these need re-checking.
   links, stale system files, enablement of retired units, networkd on a
   NetworkManager host). It is a dry run by default; `./cleanup.py -y` applies.
   Run it on each machine after pulling, and again when the script changes.
+  It never installs or removes packages: it prints the `yay` commands instead,
+  for what the adopted `pacman/*.txt` lists are missing (a list counts once
+  more than half of it is installed) and for `RETIRED_PACKAGES` still present.
+  A package dropped from a list goes into `RETIRED_PACKAGES`, or machines that
+  already have it keep it.
 - **Only tracked files are installed**, because the file list is `git ls-files`
   over the package. A file written but never `git add`ed is skipped in silence
   and the run still reports success, since nothing failed — it just had nothing

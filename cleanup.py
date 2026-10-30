@@ -199,6 +199,35 @@ SYSTEM_PATHS = [
     ),
 ]
 
+PACKAGE_LISTS = REPO / "pacman/.config/pacman"
+# A list counts as this machine's once more than this share of it is
+# installed, so the GPU and gaming lists apply only where they were adopted.
+ADOPTED_SHARE = 0.5
+# Packages a migration replaced. Dropping a name from a list only stops new
+# installs; machines that already have it keep it until removed by hand.
+RETIRED_PACKAGES = (
+    # the sway stack
+    "autotiling-rs",
+    "nwg-wrapper",
+    "sway",
+    "sway-audio-idle-inhibit-git",
+    "swaybg",
+    "swaycwd",
+    "swayidle",
+    "swaylock-effects-git",
+    "swayr",
+    "sworkstyle",
+    "wl-gammarelay-rs",
+    # hypr-zoom, replaced by the native cursor zoom
+    "hypr-zoom",
+    # hyprwhspr, replaced by speech.py's own capture
+    "hyprwhspr",
+    # ydotool, replaced by wtype
+    "ydotool",
+    # wayfreeze, replaced by hyprpicker as the screenshot freeze
+    "wayfreeze-git",
+)
+
 # NetworkManager owns the interfaces on hosts that enable it, so networkd's
 # per-interface files for them are stale as well.
 NETWORKD_UNITS = (
@@ -339,6 +368,39 @@ class Cleaner:
         # networkd is off by now, applied or planned.
         self.drop_all([Entry(Path(p), False) for p in NETWORKD_FILES], True)
 
+    def packages(self) -> None:
+        """Print the yay commands that bring this machine in line with the
+        lists. Report only: package changes are never applied here."""
+        if not self.run("which", "pacman", check=False).stdout:
+            log.info("  no pacman, skipped")
+            return
+
+        install = []
+        for path in sorted(PACKAGE_LISTS.glob("*.txt")):
+            listed = [
+                line.strip()
+                for line in path.read_text().splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+            # pacman -T prints what is not satisfied, so a package provided
+            # under another name (a -git build) counts as installed.
+            missing = self.run("pacman", "-T", *listed, check=False).stdout.split()
+            if len(listed) - len(missing) <= len(listed) * ADOPTED_SHARE:
+                log.info("  not adopted: %s", path.name)
+                continue
+            log.info("  %s: %d missing", path.name, len(missing))
+            install.extend(p for p in missing if p not in install)
+
+        installed = set(self.run("pacman", "-Qq").stdout.split())
+        remove = [p for p in RETIRED_PACKAGES if p in installed]
+
+        if install:
+            log.info("  run: yay -S --needed %s", " ".join(install))
+        if remove:
+            log.info("  run: yay -Rns %s", " ".join(remove))
+        if not install and not remove:
+            log.info("  packages match the lists")
+
     def run_all(self) -> None:
         log.info("== deployed symlinks from retired packages")
         self.drop_all(USER_PATHS, False)
@@ -354,6 +416,9 @@ class Cleaner:
 
         log.info("\n== systemd-networkd on a NetworkManager host")
         self.networkd()
+
+        log.info("\n== packages against the pacman lists (report only)")
+        self.packages()
 
         log.info("")
         if not self.apply:
