@@ -6,7 +6,8 @@ peer over ssh and starts an RTP sender there that captures its default
 source. Both are transient user units, so `stop` is a unit stop on each side.
 The peer falls back to Sunshine's `SUNSHINE_CLIENT_NAME`, which it exports to
 an app's prep commands, so a stream carries the client's microphone back to
-the host the way it carries the host's audio to the client.
+the host the way it carries the host's audio to the client. A peer that ssh
+cannot reach is skipped with a warning, so a client without one still streams.
 
 `start` makes the new source the default and `stop` puts the previous one
 back."""
@@ -16,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -90,7 +92,13 @@ context.modules = [
     def start(self, peer: str, port: int) -> None:
         # The address the peer sees this machine on is the one it can send to,
         # whichever interface or VPN the ssh connection took.
-        destination = self.ssh(peer, 'echo "$SSH_CONNECTION"').split()[0]
+        # A peer without ssh (a phone) has no microphone to offer; failing
+        # here would make Sunshine undo the whole prep chain, display included.
+        try:
+            destination = self.ssh(peer, 'echo "$SSH_CONNECTION"').split()[0]
+        except subprocess.CalledProcessError:
+            self.log.warning("%s is not reachable over ssh, skipping microphone", peer)
+            return
         self.log.info("receiving %s microphone on port %d", peer, port)
 
         self.stop_unit()
