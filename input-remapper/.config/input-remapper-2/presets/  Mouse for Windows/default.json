@@ -135,25 +135,6 @@
         "input_combination": [
             {
                 "type": 1,
-                "code": 274,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff"
-            },
-            {
-                "type": 2,
-                "code": 1,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff"
-            }
-        ],
-        "target_uinput": "mouse",
-        "output_type": 2,
-        "output_code": 8,
-        "gain": -1.0,
-        "mapping_type": "analog"
-    },
-    {
-        "input_combination": [
-            {
-                "type": 1,
                 "code": 11,
                 "origin_hash": "4c8594d1c76f5205db5f02c3ce5b724d"
             }
