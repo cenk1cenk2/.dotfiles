@@ -16,12 +16,16 @@ hl.config({
 })
 
 -- Device-specific configurations
-hl.device({
-  name = "mouse-for-windows",
-  accel_profile = "adaptive",
-  sensitivity = 1.0,
-  scroll_factor = 1.5,
-})
+
+-- input-remapper forwards the grabbed mouse through a copy with the same name;
+-- it takes "-2" or "-3" depending on whether its keyboard copy came up first
+for _, name in ipairs({ "--mouse-for-windows-2", "--mouse-for-windows-3" }) do
+  hl.device({
+    name = name,
+    accel_profile = "custom 1 0 2",
+    scroll_factor = 1.5,
+  })
+end
 
 hl.device({
   name = "orbit-bt5.0-mouse",
