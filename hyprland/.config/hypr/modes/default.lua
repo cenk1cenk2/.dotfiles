@@ -275,6 +275,10 @@ hl.bind(("%s + F5"):format(d.mod), hl.dsp.exec_cmd("jumpy display aux"))
 hl.bind(("%s + F6"):format(d.mod), hl.dsp.exec_cmd("jumpy display aux-dual"))
 hl.bind(("%s + F9"):format(d.mod), hl.dsp.exec_cmd("jumpy display tv"))
 hl.bind(("%s + F10"):format(d.mod), hl.dsp.exec_cmd("jumpy display tv-4k"))
+hl.bind(
+  ("%s + F11"):format(d.mod),
+  hl.dsp.exec_cmd("curl -skf --netrc-file ~/.config/sunshine/netrc -X POST https://localhost:47990/api/apps/close")
+)
 hl.bind(("%s + F12"):format(d.mod), hl.dsp.exec_cmd("jumpy display reload"))
 
 -- gestures
