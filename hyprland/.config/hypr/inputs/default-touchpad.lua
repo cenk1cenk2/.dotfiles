@@ -29,13 +29,11 @@ hl.device({
   sensitivity = 0.0,
 })
 
--- emanet touchpad: libinput only takes a scroll curve under the custom
--- profile, so the pointer is a straight line at the 1.5x the flat profile
--- gave it with sensitivity 0.5.
+-- emanet touchpad
 hl.device({
   name = "pnp0c50:00-093a:0255-touchpad",
-  accel_profile = "custom 1 0 1.5",
-  scroll_points = "1 0 1",
+  accel_profile = "flat",
+  sensitivity = 0.5,
   scroll_factor = 1.0,
 })
 
