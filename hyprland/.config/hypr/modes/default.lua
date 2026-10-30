@@ -288,10 +288,67 @@ hl.config({
   },
 })
 
-hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
-hl.gesture({ fingers = 3, direction = "down", action = toggle_scratch })
-hl.gesture({
+-- hl.gesture with per-window overrides: the first `windows` entry whose class
+-- and title patterns match the active window runs instead of `action`. Without
+-- overrides the spec goes through untouched, so builtin actions keep working.
+local function gesture(spec)
+  if not spec.windows then
+    hl.gesture(spec)
+    return
+  end
+
+  hl.gesture({
+    fingers = spec.fingers,
+    direction = spec.direction,
+    action = function()
+      local active = hl.get_active_window()
+      for _, override in ipairs(spec.windows) do
+        if active and active.class:match(override.class) and active.title:match(override.title or "") then
+          override.action(active)
+          return
+        end
+      end
+
+      hl.dispatch(spec.action)
+    end,
+  })
+end
+
+-- Moonlight forwards no touchpad gestures, so a stream window gets the host's
+-- keybind for the same action instead.
+local function moonlight(mods, key)
+  return {
+    class = "^com%.moonlight_stream%.Moonlight$",
+    title = ".+ %- Moonlight$",
+    action = function(window)
+      hl.dispatch(hl.dsp.send_shortcut({ mods = mods, key = key, window = "address:" .. window.address }))
+    end,
+  }
+end
+
+-- Overrides need discrete left/right gestures, which costs the animated
+-- workspace swipe. workspace_swipe_invert = false: fingers left go back.
+gesture({
+  fingers = 3,
+  direction = "left",
+  action = hl.dsp.focus({ workspace = "m-1" }),
+  windows = { moonlight(("%s + CTRL"):format(d.mod), "left") },
+})
+gesture({
+  fingers = 3,
+  direction = "right",
+  action = hl.dsp.focus({ workspace = "m+1" }),
+  windows = { moonlight(("%s + CTRL"):format(d.mod), "right") },
+})
+gesture({
+  fingers = 3,
+  direction = "down",
+  action = toggle_scratch,
+  windows = { moonlight(d.mod, "D") },
+})
+gesture({
   fingers = 3,
   direction = "up",
   action = toggle_scratch_window,
+  windows = { moonlight(("%s + SHIFT"):format(d.mod), "D") },
 })
