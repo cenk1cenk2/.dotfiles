@@ -110,44 +110,6 @@
     {
         "input_combination": [
             {
-                "type": 2,
-                "code": 8,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff",
-                "analog_threshold": 1
-            },
-            {
-                "type": 2,
-                "code": 11,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff",
-                "analog_threshold": 1
-            }
-        ],
-        "target_uinput": "keyboard",
-        "output_symbol": "KEY_PAGEUP",
-        "mapping_type": "key_macro"
-    },
-    {
-        "input_combination": [
-            {
-                "type": 2,
-                "code": 8,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff",
-                "analog_threshold": -1
-            },
-            {
-                "type": 2,
-                "code": 11,
-                "origin_hash": "b0a26581de2e7aec51c919a597553fff",
-                "analog_threshold": -1
-            }
-        ],
-        "target_uinput": "keyboard",
-        "output_symbol": "KEY_PAGEDOWN",
-        "mapping_type": "key_macro"
-    },
-    {
-        "input_combination": [
-            {
                 "type": 1,
                 "code": 273,
                 "origin_hash": "b0a26581de2e7aec51c919a597553fff"
@@ -198,6 +160,30 @@
         ],
         "target_uinput": "gamepad",
         "output_symbol": "BTN_THUMBR",
+        "mapping_type": "key_macro"
+    },
+    {
+        "input_combination": [
+            {
+                "type": 1,
+                "code": 102,
+                "origin_hash": "4c8594d1c76f5205db5f02c3ce5b724d"
+            }
+        ],
+        "target_uinput": "mouse",
+        "output_symbol": "wheel(left, 1)",
+        "mapping_type": "key_macro"
+    },
+    {
+        "input_combination": [
+            {
+                "type": 1,
+                "code": 107,
+                "origin_hash": "4c8594d1c76f5205db5f02c3ce5b724d"
+            }
+        ],
+        "target_uinput": "mouse",
+        "output_symbol": "wheel(right, 1)",
         "mapping_type": "key_macro"
     }
 ]
