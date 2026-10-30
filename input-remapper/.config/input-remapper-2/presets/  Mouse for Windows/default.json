@@ -166,5 +166,17 @@
         "target_uinput": "mouse",
         "output_symbol": "wheel(right, 1)",
         "mapping_type": "key_macro"
+    },
+    {
+        "input_combination": [
+            {
+                "type": 1,
+                "code": 274,
+                "origin_hash": "b0a26581de2e7aec51c919a597553fff"
+            }
+        ],
+        "target_uinput": "mouse",
+        "output_symbol": "disable",
+        "mapping_type": "key_macro"
     }
 ]
