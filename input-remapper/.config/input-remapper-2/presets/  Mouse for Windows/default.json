@@ -152,7 +152,7 @@
             }
         ],
         "target_uinput": "mouse",
-        "output_symbol": "wheel(left, 1)",
+        "output_symbol": "wheel(left, 60)",
         "mapping_type": "key_macro"
     },
     {
@@ -164,7 +164,7 @@
             }
         ],
         "target_uinput": "mouse",
-        "output_symbol": "wheel(right, 1)",
+        "output_symbol": "wheel(right, 60)",
         "mapping_type": "key_macro"
     },
     {
