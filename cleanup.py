@@ -203,30 +203,9 @@ PACKAGE_LISTS = REPO / "pacman/.config/pacman"
 # A list counts as this machine's once more than this share of it is
 # installed, so the GPU and gaming lists apply only where they were adopted.
 ADOPTED_SHARE = 0.5
-# Packages a migration replaced. Dropping a name from a list only stops new
-# installs; machines that already have it keep it until removed by hand.
-RETIRED_PACKAGES = (
-    # the sway stack
-    "autotiling-rs",
-    "nwg-wrapper",
-    "sway",
-    "sway-audio-idle-inhibit-git",
-    "swaybg",
-    "swaycwd",
-    "swayidle",
-    "swaylock-effects-git",
-    "swayr",
-    "sworkstyle",
-    "wl-gammarelay-rs",
-    # hypr-zoom, replaced by the native cursor zoom
-    "hypr-zoom",
-    # hyprwhspr, replaced by speech.py's own capture
-    "hyprwhspr",
-    # ydotool, replaced by wtype
-    "ydotool",
-    # wayfreeze, replaced by hyprpicker as the screenshot freeze
-    "wayfreeze-git",
-)
+# Packages dropped from the lists. Dropping a name only stops new installs;
+# machines that already have it keep it until removed by hand.
+REMOVED_PACKAGES = PACKAGE_LISTS / "removed.log"
 
 # NetworkManager owns the interfaces on hosts that enable it, so networkd's
 # per-interface files for them are stale as well.
@@ -392,7 +371,7 @@ class Cleaner:
             install.extend(p for p in missing if p not in install)
 
         installed = set(self.run("pacman", "-Qq").stdout.split())
-        remove = [p for p in RETIRED_PACKAGES if p in installed]
+        remove = [p for p in REMOVED_PACKAGES.read_text().split() if p in installed]
 
         if install:
             log.info("  run: yay -S --needed %s", " ".join(install))

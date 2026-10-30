@@ -162,9 +162,20 @@ these need re-checking.
   Run it on each machine after pulling, and again when the script changes.
   It never installs or removes packages: it prints the `yay` commands instead,
   for what the adopted `pacman/*.txt` lists are missing (a list counts once
-  more than half of it is installed) and for `RETIRED_PACKAGES` still present.
-  A package dropped from a list goes into `RETIRED_PACKAGES`, or machines that
-  already have it keep it.
+  more than half of it is installed) and for packages in
+  `pacman/.config/pacman/removed.log` still present. The `.log` extension
+  keeps it out of the `*.txt` install lists.
+- **Every retirement records its cleanup in the same commit.** Neither stow,
+  `install.py` nor yay deletes anything, so a removal that only edits the repo
+  leaves every machine that already deployed it carrying the old copy:
+  - a stowed file removed or renamed: a `stale(...)` entry in `USER_PATHS`
+  - a file `install.py` copied under `/`: an entry in `SYSTEM_PATHS`
+  - a user unit that no longer ships: its enablement in `drop_enablement`
+  - a package dropped from every `pacman/*.txt` list: a line in `removed.log`.
+    Moving a package between lists is not a removal.
+
+  Prefer `stale` over `unconditional` unless nothing but this repo can ever
+  own the path, since `stale` keeps a real file an app wrote under that name.
 - **Only tracked files are installed**, because the file list is `git ls-files`
   over the package. A file written but never `git add`ed is skipped in silence
   and the run still reports success, since nothing failed — it just had nothing
