@@ -60,3 +60,24 @@ hl.device({
   middle_button_emulation = true,
   sensitivity = 0.0,
 })
+
+-- sunshine virtual devices: the client already accelerated relative motion,
+-- touch and pen coordinates are relative to the streamed headless output
+hl.device({
+  name = "libvirtualhid-mouse",
+  accel_profile = "flat",
+  sensitivity = 0.0,
+})
+
+hl.device({
+  name = "libvirtualhid-trackpad",
+  accel_profile = "flat",
+  sensitivity = 0.4,
+})
+
+for _, name in ipairs({ "libvirtualhid-touchscreen", "libvirtualhid-pen-tablet" }) do
+  hl.device({
+    name = name,
+    output = "SUNSHINE",
+  })
+end
