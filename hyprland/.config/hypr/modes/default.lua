@@ -295,7 +295,7 @@ hl.config({
     workspace_swipe_cancel_ratio = 0.5,
     workspace_swipe_min_speed_to_force = 25,
     workspace_swipe_create_new = false,
-    workspace_swipe_forever = true,
+    workspace_swipe_forever = false,
     workspace_swipe_invert = false,
     workspace_swipe_touch = true,
     workspace_swipe_touch_invert = false,
