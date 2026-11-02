@@ -291,9 +291,9 @@ hl.bind(("%s + F12"):format(d.mod), hl.dsp.exec_cmd("jumpy display reload"))
 -- gestures
 hl.config({
   gestures = {
-    workspace_swipe_distance = 200,
+    workspace_swipe_distance = 250,
     workspace_swipe_cancel_ratio = 0.5,
-    workspace_swipe_min_speed_to_force = 20,
+    workspace_swipe_min_speed_to_force = 25,
     workspace_swipe_create_new = false,
     workspace_swipe_forever = true,
     workspace_swipe_invert = false,
