@@ -7,7 +7,8 @@ Requires=geoclue-agent.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/geo-timezone update
-TimeoutStartSec=90
+SuccessExitStatus=75
+TimeoutStartSec=8min
 
 [Install]
 WantedBy=suspend.target

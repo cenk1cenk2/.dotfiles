@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -32,6 +33,15 @@ class GeoTimezone:
     ACCURACY_EXACT = 8
 
     FIX_TIMEOUT_MS = 45_000
+
+    # Right after boot or resume the link is up before geoclue can reach its
+    # backends, so the first fix routinely times out and a later one succeeds.
+    RETRY_BASE_S = 5
+    RETRIES = 4
+
+    # EX_TEMPFAIL, mapped to success by SuccessExitStatus= in the unit: the
+    # zone is left as it was, and the timer or the dispatcher tries again.
+    EX_TEMPFAIL = 75
 
     # When no WiFi access point is known to BeaconDB, geoclue falls back to
     # GeoIP, which resolves the exit node rather than us. Matched against the
@@ -231,14 +241,26 @@ class GeoTimezone:
     def cmd_update(self, dry_run: bool) -> None:
         current = self.current()
 
+        if self._egress() is None:
+            self._log(f"keeping {current}: no route")
+            sys.exit(self.EX_TEMPFAIL)
+
         if self._tunnelled():
             self._log(f"keeping {current}: {self._egress()} carries the route")
             return
 
         fix = self.locate()
+        for attempt in range(self.RETRIES):
+            if fix is not None:
+                break
+            delay = self.RETRY_BASE_S * 2**attempt
+            self._log(f"retrying in {delay}s")
+            time.sleep(delay)
+            fix = self.locate()
+
         if fix is None:
             self._log(f"keeping {current}: no location")
-            sys.exit(1)
+            sys.exit(self.EX_TEMPFAIL)
 
         lat, lon, accuracy = fix
         zone = self.zone_for(lat, lon)
