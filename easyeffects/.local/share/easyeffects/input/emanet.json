@@ -136,7 +136,7 @@
       "split-channels": false,
       "left": {
         "band0": {
-          "frequency": 100.0,
+          "frequency": 110.0,
           "gain": 0.0,
           "mode": "RLC (BT)",
           "mute": false,
@@ -146,18 +146,18 @@
           "type": "Hi-pass"
         },
         "band1": {
-          "frequency": 130.0,
-          "gain": -4.0,
+          "frequency": 115.0,
+          "gain": -7.0,
           "mode": "RLC (BT)",
           "mute": false,
-          "q": 1.2,
+          "q": 1.0,
           "slope": "x1",
           "solo": false,
           "type": "Bell"
         },
         "band2": {
-          "frequency": 250.0,
-          "gain": -3.0,
+          "frequency": 210.0,
+          "gain": -4.0,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 1.4,
@@ -166,7 +166,7 @@
           "type": "Bell"
         },
         "band3": {
-          "frequency": 600.0,
+          "frequency": 500.0,
           "gain": -3.0,
           "mode": "RLC (BT)",
           "mute": false,
@@ -178,7 +178,7 @@
       },
       "right": {
         "band0": {
-          "frequency": 100.0,
+          "frequency": 110.0,
           "gain": 0.0,
           "mode": "RLC (BT)",
           "mute": false,
@@ -188,18 +188,18 @@
           "type": "Hi-pass"
         },
         "band1": {
-          "frequency": 130.0,
-          "gain": -4.0,
+          "frequency": 115.0,
+          "gain": -7.0,
           "mode": "RLC (BT)",
           "mute": false,
-          "q": 1.2,
+          "q": 1.0,
           "slope": "x1",
           "solo": false,
           "type": "Bell"
         },
         "band2": {
-          "frequency": 250.0,
-          "gain": -3.0,
+          "frequency": 210.0,
+          "gain": -4.0,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 1.4,
@@ -208,7 +208,7 @@
           "type": "Bell"
         },
         "band3": {
-          "frequency": 600.0,
+          "frequency": 500.0,
           "gain": -3.0,
           "mode": "RLC (BT)",
           "mute": false,
