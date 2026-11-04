@@ -2,30 +2,68 @@
 
 * {
   background-image: none;
+  font-family: "Segoe UI";
+  box-shadow: none;
 }
 
+/* Hyprland blurs what is behind this layer (97-layer-rules.lua). */
 window {
-  background-color: @bg_color_alpha_900;
+  background-color: rgba(23, 25, 30, 0.8);
 }
 
 button {
-  color: @theme_text_color;
-  background-color: @bg_color_100;
-  border-style: solid;
-  border-width: 2px;
-  border-color: @bg_color_200;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 25%;
+  color: @bg_color_900;
+  font-size: 16px;
+  background-color: rgba(23, 25, 30, 0.95);
+  border: 2px solid @bg_color_400;
   border-radius: 0;
+  margin: 16px;
+  background-repeat: no-repeat;
+  background-position: center 40%;
+  background-size: 22%;
+  outline-style: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 button:focus,
-button:active,
-button:hover {
-  background-color: @bg_color;
-  border-color: @theme_selected_bg_color;
-  outline-style: none;
+button:hover,
+button:active {
+  color: @bright_text_color;
+  background-color: rgba(34, 40, 47, 0.95);
+  border-color: @bg_color_900;
+}
+
+/* Categories, from the nvim onedarker palette: session yellow, power red,
+   sleep blue. The bottom edge carries
+   the colour at rest; focus lights the whole border. */
+#lock,
+#logout {
+  border-bottom: 4px solid #e5c07b;
+}
+
+#suspend,
+#hibernate {
+  border-bottom: 4px solid #61afef;
+}
+
+#reboot,
+#shutdown {
+  border-bottom: 4px solid #e06c75;
+}
+
+#lock:focus, #lock:hover,
+#logout:focus, #logout:hover {
+  border-color: #e5c07b;
+}
+
+#suspend:focus, #suspend:hover,
+#hibernate:focus, #hibernate:hover {
+  border-color: #61afef;
+}
+
+#reboot:focus, #reboot:hover,
+#shutdown:focus, #shutdown:hover {
+  border-color: #e06c75;
 }
 
 #lock {

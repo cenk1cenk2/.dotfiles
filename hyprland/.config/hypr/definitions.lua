@@ -33,7 +33,7 @@ M.obsidian = "xdg-open obsidian://tray/toggleWindows"
 M.locking = "hyprlock"
 
 -- Shutdown mode
-M.shutdown = [==[bash -c '[[ "$(pgrep -x wlogout)" ]] && pkill wlogout || wlogout']==]
+M.shutdown = [==[bash -c '[[ "$(pgrep -x wlogout)" ]] && pkill wlogout || wlogout -b 2']==]
 
 -- Utility applications
 M.apps = {
