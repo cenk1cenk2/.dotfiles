@@ -67,7 +67,8 @@ class SoundPlugin(Plugin):
 
     Levels come from PulseAudio over one persistent connection; presses run
     the same `launch-app.py` dispatchers as the Hyprland binds, so the
-    swayosd popup still shows."""
+    swayosd popup still shows. The input mute key toggles on a tap and is
+    push to talk while held."""
 
     LAUNCH = Path.home() / ".config/hypr/scripts/launch-app.py"
     # Dispatcher names per device and verb, as `definitions.lua` spells them.
@@ -330,19 +331,33 @@ class SoundPlugin(Plugin):
             case Action.MEDIA:
                 self.spawn([str(self.LAUNCH), self.MEDIA[key.verb]])
 
+    @staticmethod
+    def talks(key: SoundKey) -> bool:
+        """The input mute key, which is push to talk while held."""
+        return (
+            key.action == Action.VOLUME
+            and key.device == Device.INPUT
+            and key.verb == "mute"
+        )
+
     def holds(self, key: SoundKey) -> bool:
         if key.action == Action.VOLUME:
-            return key.verb in ("down", "up")
+            return key.verb in ("down", "up") or self.talks(key)
 
         return key.action == Action.MEDIA and key.verb in self.SEEK
 
     def repeats(self, key: SoundKey) -> bool:
-        return self.holds(key)
+        return self.holds(key) and not self.talks(key)
 
     def hold_hint(self, key: SoundKey) -> str | None:
+        if self.talks(key):
+            return "talk"
+
         return "repeat" if key.action == Action.VOLUME else self.hold_status(key)
 
     def hold_status(self, key: SoundKey) -> str | None:
+        if self.talks(key):
+            return "live"
         if key.action != Action.MEDIA:
             return None
         amount = self.SEEK[key.verb].rstrip("+-")
@@ -350,6 +365,8 @@ class SoundPlugin(Plugin):
         return f"◀ {amount}s" if key.verb == "prev" else f"{amount}s ▶"
 
     def hold(self, context: str, key: SoundKey) -> None:
+        if self.talks(key):
+            return self.talk(True)
         if key.action == Action.VOLUME:
             return self.press(context, key)
 
@@ -371,10 +388,12 @@ class SoundPlugin(Plugin):
         self.talk(True)
 
     def key_up(self, context: str, key: SoundKey) -> None:
-        if key.action != Action.TALK:
-            return super().key_up(context, key)
+        if key.action == Action.TALK:
+            return self.talk(False)
+        if key.held and self.talks(key):
+            self.talk(False)
 
-        self.talk(False)
+        super().key_up(context, key)
 
 
 if __name__ == "__main__":
