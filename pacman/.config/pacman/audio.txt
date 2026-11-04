@@ -1,6 +1,7 @@
 alsa-scarlett-gui
 calf
 coppwr
+deepfilternet-ladspa
 easyeffects
 lib32-pipewire-jack
 lsp-plugins-lv2

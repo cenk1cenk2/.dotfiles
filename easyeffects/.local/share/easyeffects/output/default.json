@@ -10,7 +10,7 @@
       "split-channels": false,
       "left": {
         "band0": {
-          "frequency": 40.0,
+          "frequency": 45.0,
           "gain": 3.0,
           "mode": "RLC (BT)",
           "mute": false,
@@ -20,8 +20,8 @@
           "type": "Lo-shelf"
         },
         "band1": {
-          "frequency": 60.0,
-          "gain": 3.0,
+          "frequency": 55.0,
+          "gain": 1.5,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 1.4,
@@ -30,11 +30,11 @@
           "type": "Bell"
         },
         "band2": {
-          "frequency": 100.0,
-          "gain": 1.5,
+          "frequency": 110.0,
+          "gain": -1.5,
           "mode": "RLC (BT)",
           "mute": false,
-          "q": 1.2,
+          "q": 1.4,
           "slope": "x1",
           "solo": false,
           "type": "Bell"
@@ -102,7 +102,7 @@
       },
       "right": {
         "band0": {
-          "frequency": 40.0,
+          "frequency": 45.0,
           "gain": 3.0,
           "mode": "RLC (BT)",
           "mute": false,
@@ -112,8 +112,8 @@
           "type": "Lo-shelf"
         },
         "band1": {
-          "frequency": 60.0,
-          "gain": 3.0,
+          "frequency": 55.0,
+          "gain": 1.5,
           "mode": "RLC (BT)",
           "mute": false,
           "q": 1.4,
@@ -122,11 +122,11 @@
           "type": "Bell"
         },
         "band2": {
-          "frequency": 100.0,
-          "gain": 1.5,
+          "frequency": 110.0,
+          "gain": -1.5,
           "mode": "RLC (BT)",
           "mute": false,
-          "q": 1.2,
+          "q": 1.4,
           "slope": "x1",
           "solo": false,
           "type": "Bell"
@@ -198,7 +198,7 @@
       "input-gain": 0.0,
       "output-gain": 0.0,
       "attack": 5.0,
-      "release": 5.0,
+      "release": 60.0,
       "lookahead": 5.0,
       "threshold": -1.0,
       "gain-boost": false,
@@ -210,13 +210,6 @@
       "sidechain-type": "Internal",
       "sidechain-preamp": -80.01
     },
-    "crossfeed#0": {
-      "bypass": true,
-      "fcut": 650,
-      "feed": 9.5,
-      "input-gain": 0.0,
-      "output-gain": 0.0
-    },
-    "plugins_order": ["equalizer#0", "limiter#0", "crossfeed#0"]
+    "plugins_order": ["equalizer#0", "limiter#0"]
   }
 }
