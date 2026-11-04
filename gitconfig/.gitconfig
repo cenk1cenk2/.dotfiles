@@ -37,6 +37,7 @@
   trunk = "!git symbolic-ref -q refs/remotes/origin/HEAD >/dev/null || git remote set-head origin --auto >/dev/null 2>&1; git checkout \"$(git trunk-name)\""
   root = rev-parse --show-toplevel
   origin = git remote get-url origin
+  b = "!batdiff"
 
 [safe]
   directory = /home/cenk/.config/nvim
