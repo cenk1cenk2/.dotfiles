@@ -26,7 +26,7 @@ textbox-num-sep {
 
 textbox {
     padding:                     6px 12px;
-    border-radius:               8px;
+    border-radius:               0px;
     background-color:            @alternate-background;
     text-color:                  @border-colour;
     horizontal-align:            0.5;
