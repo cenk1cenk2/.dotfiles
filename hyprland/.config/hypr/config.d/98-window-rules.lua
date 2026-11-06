@@ -258,3 +258,14 @@ hl.window_rule({
   match = { class = "steam" },
   opaque = true,
 })
+
+-- Under winewayland, Proton's explorer.exe /desktop (the system tray host) maps as an
+-- untitled, screen-sized transparent surface with the game's steam_app class. Wine
+-- re-asserts its size, and an untitled game window would match too, so no size here.
+hl.window_rule({
+  name = "wine-tray-host",
+  match = { class = "^(steam_app_[0-9]+)$", title = "^()$" },
+  float = true,
+  border_size = 0,
+  no_initial_focus = true,
+})
