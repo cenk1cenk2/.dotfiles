@@ -61,6 +61,14 @@ hl.device({
   sensitivity = 0.0,
 })
 
+-- keyd grabs the mice listed in /etc/keyd/kensington.conf and re-emits them
+-- through its virtual pointer, so their device blocks above no longer match
+hl.device({
+  name = "keyd-virtual-pointer",
+  middle_button_emulation = true,
+  sensitivity = 0.0,
+})
+
 -- sunshine virtual devices: the client already accelerated relative motion,
 -- touch and pen coordinates are relative to the streamed headless output
 hl.device({
