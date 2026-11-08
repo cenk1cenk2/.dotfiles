@@ -29,7 +29,7 @@ end)
 
 -- Launchers
 hl.bind(("%s + Space"):format(d.mod), hl.dsp.exec_cmd(d.menu))
-hl.bind(("%s + SHIFT + Space"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/steal-window.py"))
+hl.bind(("%s + SHIFT + Space"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/window.py steal"))
 hl.bind(("%s + P"):format(d.mod), hl.dsp.exec_cmd(d.clipboard))
 hl.bind(("%s + SHIFT + P"):format(d.mod), hl.dsp.exec_cmd(d.quick_note))
 
@@ -101,7 +101,7 @@ hl.bind(("%s + CTRL + SHIFT + down"):format(d.mod), hl.dsp.workspace.move({ moni
 
 -- Alt-Tab and Super-Tab
 hl.bind("ALT + Tab", hl.dsp.focus({ workspace = "previous" }))
-hl.bind(("%s + Tab"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/switch-window.py"))
+hl.bind(("%s + Tab"):format(d.mod), hl.dsp.exec_cmd("~/.config/hypr/scripts/window.py switch"))
 
 -- Layout controls (matching Sway)
 hl.bind(("%s + x"):format(d.mod), hl.dsp.layout("preselect l")) -- preselect horizontal split

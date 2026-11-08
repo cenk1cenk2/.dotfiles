@@ -1,5 +1,5 @@
 #!/usr/bin/env -S sh -c 'd="$(dirname "$0")"; uv sync -q --project "$d" && exec "$d/.venv/bin/python" "$0" "$@"'
-"""Switch to any window from any workspace via rofi."""
+"""Switch to or steal a window from any workspace via rofi."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ class Style(StrEnum):
     SCREENSHOT = "screenshot"
 
 
-class SwitchWindow:
-    log = logging.getLogger("switch-window")
+class Window:
+    log = logging.getLogger("window")
     RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 
     WIDTH = 0.75
@@ -54,26 +54,56 @@ class SwitchWindow:
         "Return,KP_Enter",
         "-kb-custom-1",
         "Control+x",
-        "-selected-row",
-        "1",
     )
     ROFI_CLOSE = 10
 
-    def __init__(self, hypr: Hyprctl):
+    def __init__(self, hypr: Hyprctl, style: Style):
         self._hypr = hypr
+        self._style = style
 
-    def run(self, style: Style) -> None:
-        windows = self._hypr.clients()
-        if not windows:
-            self.log.info("No windows available")
-            return
-
+    def switch(self) -> None:
         # Most recently focused first, with the previous window preselected,
         # as Windows orders Alt-Tab.
-        windows.sort(key=lambda w: w.get("focusHistoryID", 999))
-        selected, close = self._pick(windows, style)
-        if selected is None or selected >= len(windows):
+        window = self._choose("Switch window", self._hypr.clients(), row=1)
+        if window is None:
             return
+
+        self._focus(window)
+        self.log.info("Switched to window: %s", window.get("title", "Untitled"))
+
+    def steal(self) -> None:
+        active = self._hypr.active_workspace()
+        if not active:
+            raise click.ClickException("No active workspace")
+
+        window = self._choose(
+            "Steal window",
+            [
+                w
+                for w in self._hypr.clients()
+                if w.get("workspace", {}).get("id") != active["id"]
+            ],
+            row=0,
+        )
+        if window is None:
+            return
+
+        self._hypr.dispatch(
+            f'hl.dsp.window.move({{ workspace = "{active["id"]}", window = "address:{window["address"]}" }})'
+        )
+        self._focus(window)
+        self.log.info("Stole window: %s", window.get("title", "Untitled"))
+
+    def _choose(self, prompt: str, windows: list[dict], row: int) -> dict | None:
+        """Pick from windows by focus order, closing the pick on request."""
+        if not windows:
+            self.log.info("No windows available")
+            return None
+
+        windows.sort(key=lambda w: w.get("focusHistoryID", 999))
+        selected, close = self._pick(prompt, windows, row)
+        if selected is None or selected >= len(windows):
+            return None
 
         window = windows[selected]
         if close:
@@ -81,15 +111,17 @@ class SwitchWindow:
                 f'hl.dsp.window.close({{ window = "address:{window["address"]}" }})'
             )
             self.log.info("Closed window: %s", window.get("title", "Untitled"))
-            return
+            return None
 
+        return window
+
+    def _focus(self, window: dict) -> None:
         self._hypr.dispatch(
             f'hl.dsp.focus({{ window = "address:{window["address"]}" }})'
         )
         self._hypr.dispatch(
             f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{window["address"]}" }})'
         )
-        self.log.info("Switched to window: %s", window.get("title", "Untitled"))
 
     def _grid_theme(self, count: int) -> list[str]:
         """Size the grid to the focused monitor so tiles fill the window width.
@@ -124,7 +156,9 @@ class SwitchWindow:
             f"element-icon {{ size: {size}px; expand: true; }}",
         ]
 
-    def _pick(self, windows: list[dict], style: Style) -> tuple[int | None, bool]:
+    def _pick(
+        self, prompt: str, windows: list[dict], row: int
+    ) -> tuple[int | None, bool]:
         """Open rofi at once and feed it each tile as its image is ready.
 
         rofi cannot swap an image once drawn, so tiles are written in focus
@@ -137,13 +171,15 @@ class SwitchWindow:
             "-dmenu",
             "-i",
             "-p",
-            "Switch window",
+            prompt,
             "-format",
             "i",
             "-show-icons",
             "-async-pre-read",
             "0",
             *self.ROFI_ARGS,
+            "-selected-row",
+            str(row),
             *self._grid_theme(len(windows)),
         ]
         self.log.debug("spawn: %s", " ".join(cmd))
@@ -156,7 +192,7 @@ class SwitchWindow:
             ) as directory,
             ThreadPoolExecutor(max_workers=len(windows)) as pool,
         ):
-            match style:
+            match self._style:
                 case Style.SCREENSHOT:
                     images = [
                         pool.submit(self._thumbnail, w, Path(directory))
@@ -218,23 +254,34 @@ class SwitchWindow:
 
         return f"{marker}[{workspace}] {app} - {title}"
 
+    @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+    @click.option(
+        "-s",
+        "--style",
+        type=click.Choice([s.value for s in Style]),
+        default=Style.ICON.value,
+        show_default=True,
+        help="Tile content: app icons or window captures.",
+    )
+    @click.option("-v", "--verbose", is_flag=True, help="Show capture traces.")
+    @click.pass_context
+    def cli(ctx: click.Context, style: str, verbose: bool) -> None:
+        """Switch to or steal a window."""
+        create_logger(verbose, name="window")
+        ctx.obj = Style(style)
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.option(
-    "-s",
-    "--style",
-    type=click.Choice([s.value for s in Style]),
-    default=Style.ICON.value,
-    show_default=True,
-    help="Tile content: app icons or window captures.",
-)
-@click.option("-v", "--verbose", is_flag=True, help="Show capture traces.")
-def cmd_main(style: str, verbose: bool) -> None:
-    create_logger(verbose, name="switch-window")
-    SwitchWindow(Hyprctl()).run(Style(style))
+    @cli.command("switch")
+    @click.pass_obj
+    def cmd_switch(style: Style) -> None:
+        """Focus and raise a window from any workspace."""
+        Window(Hyprctl(), style).switch()
 
+    @cli.command("steal")
+    @click.pass_obj
+    def cmd_steal(style: Style) -> None:
+        """Move a window here from another workspace, then focus and raise it."""
+        Window(Hyprctl(), style).steal()
 
-SwitchWindow.cli = cmd_main
 
 if __name__ == "__main__":
-    SwitchWindow.cli()
+    Window.cli()

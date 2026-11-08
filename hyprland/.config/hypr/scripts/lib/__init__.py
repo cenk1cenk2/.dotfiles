@@ -2,7 +2,7 @@
 
 Typical usage:
 
-    from lib import Hyprctl, rofi, rofi_with_icons
+    from lib import Hyprctl, rofi
     from lib.window_icons import get_icon_for_class
 
     hypr = Hyprctl()
@@ -12,6 +12,5 @@ Typical usage:
 
 from .hyprctl import Hyprctl as Hyprctl
 from .rofi import rofi as rofi
-from .rofi import rofi_with_icons as rofi_with_icons
 from .window_icons import get_icon_for_class as get_icon_for_class
 from .window_icons import get_name_for_class as get_name_for_class

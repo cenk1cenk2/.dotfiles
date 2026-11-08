@@ -171,6 +171,11 @@ USER_PATHS = [
     *stale("~/.config/hypr/scripts/grimshot.sh"),
     # install-plugins.sh, an empty hyprpm list nothing ran any more
     *stale("~/.config/hypr/scripts/install-plugins.sh"),
+    # switch-window.py and steal-window.py, merged into window.py
+    *stale(
+        "~/.config/hypr/scripts/switch-window.py",
+        "~/.config/hypr/scripts/steal-window.py",
+    ),
     # a stow run from the wrong directory linked playerctl-waybar.service
     # under ~/systemd instead of ~/.config/systemd/user
     *stale("~/systemd"),
