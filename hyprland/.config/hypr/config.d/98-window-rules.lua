@@ -221,6 +221,12 @@ hl.window_rule({
 })
 
 hl.window_rule({
+  name = "swappy",
+  match = { class = "swappy" },
+  float = true,
+})
+
+hl.window_rule({
   name = "mpv",
   match = { class = "mpv" },
   opaque = true,
