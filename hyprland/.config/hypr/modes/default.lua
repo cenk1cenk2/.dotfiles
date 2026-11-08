@@ -273,6 +273,18 @@ hl.bind(("%s + E"):format(d.mod), function()
   end
 end)
 
+-- Cycling follows the stacking order, so raising the target alone would make
+-- the backward direction flip between the top two windows. Lowering the current
+-- window first rotates the stack the opposite way.
+hl.bind(("%s + period"):format(d.mod), function()
+  hl.dispatch(hl.dsp.window.cycle_next())
+  hl.dispatch(hl.dsp.window.bring_to_top())
+end)
+hl.bind(("%s + comma"):format(d.mod), function()
+  hl.dispatch(hl.dsp.window.alter_zorder({ mode = "bottom" }))
+  hl.dispatch(hl.dsp.window.cycle_next({ next = false }))
+end)
+
 -- Monitor profiles (using kanshi)
 hl.bind(("%s + F1"):format(d.mod), hl.dsp.exec_cmd("jumpy display main"))
 hl.bind(("%s + F2"):format(d.mod), hl.dsp.exec_cmd("jumpy display main-solo"))
