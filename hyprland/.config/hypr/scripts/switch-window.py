@@ -86,6 +86,9 @@ class SwitchWindow:
         self._hypr.dispatch(
             f'hl.dsp.focus({{ window = "address:{window["address"]}" }})'
         )
+        self._hypr.dispatch(
+            f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{window["address"]}" }})'
+        )
         self.log.info("Switched to window: %s", window.get("title", "Untitled"))
 
     def _grid_theme(self, count: int) -> list[str]:
