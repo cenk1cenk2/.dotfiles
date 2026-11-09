@@ -28,6 +28,7 @@ NAMES: dict[str, str] = {
     "claude": "claude",
     "codex": "openai",
     "opencode": "opencode",
+    "amp.exe": "amp",
 }
 
 
@@ -143,7 +144,7 @@ def walk(panes: dict[str, dict]) -> dict[str, dict]:
         while stack:
             current = stack.pop()
             name = names.get(current, "")
-            if (vendor := NAMES.get(name)) is not None:
+            if (vendor := NAMES.get(name)) is not None and not headless(current):
                 home = config_dir(current, vendor)
                 found[pane] = {
                     "pane": pane,
@@ -217,6 +218,15 @@ def alive(pid: int, name: str) -> bool:
         return False
 
     return stat[stat.find("(") + 1 : stat.rfind(")")] == name
+
+
+def headless(pid: int) -> bool:
+    """Whether an agent runs with no prompt to type into, as Amp's desktop
+    server does under the same process name as its terminal client."""
+    try:
+        return b"--no-tui" in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return True
 
 
 def config_dir(pid: int, vendor: str) -> Path | None:
