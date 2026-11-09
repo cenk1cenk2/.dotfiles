@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import stat
@@ -23,6 +24,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -43,6 +45,7 @@ class Vendor(StrEnum):
     CLAUDE = "claude"
     CODEX = "codex"
     OPENCODE = "opencode"
+    WOW = "wow"
 
 
 class Merge(StrEnum):
@@ -63,6 +66,11 @@ class Merge(StrEnum):
     wins, shorter or not, as a revert drops messages. Without a receipt the
     longer message-id list wins; two lists neither of which extends the
     other are a CONFLICT.
+
+    CHANGED is for files whose mtime says little, such as those an addon zip
+    unpacks with its own dates, so an update can look older than what it
+    replaces. The side that changed since the receipt wins and two changes
+    are a CONFLICT. Without a receipt it falls back to NEWER.
     """
 
     APPEND = "append"
@@ -70,6 +78,7 @@ class Merge(StrEnum):
     INDEX = "index"
     NEWER = "newer"
     SESSION = "session"
+    CHANGED = "changed"
 
 
 class Policy(StrEnum):
@@ -129,10 +138,12 @@ class Profile:
     sweeps: bool = False
     # OPENCODE_CONFIG_DIR, for the vendor whose sessions live in sqlite.
     config: Path | None = None
+    # Where the far side keeps it, for a root that is not under $HOME.
+    far: Path | None = None
 
     @property
-    def relative_root(self) -> Path:
-        return self.root.relative_to(Path.home())
+    def far_root(self) -> Path:
+        return self.far or self.root.relative_to(Path.home())
 
     @property
     def slug(self) -> str:
@@ -588,7 +599,7 @@ class Peer:
         return None
 
     def remote(self, profile: Profile) -> str:
-        return f":sftp:{profile.relative_root}"
+        return f":sftp:{profile.far_root}"
 
     def flags(self) -> list[str]:
         # rclone's own sftp client reads none of ~/.ssh/config, so a peer's
@@ -649,13 +660,49 @@ class Archive:
             raise click.ClickException(f"{self.base} is not on a mounted share")
 
     def remote(self, profile: Profile) -> str:
-        return str(self.base / profile.relative_root)
+        return str(self.base / profile.far_root)
 
     def flags(self) -> list[str]:
         return []
 
     def shell(self, script: str) -> None:
         return None
+
+
+def sync_options(archive: Path) -> Callable[[Callable], Callable]:
+    """The far side and safety flags of a sync command, for `Synco.run_sync`."""
+    options = (
+        click.option("--peer", default=None, help="Host to sync against, over ssh."),
+        click.option("--user", default=None, help="Remote user. Default: ssh config."),
+        click.option(
+            "--archive",
+            is_flag=False,
+            flag_value=str(archive),
+            default=None,
+            help="Directory to sync against instead of a peer.",
+        ),
+        click.option("-n", "--dry-run", is_flag=True, help="Plan only, write nothing."),
+        click.option(
+            "--checksum", is_flag=True, help="Hash files whose size and mtime match."
+        ),
+        click.option("--adopt", is_flag=True, help="Push unclaimed local-only paths."),
+        click.option("--no-deletes", is_flag=True, help="Hold every drop."),
+        click.option(
+            "--force-deletes", is_flag=True, help="Override the mass-delete gate."
+        ),
+        click.option("--max-delete", default=25, show_default=True, help="Drop cap."),
+        click.option(
+            "--max-expire", default=200, show_default=True, help="Expiry drop cap."
+        ),
+    )
+
+    def decorate(command: Callable) -> Callable:
+        for option in reversed(options):
+            command = option(command)
+
+        return command
+
+    return decorate
 
 
 class Synco:
@@ -681,6 +728,7 @@ class Synco:
     )
     RCLONE_TIMEOUT = 900.0
     ARCHIVE = Path("/mnt/norsu/rock/backup/synco/agents")
+    WOW_ARCHIVE = Path("/mnt/norsu/rock/backup/synco/wow")
     # All the sftp backend probes for on its own. Anything else has to name
     # its remote command too (--sftp-hashes sha256 --sftp-sha256sum-command
     # sha256sum); asking without that silently drops the hash from hashsum
@@ -708,6 +756,15 @@ class Synco:
     )
     OPENCODE_ID = re.compile(r"ses_[0-9A-Za-z]+")
     REINDEX_TIMEOUT = 300.0
+    # A Wine game's comm can be whatever it named its main thread, so WoW is
+    # found by command line. The bracket stops the pattern matching the shell
+    # that carries this probe across ssh.
+    PROCESSES: ClassVar[dict[Vendor, tuple[str, str]]] = {
+        Vendor.CLAUDE: ("-x", "claude"),
+        Vendor.CODEX: ("-x", "codex"),
+        Vendor.OPENCODE: ("-x", "opencode"),
+        Vendor.WOW: ("-f", r"[W]ow[A-Za-z]*\.exe"),
+    }
     # Every `ThreadSourceKind` in app-server's schema, subagents included.
     CODEX_SOURCES = (
         "cli",
@@ -782,6 +839,7 @@ class Synco:
         # Not the database, which also holds the credentials: one export per
         # session, written and read back by `reconcile`.
         Vendor.OPENCODE: ("sessions/**",),
+        Vendor.WOW: ("Interface/AddOns/**", "WTF/Account/**"),
     }
 
     # Credentials are excluded by path rather than by flag, so no invocation
@@ -822,6 +880,16 @@ class Synco:
             "opencode.db-*",
             "**/.*.synco",
         ),
+        # The cache files are the client's copy of what Blizzard's servers
+        # already sync per account. `Config.wtf`, a machine's graphics and
+        # monitor settings, sits outside the includes.
+        Vendor.WOW: (
+            "**/*-cache.*",
+            "**/cache.md5",
+            "**/*.bak",
+            "**/*.old",
+            "**/.*.synco",
+        ),
     }
 
     MERGES: ClassVar[dict[Vendor, tuple[tuple[str, Merge], ...]]] = {
@@ -846,6 +914,7 @@ class Synco:
             ("archived_sessions/**/*.zst", Merge.NEWER),
         ),
         Vendor.OPENCODE: (("sessions/*.json", Merge.SESSION),),
+        Vendor.WOW: (("**", Merge.CHANGED),),
     }
 
     # First match wins; anything unlisted is RETAIN, so a kind nobody thought
@@ -875,6 +944,7 @@ class Synco:
             # database: a session deleted here stays wherever else it is.
             ("sessions/**", Policy.RETAIN),
         ),
+        Vendor.WOW: (("**", Policy.PROPAGATE),),
     }
 
     ACTION_STYLES: ClassVar[dict[Action, str]] = {
@@ -976,6 +1046,19 @@ class Synco:
             return f"projects/{parts[1]}/{parts[2]}.jsonl"
 
         return None
+
+    def unit(self, profile: Profile, path: str) -> str:
+        """What the gate and the caps count a path as.
+
+        Removing an addon takes its whole folder, which is one decision and
+        not thousands of deletes. A wiped `AddOns` still reads as every addon
+        gone.
+        """
+        parts = path.split("/")
+        if profile.vendor is Vendor.WOW and parts[:2] == ["Interface", "AddOns"]:
+            return "/".join(parts[:3])
+
+        return self.anchor(profile, path) or path
 
     def policy(self, profile: Profile, path: str) -> Policy:
         if self.anchor(profile, path) is not None:
@@ -1541,7 +1624,7 @@ class Synco:
         steps = {s.path: s for s in report.steps}
 
         def unit(path: str) -> str:
-            return self.anchor(profile, path) or path
+            return self.unit(profile, path)
 
         for side, entries, index in (
             ("local", report.local, 0),
@@ -1700,6 +1783,7 @@ class Synco:
         # makes a gap look almost a second smaller than it was.
         drift = int(landed.stat().st_mtime) - int(target.stat().st_mtime)
         peer_is_newer = drift > 0
+        pair = report.base.paths.get(path) if report.base else None
         if kind is Merge.SESSION:
             ours = self.transcript(target.read_text())
             theirs = self.transcript(landed.read_text())
@@ -1709,26 +1793,19 @@ class Synco:
             # other side, which stamps its own time.updated on it.
             if ours == theirs:
                 return Step(path, Action.SAME, kind)
-            pair = report.base.paths.get(path) if report.base else None
             if pair is not None:
-                # The side that changed since both agreed wins even when it
-                # is shorter: a revert travels like any other edit.
-                here = report.local.get(path) != pair[0]
-                there = report.remote.get(path) != pair[1]
-                if here and not there:
-                    return Step(path, Action.PUSH, kind, "changed here")
-                if there and not here:
-                    return Step(path, Action.PULL, kind, "changed there")
-                return Step(path, Action.CONFLICT, kind, "changed on both")
+                return self.moved_side(path, kind, report, pair)
             if self.extends(theirs, ours):
                 return Step(path, Action.PULL, kind, "peer's runs further")
             if self.extends(ours, theirs):
                 return Step(path, Action.PUSH, kind, "ours runs further")
 
             return Step(path, Action.CONFLICT, kind, "resumed on both")
-        if kind is Merge.NEWER:
+        if kind in (Merge.NEWER, Merge.CHANGED):
             if target.read_bytes() == landed.read_bytes():
                 return Step(path, Action.SAME, kind)
+            if kind is Merge.CHANGED and pair is not None:
+                return self.moved_side(path, kind, report, pair)
             if drift > 0:
                 return Step(path, Action.PULL, kind, "peer's is newer")
             if drift < 0:
@@ -1748,6 +1825,23 @@ class Synco:
             return Step(path, Action.SAME, kind)
 
         return Step(path, Action.MERGE, kind, payload=merged)
+
+    def moved_side(
+        self,
+        path: str,
+        kind: Merge,
+        report: Report,
+        pair: tuple[Entry | None, Entry | None],
+    ) -> Step:
+        """The side that changed since both agreed wins, shorter or older or not."""
+        here = report.local.get(path) != pair[0]
+        there = report.remote.get(path) != pair[1]
+        if here and not there:
+            return Step(path, Action.PUSH, kind, "changed here")
+        if there and not here:
+            return Step(path, Action.PULL, kind, "changed there")
+
+        return Step(path, Action.CONFLICT, kind, "changed on both")
 
     def decide(self, profile: Profile, path: str, staging: Path) -> Step:
         ours = (profile.root / path).read_bytes()
@@ -2436,12 +2530,15 @@ class Synco:
         names it finds, because `pgrep` prints pids and those say nothing
         about which vendor they belong to.
         """
-        probe = "; ".join(f"pgrep -x {v} >/dev/null && echo {v}" for v in Vendor)
+        probe = "; ".join(
+            f"pgrep {shlex.join(self.PROCESSES[v])} >/dev/null && echo {v}"
+            for v in Vendor
+        )
         live = {
             vendor
             for vendor in Vendor
             if run(
-                ["pgrep", "-x", "-u", str(os.getuid()), str(vendor)],
+                ["pgrep", "-u", str(os.getuid()), *self.PROCESSES[vendor]],
                 log=self.log,
                 timeout=30.0,
             ).returncode
@@ -2563,7 +2660,11 @@ class Synco:
             self.console.rule(self.DRY_RUN_BANNER)
         if any(p.sweeps for p in profiles):
             self.check_clock()
-        live = self.live_vendors()
+        live = self.live_vendors() & {p.vendor for p in profiles}
+        # WoW holds addon settings in memory and writes them on logout, over
+        # whatever a sync just put there, which no mid-run re-check can catch.
+        if Vendor.WOW in live and not self.dry_run:
+            raise click.ClickException("WoW is running; exit it first")
         staging = self.backup_root / "peer"
         staging.mkdir(parents=True, exist_ok=True)
 
@@ -2645,58 +2746,17 @@ class Synco:
 
         return failures
 
-    @cli.group("agents", invoke_without_command=True)
-    @click.option("--peer", default=None, help="Host to sync against, over ssh.")
-    @click.option("--user", default=None, help="Remote user. Default: ssh config.")
-    @click.option(
-        "--archive",
-        is_flag=False,
-        flag_value=str(ARCHIVE),
-        default=None,
-        help="Directory to sync against instead of a peer.",
-    )
-    @click.option("--profile", "profiles", multiple=True, help="Profile to sync.")
-    @click.option(
-        "--vendor",
-        type=click.Choice([v.value for v in Vendor]),
-        multiple=True,
-        help="Vendor to sync.",
-    )
-    @click.option("-n", "--dry-run", is_flag=True, help="Plan only, write nothing.")
-    @click.option(
-        "--checksum", is_flag=True, help="Hash files whose size and mtime match."
-    )
-    @click.option("--adopt", is_flag=True, help="Push unclaimed local-only paths.")
-    @click.option("--no-deletes", is_flag=True, help="Hold every drop.")
-    @click.option(
-        "--force-deletes", is_flag=True, help="Override the mass-delete gate."
-    )
-    @click.option("--max-delete", default=25, show_default=True, help="Drop cap.")
-    @click.option(
-        "--max-expire", default=200, show_default=True, help="Expiry drop cap."
-    )
-    @click.pass_context
-    def cmd_agents(
+    @classmethod
+    def run_sync(
+        cls,
         ctx: click.Context,
+        profiles: list[Profile],
         peer: str | None,
         user: str | None,
         archive: str | None,
-        profiles: tuple[str, ...],
-        vendor: tuple[str, ...],
-        dry_run: bool,
-        checksum: bool,
-        adopt: bool,
-        no_deletes: bool,
-        force_deletes: bool,
-        max_delete: int,
-        max_expire: int,
+        **flags: bool | int,
     ) -> None:
-        """Sync agent sessions and memories with a peer machine or an archive."""
-        ctx.obj = Synco.select(profiles, vendor)
-        # Checked here rather than declared required, so the subcommands that
-        # never reach the far side are not made to name one.
-        if ctx.invoked_subcommand is not None:
-            return
+        """Sync `profiles` against the far side `sync_options` named."""
         if peer and archive:
             raise click.UsageError("--peer and --archive are exclusive", ctx)
         if archive and user:
@@ -2710,23 +2770,78 @@ class Synco:
         else:
             raise click.UsageError("--peer or --archive is required to sync", ctx)
 
-        synco = Synco(
-            transport,
-            dry_run,
-            checksum,
-            adopt=adopt,
-            no_deletes=no_deletes,
-            force_deletes=force_deletes,
-            max_delete=max_delete,
-            max_expire=max_expire,
-        )
-        failures = synco.sync(ctx.obj)
+        synco = cls(transport, **flags)
+        failures = synco.sync(profiles)
         if failures:
             synco.console.print(
                 f"[red]{failures} problem(s)[/]: conflicts parked beside their"
                 " originals, refused or capped profiles held back"
             )
             sys.exit(1)
+
+    @cli.group("agents", invoke_without_command=True)
+    @click.option("--profile", "profiles", multiple=True, help="Profile to sync.")
+    @click.option(
+        "--vendor",
+        type=click.Choice([v.value for v in Vendor if v is not Vendor.WOW]),
+        multiple=True,
+        help="Vendor to sync.",
+    )
+    @sync_options(ARCHIVE)
+    @click.pass_context
+    def cmd_agents(
+        ctx: click.Context,
+        profiles: tuple[str, ...],
+        vendor: tuple[str, ...],
+        **options: str | bool | int | None,
+    ) -> None:
+        """Sync agent sessions and memories with a peer machine or an archive."""
+        ctx.obj = Synco.select(profiles, vendor)
+        # Checked here rather than declared required, so the subcommands that
+        # never reach the far side are not made to name one.
+        if ctx.invoked_subcommand is not None:
+            return
+        Synco.run_sync(ctx, ctx.obj, **options)
+
+    @cli.command("wow")
+    @click.argument(
+        "root", type=click.Path(exists=True, file_okay=False, path_type=Path)
+    )
+    @click.option(
+        "--flavor",
+        default="_forever_",
+        show_default=True,
+        help="Client folder under the root.",
+    )
+    @click.option(
+        "--peer-root",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="World of Warcraft folder on the peer. Default: ROOT.",
+    )
+    @sync_options(WOW_ARCHIVE)
+    @click.pass_context
+    def cmd_wow(
+        ctx: click.Context,
+        root: Path,
+        flavor: str,
+        peer_root: Path | None,
+        **options: str | bool | int | None,
+    ) -> None:
+        """Sync WoW addons and their settings with a peer machine or an archive.
+
+        ROOT is the World of Warcraft folder, the one holding the client folders.
+        """
+        if peer_root and not options["peer"]:
+            raise click.UsageError("--peer-root belongs to --peer", ctx)
+        root = root.resolve()
+        profile = Profile(
+            f"wow/{flavor}",
+            Vendor.WOW,
+            root / flavor,
+            far=(peer_root or root) / flavor if options["peer"] else Path(flavor),
+        )
+        Synco.run_sync(ctx, [profile], **options)
 
     @cmd_agents.command("profiles")
     @click.pass_obj

@@ -958,6 +958,24 @@ owns.
 - Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
 - rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.
 
+### WoW addons
+
+- **`synco wow <root>` shares `agents`' far side through `sync_options` and `run_sync`.** A new
+  sync command adds those two rather than its own `--peer` / `--archive` handling. Its profile is
+  built from the arguments and is not in `PROFILES`, so `agents` never touches it.
+- **Install paths differ per machine**, so `Profile.far` carries the far-side path: the flavor
+  folder under the archive, `--peer-root` (default ROOT) on a peer.
+- **`Merge.CHANGED` decides by receipt, not mtime.** Addon zips unpack with their own dates, so an
+  update can look older than what it replaces. Only a first sync falls back to the newer mtime, so
+  a client started before its first pull can overwrite real settings with its defaults.
+- **`unit` counts one addon folder as one delete** for the gate and the caps.
+- **A running `Wow.exe` refuses the sync**, because the client rewrites `SavedVariables` on logout
+  over whatever was just pulled. `--archive` can only check this machine. It is found with
+  `pgrep -f`, as a Wine game's comm can be whatever it named its main thread.
+- **The server-synced caches stay out** (`*-cache.*`, `cache.md5`), and so does `Config.wtf`, which
+  holds per-machine graphics settings. Addon managers keep their own database, so update addons
+  from one machine and rescan on the other.
+
 ### codex sessions
 
 - **Rollouts are canonical; codex's sqlite files are derived views.** `state_5.sqlite` and
