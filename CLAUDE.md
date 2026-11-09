@@ -395,8 +395,10 @@ these need re-checking.
   kernel, so a trace armed before a logout still holds the transition after
   the next login. `options/func_stack_trace` on
   `nv_kthread_q_schedule_q_item` shows which RM timer is firing.
-- **Hyprland is not on VT 1.** greetd runs with `vt = "next"` and the session
-  stays on the greeter's VT, `tty2` here; `loginctl list-sessions` names it.
+- **Hyprland is on VT 1.** greetd runs with `vt = 1` and the session stays on
+  the greeter's VT, so Ctrl+Alt+F1 returns from a console. `vt = "next"`
+  lands it on whichever VT is free at boot, `tty2` here, behind a `tty1` that
+  greetd has already emptied through `Conflicts=getty@tty1.service`.
 - Naming the stuck ref: kprobes on `nvidia:nv_indicate_idle`,
   `nv_indicate_not_idle`, `nv_idle_holdoff` plus the `rpm_usage` tracepoint
   with `options/stacktrace`, filtered on the dGPU PCI address, across one
