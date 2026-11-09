@@ -25,6 +25,54 @@ not automatically dead — see the kitty section.
   inherited from outside the selected UWSM profile and the selected
   profile must actively neutralize that inherited value.
 
+### Unit-scoped environment from a profile
+
+- **Everything a `uwsm/env-*` file exports reaches every unit and app**, since
+  UWSM pushes it into the systemd and D-Bus activation environments. A
+  variable meant for a few units only must not be exported there.
+- **The pattern:** the profile writes a `KEY=value` file under
+  `$XDG_RUNTIME_DIR`, and each unit that should see it carries a drop-in with
+  `EnvironmentFile=-%t/<name>.env`. The profile decides whether the variable
+  exists; the drop-in decides who gets it.
+- **The leading `-` is what makes it shareable.** A missing file is a no-op,
+  so the drop-ins ship to every machine and act only where a profile writes
+  the file. A profile-specific `Environment=` line cannot do that.
+- **The common `env` removes the file before a profile may write it.** The
+  runtime dir outlives a session, and `env` is sourced ahead of the profile
+  files, so a login under another profile starts without a stale value.
+- **The file is in place before the compositor starts**: the preloader
+  (`wayland-wm-env@`) runs the env files, then `wayland-wm@` starts and reads
+  its drop-ins. It works on the compositor unit itself as well as on session
+  services.
+- **A unit's children inherit the variable**, so anything the compositor
+  spawns directly carries it too; see the launcher note below.
+- A drop-in in a new directory needs a re-stow (`--no-folding` links per
+  file) and `systemctl --user daemon-reload`.
+- No package uses the pattern today.
+
+### Launching apps (`uwsm app`)
+
+- **The launcher starts everything through `uwsm app`**: `M.menu` in
+  `hyprland/.config/hypr/definitions.lua` runs rofi with
+  `-run-command 'uwsm app -- {cmd}'`, so each app lands in its own unit under
+  `app-graphical.slice` instead of piling up in the compositor's unit.
+- **The default unit type is a scope, and a scope keeps the caller's
+  environment.** rofi starts the app and systemd only adopts the running
+  process, so the app inherits from rofi, which inherits from Hyprland. A
+  variable scoped to the compositor unit therefore leaks into every launched
+  app unless the launcher drops it (`env -u VAR rofi ...`).
+- **`uwsm app -t service`, or `UWSM_APP_UNIT_TYPE=service`, has systemd start
+  the app instead.** Its output goes to the journal and it is no child of the
+  launcher. Whether uwsm forwards the caller's environment into such a unit
+  is unverified; measure `/proc/<pid>/environ` before relying on it as an
+  environment boundary.
+- **Session services are units, not children of Hyprland**:
+  `99-autostart.lua` starts a list of `*.service` units, and XDG autostart
+  entries run as `app-<name>@autostart.service`. Both get the session
+  environment, never the compositor unit's own.
+- Terminals opened by a keybind are direct children of Hyprland, and so is
+  everything typed into them.
+
 ## Automounts (`rootfs-automount`)
 
 - The three `norsu.thor.arpa` CIFS shares mount from native systemd units in
@@ -254,49 +302,64 @@ these need re-checking.
   only `nv-kernel.o` refuses kprobes, because linux-zen lacks
   `CONFIG_KPROBE_EVENTS_ON_NOTRACE`.
 
-### 615.78.08 hybrid findings (2026-11-09)
+### 615.78.08 hybrid findings (2026-11-10)
 
-- **The dGPU sleeps before the desktop starts and never after.** On linux-zen
-  7.2.11, Hyprland 0.56.2 and Aquamarine 0.15.1 it is runtime-suspended from
-  about 27 s after boot until the second Hyprland starts (the kernel logs
-  `Enabling HDA controller` on that wake), then stays D0/active for the rest
-  of the session, on AC and on battery alike. `runtime_suspended_time`
-  freezes at the greeter-phase total.
-- **Neither daemon blocks that sleep.** `nvidia-persistenced` and
-  `nvidia-powerd` are both running throughout the greeter-phase suspend, so
-  the driver, firmware and ACPI path to runtime suspend work with them
-  present. `nvidia-powerd` reports unsupported DC power-limit tables and
-  `SysPwrLimitGetInfo` / JPAC errors; they are not a cause.
-- **No reference found in source explains the D0.** An open `/dev/nvidia0`
-  nets to zero in fine-grained mode: `nv_start_device` takes a COARSE ref and
-  drops a FINE ref before returning, and both count while the mode is FINE
-  (`mode > nvp->dynamic_power.mode` is the only filter in
-  `os_ref_dynamic_power`). RM API calls take their ref in `rmapiPrologue` and
-  drop it in `rmapiEpilogue`. What remains is one firmware answer:
-  `NV2080_CTRL_CMD_INTERNAL_GCX_ENTRY_PREREQUISITE`, read by
-  `RmCheckForGcxSupportOnCurrentState`, which gates both the idle-holdoff
-  release after a wake (`RmRemoveIdleHoldoff`, identical to 610.57.04) and
-  the deferred idle preconditions. A stock build prints neither its result
-  nor which of the two is waiting.
+- **The dGPU sleeps outside a graphical session and never inside one.** On
+  linux-zen 7.2.11, Hyprland 0.56.2 and Aquamarine 0.15.1 it reaches D3cold
+  within about two seconds of every logout, at the greeter and on a TTY, and
+  stays there. A Hyprland login wakes it and it stays D0/active until that
+  session ends, on AC and on battery alike.
+- **Neither daemon blocks sleep.** `nvidia-persistenced` and `nvidia-powerd`
+  run throughout the greeter and TTY suspends. `nvidia-powerd` reports
+  unsupported DC power-limit tables and `SysPwrLimitGetInfo` / JPAC errors;
+  they are not a cause.
+- **The compositor is not the pin.** With Hyprland, hyprpaper and
+  hyprpolkitagent held to Mesa EGL by unit drop-ins, `AQ_DRM_DEVICES` listing
+  the Intel card alone, the session apps stopped, and no process holding or
+  mapping any NVIDIA node, the GPU still stays awake. `nvidia-smi` then lists
+  no process, 2 MiB used and P8, and `dma_buf/bufinfo` holds no NVIDIA
+  buffer.
+- **None of these release it inside a session:** unplugging AC, switching to
+  another VT, toggling `power/control` to `on` and back, opening and closing
+  `card1`, stopping every app that had loaded `libEGL_nvidia`.
+- **A login runs this sequence** (function trace of the driver's entry
+  points): Hyprland probes the connectors on `card1` and wakes the GPU, even
+  when `card1` is not in `AQ_DRM_DEVICES`; the post-wake idle holdoff is
+  released five seconds later, as designed; the Electron GPU processes of the
+  autostarted apps then spend two seconds on some 30 opens and 400 ioctls and
+  close everything; after that no process enters the driver again, and it
+  never indicates idle.
+- **What is left is one firmware answer.** The driver's precondition timer
+  fires every five seconds (`GC6_PRECONDITION_CHECK_TIME`) and asks
+  `NV2080_CTRL_CMD_INTERNAL_GCX_ENTRY_PREREQUISITE` through
+  `RmCheckForGcxSupportOnCurrentState`. The reply is two booleans,
+  `bIsGC6Satisfied` and `bIsGCOFFSatisfied`, so a rebuilt RM can print the
+  refusal but not its reason. At logout the answer flips with no driver call
+  preceding it.
+- **No reference in source explains the D0.** An open `/dev/nvidia0` nets to
+  zero in fine-grained mode: `nv_start_device` takes a COARSE ref and drops a
+  FINE ref before returning, and both count while the mode is FINE. RM API
+  calls take their ref in `rmapiPrologue` and drop it in `rmapiEpilogue`.
+  `nv_drm_open` takes nothing, and with `nvidia_drm.fbdev=Y` the driver owns
+  modeset from load, so a compositor taking DRM master changes nothing.
 - **Aquamarine keeps no renderer on the dGPU.** 0.15.1 carries
   [aquamarine PR #239 — drm: keep secondary renderers alive only when they're needed](https://github.com/hyprwm/aquamarine/pull/239),
-  so with nothing on HDMI the secondary renderer on `card1` is torn down.
-  Hyprland, hyprpaper and hyprpolkitagent still hold `/dev/nvidia0` through
-  GLVND's EGL vendor enumeration.
-- **Two causes still fit, and one test splits them:** Hyprland's live NVIDIA
-  EGL state failing the firmware prerequisite, or the driver staying stuck
-  after its first wake whatever holds it, as on 610. Exit Hyprland, log in on
-  a TTY, confirm `fuser -v /dev/nvidia0` lists nothing, and read
-  `power/runtime_status` for 60 seconds: `suspended` means the desktop's
-  state, `active` the driver. A check run inside the session proves nothing.
-- **The usual recipe is the one ruled out here.** The working setups in
-  [omarchy #1776 — Laptop / Hybrid GPU Power Management Issue (NVIDIA, iGPU + dGPU)](https://github.com/basecamp/omarchy/issues/1776)
-  drop the dGPU from `AQ_DRM_DEVICES`, pin Mesa EGL and disable
-  `nvidia-persistenced`. Here that kills the HDMI port, which is wired to the
-  dGPU, and hides the dGPU from Proton.
-  [#905](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/905)'s own
-  workaround is what `nvidia-power.conf` and `80-nvidia-pm.rules` already
-  apply.
+  so with nothing on HDMI both renderers are on `card0`.
+- **The open lead is the Electron probe.** A login in which no Electron or
+  Chromium app starts is untested. `electron-flags.conf` enables
+  `AcceleratedVideoEncoder` and `AcceleratedVideoEncodeLinux`, the cheapest
+  thing to drop first; those GPU processes render on Intel
+  (`--render-node-override=/dev/dri/renderD128`) and only probe the dGPU.
+  The setups that do sleep, as in
+  [omarchy #1776 — Laptop / Hybrid GPU Power Management Issue (NVIDIA, iGPU + dGPU)](https://github.com/basecamp/omarchy/issues/1776),
+  pin Mesa EGL for the whole session, which keeps every app off NVIDIA's
+  library and not only the compositor. That pin hides the dGPU from Proton
+  here, and dropping the dGPU from `AQ_DRM_DEVICES` kills the HDMI port,
+  which is wired to it.
+- GLVND loading every EGL vendor is the known upstream mechanism behind
+  compositors and apps opening the dGPU:
+  [egl-wayland #89 — egl needs an early out to prevent waking the dGPU unnecessarily](https://github.com/NVIDIA/egl-wayland/issues/89).
+  KWin users scope the Mesa pin to the compositor's unit for the same reason.
 - The PCI GPU has `power/control=auto` and `d3cold_allowed=1`; HDMI audio
   has `power/control=auto` and is runtime-suspended. Only the Intel-driven
   internal panel is active. `/proc/driver/nvidia/gpus/<PCI-address>/power`
@@ -304,21 +367,6 @@ these need re-checking.
   and self-refresh/off support. No missing prerequisite is established by
   these checks or the
   [NVIDIA 615.78.08 Runtime D3 manual](https://download.nvidia.com/XFree86/Linux-x86_64/615.78.08/README/dynamicpowermanagement.html).
-- A 60-second isolated ftrace capture in the desktop session, with a
-  successful `__do_sys_getpid` positive control and zero lost events, shows
-  no GPU-filtered `rpm:*` events and none of the selected NVIDIA
-  idle/holdoff, runtime suspend/resume, ioctl or ACPI notification calls: the
-  driver attempts no transition at all. `RmRemoveIdleHoldoff`,
-  `RmCheckForGcxSupportOnCurrentState` and `os_ref_dynamic_power` /
-  `os_unref_dynamic_power` are absent from stock
-  `available_filter_functions`, so function tracing cannot expose their
-  decisions and repeating the capture adds nothing.
-- **Naming the cause needs a rebuilt RM**, since DKMS compiles it from
-  source: log `bIsGC6Satisfied`, `bIsGCOFFSatisfied` and `b_idle_holdoff` in
-  `dynamic-power.c`. The bounded-retry change proposed for
-  [#1071](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1071)
-  fits the same build. Edits under `/usr/src/nvidia-<version>/` do not
-  survive a driver update.
 - NVPCF wake patches address a different observation, repeated wakes after a
   successful suspend:
   [PR #1181 — Don't wake a runtime-suspended dGPU to service NVPCF/GPS ACPI notifies](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181)
@@ -337,6 +385,18 @@ these need re-checking.
   attempts suspend. Use a positive control before interpreting silence;
   zero events alone cannot distinguish a held reference from an unmet idle
   condition, even with zero device holders.
+- **Tracing who enters the driver:** the function tracer with
+  `:mod:nvidia_drm` plus `nvidia_unlocked_ioctl`, `nvidia_open`,
+  `nvidia_close`, `nvkms_unlocked_ioctl`, `nv_indicate_idle`,
+  `nv_indicate_not_idle`, `nv_idle_holdoff` and `nv_pmops_runtime_*` in
+  `set_ftrace_filter`. Append the names one write at a time and check the
+  line count afterwards: one unknown name in a combined write leaves the
+  filter empty, which traces every kernel function. The buffer lives in the
+  kernel, so a trace armed before a logout still holds the transition after
+  the next login. `options/func_stack_trace` on
+  `nv_kthread_q_schedule_q_item` shows which RM timer is firing.
+- **Hyprland is not on VT 1.** greetd runs with `vt = "next"` and the session
+  stays on the greeter's VT, `tty2` here; `loginctl list-sessions` names it.
 - Naming the stuck ref: kprobes on `nvidia:nv_indicate_idle`,
   `nv_indicate_not_idle`, `nv_idle_holdoff` plus the `rpm_usage` tracepoint
   with `options/stacktrace`, filtered on the dGPU PCI address, across one
