@@ -254,15 +254,49 @@ these need re-checking.
   only `nv-kernel.o` refuses kprobes, because linux-zen lacks
   `CONFIG_KPROBE_EVENTS_ON_NOTRACE`.
 
-### 615.78.08 hybrid findings (2026-10-20)
+### 615.78.08 hybrid findings (2026-11-09)
 
-- **Idle D3cold is not verified fixed.** On linux-zen 7.2.2, Hyprland 0.56.2
-  and Aquamarine 0.15.1, the dGPU remains D0/active across 60-second idle
-  observations with persistence absent from boot, including one with
-  `nvidia-powerd` stopped. Its `runtime_suspended_time` stays at 1017 ms.
-  Hyprland, hyprpaper and hyprpolkitagent still hold device handles; this is
-  not a zero-holder test and does not establish the same refcount failure
-  as on 610. Proton stability without persistence is unverified.
+- **The dGPU sleeps before the desktop starts and never after.** On linux-zen
+  7.2.11, Hyprland 0.56.2 and Aquamarine 0.15.1 it is runtime-suspended from
+  about 27 s after boot until the second Hyprland starts (the kernel logs
+  `Enabling HDA controller` on that wake), then stays D0/active for the rest
+  of the session, on AC and on battery alike. `runtime_suspended_time`
+  freezes at the greeter-phase total.
+- **Neither daemon blocks that sleep.** `nvidia-persistenced` and
+  `nvidia-powerd` are both running throughout the greeter-phase suspend, so
+  the driver, firmware and ACPI path to runtime suspend work with them
+  present. `nvidia-powerd` reports unsupported DC power-limit tables and
+  `SysPwrLimitGetInfo` / JPAC errors; they are not a cause.
+- **No reference found in source explains the D0.** An open `/dev/nvidia0`
+  nets to zero in fine-grained mode: `nv_start_device` takes a COARSE ref and
+  drops a FINE ref before returning, and both count while the mode is FINE
+  (`mode > nvp->dynamic_power.mode` is the only filter in
+  `os_ref_dynamic_power`). RM API calls take their ref in `rmapiPrologue` and
+  drop it in `rmapiEpilogue`. What remains is one firmware answer:
+  `NV2080_CTRL_CMD_INTERNAL_GCX_ENTRY_PREREQUISITE`, read by
+  `RmCheckForGcxSupportOnCurrentState`, which gates both the idle-holdoff
+  release after a wake (`RmRemoveIdleHoldoff`, identical to 610.57.04) and
+  the deferred idle preconditions. A stock build prints neither its result
+  nor which of the two is waiting.
+- **Aquamarine keeps no renderer on the dGPU.** 0.15.1 carries
+  [aquamarine PR #239 — drm: keep secondary renderers alive only when they're needed](https://github.com/hyprwm/aquamarine/pull/239),
+  so with nothing on HDMI the secondary renderer on `card1` is torn down.
+  Hyprland, hyprpaper and hyprpolkitagent still hold `/dev/nvidia0` through
+  GLVND's EGL vendor enumeration.
+- **Two causes still fit, and one test splits them:** Hyprland's live NVIDIA
+  EGL state failing the firmware prerequisite, or the driver staying stuck
+  after its first wake whatever holds it, as on 610. Exit Hyprland, log in on
+  a TTY, confirm `fuser -v /dev/nvidia0` lists nothing, and read
+  `power/runtime_status` for 60 seconds: `suspended` means the desktop's
+  state, `active` the driver. A check run inside the session proves nothing.
+- **The usual recipe is the one ruled out here.** The working setups in
+  [omarchy #1776 — Laptop / Hybrid GPU Power Management Issue (NVIDIA, iGPU + dGPU)](https://github.com/basecamp/omarchy/issues/1776)
+  drop the dGPU from `AQ_DRM_DEVICES`, pin Mesa EGL and disable
+  `nvidia-persistenced`. Here that kills the HDMI port, which is wired to the
+  dGPU, and hides the dGPU from Proton.
+  [#905](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/905)'s own
+  workaround is what `nvidia-power.conf` and `80-nvidia-pm.rules` already
+  apply.
 - The PCI GPU has `power/control=auto` and `d3cold_allowed=1`; HDMI audio
   has `power/control=auto` and is runtime-suspended. Only the Intel-driven
   internal panel is active. `/proc/driver/nvidia/gpus/<PCI-address>/power`
@@ -270,36 +304,27 @@ these need re-checking.
   and self-refresh/off support. No missing prerequisite is established by
   these checks or the
   [NVIDIA 615.78.08 Runtime D3 manual](https://download.nvidia.com/XFree86/Linux-x86_64/615.78.08/README/dynamicpowermanagement.html).
-  Its explicit persistence warning concerns UVM persistence mode; there
-  are no `/dev/nvidia-uvm` holders in this test.
-- A 60-second isolated ftrace capture has a successful `__do_sys_getpid`
-  positive control and zero lost events, but no GPU-filtered `rpm:*`
-  events or selected NVIDIA idle/holdoff, runtime suspend/resume, ioctl or
-  ACPI notification calls. This establishes no observed transition or
-  selected calls, not absence of GPU work or the internal reason for D0.
-  `RmRemoveIdleHoldoff`, `RmCheckForGcxSupportOnCurrentState` and
-  `os_ref_dynamic_power` / `os_unref_dynamic_power` are absent from stock
-  `available_filter_functions`; ordinary function tracing cannot expose
-  their decisions. Repeating the same idle capture adds little evidence.
-- Source comparison with 610.57.04 finds `RmRemoveIdleHoldoff` identical:
-  no fix is established in this path. Fine-grained initialization-ref
-  release exists in both versions; `GpuInitOnProbe=2` is the newer default
-  policy, not a new fine-grained unref mechanism.
-- `nvidia-powerd` reports unsupported DC power-limit tables and
-  `SysPwrLimitGetInfo` / JPAC errors. Its absence alone does not restore
-  runtime suspend in the desktop test; these errors are not a proven cause.
-- Desktop DRM ownership is an unresolved lead, not a proven power pin:
-  [Aquamarine #83 — Hyprland uses NVIDIA card even when told not to](https://github.com/hyprwm/aquamarine/issues/83)
-  contains a similar report. Do not reinstate the Mesa-only EGL pin as a
-  fix: it breaks Proton device selection here. A fresh console-only test
-  with desktop clients and both daemons absent remains the discriminating
-  check before attributing this to desktop initialization or the driver.
-  NVPCF wake patches address a different observation (repeated wakes after
-  successful suspend):
+- A 60-second isolated ftrace capture in the desktop session, with a
+  successful `__do_sys_getpid` positive control and zero lost events, shows
+  no GPU-filtered `rpm:*` events and none of the selected NVIDIA
+  idle/holdoff, runtime suspend/resume, ioctl or ACPI notification calls: the
+  driver attempts no transition at all. `RmRemoveIdleHoldoff`,
+  `RmCheckForGcxSupportOnCurrentState` and `os_ref_dynamic_power` /
+  `os_unref_dynamic_power` are absent from stock
+  `available_filter_functions`, so function tracing cannot expose their
+  decisions and repeating the capture adds nothing.
+- **Naming the cause needs a rebuilt RM**, since DKMS compiles it from
+  source: log `bIsGC6Satisfied`, `bIsGCOFFSatisfied` and `b_idle_holdoff` in
+  `dynamic-power.c`. The bounded-retry change proposed for
+  [#1071](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1071)
+  fits the same build. Edits under `/usr/src/nvidia-<version>/` do not
+  survive a driver update.
+- NVPCF wake patches address a different observation, repeated wakes after a
+  successful suspend:
   [PR #1181 — Don't wake a runtime-suspended dGPU to service NVPCF/GPS ACPI notifies](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1181)
   and
   [PR #1299 — nvidia: defer NVPCF notifications until runtime resume](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1299)
-  are not validated fixes for this machine's continuously active state.
+  do not apply to a GPU that never suspends again.
 
 ### Verifying without waking the GPU
 
