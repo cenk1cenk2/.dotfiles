@@ -275,3 +275,10 @@ hl.window_rule({
   border_size = 0,
   no_initial_focus = true,
 })
+
+-- Skips untitled windows so the tray host above keeps its transparency.
+hl.window_rule({
+  name = "proton-opaque",
+  match = { class = "^(steam_app_[0-9]+)$", title = "negative:^()$" },
+  opaque = true,
+})
