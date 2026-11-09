@@ -946,15 +946,14 @@ owns.
   N+1 an archive-only file is purged. Every machine must share the stowed value, since the
   shortest one wins. `Profile.sweeps` is true only where Claude actually runs:
   `~/.claude` is never swept, so its plans never expire.
-- **Guards:** refuse when the local clock is >1 day ahead of a peer (the archive relies on NTP
-  sync, see below); a mass-delete gate (`--force-deletes`); `--max-delete 25`;
-  `--max-expire 200`; `--no-deletes`. A pairing's first sync holds local-only propagate files
+- **Guards:** every run refuses a clock more than 5 minutes off a peer, either way, or one
+  without NTP sync when the far clock cannot be read, as on the archive, since file times decide
+  merges and bands and a copy carries its time across; a mass-delete gate (`--force-deletes`);
+  `--max-delete 25`; `--max-expire 200`; `--no-deletes`. A pairing's first sync holds local-only propagate files
   as `unclaimed` until `--adopt`; remote-only ones are still pulled, so a first `--peer`
   pairing with a stale machine can bring its deleted memories back here.
 - `cleanupPeriodDays` defaults to Claude's own 30 when settings.json omits it. It counts days
-  since the file was last written: a resumed session or an edited plan starts over. Without
-  NTP sync an archive run refuses the sweeping profiles, since no absence can then be told
-  from Claude's sweep.
+  since the file was last written: a resumed session or an edited plan starts over.
 - Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
 - rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.
 

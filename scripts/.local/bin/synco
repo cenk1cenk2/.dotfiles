@@ -756,6 +756,8 @@ class Synco:
     )
     OPENCODE_ID = re.compile(r"ses_[0-9A-Za-z]+")
     REINDEX_TIMEOUT = 300.0
+    # Seconds two clocks may differ by before their file times stop agreeing.
+    CLOCK_SKEW = 300
     # A Wine game's comm can be whatever it named its main thread, so WoW is
     # found by command line. The bracket stops the pattern matching the shell
     # that carries this probe across ssh.
@@ -996,9 +998,6 @@ class Synco:
         self.backup_root = self.STATE_DIR / self.stamp
         self.manifest: list[dict[str, object]] = []
         self.now = time.time()
-        # Set by `check_clock`; False drops every profile to the non-sweeping
-        # view, where nothing is banded and every absence counts.
-        self.bands = True
 
     @property
     def hostname(self) -> str:
@@ -1332,20 +1331,22 @@ class Synco:
         return written
 
     def check_clock(self) -> None:
-        """Refuse a clock running ahead of the far side; distrust an unknown one.
+        """Refuse a clock off from the far side, or an unknown one without NTP.
 
-        Every band is measured on this clock, and a fast one makes every file
-        look expired — the one failure the delete caps cannot tell from a
-        week without syncing. A slow clock only bands fewer files.
+        Newer-wins merges and age bands both read file times, and a copy
+        carries its time to the far side, so a wrong clock outlives the run.
+        A fast one also makes every file look expired, which the delete caps
+        cannot tell from a week without syncing.
         """
         command = self.transport.shell("date +%s")
         if command is not None:
             result = run(command, log=self.log, timeout=30.0)
             if result.returncode == 0:
-                ahead = self.now - float(result.stdout.strip())
-                if ahead > self.EXPIRY_SLACK:
+                skew = self.now - float(result.stdout.strip())
+                if abs(skew) > self.CLOCK_SKEW:
                     raise click.ClickException(
-                        f"local clock is {ahead / 3600:.1f}h ahead of {self.transport.name}"
+                        f"local clock is {abs(skew):.0f}s"
+                        f" {'ahead of' if skew > 0 else 'behind'} {self.transport.name}"
                     )
                 return
         # The archive is a CIFS mount whose server-side timestamps are not
@@ -1356,8 +1357,7 @@ class Synco:
             timeout=30.0,
         )
         if result.stdout.strip() != "yes":
-            self.log.warning("clock not NTP-synchronised; sweeping profiles refused")
-            self.bands = False
+            raise click.ClickException("clock not NTP-synchronised")
 
     @staticmethod
     def is_prefix(shorter: bytes, longer: bytes) -> bool:
@@ -1698,11 +1698,6 @@ class Synco:
             report.skipped = f"{profile.root} absent"
             return report
 
-        if profile.sweeps and not self.bands:
-            # Without a trusted clock no absence can be told from Claude's own
-            # sweep, and counting those as deletes caps or refuses anyway.
-            report.refused = "clock not NTP-synchronised"
-            return report
         try:
             report.base = base = self.identify(profile, report)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
@@ -2523,8 +2518,8 @@ class Synco:
             self.log.debug("app-server stderr: %s", stderr.read_text())
         self.log.info("%s: %d thread(s) indexed", profile.name, indexed)
 
-    def live_vendors(self) -> set[Vendor]:
-        """Which vendors have a process running on either side.
+    def live_vendors(self, vendors: set[Vendor]) -> set[Vendor]:
+        """Which of `vendors` have a process running on either side.
 
         One round trip rather than one per vendor: the probe prints the
         names it finds, because `pgrep` prints pids and those say nothing
@@ -2532,11 +2527,11 @@ class Synco:
         """
         probe = "; ".join(
             f"pgrep {shlex.join(self.PROCESSES[v])} >/dev/null && echo {v}"
-            for v in Vendor
+            for v in vendors
         )
         live = {
             vendor
-            for vendor in Vendor
+            for vendor in vendors
             if run(
                 ["pgrep", "-u", str(os.getuid()), *self.PROCESSES[vendor]],
                 log=self.log,
@@ -2553,7 +2548,7 @@ class Synco:
             timeout=30.0,
         )
 
-        return live | {v for v in Vendor if str(v) in remote.stdout.split()}
+        return live | {v for v in vendors if str(v) in remote.stdout.split()}
 
     def summary(self, reports: list[Report]) -> Table:
         table = Table(box=None)
@@ -2658,9 +2653,8 @@ class Synco:
         # run does, so the mode is stated before and after them.
         if self.dry_run:
             self.console.rule(self.DRY_RUN_BANNER)
-        if any(p.sweeps for p in profiles):
-            self.check_clock()
-        live = self.live_vendors() & {p.vendor for p in profiles}
+        self.check_clock()
+        live = self.live_vendors({p.vendor for p in profiles})
         # WoW holds addon settings in memory and writes them on logout, over
         # whatever a sync just put there, which no mid-run re-check can catch.
         if Vendor.WOW in live and not self.dry_run:
