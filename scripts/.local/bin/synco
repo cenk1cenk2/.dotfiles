@@ -508,6 +508,9 @@ class Report:
     # opencode sessions changed both in the database and in the export,
     # whose export body was parked beside the original.
     parked: list[str] = field(default_factory=list)
+    # Paths `--restore-from` put back here, which go to the far side whatever
+    # it holds now.
+    restored: set[str] = field(default_factory=set)
 
     def obscured(self, path: str) -> bool:
         return any(path == u or path.startswith(f"{u}/") for u in self.unknown)
@@ -693,6 +696,11 @@ def sync_options(archive: Path) -> Callable[[Callable], Callable]:
         click.option("--max-delete", default=25, show_default=True, help="Drop cap."),
         click.option(
             "--max-expire", default=200, show_default=True, help="Expiry drop cap."
+        ),
+        click.option(
+            "--restore-from",
+            default=None,
+            help="Backup stamp or directory to restore here, then push.",
         ),
     )
 
@@ -985,6 +993,7 @@ class Synco:
         force_deletes: bool = False,
         max_delete: int = 25,
         max_expire: int = 200,
+        restore_from: str | None = None,
     ) -> None:
         self.transport = transport
         self.dry_run = dry_run
@@ -994,6 +1003,7 @@ class Synco:
         self.force_deletes = force_deletes
         self.max_delete = max_delete
         self.max_expire = max_expire
+        self.restore_from = restore_from
         self.stamp = f"{time.strftime(self.STAMP)}-{os.getpid()}"
         self.backup_root = self.STATE_DIR / self.stamp
         self.manifest: list[dict[str, object]] = []
@@ -1547,6 +1557,8 @@ class Synco:
         pair = base.paths.get(path)
         if report.obscured(path):
             return Step(path, Action.HELD, kind, "not a regular file here")
+        if path in report.restored and local != remote:
+            return Step(path, Action.PUSH, kind, "restored")
         policy = self.policy(profile, path)
         if policy is Policy.EXPIRES and days is None:
             policy = Policy.PROPAGATE
@@ -1757,8 +1769,14 @@ class Synco:
 
         # Bodies are only pulled where the listing could not settle it, so
         # an unchanged tree costs one listing and no transfer. A body about
-        # to be dropped there is fetched too: it is the backup.
-        dropping = [s.path for s in report.steps if s.action is Action.DROP_REMOTE]
+        # to be dropped or overwritten by a restore is fetched too: it is the
+        # backup.
+        dropping = [
+            s.path
+            for s in report.steps
+            if s.action is Action.DROP_REMOTE
+            or (s.path in report.restored and s.path in remote)
+        ]
         self.fetch(profile, undecided + mergeable + dropping, staging)
         for path in sorted(undecided):
             report.steps.append(self.decide(profile, path, staging))
@@ -2610,6 +2628,49 @@ class Synco:
             f"[yellow]running:[/] {names} — some paths may be held back this run"
         )
 
+    def restore_backup(self, profile: Profile) -> set[str]:
+        """Put this machine's backed-up copies of `profile` back in place.
+
+        Only the local copies: a `-peer` body was never this machine's. Each
+        one is stamped now, so it reads as the latest edit on every other
+        machine too and is not replaced by the copy it was restored over.
+        """
+        assert self.restore_from is not None
+        source = Path(self.restore_from)
+        if not source.is_dir():
+            source = self.STATE_DIR / self.restore_from
+        manifest = source / "manifest.json"
+        if not manifest.is_file():
+            raise click.ClickException(f"{self.restore_from}: no backup manifest")
+        restored: set[str] = set()
+        for path in {
+            entry["path"]
+            for entry in json.loads(manifest.read_text())
+            if entry["profile"] == profile.name and "side" not in entry
+        }:
+            body = source / profile.slug / path
+            if not self.wanted(profile, path) or not body.is_file():
+                self.log.warning("%s: nothing to restore for %s", profile.name, path)
+                continue
+            restored.add(path)
+            target = profile.root / path
+            if self.dry_run or (
+                target.is_file() and self.digest(target) == self.digest(body)
+            ):
+                continue
+            self.backup(profile, path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(f".{target.name}.synco")
+            shutil.copy2(body, temporary)
+            os.utime(temporary)
+            temporary.replace(target)
+        self.console.print(
+            f"{profile.name}: [bold]{len(restored)}[/] file(s)"
+            f" {'to restore' if self.dry_run else 'restored'} from {source}"
+        )
+
+        return restored
+
     def tidy(self) -> None:
         """Drop scratch state; keep backup bodies for BACKUP_DAYS.
 
@@ -2676,6 +2737,8 @@ class Synco:
         for profile in profiles:
             report = Report(profile)
             reports.append(report)
+            if self.restore_from is not None and profile.root.is_dir():
+                report.restored = self.restore_backup(profile)
             if profile.vendor is Vendor.OPENCODE:
                 try:
                     self.reconcile(profile, report)

@@ -955,6 +955,11 @@ owns.
 - `cleanupPeriodDays` defaults to Claude's own 30 when settings.json omits it. It counts days
   since the file was last written: a resumed session or an edited plan starts over.
 - Staging and file lists are scratch; backup bodies stay 14 days under `~/.local/state/synco`.
+- **`--restore-from <stamp|dir>` puts this machine's backed-up copies back, then syncs.** The
+  `-peer` bodies stay out, as they were never this machine's. Each restored file is stamped now
+  and pushed whatever the far side holds, with the far copy backed up first, so a newer-wins merge
+  elsewhere does not undo it. Copy-only append files (transcripts) are the exception: a machine
+  holding a longer body still extends a restored shorter one.
 - rclone filters are `--filter` rules: mixed `--include`/`--exclude` have an undefined order.
 
 ### WoW addons
