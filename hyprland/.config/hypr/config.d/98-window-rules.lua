@@ -278,9 +278,11 @@ hl.window_rule({
   workspace = "special:wine-tray silent",
 })
 
--- Skips untitled windows so the tray host above keeps its transparency.
+-- Skips untitled windows so the tray host above keeps its transparency. A hidden
+-- workspace gets no frame callbacks, and a game waiting on one stops answering pings.
 hl.window_rule({
-  name = "proton-opaque",
+  name = "proton-window",
   match = { class = "^(steam_app_[0-9]+)$", title = "negative:^()$" },
   opaque = true,
+  render_unfocused = true,
 })
