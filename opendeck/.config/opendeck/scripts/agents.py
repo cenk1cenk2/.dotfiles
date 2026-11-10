@@ -11,9 +11,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
-from deck import Key, Plugin, command, icon
+from deck import NO_OVERRIDE, Key, Override, Plugin, command, icon
+from hyprland import Focus, Hyprland
 from speech import Session, SpeechPlugin
 from dotlib import agents
+from dotlib.microphone import Capturing
 
 
 class Action(StrEnum):
@@ -36,11 +38,15 @@ class AgentsPlugin(Plugin):
 
     NOTIFY = Path.home() / ".config/wayland/scripts/notify.py"
     PICKER = Path.home() / ".config/hypr/scripts/agents.py"
+    # Amp's desktop app dictates on its own: Ctrl+Shift+D starts recording, and
+    # Enter stops it and sends.
+    AMP = "amp-desktop"
     ICONS = Path.home() / ".config/opendeck/plugins/dev.kilic.agents.sdPlugin/icons"
     SAMPLE_SECONDS = 1.0
     AGENTS_SECONDS = 2.0
     WALK_SECONDS = 15.0
     URGENT = "#e06c75"
+    PICKER_TILE = "#c678dd"
     WAITING_TILE = "#d19a66"
     SESSIONS_TILE = "#56b6c2"
     # Simple Icons marks (CC0) in icons/agents/, by hook vendor.
@@ -48,6 +54,7 @@ class AgentsPlugin(Plugin):
         "Claude Code": "claude",
         "Codex": "openai",
         "OpenCode": "opencode",
+        "Amp": "amp",
     }
     KEY = AgentKey
 
@@ -69,6 +76,20 @@ class AgentsPlugin(Plugin):
         self.last_seen: str | None = None
         self.next_sample = 0.0
         self.next_agents = 0.0
+        self.hypr = Hyprland()
+        self.focus = Focus(self.hypr)
+        self.windows: list[dict] = []
+        self.windows_read = -1
+        # Amp dictating is Amp holding a capture stream open, however the take
+        # was started, so the key never trusts its own memory of it.
+        self.capturing = Capturing()
+        # The picker's tile, and the same in the STT keys' live red for while
+        # Amp records; built once, since the deck redraws every poll.
+        picker = (self.ICONS / "picker.svg").read_text()
+        self.picker_images = (
+            self.uri(picker),
+            self.uri(picker.replace(self.PICKER_TILE, self.URGENT)),
+        )
 
     def poll(self) -> None:
         actions = {key.action for key in self.keys.values()}
@@ -90,6 +111,8 @@ class AgentsPlugin(Plugin):
                 return self.agent_image(key)
             case Action.SESSIONS:
                 return self.sessions_image()
+            case Action.PICKER:
+                return self.picker_images[self.AMP in self.capturing]
 
         return None
 
@@ -100,6 +123,8 @@ class AgentsPlugin(Plugin):
         match key.action:
             case Action.SESSIONS:
                 self.switch(1)
+            case Action.PICKER if self.AMP in self.capturing:
+                self.amp_send()
             case Action.PICKER:
                 self.spawn([str(self.PICKER), "pick"])
             case Action.WAITING if key.settings["slot"] == 1:
@@ -107,6 +132,8 @@ class AgentsPlugin(Plugin):
             case Action.WAITING if (entry := self.agent(key)) is not None:
                 if entry.get("pane"):
                     self.spawn([str(self.NOTIFY), "focus", "--pane", entry["pane"]])
+                elif entry.get("url"):
+                    self.spawn([str(self.NOTIFY), "focus", "--url", entry["url"]])
                 self.dismiss(entry)
 
     def holds(self, key: AgentKey) -> bool:
@@ -154,7 +181,50 @@ class AgentsPlugin(Plugin):
                 if pane in panes and agents.alive(agent["pid"], agent["name"])
             }
 
-        return agents.running(panes, self.found)
+        return agents.running(panes, self.found) + self.app_windows()
+
+    def app_windows(self) -> list[dict]:
+        """Agent apps' own windows, re-listed only after Hyprland reported a
+        window change, so a quiet desktop costs no request."""
+        if self.focus.windows != self.windows_read:
+            self.windows_read = self.focus.windows
+            self.windows = agents.windows(self.hypr.query("clients") or [], None)
+
+        return [{**w, "seen": w["window"] == self.focus.address} for w in self.windows]
+
+    def raise_window(self, address: str) -> None:
+        self.hypr.dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
+
+    def override(self, key: AgentKey) -> Override:
+        if key.action != Action.PICKER:
+            return NO_OVERRIDE
+        if self.AMP in self.capturing:
+            return Override(press="amp", hold="amp")
+        if self.focus.window_class == self.AMP:
+            return Override(hold="amp")
+
+        return NO_OVERRIDE
+
+    def amp_send(self) -> None:
+        """Stop Amp's take and send it: Enter does both, wherever the take
+        was started."""
+        if (window := self.amp_window()) is not None:
+            self.amp_key(window, "Return")
+
+    def amp_window(self) -> str | None:
+        """The Amp window in focus, else the first one open."""
+        if self.focus.window_class == self.AMP:
+            return self.focus.address
+
+        return next(
+            (w["window"] for w in self.app_windows() if w["name"] == self.AMP), None
+        )
+
+    def amp_key(self, address: str, key: str, mods: str = "") -> None:
+        self.hypr.dispatch(
+            f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "{key}",'
+            f' window = "address:{address}" }})'
+        )
 
     def dictate(self) -> None:
         """Land the take being recorded in the current agent, as agents mode's
@@ -162,14 +232,35 @@ class AgentsPlugin(Plugin):
 
         The take keeps the enrichment it was started with, since a stop
         override replaces it either way. With nothing recording this opens
-        the picker, as a press does."""
+        the picker, as a press does. With Amp's desktop app in focus, one hold
+        starts Amp's own dictation and the next stops it and sends, in the
+        window it started in."""
+        if self.AMP in self.capturing:
+            return self.amp_send()
+        if self.focus.window_class == self.AMP:
+            return self.amp_key(self.focus.address, "d", "CTRL SHIFT")
+
         state = SpeechPlugin.status(Session.STT)
         self.agents = self.find_agents()
         found = self.current_agent()
         if state is None or found is None:
             return self.spawn([str(self.PICKER), "pick"])
-
         enrich = " --enrich" if state.get("enrich") else ""
+        if not found[0]["pane"]:
+            # An app window takes the paste where it lands, once focused.
+            self.raise_window(found[0]["window"])
+            return self.spawn(
+                [
+                    *SpeechPlugin.SPEECH,
+                    "stt",
+                    "toggle",
+                    "--output",
+                    "paste",
+                    "--submit",
+                    *enrich.split(),
+                ]
+            )
+
         self.spawn(
             [
                 *SpeechPlugin.SPEECH[:2],
@@ -184,7 +275,10 @@ class AgentsPlugin(Plugin):
         """Focus the next (or previous) agent after the one on screen."""
         if (target := agents.step(self.agents, step)) is None:
             return
-        self.spawn([str(self.NOTIFY), "focus", "--pane", target["pane"]])
+        if target["pane"]:
+            self.spawn([str(self.NOTIFY), "focus", "--pane", target["pane"]])
+        else:
+            self.raise_window(target["window"])
         self.next_agents = time.monotonic() + 0.3
 
     def current_agent(self) -> tuple[dict, int] | None:
@@ -196,10 +290,10 @@ class AgentsPlugin(Plugin):
             return None
         for index, agent in enumerate(self.agents):
             if agent["seen"]:
-                self.last_seen = agent["pane"]
+                self.last_seen = agent["pane"] or agent["window"]
                 return agent, index
         for index, agent in enumerate(self.agents):
-            if agent["pane"] == self.last_seen:
+            if (agent["pane"] or agent["window"]) == self.last_seen:
                 return agent, index
 
         return self.agents[0], 0

@@ -831,6 +831,40 @@ not set. Read the active line, never the comment above it.
 - Multiobs exposes `bgColorActive` / `bgColorInactive` / `bgColorIntermediate` /
   `fgColor` per key in the profile JSON. Setting those beats supplying an image,
   because they cannot be overwritten the way a file can.
+- **Focus comes from Hyprland's event socket, never a poll.**
+  `scripts/hyprland.py` holds the deck's own Hyprland IPC (`Hyprland`) and
+  `Focus`, which follows `.socket2.sock` on a background thread, re-seeds from
+  `j/activewindow` after every reconnect, and keeps the focused window's class,
+  title and address. A key that acts on the focused window reads `Focus` on
+  press instead of calling `hyprctl`. `activewindowv2` sends the address
+  without `0x`, which the IPC and `send-key.py` want, so `Focus` adds it.
+- **An agent desktop app's window is an agent like a tmux pane.**
+  `dotlib.agents.WINDOWS` maps window classes to vendors, and
+  `agents.windows(clients, focused)` shapes their windows as `running` shapes
+  panes, with a `window` address where `pane` would be. It takes Hyprland's
+  client list rather than asking, so each caller keeps its own IPC: the deck
+  re-lists only when `Focus.windows` moved (window opened, closed, moved or
+  retitled), the menu once per run. The sessions key, the menu and their
+  next/previous step focus such an entry through `hl.dsp.focus`.
+- **A key that switches to another app says so in yellow.** `Plugin.override(key)`
+  returns an `Override(press=..., hold=...)` naming the app each side drives
+  instead of its usual target. The overridden side's writing turns One Dark
+  yellow (`#e5c07b`) and keeps its text, with a tag naming the app beside it:
+  the hold hint along the bottom, or the label along the top, which the image
+  then draws itself since OpenDeck's title takes no colour. Every key that
+  follows focus goes through `override`, so yellow writing always means "this
+  now drives <app>". The agents picker's hold, for one, toggles Amp's own
+  dictation in `amp-desktop`: Ctrl+Shift+D starts a take, Enter stops it and
+  sends. A second Ctrl+Shift+D would stop without sending, and holding the
+  shortcut down through `hl.dsp.send_key_state` does not trigger Amp's
+  hold-to-send.
+- **Whether a program records comes from its capture stream, never from the
+  deck's memory.** `dotlib.microphone.Capturing` follows PipeWire's
+  source-output events through `pulsectl` and keeps the binaries holding a
+  capture stream open; Amp dictating shows up as `amp-desktop`. A take started
+  or stopped in the app itself is seen like one from the deck: while Amp
+  records, the agents key draws its tile in the live red the STT keys use, and
+  both its press and hold send Enter, marked as overridden for `amp`.
 
 ## Icons
 
@@ -943,8 +977,9 @@ not set. Read the active line, never the comment above it.
 `wayland/.config/wayland/scripts/notify.py` is the only hook, shared by
 Claude Code (`Notification` in both profiles' `settings.json`), codex
 (`PermissionRequest` and `Stop` in both `config.toml`s) and opencode (the
-`plugins/notify/tui.js` client plugin in both config dirs), all stowed from
-`~/.agents/config/{claude,codex,opencode}`. The vendor is the
+`plugins/notify/tui.js` client plugin in both config dirs) and Amp (the
+`~/.config/amp/plugins/notify.ts` plugin both accounts load), all stowed from
+`~/.agents/config/{claude,codex,opencode,amp}`. The vendor is the
 subcommand, the profile label its argument: `notify.py codex laravel`. It
 sits in the wayland scripts project rather than any vendor's package
 because most of it is the tmux/kitty/hyprland focus chain, which no vendor
@@ -959,7 +994,23 @@ owns.
 
 - **opencode sends codex's shape, so `notify.py codex` and `notify.py
   opencode` are one command** registered under both names; the name it was
-  invoked as picks only the vendor label.
+  invoked as picks only the vendor label. `notify.py amp` is the same command
+  a third time.
+
+- **Amp's plugin runs beside whichever Amp process runs the thread**: the TUI,
+  or the `amp-runner@` systemd runner that serves threads the desktop app
+  starts on this machine. `agent.end` goes out as `Stop` (cancelled turns and
+  subagents skipped), the thread state turning `awaiting-approval` as
+  `PermissionRequest` after 1.5 s, and every payload carries the thread's
+  `url`. The profile label comes from `AMP_SETTINGS_FILE`
+  (`~/.config/amp-kilic/settings.json` is `kilic`). It does nothing without
+  `WAYLAND_DISPLAY` or `notify.py`, which keeps orbs and headless runners
+  quiet. A runner's entry has no pane, so a click, the deck key and the
+  Hyprland menu open the URL through `notify.py focus --url`, in `amp-desktop`
+  when installed, and the plugin drops the entry with `notify.py dismiss
+  --session` when the next prompt starts. `amp plugins exec` never calls the
+  `agent.*` handlers; test with a real `amp -x` turn run outside the terminal,
+  or `notify.py` stays quiet because its kitty window has focus.
 
 - **opencode has no hooks, so a client (TUI) plugin stands in for them.** It
   runs in the terminal process, which is what hands `notify.py` the

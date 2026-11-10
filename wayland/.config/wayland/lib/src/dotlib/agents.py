@@ -30,6 +30,11 @@ NAMES: dict[str, str] = {
     "opencode": "opencode",
     "amp.exe": "amp",
 }
+# Desktop apps whose windows are agents in their own right, by window class,
+# to the vendor mark the deck draws.
+WINDOWS: dict[str, str] = {
+    "amp-desktop": "amp",
+}
 
 
 def edit_waiting(change: Callable[[list[dict]], list[dict]]) -> list[dict]:
@@ -175,6 +180,36 @@ def running(panes: dict[str, dict], found: dict[str, dict]) -> list[dict]:
     ]
 
 
+def windows(clients: list[dict], focused: str | None) -> list[dict]:
+    """Agent desktop apps' own windows, shaped as `running` shapes tmux agents:
+    a Hyprland window address where a pane would be, on screen while focused.
+
+    Takes Hyprland's `clients` rather than asking for them, so each caller
+    keeps its own IPC and decides how often to read it."""
+    found = []
+    for client in clients:
+        if (vendor := WINDOWS.get(client.get("class", ""))) is None:
+            continue
+        # Titles read "<page> - <App>".
+        title = client.get("title", "")
+        found.append(
+            {
+                "pane": None,
+                "window": client["address"],
+                "pid": client.get("pid"),
+                "name": client["class"],
+                "vendor": vendor,
+                "home": None,
+                "profile": None,
+                "where": f"workspace {client.get('workspace', {}).get('name', '?')}",
+                "project": title.rpartition(" - ")[0] or title or vendor,
+                "seen": client["address"] == focused,
+            }
+        )
+
+    return found
+
+
 def step(agents: list[dict], offset: int) -> dict | None:
     """The agent `offset` places from the one on screen, wrapping; from the
     start of the list when none is on screen."""
@@ -237,10 +272,16 @@ def config_dir(pid: int, vendor: str) -> Path | None:
         environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
     except OSError:
         return None
-    variable = {"claude": b"CLAUDE_CONFIG_DIR=", "openai": b"CODEX_HOME="}.get(vendor)
+    variable = {
+        "claude": b"CLAUDE_CONFIG_DIR=",
+        "openai": b"CODEX_HOME=",
+        "amp": b"AMP_SETTINGS_FILE=",
+    }.get(vendor)
     for item in environ:
         if variable and item.startswith(variable):
-            return Path(item[len(variable) :].decode(errors="replace"))
+            path = Path(item[len(variable) :].decode(errors="replace"))
+            # Amp names its settings file, `~/.config/amp-kilic/settings.json`.
+            return path.parent if vendor == "amp" else path
 
     return None
 

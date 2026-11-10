@@ -29,6 +29,7 @@ class Row:
     card: str
     pane: str | None
     entry: dict | None
+    window: str | None = None
 
 
 class AgentMenu:
@@ -111,13 +112,28 @@ class AgentMenu:
                 case _:
                     self.dismiss(row.entry)
                     if row.pane:
-                        self.focus(row.pane)
+                        self.focus("--pane", row.pane)
+                    elif row.window:
+                        self.raise_window(row.window)
+                    elif row.entry and row.entry.get("url"):
+                        self.focus("--url", row.entry["url"])
                     return
         self.log.info("no agents running")
 
+    @staticmethod
+    def app_windows() -> list[dict]:
+        hypr = Hyprctl()
+        focused = (hypr.active_window() or {}).get("address")
+
+        return agents.windows(hypr.clients(), focused)
+
+    @staticmethod
+    def raise_window(address: str) -> None:
+        Hyprctl().dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
+
     @classmethod
-    def focus(cls, pane: str) -> None:
-        run([str(cls.NOTIFY), "focus", "--pane", pane], log=cls.log, timeout=10.0)
+    def focus(cls, option: str, target: str) -> None:
+        run([str(cls.NOTIFY), "focus", option, target], log=cls.log, timeout=10.0)
 
     @staticmethod
     def dismiss(entry: dict | None) -> None:
@@ -143,6 +159,7 @@ class AgentMenu:
                 for pane, agent in found.items()
                 if pane not in flagged
             ),
+            *(self.window_row(window) for window in self.app_windows()),
         ]
 
     def pick(self, rows: list[Row]) -> tuple[int | None, int]:
@@ -244,6 +261,26 @@ class AgentMenu:
         )
 
         return Row(search, card, agent["pane"], None)
+
+    def window_row(self, window: dict) -> Row:
+        card = "\n".join(
+            (
+                self.headline(
+                    "running",
+                    self.RUNNING,
+                    None,
+                    None,
+                    window["project"],
+                    window["name"] + (", on screen" if window["seen"] else ""),
+                ),
+                f'<span alpha="60%">{html.escape(window["where"], quote=False)}</span>',
+            )
+        )
+        search = " ".join(
+            ("running", window["project"], window["name"], window["where"])
+        )
+
+        return Row(search, card, None, None, window["window"])
 
     @staticmethod
     def search(
@@ -376,14 +413,22 @@ class AgentMenu:
     @click.option("--newest", is_flag=True, help="Newest instead of oldest.")
     def cmd_waiting(newest: bool) -> None:
         """Focus a waiting agent and clear it from the list."""
-        # Paneless entries cannot be focused, so they are never the target.
-        waiting = [e for e in agents.waiting(agents.tmux_panes()) if e.get("pane")]
+        # An entry with neither a pane nor a thread URL has nowhere to go, so
+        # it is never the target.
+        waiting = [
+            e
+            for e in agents.waiting(agents.tmux_panes())
+            if e.get("pane") or e.get("url")
+        ]
         if not waiting:
             AgentMenu.NOTIFICATION.send("Nothing waiting")
             return
         entry = waiting[-1] if newest else waiting[0]
         AgentMenu.dismiss(entry)
-        AgentMenu.focus(entry["pane"])
+        if entry.get("pane"):
+            AgentMenu.focus("--pane", entry["pane"])
+        else:
+            AgentMenu.focus("--url", entry["url"])
 
     @cli.command("dismiss")
     def cmd_dismiss() -> None:
@@ -394,11 +439,16 @@ class AgentMenu:
     @classmethod
     def switch(cls, offset: int) -> None:
         panes = agents.tmux_panes() or {}
-        target = agents.step(agents.running(panes, agents.walk(panes)), offset)
+        target = agents.step(
+            agents.running(panes, agents.walk(panes)) + cls.app_windows(), offset
+        )
         if target is None:
             cls.NOTIFICATION.send("No agents running")
             return
-        cls.focus(target["pane"])
+        if target["pane"]:
+            cls.focus("--pane", target["pane"])
+        else:
+            cls.raise_window(target["window"])
 
 
 if __name__ == "__main__":

@@ -46,14 +46,30 @@ def icon(name: str, size: int = 144) -> Path | None:
     return Path(found) if found else None
 
 
+@dataclass(frozen=True)
+class Override:
+    """The apps a key's press and hold drive instead of their usual targets.
+
+    Either side's writing turns yellow and gains a tag naming the app: the
+    label along the top for the press, the hold hint along the bottom for the
+    hold. The writing itself stays, so the key still says what it does."""
+
+    press: str | None = None
+    hold: str | None = None
+
+
+NO_OVERRIDE = Override()
+
+
 @dataclass
 class Key:
     action: str
     settings: dict
     shown: tuple[int, str] | None = None
     # What the key was last drawn from: the plugin's image or the state files,
-    # the hold hint laid over it, and whether that hold was firing.
-    drawn: tuple[str | None, str | None, bool] | None = None
+    # the hold hint laid over it, whether that hold was firing, and the
+    # override marked on it.
+    drawn: tuple | None = None
     pressed_at: float | None = None
     held: bool = False
     fired_at: float = 0.0
@@ -167,6 +183,12 @@ class Plugin:
         """What holding the key does, shown along its bottom edge at all times."""
         return self.hold_status(key)
 
+    def override(self, key: Key) -> Override:
+        """What the key's press and hold drive instead of their usual targets
+        right now. Every key that follows focus goes through this, so yellow
+        writing always means "this now drives <app>"."""
+        return NO_OVERRIDE
+
     def key_down(self, context: str, key: Key) -> None:
         key.pressed_at, key.held = time.monotonic(), False
 
@@ -199,24 +221,64 @@ class Plugin:
     # unwrapped to the original instead of gaining a second band.
     HINT_MARK = 'data-deck-hint="1"'
 
+    YELLOW = "#e5c07b"
+    PLATE = "#17191e"
+
     @classmethod
-    def hinted(cls, image: str, hint: str, lit: bool = False) -> str:
-        """`image` with `hint` in a band along its bottom edge.
+    def tag(cls, text: str, y: int) -> str:
+        """A yellow app name on a small plate, its top edge at `y`."""
+        width = 16 + 12 * len(text)
+
+        return (
+            f'<rect x="{72 - width / 2}" y="{y}" width="{width}" height="28"'
+            f' rx="6" fill="{cls.PLATE}" fill-opacity="0.9"/>'
+            f'<text x="72" y="{y + 21}" font-family="Liberation Sans" font-size="21"'
+            f' font-weight="bold" fill="{cls.YELLOW}" text-anchor="middle">'
+            f"{html.escape(text)}</text>"
+        )
+
+    @classmethod
+    def hinted(
+        cls,
+        image: str,
+        hint: str | None,
+        lit: bool = False,
+        label: str = "",
+        override: Override = NO_OVERRIDE,
+    ) -> str:
+        """`image` with `hint` in a band along its bottom edge, and the
+        override's writing in yellow with a tag naming its app.
 
         The original is embedded whole rather than edited, so any image works
         and `unwrap` can always recover it. `lit` inverts the band, for while
-        the hold it names is the one firing."""
-        band, ink = ("#e5c07b", "#17191e") if lit else ("#17191e", "#e5e5e5")
+        the hold it names is the one firing. An overridden press draws the
+        label here, since OpenDeck's own title has no colour to set."""
+        if lit:
+            band, ink = cls.YELLOW, cls.PLATE
+        else:
+            band, ink = cls.PLATE, cls.YELLOW if override.hold else "#e5e5e5"
+        # Sized for the device rather than the canvas: a key is drawn at half
+        # this size, where anything under ~20px stops reading.
+        parts = [f'<image href="{image}" width="144" height="144"/>']
+        if override.press:
+            parts.append(
+                f'<rect width="144" height="30" fill="{cls.PLATE}" fill-opacity="0.9"/>'
+                '<text x="72" y="22" font-family="Liberation Sans" font-size="21"'
+                f' font-weight="bold" fill="{cls.YELLOW}" text-anchor="middle">'
+                f"{html.escape(label)}</text>" + cls.tag(override.press, 32)
+            )
+        if override.hold:
+            parts.append(cls.tag(override.hold, 84))
+        if hint:
+            parts.append(
+                f'<rect y="114" width="144" height="30" fill="{band}" fill-opacity="0.9"/>'
+                '<text x="72" y="136" font-family="Liberation Sans" font-size="21"'
+                f' font-weight="bold" fill="{ink}" text-anchor="middle">'
+                f"{html.escape(hint)}</text>"
+            )
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144"'
-            f' viewBox="0 0 144 144" {cls.HINT_MARK}>'
-            f'<image href="{image}" width="144" height="144"/>'
-            # Sized for the device rather than the canvas: a key is drawn at
-            # half this size, where anything under ~20px stops reading.
-            f'<rect y="114" width="144" height="30" fill="{band}" fill-opacity="0.9"/>'
-            '<text x="72" y="136" font-family="Liberation Sans" font-size="21"'
-            f' font-weight="bold" fill="{ink}" text-anchor="middle">'
-            f"{html.escape(hint)}</text></svg>"
+            f' viewBox="0 0 144 144" {cls.HINT_MARK}>{"".join(parts)}</svg>'
         )
 
         return f"data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()}"
@@ -264,25 +326,34 @@ class Plugin:
         """Send the key's image when it, its hint or its hold changed.
 
         A plugin image goes to every state, as OpenDeck applies a stateless
-        `setImage`; without one, a hint is laid over each state's own file."""
+        `setImage`; without one, the hint and tag are laid over each state's
+        own file, and a key that drops them gets its plain files back."""
+        override = self.override(key)
         hint = self.hold_hint(key) if self.holds(key) else None
         image = self.image(context, key)
-        if (image, hint, key.held) == key.drawn or (image is None and hint is None):
+        drawn = (image, hint, key.held, override)
+        if drawn == key.drawn:
             return
+        if (
+            image is None
+            and hint is None
+            and key.drawn is None
+            and override == NO_OVERRIDE
+        ):
+            return
+
+        def dress(base: str) -> str:
+            if hint or override != NO_OVERRIDE:
+                return self.hinted(base, hint, key.held, key.label, override)
+
+            return base
+
         if image is not None:
-            self.send(
-                "setImage",
-                context,
-                {"image": self.hinted(image, hint, key.held) if hint else image},
-            )
-        elif hint is not None:
+            self.send("setImage", context, {"image": dress(image)})
+        else:
             for state, base in self.state_images(context).items():
-                self.send(
-                    "setImage",
-                    context,
-                    {"image": self.hinted(base, hint, key.held), "state": state},
-                )
-        key.drawn = (image, hint, key.held)
+                self.send("setImage", context, {"image": dress(base), "state": state})
+        key.drawn = drawn
 
     def render(self) -> None:
         for context, key in self.keys.items():
@@ -291,7 +362,9 @@ class Plugin:
             look, status = self.look(context, key)
             if key.held and (held := self.hold_status(key)) is not None:
                 status = held
-            shown = (look, "\n".join(part for part in (key.label, status) if part))
+            # An overridden press draws its label into the image, in yellow.
+            label = "" if self.override(key).press else key.label
+            shown = (look, "\n".join(part for part in (label, status) if part))
             if shown == key.shown:
                 continue
 

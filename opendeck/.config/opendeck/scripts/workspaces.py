@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import base64
-import glob
 import itertools
-import json
 import logging
 import math
-import os
 import re
-import socket
 import threading
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from deck import Key, Plugin, command
+from hyprland import Hyprland
 
 
 class Action(StrEnum):
@@ -33,70 +30,6 @@ class Workspace:
     monitor: str
     # Window classes, most recently focused first.
     apps: list[str]
-
-
-class Hyprland:
-    """The subset of Hyprland IPC the deck needs.
-
-    Hyprctl is the hyprland project's; this is the deck's own copy, the same
-    way `jumpy` carries one, so the two projects stay independent."""
-
-    log = logging.getLogger("workspaces.ipc")
-
-    def __init__(self) -> None:
-        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-        signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-        found = (
-            [os.path.join(runtime, "hypr", signature)]
-            if signature
-            else sorted(
-                glob.glob(os.path.join(runtime, "hypr", "*")), key=os.path.getmtime
-            )
-        )
-        self.dir = found[-1] if found else None
-
-    def request(self, message: str) -> str | None:
-        if self.dir is None:
-            return None
-        self.log.debug("ipc: %s", message)
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.connect(os.path.join(self.dir, ".socket.sock"))
-                sock.sendall(message.encode())
-                chunks = []
-                while chunk := sock.recv(8192):
-                    chunks.append(chunk)
-        except OSError as e:
-            self.log.debug("ipc failed: %s", e)
-            return None
-
-        return b"".join(chunks).decode()
-
-    def query(self, what: str) -> Any:
-        response = self.request(f"j/{what}")
-        try:
-            return json.loads(response) if response else None
-        except ValueError:
-            return None
-
-    def dispatch(self, expr: str) -> None:
-        """Run a Lua dispatcher; 0.55+ no longer takes the legacy verb form."""
-        response = self.request(f"dispatch {expr}")
-        if response != "ok":
-            self.log.warning("dispatch %s: %s", expr, response)
-
-    def events(self, on_event) -> None:
-        """Call `on_event` for every line on the event socket, forever."""
-        if self.dir is None:
-            return
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.connect(os.path.join(self.dir, ".socket2.sock"))
-            buffer = b""
-            while chunk := sock.recv(4096):
-                buffer += chunk
-                *lines, buffer = buffer.split(b"\n")
-                for line in lines:
-                    on_event(line.decode(errors="replace"))
 
 
 class Icons:

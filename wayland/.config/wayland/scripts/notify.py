@@ -6,6 +6,8 @@ import glob
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import textwrap
 import time
@@ -29,22 +31,27 @@ class Notify:
     """Agent hook: desktop popup with context, plus a chime.
 
     Serves Claude Code's Notification hook, codex's PermissionRequest /
-    Stop hooks and opencode's notify client plugin, which sends codex's
+    Stop hooks and the opencode and Amp notify plugins, which send codex's
     shape. All hand JSON on stdin carrying `cwd` and `session_id` and differ
     in what names the event: Claude sends a ready-made `message` and a
-    `transcript_path`, codex and opencode send `hook_event_name` plus the
+    `transcript_path`, codex, opencode and Amp send `hook_event_name` plus the
     fields that event carries (`tool_name`, `last_assistant_message`).
     opencode adds a `Question` event for a form awaiting an answer, its title
-    in `tool_name`.
+    in `tool_name`; Amp adds the thread's `url`.
 
     Clicking the popup focuses the pane this hook was spawned in: the right
-    tmux window on the right client, and the kitty window hosting it."""
+    tmux window on the right client, and the kitty window hosting it. Outside
+    tmux, an Amp thread opens at its URL instead."""
 
     CONTEXT_CHARS = 300
     # Notification messages that must not be missed while glancing away.
     URGENT_WORDS = ("permission", "approval", "waiting for your input")
     # Subcommands taking codex's payload, and the vendor each one names.
-    CODEX_SHAPED: ClassVar[dict[str, str]] = {"codex": "Codex", "opencode": "OpenCode"}
+    CODEX_SHAPED: ClassVar[dict[str, str]] = {
+        "codex": "Codex",
+        "opencode": "OpenCode",
+        "amp": "Amp",
+    }
     # Sent with every popup: an explicit expire-timeout wins over the server's
     # per-urgency defaults, so this script decides how long its own popups live.
     SHOW_MS = 5000
@@ -120,18 +127,38 @@ class Notify:
             context=context,
         )
 
-    # opencode has no hooks; its notify client plugin speaks codex's shape, so
-    # both names run one command and differ only in the vendor label.
+    # opencode and Amp have no hooks; their notify plugins speak codex's shape,
+    # so every name runs one command and differs only in the vendor label.
     cli.add_command(cli.commands["codex"], "opencode")
+    cli.add_command(cli.commands["codex"], "amp")
 
     @staticmethod
     @cli.command("focus")
     @click.option("--pane", help="Tmux pane to focus; defaults to this one.")
+    @click.option("--url", help="Thread URL to open instead of a pane.")
     @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
-    def cmd_focus(pane: str | None, verbose: bool) -> None:
-        """Jump to a pane without a popup."""
+    def cmd_focus(pane: str | None, url: str | None, verbose: bool) -> None:
+        """Jump to a pane, or open a thread, without a popup."""
         create_logger(verbose)
-        Notify.focus(pane)
+        if url and not pane:
+            Notify.open(url)
+        else:
+            Notify.focus(pane)
+
+    @staticmethod
+    @cli.command("dismiss")
+    @click.option("--session", required=True, help="Session whose entry to drop.")
+    @click.option("--verbose", "-v", is_flag=True, help="Debug logging.")
+    def cmd_dismiss(session: str, verbose: bool) -> None:
+        """Drop a session from the waiting list once its user is back.
+
+        A pane's entry clears itself when the pane comes on screen; an entry
+        with no pane, such as a runner's Amp thread, has nothing to watch and
+        is dropped by the plugin when the next prompt starts."""
+        create_logger(verbose)
+        edit_waiting(
+            lambda waiting: [w for w in waiting if w.get("session") != session]
+        )
 
     @classmethod
     def payload(cls) -> dict | None:
@@ -168,6 +195,7 @@ class Notify:
 
         body = f"{message}\n\n{context}" if context else message
 
+        url = payload.get("url")
         cls.record(
             vendor,
             profile,
@@ -176,6 +204,7 @@ class Notify:
             message,
             context,
             urgency == Urgency.CRITICAL,
+            url,
         )
 
         label = f" ({profile})" if profile else ""
@@ -197,7 +226,10 @@ class Notify:
             actions=[("default", "Focus")],
         )
         if clicked:
-            cls.focus()
+            if url and not os.environ.get("TMUX"):
+                cls.open(url)
+            else:
+                cls.focus()
 
     @classmethod
     def record(
@@ -209,6 +241,7 @@ class Notify:
         message: str,
         context: str,
         urgent: bool,
+        url: str | None,
     ) -> None:
         """List this agent as waiting, replacing its previous entry by pane or,
         outside tmux, by session."""
@@ -227,6 +260,7 @@ class Notify:
             "message": message,
             "context": context,
             "urgent": urgent,
+            "url": url,
             "at": time.time(),
         }
         edit_waiting(
@@ -320,6 +354,23 @@ class Notify:
             os_window.get("is_focused")
             and tab.get("is_active")
             and window.get("is_active")
+        )
+
+    @classmethod
+    def open(cls, url: str) -> None:
+        """Open a thread in the Amp desktop app, or the browser without one.
+
+        Detached rather than through `run`: a desktop app this starts lives
+        on, and a timeout would kill it. A running app takes the URL into its
+        own instance and this one exits at once."""
+        cmd = [shutil.which("amp-desktop") or "xdg-open", url]
+        cls.log.debug("spawn: %s", " ".join(cmd))
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
     @classmethod
