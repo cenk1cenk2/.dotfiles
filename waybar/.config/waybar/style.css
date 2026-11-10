@@ -97,10 +97,26 @@ window#waybar .modules-right {
   color: @bg_color_100;
 }
 
+/* Window icons inside a workspace: the focused one sits on a rounded tile a
+ * shade darker than its button, the rest are slightly dimmed. A fixed radius
+ * and vertical margin keep the tile tight around the icon whatever box size
+ * waybar hands it, which a 50% radius does not. */
+#workspaces .taskbar-window {
+  padding: 0 3px;
+  margin: 2px 0;
+  border-radius: 6px;
+  background-color: transparent;
+  opacity: 0.8;
+}
+
 #workspaces .taskbar-window.active {
-  background-color: @bg_color_alpha_400;
-  border-radius: 50%;
-  border: 1px solid @bright_text_color;
+  opacity: 1;
+  background-color: @bg_color_400;
+}
+
+#workspaces button.active .taskbar-window.active,
+#workspaces button.focused .taskbar-window.active {
+  background-color: shade(@theme_selected_bg_color, 0.75);
 }
 
 /* -----------------------------------------------------------------------------
