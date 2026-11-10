@@ -210,6 +210,18 @@ def windows(clients: list[dict], focused: str | None) -> list[dict]:
     return found
 
 
+def joined(panes: list[dict], windows: list[dict]) -> list[dict]:
+    """Tmux agents then app windows, as one list to step through.
+
+    A pane counts as on screen while it is its attached session's active one,
+    which says nothing about the compositor: with an app window focused, that
+    window is what is on screen and no pane is."""
+    if any(window["seen"] for window in windows):
+        panes = [{**pane, "seen": False} for pane in panes]
+
+    return panes + windows
+
+
 def step(agents: list[dict], offset: int) -> dict | None:
     """The agent `offset` places from the one on screen, wrapping; from the
     start of the list when none is on screen."""

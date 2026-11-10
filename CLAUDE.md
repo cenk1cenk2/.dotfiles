@@ -1010,7 +1010,11 @@ owns.
   when installed, and the plugin drops the entry with `notify.py dismiss
   --session` when the next prompt starts. `amp plugins exec` never calls the
   `agent.*` handlers; test with a real `amp -x` turn run outside the terminal,
-  or `notify.py` stays quiet because its kitty window has focus.
+  or `notify.py` stays quiet because its kitty window has focus. The Linux
+  `amp-desktop` has one window and one instance, showing one account at a
+  time, and opens every link there: a thread of the other account lands on
+  a 403 "This Page Needs Another Account" until the window switches. A thread
+  URL carries no account, so nothing on this side can route it.
 
 - **opencode has no hooks, so a client (TUI) plugin stands in for them.** It
   runs in the terminal process, which is what hands `notify.py` the

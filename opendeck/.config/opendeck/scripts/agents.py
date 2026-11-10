@@ -181,7 +181,7 @@ class AgentsPlugin(Plugin):
                 if pane in panes and agents.alive(agent["pid"], agent["name"])
             }
 
-        return agents.running(panes, self.found) + self.app_windows()
+        return agents.joined(agents.running(panes, self.found), self.app_windows())
 
     def app_windows(self) -> list[dict]:
         """Agent apps' own windows, re-listed only after Hyprland reported a

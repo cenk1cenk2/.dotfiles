@@ -440,7 +440,8 @@ class AgentMenu:
     def switch(cls, offset: int) -> None:
         panes = agents.tmux_panes() or {}
         target = agents.step(
-            agents.running(panes, agents.walk(panes)) + cls.app_windows(), offset
+            agents.joined(agents.running(panes, agents.walk(panes)), cls.app_windows()),
+            offset,
         )
         if target is None:
             cls.NOTIFICATION.send("No agents running")

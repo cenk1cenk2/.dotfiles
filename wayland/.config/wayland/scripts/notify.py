@@ -362,8 +362,19 @@ class Notify:
 
         Detached rather than through `run`: a desktop app this starts lives
         on, and a timeout would kill it. A running app takes the URL into its
-        own instance and this one exits at once."""
-        cmd = [shutil.which("amp-desktop") or "xdg-open", url]
+        own instance and this one exits at once. Hyprland does not let a
+        launched app take focus by itself, so the Amp window is focused here."""
+        if desktop := shutil.which("amp-desktop"):
+            run(
+                [
+                    "hyprctl",
+                    "dispatch",
+                    'hl.dsp.focus({ window = "class:amp-desktop" })',
+                ],
+                log=cls.log,
+                timeout=cls.RUN_TIMEOUT,
+            )
+        cmd = [desktop or "xdg-open", url]
         cls.log.debug("spawn: %s", " ".join(cmd))
         subprocess.Popen(
             cmd,
