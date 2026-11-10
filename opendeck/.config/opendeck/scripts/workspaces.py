@@ -160,7 +160,8 @@ class WorkspacesPlugin(Plugin):
         places = self.places(monitors)
         apps: dict[int, list[str]] = {}
         for client in sorted(clients, key=lambda c: c["focusHistoryID"]):
-            apps.setdefault(client["workspace"]["id"], []).append(client["class"])
+            if "id" in client["workspace"]:
+                apps.setdefault(client["workspace"]["id"], []).append(client["class"])
 
         self.workspaces = [
             Workspace(
@@ -169,8 +170,9 @@ class WorkspacesPlugin(Plugin):
                 places.get(w["monitor"], ""),
                 apps.get(w["id"], []),
             )
-            for w in sorted(spaces, key=lambda w: w["id"])
-            if w["id"] > 0
+            for w in sorted(
+                (w for w in spaces if w.get("id", 0) > 0), key=lambda w: w["id"]
+            )
         ]
         self.visible = {m["activeWorkspace"]["id"] for m in monitors}
         focused = next(
