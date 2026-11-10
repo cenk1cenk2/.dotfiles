@@ -125,7 +125,9 @@ hl.bind(("%s + CTRL + left"):format(d.mod), hl.dsp.focus({ workspace = "m-1" }))
 local function first_empty_workspace()
   local used = {}
   for _, ws in ipairs(hl.get_workspaces()) do
-    used[ws.id] = true
+    if ws.id then
+      used[ws.id] = true
+    end
   end
   local i = 1
   while used[i] do
@@ -197,7 +199,7 @@ local function workspace_neighbor(direction)
   end
   local ids = {}
   for _, ws in ipairs(hl.get_workspaces()) do
-    if ws.monitor and ws.monitor.id == active_mon.id and ws.id > 0 then
+    if ws.monitor and ws.monitor.id == active_mon.id and ws.id and ws.id > 0 then
       table.insert(ids, ws.id)
     end
   end
