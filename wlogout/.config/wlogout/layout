@@ -11,18 +11,6 @@
     "keybind" : "L"
 }
 {
-    "label" : "reboot",
-    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl reboot' || systemctl reboot",
-    "text" : " [R] Reboot",
-    "keybind" : "R"
-}
-{
-    "label" : "shutdown",
-    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl poweroff' || systemctl poweroff",
-    "text" : "[Q] Shutdown",
-    "keybind" : "Q"
-}
-{
     "label" : "suspend",
     "action" : "systemctl suspend",
     "text" : "[s] Suspend",
@@ -33,4 +21,16 @@
     "action" : "systemctl hibernate",
     "text" : "[S] Hibernate",
     "keybind" : "h"
+}
+{
+    "label" : "reboot",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl reboot' || systemctl reboot",
+    "text" : " [R] Reboot",
+    "keybind" : "R"
+}
+{
+    "label" : "shutdown",
+    "action" : "[[ -n \"$HYPRLAND_INSTANCE_SIGNATURE\" ]] && hyprshutdown -p 'systemctl poweroff' || systemctl poweroff",
+    "text" : "[Q] Shutdown",
+    "keybind" : "Q"
 }
