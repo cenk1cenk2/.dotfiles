@@ -165,6 +165,11 @@
   },
 
   "backlight": {
+    // Only machines with a screen backlight. Without one, waybar 0.16 falls
+    // back to any LED in the leds subsystem (a NIC or Caps Lock LED on mau5)
+    // and shows 0%, and a missing "device" falls back the same way. "hosts"
+    // is an allow-list of short hostnames: a laptop needs adding here.
+    "hosts": ["bat", "emanet"],
     "format": "{icon} {percent}%",
     "format-icons": ["󰃞", "󰃟", "󰃠"],
   },

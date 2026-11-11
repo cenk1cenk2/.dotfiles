@@ -753,6 +753,12 @@ not set. Read the active line, never the comment above it.
   anything, and the command's own error surfaces only in the waybar
   journal (`journalctl --user -u 'waybar*'`).
 
+- **A module can be limited to machines with `"hosts": [...]`**, an
+  allow-list of short hostnames that waybar checks before building the module
+  (undocumented in 0.16's man page, but honoured). `backlight` carries
+  `["bat", "emanet"]`: with no screen backlight, waybar 0.16 falls back to any
+  LED in the leds subsystem and shows 0%, and naming a missing `device` falls
+  back the same way. A new laptop needs adding there.
 - `hyprland.jsonc` is the only bar. `config.jsonc` holds the shared
   module definitions and `hyprland.jsonc` the compositor-specific ones;
   a module whose backing IPC is absent is instantiated and fails, so
