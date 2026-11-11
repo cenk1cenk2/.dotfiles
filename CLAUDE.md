@@ -729,6 +729,15 @@ not set. Read the active line, never the comment above it.
   `load_config()` with no path silently returns defaults, so passing the
   path is mandatory or the probe proves nothing.
 
+## Keybinds
+
+- **A bind takes the key the neovim config would use for the same action**,
+  for muscle memory: `f` for find, so agents mode picks an agent on `f`.
+  Semantic letters are the default, but where neovim's key differs, neovim
+  wins, and some binds cannot be semantic at all.
+- An existing bind that looks arbitrary may be deliberate; ask before moving
+  it to a "more semantic" key.
+
 ## Waybar modules
 
 - Waybar reads its config once at startup and never re-reads it —
