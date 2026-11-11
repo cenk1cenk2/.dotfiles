@@ -15,7 +15,17 @@ from pathlib import Path
 from typing import ClassVar
 
 import click
-from dotlib.agents import NAMES, ancestor, config_dir, edit_waiting, last_reply
+from dotlib.agents import (
+    DEFAULT_SERVER,
+    NAMES,
+    ancestor,
+    config_dir,
+    edit_waiting,
+    last_reply,
+    own_pane,
+    split_ref,
+    tmux,
+)
 from dotlib.cli import create_logger, run
 from dotlib.notify import (
     Chime,
@@ -245,7 +255,7 @@ class Notify:
     ) -> None:
         """List this agent as waiting, replacing its previous entry by pane or,
         outside tmux, by session."""
-        pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
+        pane = own_pane()
         found = ancestor(os.getppid())
         home = found and config_dir(found[0], NAMES[found[1]])
         entry = {
@@ -385,24 +395,22 @@ class Notify:
         )
 
     @classmethod
-    def focus(cls, pane: str | None = None) -> None:
+    def focus(cls, ref: str | None = None) -> None:
         """Land the user on a pane, this hook's own by default, best effort at
-        every step."""
-        if pane is None:
-            pane = os.environ.get("TMUX_PANE") if os.environ.get("TMUX") else None
-        if not pane:
+        every step.
+
+        `ref` names the pane across tmux servers (`dotlib.agents.pane_ref`).
+        A pane on the popup plugin's server is shown by opening its popup on
+        the default server's client, since a closed popup has no client."""
+        ref = ref or own_pane()
+        if not ref:
             cls.log.debug("not inside tmux; nothing to focus")
             return
+        pane, server = split_ref(ref)
+        on = tmux(server)
 
         shown = run(
-            [
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                pane,
-                "#{session_name}\t#{window_id}",
-            ],
+            [*on, "display-message", "-p", "-t", pane, "#{session_name}\t#{window_id}"],
             log=cls.log,
             timeout=cls.RUN_TIMEOUT,
         )
@@ -410,30 +418,88 @@ class Notify:
             return
         session, _, window = shown.stdout.strip().partition("\t")
 
-        run(
-            ["tmux", "select-window", "-t", window],
-            log=cls.log,
-            timeout=cls.RUN_TIMEOUT,
-        )
-        run(["tmux", "select-pane", "-t", pane], log=cls.log, timeout=cls.RUN_TIMEOUT)
-        if client := cls._client(session):
-            pid, tty = client
+        run([*on, "select-window", "-t", window], log=cls.log, timeout=cls.RUN_TIMEOUT)
+        run([*on, "select-pane", "-t", pane], log=cls.log, timeout=cls.RUN_TIMEOUT)
+        popup = server != DEFAULT_SERVER and server == cls._popup_server()
+        client = cls._client(on, session, any_session=not popup)
+        if client:
             run(
-                ["tmux", "switch-client", "-c", tty, "-t", session],
+                [*on, "switch-client", "-c", client[1], "-t", session],
                 log=cls.log,
                 timeout=cls.RUN_TIMEOUT,
             )
-            cls._focus_kitty(pid)
+        elif popup:
+            cls._open_popup(session)
+        else:
+            cls.log.debug("no client on tmux server %s; nothing to show", server)
+            return
+        # A popup's client runs under the default server, not under kitty, so
+        # kitty is found through the default server's client.
+        if popup:
+            client = cls._client(tmux(DEFAULT_SERVER), None)
+        if client:
+            cls._focus_kitty(client[0])
 
     @classmethod
-    def _client(cls, session: str) -> tuple[int, str] | None:
-        """The tmux client to steer: one on our session, else the freshest.
+    def _popup_server(cls) -> str | None:
+        """The server tmux-toggle-popup keeps its popup sessions on."""
+        shown = run(
+            [*tmux(DEFAULT_SERVER), "show-options", "-gv", "@popup-socket-name"],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+        return shown.stdout.strip() or None if shown.returncode == 0 else None
+
+    @classmethod
+    def _open_popup(cls, session: str) -> None:
+        """Open a popup session through the plugin's own toggle, from the
+        default server's freshest client, sized as its key bindings size it."""
+        if (client := cls._client(tmux(DEFAULT_SERVER), None)) is None:
+            cls.log.debug("no default tmux client to open popup %s in", session)
+            return
+        current = run(
+            [
+                *tmux(DEFAULT_SERVER),
+                "display-message",
+                "-p",
+                "-c",
+                client[1],
+                "#{pane_id}",
+            ],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+        if current.returncode != 0:
+            return
+        run(
+            [
+                *tmux(DEFAULT_SERVER),
+                "run-shell",
+                "-b",
+                "-t",
+                current.stdout.strip(),
+                (
+                    f"#{{@popup-toggle}} --id '{session}'"
+                    " -x#{E:@popup-width} -y#{E:@popup-height}"
+                    " -X#{E:@popup-x} -Y#{E:@popup-y}"
+                ),
+            ],
+            log=cls.log,
+            timeout=cls.RUN_TIMEOUT,
+        )
+
+    @classmethod
+    def _client(
+        cls, on: list[str], session: str | None, any_session: bool = True
+    ) -> tuple[int, str] | None:
+        """The tmux client to steer: one on `session`, else the freshest, unless
+        `any_session` is off.
 
         A detached session has no client of its own, but any attached client
         can be switched to it — that beats a click that goes nowhere."""
         listed = run(
             [
-                "tmux",
+                *on,
                 "list-clients",
                 "-F",
                 "#{client_pid}\t#{client_tty}\t#{client_activity}\t#{session_name}",
@@ -450,6 +516,8 @@ class Notify:
             return None
 
         ours = [c for c in clients if c[3] == session]
+        if not ours and not any_session:
+            return None
         pid, tty, _, _ = max(ours or clients, key=lambda c: c[2])
 
         return pid, tty

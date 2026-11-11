@@ -21,6 +21,8 @@ WAITING = (
     Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
     / "agents-waiting.json"
 )
+# The tmux server `tmux` reaches without -L, whose panes keep their bare id.
+DEFAULT_SERVER = "default"
 # An entry with no tmux pane can be neither checked nor focused.
 PANELESS_SECONDS = 30 * 60
 # Process names, as /proc reports them, by the vendor mark the deck draws.
@@ -84,45 +86,83 @@ def stale(entry: dict, panes: dict[str, dict] | None) -> bool:
     return info is None or info["seen"]
 
 
+def pane_ref(pane: str, server: str) -> str:
+    """A pane's name across tmux servers, which all number panes from %0: the
+    bare id on the default server, `%id@server` on any other (the popup
+    plugin's, Amp's terminals)."""
+    return pane if server == DEFAULT_SERVER else f"{pane}@{server}"
+
+
+def split_ref(ref: str) -> tuple[str, str]:
+    """A pane name's tmux pane id and server."""
+    pane, _, server = ref.partition("@")
+    return pane, server or DEFAULT_SERVER
+
+
+def tmux(server: str) -> list[str]:
+    return ["tmux", "-L", server]
+
+
+def servers() -> list[str]:
+    """The tmux servers with a socket in this user's tmux directory."""
+    root = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
+    try:
+        return sorted(path.name for path in root.iterdir() if path.is_socket())
+    except OSError:
+        return []
+
+
+def own_pane() -> str | None:
+    """The pane this process runs in, named across servers; None outside tmux."""
+    pane, socket = os.environ.get("TMUX_PANE"), os.environ.get("TMUX")
+    if not pane or not socket:
+        return None
+
+    return pane_ref(pane, Path(socket.split(",")[0]).name)
+
+
 def tmux_panes() -> dict[str, dict] | None:
-    """Every tmux pane by id; None without tmux.
+    """Every tmux pane on every server, by `pane_ref`; None without tmux.
 
     On screen means the active pane of its session's active window, in a
     session some client is attached to. Kitty's own focus is not asked, which
     would cost a `kitty @ ls` on every poll."""
-    cmd = [
-        "tmux",
-        "list-panes",
-        "-a",
-        "-F",
-        (
-            "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
-            "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
-        ),
-    ]
-    # DEBUG, not INFO: the deck runs this every second.
-    log.debug("spawn: %s", " ".join(cmd))
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=2, check=False
-        )
-    except subprocess.TimeoutExpired:
-        return None
-    if proc.stderr:
-        log.debug("tmux stderr: %s", proc.stderr.strip())
-    if proc.returncode != 0:
-        return None
+    panes: dict[str, dict] | None = None
+    for server in servers():
+        cmd = [
+            *tmux(server),
+            "list-panes",
+            "-a",
+            "-F",
+            (
+                "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
+                "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
+            ),
+        ]
+        # DEBUG, not INFO: the deck runs this every second.
+        log.debug("spawn: %s", " ".join(cmd))
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=2, check=False
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        if proc.stderr:
+            log.debug("tmux stderr: %s", proc.stderr.strip())
+        # A socket left by a server that has exited answers with an error.
+        if proc.returncode != 0:
+            continue
 
-    panes = {}
-    for line in proc.stdout.splitlines():
-        pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
-        if pid.isdigit():
-            panes[pane] = {
-                "pid": int(pid),
-                "where": where,
-                "path": path,
-                "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
-            }
+        panes = panes or {}
+        for line in proc.stdout.splitlines():
+            pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
+            if pid.isdigit():
+                panes[pane_ref(pane, server)] = {
+                    "pid": int(pid),
+                    "where": where if server == DEFAULT_SERVER else f"{server} {where}",
+                    "path": path,
+                    "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
+                }
 
     return panes
 

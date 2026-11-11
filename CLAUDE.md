@@ -1099,6 +1099,19 @@ owns.
   dialog being on screen, so 0 costs one notification at the end of a
   turn rather than a poll.
 
+- **Panes are named across tmux servers.** Besides `default` there are the
+  tmux-toggle-popup server (`popup`, its sessions named
+  `<session>/<popup>`) and Amp's `amp-terminal`, and every server numbers its
+  panes from `%0`. `dotlib.agents.pane_ref` keeps the bare id on the default
+  server and writes `%id@<server>` elsewhere; the hook records that from
+  `$TMUX`, and `tmux_panes()` lists every live socket in
+  `/tmp/tmux-<uid>/`, so the picker and deck see popup agents too.
+  `notify.py focus` runs every tmux call with `-L <server>`. A popup session
+  has no client while its popup is closed, so focus opens it through the
+  plugin's own `#{@popup-toggle} --id <session>`, run with `run-shell` on the
+  default server's freshest client, and raises kitty through that client,
+  since a popup's client runs under the default server and not under kitty.
+  A pane on any other client-less server is selected but cannot be shown.
 - **The hook stays quiet when the pane is already being watched**,
   which is what makes a 0 threshold liveable. `Notify.focused()` wants
   every layer to agree: the pane is active in its tmux window, that
