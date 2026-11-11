@@ -138,3 +138,4 @@ hl.workspace_rule({ workspace = "w[tv1]", gaps_out = 0, gaps_in = 0 })
 -- Source config.d/ and modes/ (each via its init.lua re-exports).
 require("config.d")
 require("modes")
+require("applications")

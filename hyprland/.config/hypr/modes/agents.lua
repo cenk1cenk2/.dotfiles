@@ -34,9 +34,10 @@ hl.define_submap(submap, function()
 
   -- Dictation pastes into the focused window, and the submap would catch
   -- the paste key, so it leaves the submap like the recording mode's stt binds.
+  -- Amp's desktop app dictates itself when focused or already recording.
   hl.bind(
     "s",
-    exec_then_reset(("%s stt toggle --output paste --enrich --submit"):format(d.speech)),
+    exec_then_reset(("%s stt toggle --target amp --output paste --enrich --submit"):format(d.speech)),
     { description = "dictate" }
   )
 

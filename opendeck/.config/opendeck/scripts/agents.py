@@ -123,8 +123,10 @@ class AgentsPlugin(Plugin):
         match key.action:
             case Action.SESSIONS:
                 self.switch(1)
-            case Action.PICKER if self.AMP in self.capturing:
-                self.amp_send()
+            case Action.PICKER if (
+                self.AMP in self.capturing and self.focus.window_class == self.AMP
+            ):
+                self.amp_toggle()
             case Action.PICKER:
                 self.spawn([str(self.PICKER), "pick"])
             case Action.WAITING if key.settings["slot"] == 1:
@@ -198,33 +200,18 @@ class AgentsPlugin(Plugin):
     def override(self, key: AgentKey) -> Override:
         if key.action != Action.PICKER:
             return NO_OVERRIDE
+        if self.focus.window_class != self.AMP:
+            return NO_OVERRIDE
         if self.AMP in self.capturing:
             return Override(press="amp", hold="amp")
-        if self.focus.window_class == self.AMP:
-            return Override(hold="amp")
 
-        return NO_OVERRIDE
+        return Override(hold="amp")
 
-    def amp_send(self) -> None:
-        """Stop Amp's take and send it: Enter does both, wherever the take
-        was started."""
-        if (window := self.amp_window()) is not None:
-            self.amp_key(window, "Return")
-
-    def amp_window(self) -> str | None:
-        """The Amp window in focus, else the first one open."""
-        if self.focus.window_class == self.AMP:
-            return self.focus.address
-
-        return next(
-            (w["window"] for w in self.app_windows() if w["name"] == self.AMP), None
-        )
-
-    def amp_key(self, address: str, key: str, mods: str = "") -> None:
-        self.hypr.dispatch(
-            f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "{key}",'
-            f' window = "address:{address}" }})'
-        )
+    def amp_toggle(self) -> None:
+        """Start Amp's take in the focused Amp window, or stop and send it.
+        speech.py does both, so the room is quieted for the take and handed
+        back when Amp stops recording, however that happens."""
+        self.spawn([*SpeechPlugin.SPEECH, "stt", "toggle", "--target", "amp"])
 
     def dictate(self) -> None:
         """Land the take being recorded in the current agent, as agents mode's
@@ -233,12 +220,9 @@ class AgentsPlugin(Plugin):
         The take keeps the enrichment it was started with, since a stop
         override replaces it either way. With nothing recording this opens
         the picker, as a press does. With Amp's desktop app in focus, one hold
-        starts Amp's own dictation and the next stops it and sends, in the
-        window it started in."""
-        if self.AMP in self.capturing:
-            return self.amp_send()
+        starts Amp's own dictation and the next stops it and sends."""
         if self.focus.window_class == self.AMP:
-            return self.amp_key(self.focus.address, "d", "CTRL SHIFT")
+            return self.amp_toggle()
 
         state = SpeechPlugin.status(Session.STT)
         self.agents = self.find_agents()

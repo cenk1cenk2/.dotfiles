@@ -12,6 +12,7 @@ import queue
 import re
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -49,6 +50,7 @@ from dotlib.enrich import (
     enrich_options,
     spec_from_options,
 )
+from dotlib.microphone import Capturing
 from dotlib.notify import (
     Chime,
     ChimeDirection,
@@ -538,6 +540,92 @@ class SttSession(SocketSession):
         # A file sink carries a path the socket payload does not, so
         # build_output refuses it and the client is told why.
         self.set_output(build_output(mode, submit=submit or None))
+
+
+class SttTarget(StrEnum):
+    """An app that dictates on its own, which `stt toggle --target` hands the
+    take to while one of its windows has focus."""
+
+    AMP = "amp"
+
+
+class AmpDictation:
+    """Amp's desktop app dictating, with the room quieted as for an stt take.
+
+    Ctrl+Shift+D starts Amp's take and Enter stops it and sends. Amp holding a
+    capture stream open is the take, so the room comes back however it ends:
+    Enter, Amp's own button, a second shortcut, or Amp quitting."""
+
+    APP = "amp-desktop"
+    # Amp opens its capture stream well under a second after the shortcut.
+    START_SECONDS = 3.0
+    HYPRCTL_SECONDS = 5.0
+
+    log = logging.getLogger("speech.amp")
+
+    def __init__(self, suppressor: PlaybackSuppressor):
+        self._suppressor = suppressor
+        self._capturing = Capturing()
+
+    def toggle(self) -> bool:
+        """Start or stop Amp's take in the focused Amp window; False when
+        another window has focus, whatever Amp is doing."""
+        focused = self._hyprctl_json("activewindow") or {}
+        if focused.get("class") != self.APP:
+            return False
+        self._capturing.wait(lambda _: True, self.START_SECONDS)
+        if self.APP in self._capturing:
+            self._send(focused["address"], "Return")
+            return True
+
+        # Waited on, and before the suppression, as the stt take's own cue is.
+        Chime(ChimeDirection.UP).play(wait=True)
+        self._send(focused["address"], "d", "CTRL SHIFT")
+        if not self._capturing.wait(lambda b: self.APP in b, self.START_SECONDS):
+            self.log.warning("amp opened no capture stream; nothing to quiet")
+            return True
+        self.log.info("amp recording")
+        self._suppressor.suppress()
+        try:
+            self._capturing.wait(lambda b: self.APP not in b, None)
+        finally:
+            self._suppressor.restore()
+        self.log.info("amp stopped recording")
+        Chime(ChimeDirection.DOWN).play()
+        return True
+
+    def _send(self, address: str, key: str, mods: str = "") -> None:
+        self._hyprctl(
+            "dispatch",
+            f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "{key}",'
+            f' window = "address:{address}" }})',
+        )
+
+    def _hyprctl_json(self, query: str) -> Any:
+        out = self._hyprctl("-j", query)
+        try:
+            return json.loads(out) if out else None
+        except json.JSONDecodeError:
+            self.log.warning("hyprctl %s: unreadable reply", query)
+            return None
+
+    def _hyprctl(self, *args: str) -> str:
+        cmd = ["hyprctl", *args]
+        self.log.debug("spawn: %s", " ".join(cmd))
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.HYPRCTL_SECONDS,
+                check=False,
+            )
+        except FileNotFoundError, subprocess.TimeoutExpired:
+            self.log.warning("hyprctl %s failed", args[0])
+            return ""
+        if proc.stderr:
+            self.log.debug("hyprctl stderr: %s", proc.stderr.strip())
+        return proc.stdout
 
 
 class Stt:
@@ -1301,6 +1389,12 @@ class Stt:
         default=True,
         help="Pause MPRIS players while recording.",
     )
+    @click.option(
+        "--target",
+        type=click.Choice([t.value for t in SttTarget]),
+        default=None,
+        help="App that dictates itself while focused.",
+    )
     def cmd_toggle(
         source,
         batch,
@@ -1324,9 +1418,20 @@ class Stt:
         duck,
         duck_factor,
         pause_players,
+        target,
         **enrich_opts,
     ):
         """Start a session, or toggle an existing one."""
+        # A live take of our own is stopped as usual, whatever has focus.
+        if target is not None and not Stt().is_recording():
+            suppressor = PlaybackSuppressor(
+                duck=duck, factor=duck_factor, pause=pause_players, name="speech"
+            )
+            match SttTarget(target):
+                case SttTarget.AMP:
+                    if AmpDictation(suppressor).toggle():
+                        return
+
         output_mode = OutputMode(output)
         try:
             output_adapter = build_output(
