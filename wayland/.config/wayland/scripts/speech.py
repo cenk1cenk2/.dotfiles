@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol
 
 import click
 from dotlib.audio import (
@@ -549,65 +549,28 @@ class SttTarget(StrEnum):
     AMP = "amp"
 
 
-class AmpDictation:
-    """Amp's desktop app dictating, with the room quieted as for an stt take.
+class Hypr:
+    """The two Hyprland calls a target's hooks need, over hyprctl."""
 
-    Ctrl+Shift+D starts Amp's take and Enter stops it and sends. Amp holding a
-    capture stream open is the take, so the room comes back however it ends:
-    Enter, Amp's own button, a second shortcut, or Amp quitting."""
+    TIMEOUT_SECONDS = 5.0
 
-    APP = "amp-desktop"
-    # Amp opens its capture stream well under a second after the shortcut.
-    START_SECONDS = 3.0
-    HYPRCTL_SECONDS = 5.0
+    log = logging.getLogger("speech.hypr")
 
-    log = logging.getLogger("speech.amp")
-
-    def __init__(self, suppressor: PlaybackSuppressor):
-        self._suppressor = suppressor
-        self._capturing = Capturing()
-
-    def toggle(self) -> bool:
-        """Start or stop Amp's take in the focused Amp window; False when
-        another window has focus, whatever Amp is doing."""
-        focused = self._hyprctl_json("activewindow") or {}
-        if focused.get("class") != self.APP:
-            return False
-        self._capturing.wait(lambda _: True, self.START_SECONDS)
-        if self.APP in self._capturing:
-            self._send(focused["address"], "Return")
-            return True
-
-        # Waited on, and before the suppression, as the stt take's own cue is.
-        Chime(ChimeDirection.UP).play(wait=True)
-        self._send(focused["address"], "d", "CTRL SHIFT")
-        if not self._capturing.wait(lambda b: self.APP in b, self.START_SECONDS):
-            self.log.warning("amp opened no capture stream; nothing to quiet")
-            return True
-        self.log.info("amp recording")
-        self._suppressor.suppress()
+    def active_window(self) -> dict:
+        out = self._hyprctl("-j", "activewindow")
         try:
-            self._capturing.wait(lambda b: self.APP not in b, None)
-        finally:
-            self._suppressor.restore()
-        self.log.info("amp stopped recording")
-        Chime(ChimeDirection.DOWN).play()
-        return True
+            return json.loads(out) if out else {}
+        except json.JSONDecodeError:
+            self.log.warning("hyprctl activewindow: unreadable reply")
+            return {}
 
-    def _send(self, address: str, key: str, mods: str = "") -> None:
+    def send_shortcut(self, window: str, key: str, mods: str = "") -> None:
+        """Send a key straight to `window`, past Hyprland's own binds."""
         self._hyprctl(
             "dispatch",
             f'hl.dsp.send_shortcut({{ mods = "{mods}", key = "{key}",'
-            f' window = "address:{address}" }})',
+            f' window = "address:{window}" }})',
         )
-
-    def _hyprctl_json(self, query: str) -> Any:
-        out = self._hyprctl("-j", query)
-        try:
-            return json.loads(out) if out else None
-        except json.JSONDecodeError:
-            self.log.warning("hyprctl %s: unreadable reply", query)
-            return None
 
     def _hyprctl(self, *args: str) -> str:
         cmd = ["hyprctl", *args]
@@ -617,7 +580,7 @@ class AmpDictation:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.HYPRCTL_SECONDS,
+                timeout=self.TIMEOUT_SECONDS,
                 check=False,
             )
         except FileNotFoundError, subprocess.TimeoutExpired:
@@ -626,6 +589,83 @@ class AmpDictation:
         if proc.stderr:
             self.log.debug("hyprctl stderr: %s", proc.stderr.strip())
         return proc.stdout
+
+
+class SttTargetHooks(Protocol):
+    """What an app that dictates on its own supplies to `TargetDictation`."""
+
+    # Focus on a window of this class hands the take to the target.
+    window_class: str
+    # The binary whose capture stream is the target's take.
+    capture_binary: str
+
+    def start(self, hypr: Hypr, window: str) -> None: ...
+
+    def stop(self, hypr: Hypr, window: str) -> None: ...
+
+
+class AmpHooks:
+    """Amp's desktop app: Ctrl+Shift+D starts a take, Enter stops it and sends."""
+
+    window_class = "amp-desktop"
+    capture_binary = "amp-desktop"
+
+    def start(self, hypr: Hypr, window: str) -> None:
+        hypr.send_shortcut(window, "d", "CTRL SHIFT")
+
+    def stop(self, hypr: Hypr, window: str) -> None:
+        hypr.send_shortcut(window, "Return")
+
+
+class TargetDictation:
+    """An app's own dictation, with the room quieted as for an stt take.
+
+    The app holding a capture stream open is the take, so the room comes back
+    however it ends: the stop hook, the app's own button, or the app quitting."""
+
+    # Apps open their capture stream well under a second after being asked.
+    START_SECONDS = 3.0
+
+    log = logging.getLogger("speech.target")
+
+    def __init__(self, hooks: SttTargetHooks, suppressor: PlaybackSuppressor):
+        self._hooks = hooks
+        self._suppressor = suppressor
+        self._hypr = Hypr()
+        self._capturing = Capturing()
+
+    def toggle(self) -> bool:
+        """Start or stop the take in the target's focused window; False when
+        another window has focus, whatever the target is doing."""
+        hooks = self._hooks
+        focused = self._hypr.active_window()
+        if focused.get("class") != hooks.window_class:
+            return False
+        window = focused["address"]
+        self._capturing.wait(lambda _: True, self.START_SECONDS)
+        if hooks.capture_binary in self._capturing:
+            hooks.stop(self._hypr, window)
+            return True
+
+        # Waited on, and before the suppression, as the stt take's own cue is.
+        Chime(ChimeDirection.UP).play(wait=True)
+        hooks.start(self._hypr, window)
+        if not self._capturing.wait(
+            lambda b: hooks.capture_binary in b, self.START_SECONDS
+        ):
+            self.log.warning(
+                "%s opened no capture stream; nothing to quiet", hooks.capture_binary
+            )
+            return True
+        self.log.info("%s recording", hooks.capture_binary)
+        self._suppressor.suppress()
+        try:
+            self._capturing.wait(lambda b: hooks.capture_binary not in b, None)
+        finally:
+            self._suppressor.restore()
+        self.log.info("%s stopped recording", hooks.capture_binary)
+        Chime(ChimeDirection.DOWN).play()
+        return True
 
 
 class Stt:
@@ -1427,10 +1467,12 @@ class Stt:
             suppressor = PlaybackSuppressor(
                 duck=duck, factor=duck_factor, pause=pause_players, name="speech"
             )
+            hooks: SttTargetHooks
             match SttTarget(target):
                 case SttTarget.AMP:
-                    if AmpDictation(suppressor).toggle():
-                        return
+                    hooks = AmpHooks()
+            if TargetDictation(hooks, suppressor).toggle():
+                return
 
         output_mode = OutputMode(output)
         try:
