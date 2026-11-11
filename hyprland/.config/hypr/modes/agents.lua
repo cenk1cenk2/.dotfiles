@@ -29,8 +29,7 @@ hl.define_submap(submap, function()
   )
   hl.bind("d", exec_then_reset(("%s dismiss"):format(d.agents)), { description = "clear waiting list" })
 
-  hl.bind("space", exec_then_reset(("%s pick"):format(d.agents)), { description = "pick agent" })
-  hl.bind("a", exec_then_reset(("%s pick"):format(d.agents)), { description = "pick agent" })
+  hl.bind("f", exec_then_reset(("%s pick"):format(d.agents)), { description = "pick agent" })
 
   -- Dictation pastes into the focused window, and the submap would catch
   -- the paste key, so it leaves the submap like the recording mode's stt binds.
