@@ -232,7 +232,7 @@ class AgentsPlugin(Plugin):
         focused Amp window.
         speech.py does both, so the room is quieted for the take and handed
         back when Amp stops recording, however that happens."""
-        self.spawn([*SpeechPlugin.SPEECH, "stt", "toggle", "--target", "amp"])
+        self.spawn([*SpeechPlugin.SPEECH, "stt", "toggle"])
 
     def dictate(self) -> None:
         """Land the take being recorded in the current agent, as agents mode's

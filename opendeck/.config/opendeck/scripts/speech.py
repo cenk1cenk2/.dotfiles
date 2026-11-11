@@ -9,7 +9,8 @@ import socket
 import time
 from enum import IntEnum, StrEnum
 
-from deck import Key, Plugin, command
+from deck import NO_OVERRIDE, Key, Override, Plugin, command
+from dotlib.microphone import Capturing
 
 
 class Session(StrEnum):
@@ -73,6 +74,9 @@ class SpeechPlugin(Plugin):
         "a=$(hyprctl -j activewindow | jq -r .address)"
         ' && ~/.config/hypr/scripts/send-key.py "address:$a"'
     )
+    # speech.py's stt kill cancels Amp's desktop take while it records and no
+    # take of ours runs; the keys' hold says so.
+    AMP = "amp-desktop"
     KEY = SpeechKey
 
     log = logging.getLogger("speech-deck")
@@ -85,6 +89,7 @@ class SpeechPlugin(Plugin):
         self.tts_owner: str | None = None
         self.tts_claimed_at = 0.0
         self.tts_seen = False
+        self.capturing = Capturing()
 
     @staticmethod
     def status(session: Session) -> dict | None:
@@ -200,6 +205,20 @@ class SpeechPlugin(Plugin):
                         ' && ~/.config/hypr/scripts/send-key.py "address:$a" Return',
                     ]
                 )
+
+    def override(self, key: SpeechKey) -> Override:
+        """The hold's kill cancels Amp's take while it records and no take of
+        ours runs; only the hold is marked, as only the kill is overridden."""
+        # Action first: a paste key carries no session.
+        if (
+            key.action not in (Action.TOGGLE, Action.PAUSE)
+            or key.session != Session.STT
+            or self.states.get(Session.STT) is not None
+            or self.AMP not in self.capturing
+        ):
+            return NO_OVERRIDE
+
+        return Override(hold="amp")
 
     def holds(self, key: SpeechKey) -> bool:
         return key.action in (Action.TOGGLE, Action.PAUSE, Action.SEEK, Action.PASTE)

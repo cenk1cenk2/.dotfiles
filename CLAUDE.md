@@ -810,6 +810,11 @@ not set. Read the active line, never the comment above it.
   folder holds only `manifest.json`, a `bin/` launcher that execs the script,
   and `icons/`. Being copied, the deployed `uv.lock` is regenerated next to the
   deployed copy; copy it back into the repo when dependencies change.
+- **A plugin's tracebacks are only in its own log**,
+  `~/.local/share/opendeck/logs/plugins/<plugin>.sdPlugin.log`, not the
+  journal. An exception in a draw or `override` kills the whole plugin
+  process, so every key of that plugin stops at once; check that log after
+  every deploy.
 - **A profile key's `action.plugin` is the plugin folder name, `.sdPlugin`
   included.** A key naming a plugin that is not loaded is dropped from the
   profile on load, with no error.
@@ -882,21 +887,26 @@ not set. Read the active line, never the comment above it.
   wherever focus is; otherwise it is the usual stt dictation. Holding the
   shortcut down through `hl.dsp.send_key_state` does not trigger Amp's
   hold-to-send.
-- **Every Amp dictation goes through `speech.py stt toggle --target amp`**:
-  the deck's picker, agents mode's `s`, and Ctrl+Shift+D itself, which
+- **Target apps are detected, never named by a caller.** Every `stt toggle`
+  and `stt kill` checks each registered target (`SttTarget.all_hooks()`), so
+  every dictation key (both modes' `s`, the deck, and Ctrl+Shift+D, which
   `hyprland/.config/hypr/applications.lua` binds for `amp-desktop` and replays
-  to every other window. A target is an `SttTargetHooks`: its `name`, `owns`
-  (is this Hyprland client the target's), `records` (do the capturing binaries
-  include its take), and `start` / `stop`. `Stt` takes a list of them and
-  drives them in `hand_to_target`; `--target` repeats, and adding a target is
-  an `SttTarget` value plus a hooks class. While
+  to every other window) hands a take to Amp when Amp records or has focus.
+  `--no-targets` opts one call out. A target is an `SttTargetHooks`: its
+  `name`, `owns` (is this Hyprland client the target's), `records` (do the
+  capturing binaries include its take), and `start` / `stop` / `cancel`. `Stt`
+  takes a list of them and drives them in `hand_to_target`; adding a target is
+  an `SttTarget` value plus a hooks class, and no caller changes. While
   the target records, `toggle` sends its stop (Enter for Amp) to its window
   wherever focus is; otherwise it starts a take (Ctrl+Shift+D) only in a
   focused target window. Amp's own second Ctrl+Shift+D (stop without sending)
   is no longer reachable from the keyboard. A started take ducks and pauses
   playback like an stt take, and the process follows the capture stream until
   it closes, so the room comes back however the take ends. A live stt take of
-  our own still wins: `toggle` stops it first. The stt waybar module follows
+  our own still wins: `toggle` stops it first. `stt kill` (recording mode's
+  `q`, the deck's STT hold) likewise kills a take of ours, and with none
+  sends the target's `cancel` hook (Escape for Amp) wherever focus is, which
+  discards the take unsent. The stt waybar module follows
   the targets' capture streams too, so a take shows as `󰍬 amp` however it
   started.
 - **Whether a program records comes from its capture stream, never from the

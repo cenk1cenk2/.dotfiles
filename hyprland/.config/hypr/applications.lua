@@ -13,7 +13,7 @@ hl.bind("CTRL + SHIFT + D", function()
     return
   end
   if active.class == "amp-desktop" then
-    hl.exec_cmd(("%s stt toggle --target amp"):format(d.speech))
+    hl.exec_cmd(("%s stt toggle"):format(d.speech))
     return
   end
   hl.dispatch(hl.dsp.send_shortcut({ mods = "CTRL SHIFT", key = "d", window = "address:" .. active.address }))

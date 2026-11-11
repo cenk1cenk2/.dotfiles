@@ -543,8 +543,9 @@ class SttSession(SocketSession):
 
 
 class SttTarget(StrEnum):
-    """An app that dictates on its own, which `stt toggle --target` hands the
-    take to while it records or one of its windows has focus."""
+    """An app that dictates on its own. `stt toggle` hands it the take while it
+    records or one of its windows has focus, and `stt kill` cancels its take;
+    every target is detected, none is named by the caller."""
 
     AMP = "amp"
 
@@ -552,6 +553,10 @@ class SttTarget(StrEnum):
         match self:
             case SttTarget.AMP:
                 return AmpHooks()
+
+    @classmethod
+    def all_hooks(cls) -> list[SttTargetHooks]:
+        return [target.hooks() for target in cls]
 
 
 class Hypr:
@@ -628,6 +633,10 @@ class SttTargetHooks(Protocol):
 
     def stop(self, hypr: Hypr, window: str) -> None: ...
 
+    def cancel(self, hypr: Hypr, window: str) -> None:
+        """Discard the take without sending it."""
+        ...
+
 
 class AmpHooks:
     """Amp's desktop app: Ctrl+Shift+D starts a take, Enter stops it and sends."""
@@ -646,6 +655,9 @@ class AmpHooks:
 
     def stop(self, hypr: Hypr, window: str) -> None:
         hypr.send_shortcut(window, "Return")
+
+    def cancel(self, hypr: Hypr, window: str) -> None:
+        hypr.send_shortcut(window, "Escape")
 
 
 class Stt:
@@ -716,6 +728,30 @@ class Stt:
         capturing = self._capture_streams()
         return next((t for t in self._targets if t.records(capturing.binaries)), None)
 
+    def _target_window(
+        self, hypr: Hypr, target: SttTargetHooks, focused: dict
+    ) -> str | None:
+        """The target's focused window, else its first one."""
+        if target.owns(focused):
+            return focused["address"]
+        window = next((c["address"] for c in hypr.clients() if target.owns(c)), None)
+        if window is None:
+            self.log.warning("%s records, but has no window", target.name)
+        return window
+
+    def cancel_target(self) -> bool:
+        """Discard a recording target's take wherever focus is; False when no
+        target records. The process that started the take sees its capture
+        stream close and hands the room back."""
+        if (target := self.recording_target()) is None:
+            return False
+        hypr = Hypr()
+        if (
+            window := self._target_window(hypr, target, hypr.active_window())
+        ) is not None:
+            target.cancel(hypr, window)
+        return True
+
     def hand_to_target(self) -> bool:
         """Stop a target's take wherever focus is, or start one in a focused
         target window; False when no target records or has focus.
@@ -725,16 +761,7 @@ class Stt:
         hypr = Hypr()
         focused = hypr.active_window()
         if (target := self.recording_target()) is not None:
-            window = (
-                focused["address"]
-                if target.owns(focused)
-                else next(
-                    (c["address"] for c in hypr.clients() if target.owns(c)), None
-                )
-            )
-            if window is None:
-                self.log.warning("%s records, but has no window", target.name)
-            else:
+            if (window := self._target_window(hypr, target, focused)) is not None:
                 target.stop(hypr, window)
             return True
         target = next((t for t in self._targets if t.owns(focused)), None)
@@ -1289,10 +1316,14 @@ class Stt:
         self.log.info("paused" if resp.state and resp.state.paused else "resumed")
 
     def kill(self):
-        recorder = self._recorder
-        if self._send(Command.KILL) is None and recorder:
+        """Kill our own take; with none, cancel a recording target's take."""
+        if self._send(Command.KILL) is not None:
+            return
+        if recorder := self._recorder:
             recorder.cancel()
             SttSession._signal_waybar()
+        elif self._targets:
+            self.cancel_target()
 
     def status_json(self) -> str:
         resp = self._send(Command.STATUS)
@@ -1483,11 +1514,10 @@ class Stt:
         help="Pause MPRIS players while recording.",
     )
     @click.option(
-        "--target",
-        "targets",
-        type=click.Choice([t.value for t in SttTarget]),
-        multiple=True,
-        help="App that dictates itself while recording or focused.",
+        "--targets/--no-targets",
+        "use_targets",
+        default=True,
+        help="Hand the take to a target app recording or in focus.",
     )
     def cmd_toggle(
         source,
@@ -1512,17 +1542,18 @@ class Stt:
         duck,
         duck_factor,
         pause_players,
-        targets,
+        use_targets,
         **enrich_opts,
     ):
-        """Start a session, or toggle an existing one."""
+        """Start a session, or toggle an existing one; a target app recording
+        or in focus takes the take instead."""
         # A live take of our own is stopped as usual, whatever has focus.
-        if targets and not Stt().is_recording():
+        if use_targets and not Stt().is_recording():
             stt = Stt(
                 duck=duck,
                 duck_factor=duck_factor,
                 pause_players=pause_players,
-                targets=[SttTarget(t).hooks() for t in targets],
+                targets=SttTarget.all_hooks(),
             )
             if stt.hand_to_target():
                 return
@@ -1698,9 +1729,16 @@ class Stt:
         Stt().pause()
 
     @cli.command("kill")
-    def cmd_kill():
-        """Kill the session's process group."""
-        Stt().kill()
+    @click.option(
+        "--targets/--no-targets",
+        "use_targets",
+        default=True,
+        help="With no session of ours, cancel a recording target app's take.",
+    )
+    def cmd_kill(use_targets: bool):
+        """Kill the session's process group; with none, cancel a recording
+        target app's take."""
+        Stt(targets=SttTarget.all_hooks() if use_targets else []).kill()
 
     @cli.command("status")
     @click.option(
@@ -1709,7 +1747,7 @@ class Stt:
     def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
         # Every target shows on the bar, whichever started its take.
-        stt = Stt(targets=[t.hooks() for t in SttTarget])
+        stt = Stt(targets=SttTarget.all_hooks())
         if watching:
             return watch(stt.status_json, 0.5)
         sys.stdout.write(stt.status_json() + "\n")

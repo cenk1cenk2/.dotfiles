@@ -33,19 +33,17 @@ hl.define_submap(submap, function()
 
   -- Dictation pastes into the focused window, and the submap would catch
   -- the paste key, so it leaves the submap like the recording mode's stt binds.
-  -- Amp's desktop app dictates itself when focused or already recording.
+  -- speech.py hands the take to a target app (Amp) focused or recording.
   hl.bind(
     "s",
-    exec_then_reset(("%s stt toggle --target amp --output paste --enrich --submit"):format(d.speech)),
+    exec_then_reset(("%s stt toggle --output paste --enrich --submit"):format(d.speech)),
     { description = "dictate" }
   )
   -- The same dictation into an agent chosen first: the only one directly,
   -- else the picker. A picked Amp window gets Amp's own take.
   hl.bind(
     "SHIFT + s",
-    exec_then_reset(
-      ("%s pick && %s stt toggle --target amp --output paste --enrich --submit"):format(d.agents, d.speech)
-    ),
+    exec_then_reset(("%s pick && %s stt toggle --output paste --enrich --submit"):format(d.agents, d.speech)),
     { description = "dictate to an agent" }
   )
 
