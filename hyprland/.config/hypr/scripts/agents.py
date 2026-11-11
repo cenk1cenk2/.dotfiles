@@ -168,20 +168,32 @@ class AgentMenu:
         # A desktop thread that waits is already listed by its waiting row.
         flagged_urls = {e.get("url") for e in waiting if e.get("url")}
 
+        # Below the waiting ones, panes and app windows mix, most recently
+        # active first.
+        rest = sorted(
+            [
+                *(
+                    ({"activity": panes[pane]["activity"]}, agent, panes[pane])
+                    for pane, agent in found.items()
+                    if pane not in flagged
+                ),
+                *(
+                    (window, window, None)
+                    for window in self.app_windows()
+                    if window["url"] not in flagged_urls
+                ),
+            ],
+            key=lambda item: agents.recency(item[0]),
+        )
+
         return [
             *(
                 self.waiting_row(e, panes.get(e.get("pane")), found.get(e.get("pane")))
                 for e in waiting
             ),
             *(
-                self.running_row(agent, panes[pane])
-                for pane, agent in found.items()
-                if pane not in flagged
-            ),
-            *(
-                self.window_row(window)
-                for window in self.app_windows()
-                if window["url"] not in flagged_urls
+                self.running_row(agent, pane) if pane else self.window_row(agent)
+                for _, agent, pane in rest
             ),
         ]
 
@@ -237,7 +249,7 @@ class AgentMenu:
                     project,
                     f"{entry.get('message') or ''}, {self.age(entry.get('at'))} ago",
                 ),
-                self.location(entry.get("pane"), pane),
+                self.location(entry.get("pane"), pane, entry),
                 self.reply(self.last_reply(agent, session) or entry.get("context")),
             )
         )
@@ -393,7 +405,13 @@ class AgentMenu:
         )
 
     @staticmethod
-    def location(pane_id: str | None, pane: dict | None) -> str:
+    def location(
+        pane_id: str | None, pane: dict | None, entry: dict | None = None
+    ) -> str:
+        # A desktop app's thread has no pane but opens by its URL in the app.
+        if pane is None and entry and entry.get("url"):
+            where = f"{entry.get('vendor') or 'app'} desktop  {entry['url']}"
+            return f'<span alpha="60%">{html.escape(where, quote=False)}</span>'
         if pane is None:
             return '<span alpha="60%">no tmux pane</span>'
         path = pane["path"].replace(str(Path.home()), "~", 1)

@@ -1112,6 +1112,12 @@ owns.
   default server's freshest client, and raises kitty through that client,
   since a popup's client runs under the default server and not under kitty.
   A pane on any other client-less server is selected but cannot be shown.
+- **Agents list most recently active first**, below the waiting ones in the
+  picker and throughout the deck's sessions key and next/previous
+  (`agents.recency`). tmux keeps no focus time, so a pane ranks by its
+  window's last output (`window_activity`) and a busy agent rises on its own;
+  an Amp thread ranks by its runner's `updated`; an app window with neither
+  follows, in Hyprland's focus order (`focusHistoryID`), which has no time.
 - **The hook stays quiet when the pane is already being watched**,
   which is what makes a 0 threshold liveable. `Notify.focused()` wants
   every layer to agree: the pane is active in its tmux window, that

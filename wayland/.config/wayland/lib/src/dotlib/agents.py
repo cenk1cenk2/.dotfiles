@@ -137,6 +137,7 @@ def tmux_panes() -> dict[str, dict] | None:
             (
                 "#{pane_id}\t#{pane_pid}\t#{session_name}:#{window_index}"
                 "\t#{pane_current_path}\t#{pane_active}#{window_active}#{session_attached}"
+                "\t#{window_activity}"
             ),
         ]
         # DEBUG, not INFO: the deck runs this every second.
@@ -155,13 +156,15 @@ def tmux_panes() -> dict[str, dict] | None:
 
         panes = panes or {}
         for line in proc.stdout.splitlines():
-            pane, pid, where, path, flags = (line.split("\t") + [""] * 5)[:5]
+            pane, pid, where, path, flags, activity = (line.split("\t") + [""] * 6)[:6]
             if pid.isdigit():
                 panes[pane_ref(pane, server)] = {
                     "pid": int(pid),
                     "where": where if server == DEFAULT_SERVER else f"{server} {where}",
                     "path": path,
                     "seen": flags[:2] == "11" and flags[2:] not in ("", "0"),
+                    # Last output in the pane's window: tmux keeps no focus time.
+                    "activity": int(activity) if activity.isdigit() else None,
                 }
 
     return panes
@@ -219,6 +222,7 @@ def running(panes: dict[str, dict], found: dict[str, dict]) -> list[dict]:
             "where": panes[pane]["where"],
             "project": Path(panes[pane]["path"]).name or "/",
             "seen": panes[pane]["seen"],
+            "activity": panes[pane]["activity"],
         }
         for pane, agent in found.items()
         if pane in panes
@@ -253,6 +257,9 @@ def windows(clients: list[dict], focused: str | None) -> list[dict]:
             "url": None,
             "state": None,
             "cwd": None,
+            # Hyprland keeps a focus order, not a time; threads bring their own.
+            "activity": None,
+            "focus_order": client.get("focusHistoryID"),
         }
         listed = threads() if vendor == "amp" else []
         for entry in listed or [{}]:
@@ -264,6 +271,7 @@ def windows(clients: list[dict], focused: str | None) -> list[dict]:
                     "url": entry.get("url"),
                     "state": entry.get("state"),
                     "cwd": entry.get("cwd"),
+                    "activity": entry.get("updated"),
                 }
             else:
                 entry = window
@@ -308,8 +316,19 @@ def threads() -> list[dict]:
     return sorted(found, key=lambda t: -t.get("updated", 0))
 
 
+def recency(agent: dict) -> tuple:
+    """Sort key, most recently active first: a pane's last output, a thread's
+    last update; an app window with no time follows, in Hyprland's focus
+    order."""
+    activity = agent.get("activity")
+    order = agent.get("focus_order")
+
+    return (activity is None, -(activity or 0), order is None, order or 0)
+
+
 def joined(panes: list[dict], windows: list[dict]) -> list[dict]:
-    """Tmux agents then app windows, as one list to step through.
+    """Tmux agents and app windows, as one list to step through, most recently
+    active first.
 
     A pane counts as on screen while it is its attached session's active one,
     which says nothing about the compositor: with an app window focused, that
@@ -317,7 +336,7 @@ def joined(panes: list[dict], windows: list[dict]) -> list[dict]:
     if any(window["seen"] for window in windows):
         panes = [{**pane, "seen": False} for pane in panes]
 
-    return panes + windows
+    return sorted(panes + windows, key=recency)
 
 
 def step(agents: list[dict], offset: int) -> dict | None:
