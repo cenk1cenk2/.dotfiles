@@ -123,9 +123,7 @@ class AgentsPlugin(Plugin):
         match key.action:
             case Action.SESSIONS:
                 self.switch(1)
-            case Action.PICKER if (
-                self.AMP in self.capturing and self.focus.window_class == self.AMP
-            ):
+            case Action.PICKER if self.AMP in self.capturing:
                 self.amp_toggle()
             case Action.PICKER:
                 self.spawn([str(self.PICKER), "pick"])
@@ -200,15 +198,16 @@ class AgentsPlugin(Plugin):
     def override(self, key: AgentKey) -> Override:
         if key.action != Action.PICKER:
             return NO_OVERRIDE
-        if self.focus.window_class != self.AMP:
-            return NO_OVERRIDE
         if self.AMP in self.capturing:
             return Override(press="amp", hold="amp")
+        if self.focus.window_class == self.AMP:
+            return Override(hold="amp")
 
-        return Override(hold="amp")
+        return NO_OVERRIDE
 
     def amp_toggle(self) -> None:
-        """Start Amp's take in the focused Amp window, or stop and send it.
+        """Stop and send Amp's take wherever focus is, or start one in the
+        focused Amp window.
         speech.py does both, so the room is quieted for the take and handed
         back when Amp stops recording, however that happens."""
         self.spawn([*SpeechPlugin.SPEECH, "stt", "toggle", "--target", "amp"])
@@ -221,7 +220,7 @@ class AgentsPlugin(Plugin):
         override replaces it either way. With nothing recording this opens
         the picker, as a press does. With Amp's desktop app in focus, one hold
         starts Amp's own dictation and the next stops it and sends."""
-        if self.focus.window_class == self.AMP:
+        if self.AMP in self.capturing or self.focus.window_class == self.AMP:
             return self.amp_toggle()
 
         state = SpeechPlugin.status(Session.STT)

@@ -853,29 +853,33 @@ not set. Read the active line, never the comment above it.
   the hold hint along the bottom, or the label along the top, which the image
   then draws itself since OpenDeck's title takes no colour. Every key that
   follows focus goes through `override`, so yellow writing always means "this
-  now drives <app>". The agents picker's hold, for one, toggles Amp's own
-  dictation while an `amp-desktop` window has focus; with any other window in
-  focus it is the usual stt dictation, even while Amp records. Holding the
+  now drives <app>". The agents picker's hold, for one, starts Amp's own
+  dictation while an `amp-desktop` window has focus and stops Amp's take
+  wherever focus is; otherwise it is the usual stt dictation. Holding the
   shortcut down through `hl.dsp.send_key_state` does not trigger Amp's
   hold-to-send.
 - **Every Amp dictation goes through `speech.py stt toggle --target amp`**:
   the deck's picker, agents mode's `s`, and Ctrl+Shift+D itself, which
   `hyprland/.config/hypr/applications.lua` binds for `amp-desktop` and replays
-  to every other window. In a focused Amp window it sends Ctrl+Shift+D to
-  start a take and Enter to stop and send it, so Amp's own second
-  Ctrl+Shift+D (stop without sending) is no longer reachable from the
-  keyboard. A started take ducks and pauses playback like an stt take, and the
-  process follows Amp's capture stream until it closes, so the room comes
-  back however the take ends. A live stt take of our own still wins: `toggle`
-  stops it first.
+  to every other window. A target is an `SttTargetHooks` (window class,
+  capture binary, start and stop hooks), driven by `TargetDictation`. While
+  the target records, `toggle` sends its stop (Enter for Amp) to its window
+  wherever focus is; otherwise it starts a take (Ctrl+Shift+D) only in a
+  focused target window. Amp's own second Ctrl+Shift+D (stop without sending)
+  is no longer reachable from the keyboard. A started take ducks and pauses
+  playback like an stt take, and the process follows the capture stream until
+  it closes, so the room comes back however the take ends. A live stt take of
+  our own still wins: `toggle` stops it first. The stt waybar module follows
+  the targets' capture streams too, so a take shows as `󰍬 amp` however it
+  started.
 - **Whether a program records comes from its capture stream, never from the
   deck's memory.** `dotlib.microphone.Capturing` follows PipeWire's
   source-output events through `pulsectl` and keeps the binaries holding a
   capture stream open; Amp dictating shows up as `amp-desktop`. A take started
   or stopped in the app itself is seen like one from the deck: while Amp
   records, the agents key draws its tile in the live red the STT keys use, and
-  with an Amp window in focus both its press and hold stop and send the take,
-  marked as overridden for `amp`.
+  both its press and hold stop and send the take, marked as overridden for
+  `amp`.
 
 ## Icons
 

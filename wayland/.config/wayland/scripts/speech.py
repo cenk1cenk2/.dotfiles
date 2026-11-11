@@ -544,9 +544,14 @@ class SttSession(SocketSession):
 
 class SttTarget(StrEnum):
     """An app that dictates on its own, which `stt toggle --target` hands the
-    take to while one of its windows has focus."""
+    take to while it records or one of its windows has focus."""
 
     AMP = "amp"
+
+    def hooks(self) -> SttTargetHooks:
+        match self:
+            case SttTarget.AMP:
+                return AmpHooks()
 
 
 class Hypr:
@@ -563,6 +568,18 @@ class Hypr:
         except json.JSONDecodeError:
             self.log.warning("hyprctl activewindow: unreadable reply")
             return {}
+
+    def window_of_class(self, window_class: str) -> str | None:
+        """The address of the first window of `window_class`, if any."""
+        out = self._hyprctl("-j", "clients")
+        try:
+            clients = json.loads(out) if out else []
+        except json.JSONDecodeError:
+            self.log.warning("hyprctl clients: unreadable reply")
+            return None
+        return next(
+            (c["address"] for c in clients if c.get("class") == window_class), None
+        )
 
     def send_shortcut(self, window: str, key: str, mods: str = "") -> None:
         """Send a key straight to `window`, past Hyprland's own binds."""
@@ -635,17 +652,26 @@ class TargetDictation:
         self._capturing = Capturing()
 
     def toggle(self) -> bool:
-        """Start or stop the take in the target's focused window; False when
-        another window has focus, whatever the target is doing."""
+        """Stop the target's take wherever focus is, or start one in its
+        focused window; False when it neither records nor has focus."""
         hooks = self._hooks
         focused = self._hypr.active_window()
-        if focused.get("class") != hooks.window_class:
-            return False
-        window = focused["address"]
+        is_focused = focused.get("class") == hooks.window_class
         self._capturing.wait(lambda _: True, self.START_SECONDS)
         if hooks.capture_binary in self._capturing:
-            hooks.stop(self._hypr, window)
+            window = (
+                focused["address"]
+                if is_focused
+                else self._hypr.window_of_class(hooks.window_class)
+            )
+            if window is None:
+                self.log.warning("%s records, but has no window", hooks.window_class)
+            else:
+                hooks.stop(self._hypr, window)
             return True
+        if not is_focused:
+            return False
+        window = focused["address"]
 
         # Waited on, and before the suppression, as the stt take's own cue is.
         Chime(ChimeDirection.UP).play(wait=True)
@@ -710,6 +736,8 @@ class Stt:
         self._adapter = adapter
         self._enricher = enricher
         self._output = output
+        # Only the status watcher follows the targets' capture streams.
+        self._capturing: Capturing | None = None
         self._suppressor = PlaybackSuppressor(
             duck=duck,
             factor=duck_factor,
@@ -1256,6 +1284,20 @@ class Stt:
         state = resp.state if resp and resp.ok else None
 
         if state is None:
+            # A target's take is its own capture stream, however it was started,
+            # so the bar follows the streams rather than any process of ours.
+            if self._capturing is None:
+                self._capturing = Capturing()
+                self._capturing.wait(lambda _: True, 1.0)
+            for target in SttTarget:
+                if target.hooks().capture_binary in self._capturing:
+                    return json.dumps(
+                        {
+                            "class": Phase.RECORDING.value,
+                            "text": f"󰍬 {target.value}",
+                            "tooltip": f"Recording speech → {target.value}",
+                        }
+                    )
             recorder = self._recorder
             if recorder and recorder.is_recording():
                 return json.dumps(
@@ -1433,7 +1475,7 @@ class Stt:
         "--target",
         type=click.Choice([t.value for t in SttTarget]),
         default=None,
-        help="App that dictates itself while focused.",
+        help="App that dictates itself while recording or focused.",
     )
     def cmd_toggle(
         source,
@@ -1467,11 +1509,7 @@ class Stt:
             suppressor = PlaybackSuppressor(
                 duck=duck, factor=duck_factor, pause=pause_players, name="speech"
             )
-            hooks: SttTargetHooks
-            match SttTarget(target):
-                case SttTarget.AMP:
-                    hooks = AmpHooks()
-            if TargetDictation(hooks, suppressor).toggle():
+            if TargetDictation(SttTarget(target).hooks(), suppressor).toggle():
                 return
 
         output_mode = OutputMode(output)
