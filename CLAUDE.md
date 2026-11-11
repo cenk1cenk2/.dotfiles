@@ -861,8 +861,11 @@ not set. Read the active line, never the comment above it.
 - **Every Amp dictation goes through `speech.py stt toggle --target amp`**:
   the deck's picker, agents mode's `s`, and Ctrl+Shift+D itself, which
   `hyprland/.config/hypr/applications.lua` binds for `amp-desktop` and replays
-  to every other window. A target is an `SttTargetHooks` (window class,
-  capture binary, start and stop hooks), driven by `TargetDictation`. While
+  to every other window. A target is an `SttTargetHooks`: its `name`, `owns`
+  (is this Hyprland client the target's), `records` (do the capturing binaries
+  include its take), and `start` / `stop`. `Stt` takes a list of them and
+  drives them in `hand_to_target`; `--target` repeats, and adding a target is
+  an `SttTarget` value plus a hooks class. While
   the target records, `toggle` sends its stop (Enter for Amp) to its window
   wherever focus is; otherwise it starts a take (Ctrl+Shift+D) only in a
   focused target window. Amp's own second Ctrl+Shift+D (stop without sending)

@@ -17,7 +17,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -569,17 +569,13 @@ class Hypr:
             self.log.warning("hyprctl activewindow: unreadable reply")
             return {}
 
-    def window_of_class(self, window_class: str) -> str | None:
-        """The address of the first window of `window_class`, if any."""
+    def clients(self) -> list[dict]:
         out = self._hyprctl("-j", "clients")
         try:
-            clients = json.loads(out) if out else []
+            return json.loads(out) if out else []
         except json.JSONDecodeError:
             self.log.warning("hyprctl clients: unreadable reply")
-            return None
-        return next(
-            (c["address"] for c in clients if c.get("class") == window_class), None
-        )
+            return []
 
     def send_shortcut(self, window: str, key: str, mods: str = "") -> None:
         """Send a key straight to `window`, past Hyprland's own binds."""
@@ -609,12 +605,24 @@ class Hypr:
 
 
 class SttTargetHooks(Protocol):
-    """What an app that dictates on its own supplies to `TargetDictation`."""
+    """An app that dictates on its own, which `Stt` hands the take to.
 
-    # Focus on a window of this class hands the take to the target.
-    window_class: str
-    # The binary whose capture stream is the target's take.
-    capture_binary: str
+    The app holding a capture stream open is the take, so `Stt` quiets the room
+    for it and hands it back however it ends: the stop hook, the app's own
+    button, or the app quitting."""
+
+    # Names the target in logs and on the bar.
+    name: str
+
+    def owns(self, window: dict) -> bool:
+        """Whether a Hyprland client (`activewindow` / `clients` shape) is the
+        target's; focus on one hands a new take to the target."""
+        ...
+
+    def records(self, capturing: frozenset[str]) -> bool:
+        """Whether the binaries holding a capture stream include the target's
+        take."""
+        ...
 
     def start(self, hypr: Hypr, window: str) -> None: ...
 
@@ -624,74 +632,20 @@ class SttTargetHooks(Protocol):
 class AmpHooks:
     """Amp's desktop app: Ctrl+Shift+D starts a take, Enter stops it and sends."""
 
-    window_class = "amp-desktop"
-    capture_binary = "amp-desktop"
+    APP = "amp-desktop"
+    name = "amp"
+
+    def owns(self, window: dict) -> bool:
+        return window.get("class") == self.APP
+
+    def records(self, capturing: frozenset[str]) -> bool:
+        return self.APP in capturing
 
     def start(self, hypr: Hypr, window: str) -> None:
         hypr.send_shortcut(window, "d", "CTRL SHIFT")
 
     def stop(self, hypr: Hypr, window: str) -> None:
         hypr.send_shortcut(window, "Return")
-
-
-class TargetDictation:
-    """An app's own dictation, with the room quieted as for an stt take.
-
-    The app holding a capture stream open is the take, so the room comes back
-    however it ends: the stop hook, the app's own button, or the app quitting."""
-
-    # Apps open their capture stream well under a second after being asked.
-    START_SECONDS = 3.0
-
-    log = logging.getLogger("speech.target")
-
-    def __init__(self, hooks: SttTargetHooks, suppressor: PlaybackSuppressor):
-        self._hooks = hooks
-        self._suppressor = suppressor
-        self._hypr = Hypr()
-        self._capturing = Capturing()
-
-    def toggle(self) -> bool:
-        """Stop the target's take wherever focus is, or start one in its
-        focused window; False when it neither records nor has focus."""
-        hooks = self._hooks
-        focused = self._hypr.active_window()
-        is_focused = focused.get("class") == hooks.window_class
-        self._capturing.wait(lambda _: True, self.START_SECONDS)
-        if hooks.capture_binary in self._capturing:
-            window = (
-                focused["address"]
-                if is_focused
-                else self._hypr.window_of_class(hooks.window_class)
-            )
-            if window is None:
-                self.log.warning("%s records, but has no window", hooks.window_class)
-            else:
-                hooks.stop(self._hypr, window)
-            return True
-        if not is_focused:
-            return False
-        window = focused["address"]
-
-        # Waited on, and before the suppression, as the stt take's own cue is.
-        Chime(ChimeDirection.UP).play(wait=True)
-        hooks.start(self._hypr, window)
-        if not self._capturing.wait(
-            lambda b: hooks.capture_binary in b, self.START_SECONDS
-        ):
-            self.log.warning(
-                "%s opened no capture stream; nothing to quiet", hooks.capture_binary
-            )
-            return True
-        self.log.info("%s recording", hooks.capture_binary)
-        self._suppressor.suppress()
-        try:
-            self._capturing.wait(lambda b: hooks.capture_binary not in b, None)
-        finally:
-            self._suppressor.restore()
-        self.log.info("%s stopped recording", hooks.capture_binary)
-        Chime(ChimeDirection.DOWN).play()
-        return True
 
 
 class Stt:
@@ -721,6 +675,8 @@ class Stt:
     # characters errs long; code and punctuation tokenise denser than prose.
     CHARS_PER_TOKEN = 3
     MODELS_TIMEOUT = 5.0
+    # Apps open their capture stream well under a second after being asked.
+    TARGET_START_SECONDS = 3.0
 
     log = logging.getLogger("speech.stt")
 
@@ -732,11 +688,13 @@ class Stt:
         duck: bool = False,
         duck_factor: float = DEFAULT_DUCK_FACTOR,
         pause_players: bool = False,
+        targets: Sequence[SttTargetHooks] = (),
     ):
         self._adapter = adapter
         self._enricher = enricher
         self._output = output
-        # Only the status watcher follows the targets' capture streams.
+        self._targets = targets
+        # Opened on first use, so only callers with targets follow the streams.
         self._capturing: Capturing | None = None
         self._suppressor = PlaybackSuppressor(
             duck=duck,
@@ -744,6 +702,63 @@ class Stt:
             pause=pause_players,
             name="speech",
         )
+
+    # ── targets ───────────────────────────────────────────────────
+
+    def _capture_streams(self) -> Capturing:
+        """The capture streams, listed at least once before the first read."""
+        if self._capturing is None:
+            self._capturing = Capturing()
+            self._capturing.wait(lambda _: True, self.TARGET_START_SECONDS)
+        return self._capturing
+
+    def recording_target(self) -> SttTargetHooks | None:
+        capturing = self._capture_streams()
+        return next((t for t in self._targets if t.records(capturing.binaries)), None)
+
+    def hand_to_target(self) -> bool:
+        """Stop a target's take wherever focus is, or start one in a focused
+        target window; False when no target records or has focus.
+
+        A started take quiets the room as an stt take does, and this process
+        follows the capture stream until it closes."""
+        hypr = Hypr()
+        focused = hypr.active_window()
+        if (target := self.recording_target()) is not None:
+            window = (
+                focused["address"]
+                if target.owns(focused)
+                else next(
+                    (c["address"] for c in hypr.clients() if target.owns(c)), None
+                )
+            )
+            if window is None:
+                self.log.warning("%s records, but has no window", target.name)
+            else:
+                target.stop(hypr, window)
+            return True
+        target = next((t for t in self._targets if t.owns(focused)), None)
+        if target is None:
+            return False
+
+        capturing = self._capture_streams()
+        # Waited on, and before the suppression, as the stt take's own cue is.
+        Chime(ChimeDirection.UP).play(wait=True)
+        target.start(hypr, focused["address"])
+        if not capturing.wait(target.records, self.TARGET_START_SECONDS):
+            self.log.warning(
+                "%s opened no capture stream; nothing to quiet", target.name
+            )
+            return True
+        self.log.info("%s recording", target.name)
+        self._suppressor.suppress()
+        try:
+            capturing.wait(lambda b: not target.records(b), None)
+        finally:
+            self._suppressor.restore()
+        self.log.info("%s stopped recording", target.name)
+        Chime(ChimeDirection.DOWN).play()
+        return True
 
     # ── core ──────────────────────────────────────────────────────
 
@@ -1286,18 +1301,14 @@ class Stt:
         if state is None:
             # A target's take is its own capture stream, however it was started,
             # so the bar follows the streams rather than any process of ours.
-            if self._capturing is None:
-                self._capturing = Capturing()
-                self._capturing.wait(lambda _: True, 1.0)
-            for target in SttTarget:
-                if target.hooks().capture_binary in self._capturing:
-                    return json.dumps(
-                        {
-                            "class": Phase.RECORDING.value,
-                            "text": f"󰍬 {target.value}",
-                            "tooltip": f"Recording speech → {target.value}",
-                        }
-                    )
+            if self._targets and (target := self.recording_target()) is not None:
+                return json.dumps(
+                    {
+                        "class": Phase.RECORDING.value,
+                        "text": f"󰍬 {target.name}",
+                        "tooltip": f"Recording speech → {target.name}",
+                    }
+                )
             recorder = self._recorder
             if recorder and recorder.is_recording():
                 return json.dumps(
@@ -1473,8 +1484,9 @@ class Stt:
     )
     @click.option(
         "--target",
+        "targets",
         type=click.Choice([t.value for t in SttTarget]),
-        default=None,
+        multiple=True,
         help="App that dictates itself while recording or focused.",
     )
     def cmd_toggle(
@@ -1500,16 +1512,19 @@ class Stt:
         duck,
         duck_factor,
         pause_players,
-        target,
+        targets,
         **enrich_opts,
     ):
         """Start a session, or toggle an existing one."""
         # A live take of our own is stopped as usual, whatever has focus.
-        if target is not None and not Stt().is_recording():
-            suppressor = PlaybackSuppressor(
-                duck=duck, factor=duck_factor, pause=pause_players, name="speech"
+        if targets and not Stt().is_recording():
+            stt = Stt(
+                duck=duck,
+                duck_factor=duck_factor,
+                pause_players=pause_players,
+                targets=[SttTarget(t).hooks() for t in targets],
             )
-            if TargetDictation(SttTarget(target).hooks(), suppressor).toggle():
+            if stt.hand_to_target():
                 return
 
         output_mode = OutputMode(output)
@@ -1693,9 +1708,11 @@ class Stt:
     )
     def cmd_status(watching: bool):
         """Print waybar-shaped status JSON."""
+        # Every target shows on the bar, whichever started its take.
+        stt = Stt(targets=[t.hooks() for t in SttTarget])
         if watching:
-            return watch(Stt().status_json, 0.5)
-        sys.stdout.write(Stt().status_json() + "\n")
+            return watch(stt.status_json, 0.5)
+        sys.stdout.write(stt.status_json() + "\n")
 
     @cli.command("is-recording")
     def cmd_is_recording():
