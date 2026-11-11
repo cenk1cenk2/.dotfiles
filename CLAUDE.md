@@ -735,6 +735,10 @@ not set. Read the active line, never the comment above it.
   for muscle memory: `f` for find, so agents mode picks an agent on `f`.
   Semantic letters are the default, but where neovim's key differs, neovim
   wins, and some binds cannot be semantic at all.
+- **A bind also stays on one side of the keyboard** with its modifiers, so it
+  can be pressed one-handed. That can outrank both the semantic and the neovim
+  key: copy is `c` beside paste on `v`, not neovim's `y` and `p`, and the split
+  keys stay on `x`, `v` and `z`.
 - An existing bind that looks arbitrary may be deliberate; ask before moving
   it to a "more semantic" key.
 
