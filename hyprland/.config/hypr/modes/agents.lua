@@ -40,6 +40,15 @@ hl.define_submap(submap, function()
     exec_then_reset(("%s stt toggle --target amp --output paste --enrich --submit"):format(d.speech)),
     { description = "dictate" }
   )
+  -- The same dictation into an agent chosen first: the only one directly,
+  -- else the picker. A picked Amp window gets Amp's own take.
+  hl.bind(
+    "SHIFT + s",
+    exec_then_reset(
+      ("%s pick && %s stt toggle --target amp --output paste --enrich --submit"):format(d.agents, d.speech)
+    ),
+    { description = "dictate to an agent" }
+  )
 
   -- Paste into the focused window. Ctrl+Shift+V rather than Ctrl+V, which is
   -- what pastes in kitty.

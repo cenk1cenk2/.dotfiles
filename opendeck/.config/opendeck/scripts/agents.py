@@ -6,6 +6,8 @@ import base64
 import html
 import logging
 import re
+import subprocess
+import sys
 import time
 from enum import StrEnum
 from pathlib import Path
@@ -184,13 +186,33 @@ class AgentsPlugin(Plugin):
         return agents.joined(agents.running(panes, self.found), self.app_windows())
 
     def app_windows(self) -> list[dict]:
-        """Agent apps' own windows, re-listed only after Hyprland reported a
-        window change, so a quiet desktop costs no request."""
+        """Agent apps' own windows and Amp's threads in them. Clients are
+        re-listed only after Hyprland reported a window change, so a quiet
+        desktop costs no request; the threads are re-read every time."""
         if self.focus.windows != self.windows_read:
             self.windows_read = self.focus.windows
-            self.windows = agents.windows(self.hypr.query("clients") or [], None)
+            self.windows = self.hypr.query("clients") or []
 
-        return [{**w, "seen": w["window"] == self.focus.address} for w in self.windows]
+        return [
+            {**w, "seen": agents.on_screen(w, self.focus.address, self.focus.title)}
+            for w in agents.windows(self.windows, None)
+        ]
+
+    def show(self, agent: dict) -> None:
+        """Bring an app entry on screen: a thread through its URL, waiting for
+        it so a paste that follows lands there, else its window."""
+        if agent.get("url"):
+            self.log.info("spawn: %s focus --url %s", self.NOTIFY, agent["url"])
+            subprocess.run(
+                [str(self.NOTIFY), "focus", "--url", agent["url"]],
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stderr,
+                stderr=sys.stderr,
+                timeout=10,
+                check=False,
+            )
+        else:
+            self.raise_window(agent["window"])
 
     def raise_window(self, address: str) -> None:
         self.hypr.dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
@@ -231,7 +253,7 @@ class AgentsPlugin(Plugin):
         enrich = " --enrich" if state.get("enrich") else ""
         if not found[0]["pane"]:
             # An app window takes the paste where it lands, once focused.
-            self.raise_window(found[0]["window"])
+            self.show(found[0])
             return self.spawn(
                 [
                     *SpeechPlugin.SPEECH,
@@ -261,7 +283,7 @@ class AgentsPlugin(Plugin):
         if target["pane"]:
             self.spawn([str(self.NOTIFY), "focus", "--pane", target["pane"]])
         else:
-            self.raise_window(target["window"])
+            self.show(target)
         self.next_agents = time.monotonic() + 0.3
 
     def current_agent(self) -> tuple[dict, int] | None:
@@ -273,10 +295,10 @@ class AgentsPlugin(Plugin):
             return None
         for index, agent in enumerate(self.agents):
             if agent["seen"]:
-                self.last_seen = agent["pane"] or agent["window"]
+                self.last_seen = agent["pane"] or agent.get("url") or agent["window"]
                 return agent, index
         for index, agent in enumerate(self.agents):
-            if (agent["pane"] or agent["window"]) == self.last_seen:
+            if (agent["pane"] or agent.get("url") or agent["window"]) == self.last_seen:
                 return agent, index
 
         return self.agents[0], 0

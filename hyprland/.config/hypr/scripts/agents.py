@@ -9,6 +9,7 @@ import html
 import logging
 import re
 import subprocess
+import sys
 import textwrap
 import time
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ class Row:
     pane: str | None
     entry: dict | None
     window: str | None = None
+    url: str | None = None
 
 
 class AgentMenu:
@@ -46,6 +48,13 @@ class AgentMenu:
     STATES: ClassVar[dict[str | None, tuple[str, str]]] = {
         "busy": ("working", WORKING),
         "idle": ("idle", IDLE),
+    }
+    # An Amp desktop thread's state, as its runner reports it.
+    THREAD_STATES: ClassVar[dict[str | None, tuple[str, str]]] = {
+        "running": ("working", WORKING),
+        "idle": ("idle", IDLE),
+        "awaiting-approval": ("waiting", WAITING),
+        "error": ("error", URGENT),
     }
     REPLY_LINES = 4
     LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
@@ -97,12 +106,17 @@ class AgentMenu:
             self.width, self.height = self.height, self.width
         self.reply_width = int((self.width - self.TEXT_INSET) / self.CHAR_PX)
 
-    def run(self) -> None:
+    def run(self) -> bool:
+        """Focus the agent picked, or the only one without asking; False when
+        none was."""
         # Dismissing reopens the list, so a queue can be cleared in one go.
         while rows := self.rows():
-            choice, code = self.pick(rows)
+            if len(rows) == 1:
+                choice, code = 0, 0
+            else:
+                choice, code = self.pick(rows)
             if choice is None:
-                return
+                return False
             row = rows[choice]
             match code:
                 case self.ROFI_DISMISS:
@@ -113,12 +127,15 @@ class AgentMenu:
                     self.dismiss(row.entry)
                     if row.pane:
                         self.focus("--pane", row.pane)
+                    elif row.url:
+                        self.focus("--url", row.url)
                     elif row.window:
                         self.raise_window(row.window)
                     elif row.entry and row.entry.get("url"):
                         self.focus("--url", row.entry["url"])
-                    return
+                    return True
         self.log.info("no agents running")
+        return False
 
     @staticmethod
     def app_windows() -> list[dict]:
@@ -148,6 +165,8 @@ class AgentMenu:
         )
         found = agents.walk(panes)
         flagged = {e.get("pane") for e in waiting}
+        # A desktop thread that waits is already listed by its waiting row.
+        flagged_urls = {e.get("url") for e in waiting if e.get("url")}
 
         return [
             *(
@@ -159,7 +178,11 @@ class AgentMenu:
                 for pane, agent in found.items()
                 if pane not in flagged
             ),
-            *(self.window_row(window) for window in self.app_windows()),
+            *(
+                self.window_row(window)
+                for window in self.app_windows()
+                if window["url"] not in flagged_urls
+            ),
         ]
 
     def pick(self, rows: list[Row]) -> tuple[int | None, int]:
@@ -263,24 +286,37 @@ class AgentMenu:
         return Row(search, card, agent["pane"], None)
 
     def window_row(self, window: dict) -> Row:
+        state, colour = self.THREAD_STATES.get(
+            window["state"], ("running", self.RUNNING)
+        )
         card = "\n".join(
             (
+                # A thread is named by its title, in the project it runs in.
                 self.headline(
-                    "running",
-                    self.RUNNING,
-                    None,
-                    None,
-                    window["project"],
+                    state,
+                    colour,
+                    window["project"] if window["url"] else None,
+                    window["profile"],
+                    Path(window["cwd"]).name if window["cwd"] else window["project"],
                     window["name"] + (", on screen" if window["seen"] else ""),
                 ),
                 f'<span alpha="60%">{html.escape(window["where"], quote=False)}</span>',
             )
         )
         search = " ".join(
-            ("running", window["project"], window["name"], window["where"])
+            filter(
+                None,
+                (
+                    state,
+                    window["project"],
+                    window["profile"],
+                    window["name"],
+                    window["where"],
+                ),
+            )
         )
 
-        return Row(search, card, None, None, window["window"])
+        return Row(search, card, None, None, window["window"], window["url"])
 
     @staticmethod
     def search(
@@ -396,8 +432,10 @@ class AgentMenu:
 
     @cli.command("pick")
     def cmd_pick() -> None:
-        """Pick an agent in rofi, waiting ones first."""
-        AgentMenu().run()
+        """Pick an agent in rofi, waiting ones first, or focus the only one;
+        exit 1 when none was."""
+        if not AgentMenu().run():
+            sys.exit(1)
 
     @cli.command("next")
     def cmd_next() -> None:
@@ -448,6 +486,8 @@ class AgentMenu:
             return
         if target["pane"]:
             cls.focus("--pane", target["pane"])
+        elif target["url"]:
+            cls.focus("--url", target["url"])
         else:
             cls.raise_window(target["window"])
 

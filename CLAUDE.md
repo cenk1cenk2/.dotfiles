@@ -846,6 +846,17 @@ not set. Read the active line, never the comment above it.
   re-lists only when `Focus.windows` moved (window opened, closed, moved or
   retitled), the menu once per run. The sessions key, the menu and their
   next/previous step focus such an entry through `hl.dsp.focus`.
+- **The Amp window lists as one entry per desktop thread.** The amp notify
+  plugin (`~/.agents`, `config/amp/.config/amp/plugins/notify.ts`), running in
+  an `amp-runner@` runner with no `TMUX_PANE`, writes each top-level thread to
+  `$XDG_RUNTIME_DIR/agents/amp/<thread>.json` (url, title, state, profile,
+  cwd, the plugin process's pid) on every title or state change.
+  `agents.threads()` reads them on each call, drops a file whose pid is gone,
+  and hides a thread idle for `THREAD_IDLE_SECONDS`, since Amp has no event
+  for a thread closing. Such an entry carries `url` and `state` and is focused
+  through `notify.py focus --url`; `agents.on_screen` marks it seen when the
+  Amp window's title names its page. The menu drops a thread already in the
+  waiting list. A new plugin version reaches a runner only when it restarts.
 - **A key that switches to another app says so in yellow.** `Plugin.override(key)`
   returns an `Override(press=..., hold=...)` naming the app each side drives
   instead of its usual target. The overridden side's writing turns One Dark

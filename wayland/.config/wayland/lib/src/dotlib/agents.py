@@ -35,6 +35,11 @@ NAMES: dict[str, str] = {
 WINDOWS: dict[str, str] = {
     "amp-desktop": "amp",
 }
+# The threads Amp's desktop app runs on this machine's runners, one file each,
+# kept by the amp notify plugin (~/.config/amp/plugins/notify.ts).
+THREADS = WAITING.parent / "agents" / "amp"
+# Amp has no event for a thread closing, so an idle thread drops off after this.
+THREAD_IDLE_SECONDS = 12 * 60 * 60
 
 
 def edit_waiting(change: Callable[[list[dict]], list[dict]]) -> list[dict]:
@@ -185,29 +190,82 @@ def windows(clients: list[dict], focused: str | None) -> list[dict]:
     a Hyprland window address where a pane would be, on screen while focused.
 
     Takes Hyprland's `clients` rather than asking for them, so each caller
-    keeps its own IPC and decides how often to read it."""
+    keeps its own IPC and decides how often to read it.
+
+    One Amp window shows many threads, so it lists as one entry per thread
+    its runners report, each carrying the thread's `url` and `state`."""
     found = []
     for client in clients:
         if (vendor := WINDOWS.get(client.get("class", ""))) is None:
             continue
         # Titles read "<page> - <App>".
         title = client.get("title", "")
-        found.append(
-            {
-                "pane": None,
-                "window": client["address"],
-                "pid": client.get("pid"),
-                "name": client["class"],
-                "vendor": vendor,
-                "home": None,
-                "profile": None,
-                "where": f"workspace {client.get('workspace', {}).get('name', '?')}",
-                "project": title.rpartition(" - ")[0] or title or vendor,
-                "seen": client["address"] == focused,
-            }
-        )
+        window = {
+            "pane": None,
+            "window": client["address"],
+            "pid": client.get("pid"),
+            "name": client["class"],
+            "vendor": vendor,
+            "home": None,
+            "profile": None,
+            "where": f"workspace {client.get('workspace', {}).get('name', '?')}",
+            "project": title.rpartition(" - ")[0] or title or vendor,
+            "url": None,
+            "state": None,
+            "cwd": None,
+        }
+        listed = threads() if vendor == "amp" else []
+        for entry in listed or [{}]:
+            if entry:
+                entry = {
+                    **window,
+                    "profile": entry.get("profile"),
+                    "project": entry.get("title") or "new thread",
+                    "url": entry.get("url"),
+                    "state": entry.get("state"),
+                    "cwd": entry.get("cwd"),
+                }
+            else:
+                entry = window
+            found.append({**entry, "seen": on_screen(entry, focused, title)})
 
     return found
+
+
+def on_screen(entry: dict, address: str | None, title: str) -> bool:
+    """Whether an app entry is what the focused window shows: its window, and
+    for a thread the page the window's title names."""
+    if entry["window"] != address:
+        return False
+
+    return entry.get("url") is None or title.rpartition(" - ")[0] == entry["project"]
+
+
+def threads() -> list[dict]:
+    """Amp desktop threads live on this machine's runners, newest first.
+
+    A runner that has exited takes its threads with it, its files removed."""
+    found = []
+    now = time.time()
+    for path in THREADS.glob("*.json"):
+        try:
+            thread = json.loads(path.read_text())
+        except OSError, json.JSONDecodeError:
+            continue
+        runner = thread.get("runner")
+        try:
+            os.kill(runner, 0)
+        except ProcessLookupError, TypeError:
+            path.unlink(missing_ok=True)
+            continue
+        except PermissionError:
+            pass
+        idle = thread.get("state") == "idle"
+        if idle and now - thread.get("updated", 0) > THREAD_IDLE_SECONDS:
+            continue
+        found.append(thread)
+
+    return sorted(found, key=lambda t: -t.get("updated", 0))
 
 
 def joined(panes: list[dict], windows: list[dict]) -> list[dict]:
