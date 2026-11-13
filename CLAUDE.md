@@ -2,7 +2,8 @@
 
 Repository knowledge base for agent sessions. Scope today: Python
 script conventions, waybar, kitty, OBS and input-remapper configuration, agent
-notification hooks and state sync, and NVIDIA dGPU runtime power. The
+notification hooks and state sync, and the `bat` laptop's NVIDIA dGPU
+runtime power and panel self-refresh. The
 claude, codex, opencode and hyprpilot stow packages live in
 `~/.agents/config/`; their rules are in `~/.agents/CLAUDE.md`. Everything below is an established rule — apply it to
 every new script (and every touch of an old one) without re-discussion.
@@ -119,74 +120,8 @@ not automatically dead — see the kitty section.
   daemon start, and the GUI leaves an empty `new preset.json` for every device
   it was opened on; neither belongs in the repo.
 
-## NVIDIA dGPU runtime power (hybrid profile, RTX 5070 / nvidia-open)
+## `install.py` and `cleanup.py`
 
-Goal state: the dGPU reaches D3cold whenever idle. Verified against driver
-source at `/usr/src/nvidia-<version>/` — read the source, not the docs, when
-these need re-checking.
-
-### Runtime power checks
-
-- **Open `/dev/nvidia0` handles alone do not prove RTD3 is blocked.**
-  In fine-grained mode, `nv_start_device` releases the initialization power
-  reference before returning (`nv.c`); retaining initialized driver state
-  is not the same as retaining a power reference. Check runtime state and
-  active operations. `/dev/nvidiactl` opens bypass `nv_start_device`, and
-  bare `/dev/dri/renderD*` opens take no ref (`nv_drm_open`).
-- **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
-  toggle**: GCOFF (full power-off, video memory dropped) requires used vidmem
-  <= threshold, and RM keeps ~2MiB allocated, so `0` rules GCOFF out and the
-  GPU idles in GC6 (D3cold, video memory in self-refresh). `nvidia-power.conf`
-  sets `0` per the open-gpu-kernel-modules#905 workaround for the GPU waking
-  straight back up after GCOFF. On a notebook the GC6 path is taken anyway
-  (see the blocker below), so it may be inert here.
-- **Any `nvidia-smi` invocation resets the runtime-PM idle timer** as well as
-  waking a sleeping GPU — polling it keeps an active GPU active forever.
-  `tdp nvidia show` is passive (sysfs only) precisely for this; smi runs only
-  with `--smi`.
-
-### Standing constraints
-
-- `nvidia-persistenced` is **configured as a Proton stability workaround**
-  for vkd3d-proton swapchain creation failures with `VK_ERROR_UNKNOWN` (-13)
-  in `dxgi_vk_swap_chain_recreate_swapchain_in_present_task`, followed by a
-  `vkGetPastPresentationTimingEXT` fault — a crash seconds in, or an endless
-  retry loop showing as a black screen. Its necessity on 615.78.08 is
-  unverified: `NVreg_GpuInitOnProbe` defaults to auto (`2`), and
-  `nv_close_device` retains initialized state after last-client close when
-  probe-time initialization is enabled. Keep the workaround until a fresh
-  hybrid test passes. Never toggle the daemon or `nvidia-smi -pm` live;
-  use a fresh boot for a controlled persistence test.
-  It is not enabled at boot, and neither is `nvidia-powerd` (Dynamic Boost,
-  which shifts power budget from the CPU to the dGPU):
-  `80-nvidia-pm.rules` starts both through `SYSTEMD_WANTS` once the
-  driver has bound a GPU, so a dGPU the firmware GPU mode hides never starts
-  them. Drop-ins also condition both units on `/proc/driver/nvidia/gpus`
-  being non-empty, guarding any other start.
-- `NVreg_DynamicPowerManagement=0x02` (FINE) forces fine-grained RTD3 and
-  pairs with `80-nvidia-pm.rules` writing `power/control=auto`: the driver's
-  own `nv_allow_runtime_suspend()` call (`dynamic-power.c`, gated on the
-  regkey being exactly `0x03`/DEFAULT) is just `pm_runtime_allow`, which the
-  udev rule does instead. Change one, change both.
-- `nvidia-power.conf` may only carry parameters the open kernel module
-  actually declares (`kernel-open/nvidia/nv-reg.h`); an unknown one is
-  logged as `unknown parameter ... ignored` at module load and does nothing.
-- `env-hybrid` sets `MANGOHUD=0`, overriding the common env: the MangoHud
-  implicit Vulkan layer dlopens NVML into every Vulkan process, so
-  Chromium/Electron GPU processes hold `/dev/nvidia0` and pay its CPU cost.
-  Games opt back in with `MANGOHUD=1 %command%`. `__EGL_VENDOR_LIBRARY_FILENAMES`
-  stays commented out: the Mesa EGL pin hides the dGPU from Proton:
-  `winewayland.drv` presents through EGL, so without NVIDIA EGL, Wine offers
-  a one-device list and every game lands on the iGPU. Hyprland and hyprpaper
-  holding `nvidia0` is expected; handles alone do not establish a PM blocker.
-- Proton titles reach the dGPU via `DXVK_FILTER_DEVICE_NAME=NVIDIA` and
-  `VKD3D_FILTER_DEVICE_NAME=NVIDIA` in `env-hybrid` — read by DXVK/vkd3d
-  inside the pressure-vessel container. `prime-run` (`rootfs/usr/local/bin`)
-  cannot do this job for Steam: the steam-runtime launcher resets `PATH` to
-  `…/steam-runtime-steamrt/bin:/usr/bin:/bin`, so `prime-run %command%`
-  resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
-  because pressure-vessel does not import `nvidia_layers.json` into the
-  container. Use `MANGOHUD=1 %command%` for the overlay.
 - **`install.py` copies the packages stow cannot symlink**, driven by a
   `.install.json` at each package root; no package is named in the script.
   `rootfs` and `rootfs-geoclue` target `/` as `root:root` with sudo, `obs` and
@@ -260,7 +195,83 @@ these need re-checking.
   with a `manifest.json` recording each path's previous kind, mode, owner or
   symlink target.
 
-### Linux 7.3 disables RTD3 (620.70.06, open)
+## bat (hybrid laptop: Intel xe iGPU + NVIDIA RTX 5070)
+
+Everything in this section was measured on `bat` and describes that machine
+only. The files it names (`env-hybrid`, `nvidia-power.conf`,
+`80-nvidia-pm.rules`, `electron-flags.conf`, `brave-flags.conf`) are shared
+by every host, so a change made for `bat` is checked against the other
+machines before it lands, and a finding here is not a rule for them.
+
+### NVIDIA dGPU runtime power (hybrid profile, RTX 5070 / nvidia-open)
+
+Goal state: the dGPU reaches D3cold whenever idle. Verified against driver
+source at `/usr/src/nvidia-<version>/` — read the source, not the docs, when
+these need re-checking.
+
+#### Runtime power checks
+
+- **Open `/dev/nvidia0` handles alone do not prove RTD3 is blocked.**
+  In fine-grained mode, `nv_start_device` releases the initialization power
+  reference before returning (`nv.c`); retaining initialized driver state
+  is not the same as retaining a power reference. Check runtime state and
+  active operations. `/dev/nvidiactl` opens bypass `nv_start_device`, and
+  bare `/dev/dri/renderD*` opens take no ref (`nv_drm_open`).
+- **`NVreg_DynamicPowerManagementVideoMemoryThreshold` is a cap in MB, not a
+  toggle**: GCOFF (full power-off, video memory dropped) requires used vidmem
+  <= threshold, and RM keeps ~2MiB allocated, so `0` rules GCOFF out and the
+  GPU idles in GC6 (D3cold, video memory in self-refresh). `nvidia-power.conf`
+  sets `0` per the open-gpu-kernel-modules#905 workaround for the GPU waking
+  straight back up after GCOFF. On a notebook the GC6 path is taken anyway
+  (see the blocker below), so it may be inert here.
+- **Any `nvidia-smi` invocation resets the runtime-PM idle timer** as well as
+  waking a sleeping GPU — polling it keeps an active GPU active forever.
+  `tdp nvidia show` is passive (sysfs only) precisely for this; smi runs only
+  with `--smi`.
+
+#### Standing constraints
+
+- `nvidia-persistenced` is **configured as a Proton stability workaround**
+  for vkd3d-proton swapchain creation failures with `VK_ERROR_UNKNOWN` (-13)
+  in `dxgi_vk_swap_chain_recreate_swapchain_in_present_task`, followed by a
+  `vkGetPastPresentationTimingEXT` fault — a crash seconds in, or an endless
+  retry loop showing as a black screen. Its necessity on 615.78.08 is
+  unverified: `NVreg_GpuInitOnProbe` defaults to auto (`2`), and
+  `nv_close_device` retains initialized state after last-client close when
+  probe-time initialization is enabled. Keep the workaround until a fresh
+  hybrid test passes. Never toggle the daemon or `nvidia-smi -pm` live;
+  use a fresh boot for a controlled persistence test.
+  It is not enabled at boot, and neither is `nvidia-powerd` (Dynamic Boost,
+  which shifts power budget from the CPU to the dGPU):
+  `80-nvidia-pm.rules` starts both through `SYSTEMD_WANTS` once the
+  driver has bound a GPU, so a dGPU the firmware GPU mode hides never starts
+  them. Drop-ins also condition both units on `/proc/driver/nvidia/gpus`
+  being non-empty, guarding any other start.
+- `NVreg_DynamicPowerManagement=0x02` (FINE) forces fine-grained RTD3 and
+  pairs with `80-nvidia-pm.rules` writing `power/control=auto`: the driver's
+  own `nv_allow_runtime_suspend()` call (`dynamic-power.c`, gated on the
+  regkey being exactly `0x03`/DEFAULT) is just `pm_runtime_allow`, which the
+  udev rule does instead. Change one, change both.
+- `nvidia-power.conf` may only carry parameters the open kernel module
+  actually declares (`kernel-open/nvidia/nv-reg.h`); an unknown one is
+  logged as `unknown parameter ... ignored` at module load and does nothing.
+- `env-hybrid` sets `MANGOHUD=0`, overriding the common env: the MangoHud
+  implicit Vulkan layer dlopens NVML into every Vulkan process, so
+  Chromium/Electron GPU processes hold `/dev/nvidia0` and pay its CPU cost.
+  Games opt back in with `MANGOHUD=1 %command%`. `__EGL_VENDOR_LIBRARY_FILENAMES`
+  stays commented out: the Mesa EGL pin hides the dGPU from Proton:
+  `winewayland.drv` presents through EGL, so without NVIDIA EGL, Wine offers
+  a one-device list and every game lands on the iGPU. Hyprland and hyprpaper
+  holding `nvidia0` is expected; handles alone do not establish a PM blocker.
+- Proton titles reach the dGPU via `DXVK_FILTER_DEVICE_NAME=NVIDIA` and
+  `VKD3D_FILTER_DEVICE_NAME=NVIDIA` in `env-hybrid` — read by DXVK/vkd3d
+  inside the pressure-vessel container. `prime-run` (`rootfs/usr/local/bin`)
+  cannot do this job for Steam: the steam-runtime launcher resets `PATH` to
+  `…/steam-runtime-steamrt/bin:/usr/bin:/bin`, so `prime-run %command%`
+  resolves to `/usr/bin/prime-run`, and its `__VK_LAYER_NV_optimus` is inert
+  because pressure-vessel does not import `nvidia_layers.json` into the
+  container. Use `MANGOHUD=1 %command%` for the overlay.
+#### Linux 7.3 disables RTD3 (620.70.06, open)
 
 - **On linux-zen 7.3 the driver turns runtime D3 off at probe**, so the dGPU
   stays in D0 everywhere, greeter and TTY included.
@@ -278,20 +289,27 @@ these need re-checking.
   [open-gpu-kernel-modules#1507 — RTD3 silently "Not supported" on Linux 7.3](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1507);
   the fix is the unmerged
   [PR #1512 — nvidia: Open the PCI sysfs config file through init's root on Linux 7.3](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1512).
-  620.70.06 does not carry it.
+  620.70.06 does not carry it (`grep -r userspace_init_fs
+  /usr/src/nvidia-<version>/` is empty). NVIDIA tracks it as internal bug
+  7039712, with no release named.
 - **The machine stays on 7.3 regardless**, for that kernel's other fixes, and
   carries no workaround. The loss is sleep at the greeter and on a TTY only,
   since the dGPU never slept inside a Hyprland session before either.
-- **Two workarounds exist and are not applied:** a 7.2 kernel, on which
-  620.70.06 enables RTD3 normally, or an unbind and bind of the GPU from
-  process context after the module loads, which probes synchronously. The
-  rebind needs a lock against parallel runs and a restart of `nvidia-powerd`,
-  which exits cleanly when its device goes away.
+- **Three workarounds exist and are not applied:** a 7.2 kernel, on which
+  620.70.06 enables RTD3 normally; PR #1512 applied to the DKMS source, which
+  a report in #1507 confirms on 620.70.06 with this same 7.3.4-zen2 kernel; or
+  an unbind and bind of the GPU from process context after the module loads,
+  which probes synchronously. The rebind needs a lock against parallel runs
+  and a restart of `nvidia-powerd`, which exits cleanly when its device goes
+  away.
 - **620.70.06 changes nothing about the in-session blocker below.** Its
   release notes list no runtime-PM fix, and #905, PR #1074, PR #1181 and
   PR #1299 are all still open.
+- **Nothing in a session is measurable while RTD3 is off**, so the in-session
+  findings below are untested on Hyprland 0.57 and Aquamarine 0.16. The
+  Aquamarine 0.16.0 release notes list no change to device probing.
 
-### Known blocker (610.43.03 and 610.57.04, parked)
+#### Known blocker (610.43.03 and 610.57.04, parked)
 
 - With every userspace pin fixed, the GPU sleeps only until the desktop
   session's first wake of the device, then never again: the driver's
@@ -333,7 +351,7 @@ these need re-checking.
   only `nv-kernel.o` refuses kprobes, because linux-zen lacks
   `CONFIG_KPROBE_EVENTS_ON_NOTRACE`.
 
-### 615.78.08 hybrid findings (2026-11-10)
+#### 615.78.08 hybrid findings (2026-11-10)
 
 - **The dGPU sleeps outside a graphical session and never inside one.** On
   linux-zen 7.2.11, Hyprland 0.56.2 and Aquamarine 0.15.1 it reaches D3cold
@@ -405,7 +423,39 @@ these need re-checking.
   [PR #1299 — nvidia: defer NVPCF notifications until runtime resume](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1299)
   do not apply to a GPU that never suspends again.
 
-### Verifying without waking the GPU
+#### Whether in-session D3cold is reachable
+
+- **It is reachable on this driver branch, on other laptops.** Reports in
+  #1507 show Blackwell notebooks cycling in and out of D3cold: an RTX 5090
+  Legion Pro 7 on 615.78.08 "with a Wayland compositor holding the device",
+  and an RTX 5070 Ti Legion Pro 5 on Arch, linux-zen and 620.70.06. Neither
+  names its compositor or its apps. So the pin here is this session's content
+  or this laptop's firmware, not the driver generation.
+- **#905 is a different bug and does not describe this machine.** There the
+  GPU suspends and an ACPI GPE wakes it a second later, on Lenovo AMD
+  laptops; the fix is a kernel DMI quirk, and
+  `DynamicPowerManagementVideoMemoryThreshold=0` is its workaround. Here the
+  GPU never suspends inside a session at all.
+- **The Electron probe is the only untested lead, and upstream supports it.**
+  [electron#47292 — Electron apps waking up Nvidia D3cold on hybrid system](https://github.com/electron/electron/issues/47292)
+  was closed as Chromium's, and NVIDIA's own comment on egl-wayland #89 is
+  that the platform libraries return early when the display server is not on
+  an NVIDIA GPU, but an app that calls `eglQueryDevicesEXT` itself or
+  enumerates Vulkan devices wakes the dGPU regardless. No Chromium flag stops
+  it; `--render-node-override` only moves rendering.
+- **The order to test in, once the power file reads `Enabled
+  (fine-grained)`:** a login with no Electron or Chromium app started; if
+  the GPU then sleeps, drop `AcceleratedVideoEncoder` and
+  `AcceleratedVideoEncodeLinux` from `electron-flags.conf` and
+  `brave-flags.conf`; if it still wakes, hide the dGPU per app rather than
+  per session, which keeps NVIDIA EGL for Proton.
+  [libnvidia-hide](https://github.com/Kelsios/libnvidia-hide) does that with
+  an `LD_PRELOAD` launcher and is untested here.
+- **If a session with no Electron app still never sleeps, nothing local is
+  left.** The refusal is the firmware's two-boolean answer, and only a
+  driver or firmware change moves it.
+
+#### Verifying without waking the GPU
 
 - `tdp nvidia show` — passive; marks pinning holders vs harmless
   (`nvidiactl`-only) ones. Unprivileged `fuser` cannot see other users'
@@ -435,6 +485,32 @@ these need re-checking.
   with `options/stacktrace`, filtered on the dGPU PCI address, across one
   sleep/wake cycle in a zero-holder session. `power/runtime_usage` is absent
   (`CONFIG_PM_ADVANCED_DEBUG` off), so ftrace is the only usage-count readout.
+
+### Intel xe eDP self-refresh
+
+- **`bat`'s OLED panel (`desc:Samsung Display Corp. ATNA60KA04-0`, Panther
+  Lake, `xe` driver) runs PSR1**, which is on by default because nothing in
+  `/etc/kernel/cmdline` turns it off. The panel supports PSR1 only, with no
+  Panel Replay, so `xe.enable_psr=0` alone disables it; the
+  `xe.enable_panel_replay=0` other reports pair with it does nothing here.
+- **A PSR state change can leave the panel black until the next frame**, and
+  Hyprland's `debug:vfr = true` sends no frame while nothing changes, so the
+  screen stays dark until input. Any key or mouse move fixes it. It shows on
+  the first new workspace after login, and on every live PSR toggle. Other
+  hosts have no PSR panel and never do this. It is not hypridle: its listeners
+  fire only after an idle timeout, and its journal shows no run at the moment
+  the screen goes dark.
+- **Toggle it live, with no reboot**, through debugfs:
+  `echo 0x1 | sudo tee /sys/kernel/debug/dri/0/i915_edp_psr_debug` turns it
+  off, `0x0` restores the default, and
+  `/sys/kernel/debug/dri/0/eDP-1/i915_psr_status` reports the mode. The write
+  blanks the panel once and does not survive a reboot.
+- **PSR stays on deliberately.** Turning it off costs roughly 0.5–1.5 W on a
+  static screen, and it can keep the CPU out of PC10, which outweighs a
+  blackout that one keypress clears. The fix if that changes is
+  `xe.enable_psr=0` in `/etc/kernel/cmdline` plus a UKI rebuild; boot-menu
+  cmdline edits are ignored under Secure Boot. Turning off `vfr` on `bat`
+  only hides the symptom, at the cost of rendering every frame at 120 Hz.
 
 ## Python scripts
 
@@ -864,7 +940,7 @@ not set. Read the active line, never the comment above it.
   `states(...) + 5`) must be wrapped in `{% raw %}…{% endraw %}`.
 - **The system plugin only queries a GPU driving a connected display.** Every
   NVML call restarts the driver's runtime-PM idle timer, so a hybrid laptop's
-  sleeping dGPU is never asked; see the NVIDIA section.
+  sleeping dGPU is never asked; see the `bat` section.
 - **Plugins write into the images tree**, so those files are theirs, not ours:
   the twelve multiobs Record / Pause / Scene icons on `Capture` (regenerated as
   a set on OBS connect), `Sound/Keypad.0.0` (pipewire, encodes the device name),
@@ -1034,32 +1110,6 @@ not set. Read the active line, never the comment above it.
   through a stow symlink into the repo file. A GTK4 shadow override belongs
   in `_gtk4_theme`, appended after the copy (`window.csd`, not
   `decoration`).
-
-## Intel xe eDP self-refresh (bat)
-
-- **`bat`'s OLED panel (`desc:Samsung Display Corp. ATNA60KA04-0`, Panther
-  Lake, `xe` driver) runs PSR1**, which is on by default because nothing in
-  `/etc/kernel/cmdline` turns it off. The panel supports PSR1 only, with no
-  Panel Replay, so `xe.enable_psr=0` alone disables it; the
-  `xe.enable_panel_replay=0` other reports pair with it does nothing here.
-- **A PSR state change can leave the panel black until the next frame**, and
-  Hyprland's `debug:vfr = true` sends no frame while nothing changes, so the
-  screen stays dark until input. Any key or mouse move fixes it. It shows on
-  the first new workspace after login, and on every live PSR toggle. Other
-  hosts have no PSR panel and never do this. It is not hypridle: its listeners
-  fire only after an idle timeout, and its journal shows no run at the moment
-  the screen goes dark.
-- **Toggle it live, with no reboot**, through debugfs:
-  `echo 0x1 | sudo tee /sys/kernel/debug/dri/0/i915_edp_psr_debug` turns it
-  off, `0x0` restores the default, and
-  `/sys/kernel/debug/dri/0/eDP-1/i915_psr_status` reports the mode. The write
-  blanks the panel once and does not survive a reboot.
-- **PSR stays on deliberately.** Turning it off costs roughly 0.5–1.5 W on a
-  static screen, and it can keep the CPU out of PC10, which outweighs a
-  blackout that one keypress clears. The fix if that changes is
-  `xe.enable_psr=0` in `/etc/kernel/cmdline` plus a UKI rebuild; boot-menu
-  cmdline edits are ignored under Secure Boot. Turning off `vfr` on `bat`
-  only hides the symptom, at the cost of rendering every frame at 120 Hz.
 
 ## Agent notification hook
 
