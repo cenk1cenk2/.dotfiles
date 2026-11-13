@@ -260,6 +260,37 @@ these need re-checking.
   with a `manifest.json` recording each path's previous kind, mode, owner or
   symlink target.
 
+### Linux 7.3 disables RTD3 (620.70.06, open)
+
+- **On linux-zen 7.3 the driver turns runtime D3 off at probe**, so the dGPU
+  stays in D0 everywhere, greeter and TTY included.
+  `/proc/driver/nvidia/gpus/<PCI-address>/power` reads `Runtime D3 status:
+  Not supported` with `NVreg_DynamicPowerManagement=0x02`, and `Disabled by
+  default` with `0x03`. Read that line before any other sleep debugging:
+  nothing below it applies until it says `Enabled (fine-grained)`.
+- **The cause is the kernel, not the driver version.** Since 7.3 every kernel
+  thread starts in an empty root, so `filp_open` of
+  `/sys/bus/pci/devices/<PCI-address>/config` in `nv_get_pci_sysfs_config`
+  (`kernel-open/nvidia/nv-pci.c`) fails inside the `nv-probe` thread.
+  `sysfs_config_file` stays NULL, `nv_dynamic_power_available` returns false
+  and `rm_init_dynamic_power_management` disables the feature. Nothing is
+  logged, and `_PR3` on the root port is present and irrelevant. Tracked in
+  [open-gpu-kernel-modules#1507 — RTD3 silently "Not supported" on Linux 7.3](https://github.com/NVIDIA/open-gpu-kernel-modules/issues/1507);
+  the fix is the unmerged
+  [PR #1512 — nvidia: Open the PCI sysfs config file through init's root on Linux 7.3](https://github.com/NVIDIA/open-gpu-kernel-modules/pull/1512).
+  620.70.06 does not carry it.
+- **The machine stays on 7.3 regardless**, for that kernel's other fixes, and
+  carries no workaround. The loss is sleep at the greeter and on a TTY only,
+  since the dGPU never slept inside a Hyprland session before either.
+- **Two workarounds exist and are not applied:** a 7.2 kernel, on which
+  620.70.06 enables RTD3 normally, or an unbind and bind of the GPU from
+  process context after the module loads, which probes synchronously. The
+  rebind needs a lock against parallel runs and a restart of `nvidia-powerd`,
+  which exits cleanly when its device goes away.
+- **620.70.06 changes nothing about the in-session blocker below.** Its
+  release notes list no runtime-PM fix, and #905, PR #1074, PR #1181 and
+  PR #1299 are all still open.
+
 ### Known blocker (610.43.03 and 610.57.04, parked)
 
 - With every userspace pin fixed, the GPU sleeps only until the desktop
